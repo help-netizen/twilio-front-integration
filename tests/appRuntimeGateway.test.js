@@ -9,7 +9,13 @@ const VERSION_ID = '20000000-0000-4000-8000-000000000001';
 const RUN_ID = '30000000-0000-4000-8000-000000000001';
 const AGENT_ID = '40000000-0000-4000-8000-000000000001';
 const DELEGATOR_ID = '50000000-0000-4000-8000-000000000001';
-const ALL_TOOLS = ['svc.list_jobs', 'svc.get_job', 'svc.list_tasks'];
+const ALL_TOOLS = [
+    'svc.list_jobs',
+    'svc.get_job',
+    'svc.list_tasks',
+    'svc.list_estimates',
+    'svc.get_estimate',
+];
 
 const mockTokenService = {
     verifyRunToken: jest.fn(),
@@ -123,7 +129,7 @@ beforeEach(() => {
     mockResolveCompanyUserAuthz.mockResolvedValue({
         role_key: 'manager',
         membership: { id: 'member-a', role_key: 'manager', status: 'active' },
-        permissions: ['jobs.view', 'tasks.view'],
+        permissions: ['jobs.view', 'tasks.view', 'estimates.view'],
         scopes: { job_visibility: 'all' },
     });
     mockConsumeInstallation.mockReturnValue({ allowed: true, retryAfterSeconds: 1 });
@@ -137,14 +143,26 @@ beforeEach(() => {
         },
         getJob: { id: 11, customer_phone: '+16175550101' },
         listTasks: { tasks: [{ id: 21, description: 'Owned task' }] },
+        listEstimates: { results: [{ id: 31, status: 'approved' }], pagination: {} },
+        getEstimate: { id: 31, status: 'approved', items: [], order_list: [] },
     })[handler]);
 });
 
 describe('APP-GW-001 catalog, validation, authorization, masking, and audit', () => {
-    test('SAB exact three read tools only: catalog equality and strict descriptor shape', () => {
+    test('SAB exact five read tools only: catalog equality, permissions, and strict descriptor shape', () => {
         const tools = catalog.listTools();
         expect(tools.map((tool) => tool.name)).toEqual(ALL_TOOLS);
-        expect(tools.map((tool) => tool.handler)).toEqual(['listJobs', 'getJob', 'listTasks']);
+        expect(tools.map((tool) => tool.handler)).toEqual([
+            'listJobs',
+            'getJob',
+            'listTasks',
+            'listEstimates',
+            'getEstimate',
+        ]);
+        expect(catalog.BUSINESS_PERMISSIONS).toMatchObject({
+            'svc.list_estimates': 'estimates.view',
+            'svc.get_estimate': 'estimates.view',
+        });
         for (const tool of tools) {
             expect(tool.kind).toBe('read');
             expect(tool.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
@@ -156,6 +174,8 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         ['svc.list_jobs', {}, 'listJobs'],
         ['svc.get_job', { job_id: 11 }, 'getJob'],
         ['svc.list_tasks', {}, 'listTasks'],
+        ['svc.list_estimates', { status: 'approved' }, 'listEstimates'],
+        ['svc.get_estimate', { estimate_id: 31 }, 'getEstimate'],
     ])('dispatches the approved tool %s through its shared read handler', async (tool, body, handler) => {
         const response = await call(buildApp(), tool, body);
         expect(response.status).toBe(200);
@@ -189,7 +209,7 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(mockAuditRecord).toHaveBeenCalledTimes(5);
     });
 
-    test('SAB exact three read tools only: registered and URL-like out-of-scope names never dispatch', async () => {
+    test('SAB exact five read tools only: registered and URL-like out-of-scope names never dispatch', async () => {
         const app = buildApp();
         for (const name of ['svc.list_calls', 'svc.create_job', 'svc.fetch_url']) {
             const response = await call(app, name, {});
@@ -207,6 +227,9 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
             ['svc.list_jobs', { start_date: '2026-02-30' }],
             ['svc.list_jobs', { limit: 0 }],
             ['svc.list_tasks', { limit: 101 }],
+            ['svc.list_estimates', { status: 'accepted' }],
+            ['svc.list_estimates', { accepted_from: '2026-02-30' }],
+            ['svc.get_estimate', { estimate_id: '31' }],
             ['svc.list_jobs', { callback_url: 'https://evil.test' }],
         ];
         for (const [name, body] of cases) {
@@ -283,6 +306,26 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(response.body.code).toBe('ACCESS_DENIED');
         expect(mockResolveCompanyUserAuthz).toHaveBeenCalledWith(COMPANY_ID, DELEGATOR_ID);
         expect(mockReadExecute).not.toHaveBeenCalled();
+    });
+
+    test('APP-DATA-001 estimates.view is required independently for both Estimate tools', async () => {
+        mockResolveCompanyUserAuthz.mockResolvedValue({
+            role_key: 'custom',
+            membership: { id: 'member-a' },
+            permissions: ['estimates.view'],
+            scopes: {},
+        });
+        await expect(call(buildApp(), 'svc.list_estimates', { status: 'approved' }))
+            .resolves.toMatchObject({ status: 200 });
+        await expect(call(buildApp(), 'svc.get_estimate', { estimate_id: 31 }))
+            .resolves.toMatchObject({ status: 200 });
+
+        mockResolveCompanyUserAuthz.mockResolvedValue({
+            role_key: 'custom', membership: { id: 'member-a' }, permissions: [], scopes: {},
+        });
+        expect((await call(buildApp(), 'svc.list_estimates', {})).body.code).toBe('ACCESS_DENIED');
+        expect((await call(buildApp(), 'svc.get_estimate', { estimate_id: 31 })).body.code)
+            .toBe('ACCESS_DENIED');
     });
 
     test('SAB APP-FINAL-P0 run authorization requires the exact hash, live consent, and live RBAC', async () => {

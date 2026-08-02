@@ -7,12 +7,16 @@ const EXPECTED_HANDLERS = Object.freeze({
     'svc.list_jobs': 'listJobs',
     'svc.get_job': 'getJob',
     'svc.list_tasks': 'listTasks',
+    'svc.list_estimates': 'listEstimates',
+    'svc.get_estimate': 'getEstimate',
 });
 const TOOL_NAMES = Object.freeze(Object.keys(EXPECTED_HANDLERS));
 const BUSINESS_PERMISSIONS = Object.freeze({
     'svc.list_jobs': 'jobs.view',
     'svc.get_job': 'jobs.view',
     'svc.list_tasks': 'tasks.view',
+    'svc.list_estimates': 'estimates.view',
+    'svc.get_estimate': 'estimates.view',
 });
 
 function schemaHasUrlField(schema) {

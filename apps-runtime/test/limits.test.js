@@ -28,11 +28,11 @@ describe('APP-RUN-001 resource limits', () => {
         })).rejects.toMatchObject({ code: 'APP_RUNTIME_MEMORY_LIMIT' });
     });
 
-    test('the sixth gateway call is rejected and no sixth request leaves the host', async () => {
+    test('the eleventh gateway call is rejected and no eleventh request leaves the host', async () => {
         const fetchImpl = jest.fn(async () => response({ accepted: true }));
         await expect(runApplication({
             source: app(`
-                for (let index = 0; index < 6; index += 1) {
+                for (let index = 0; index < 11; index += 1) {
                     await ctx.callTool('svc.list_tasks', { limit: 1 });
                 }
                 return 'unreachable';
@@ -45,12 +45,12 @@ describe('APP-RUN-001 resource limits', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(LIMITS.gatewayCallLimit);
     });
 
-    test('five gateway calls are allowed', async () => {
+    test('ten gateway calls are allowed', async () => {
         const fetchImpl = jest.fn(async () => response({ accepted: true }));
         const result = await runApplication({
             source: app(`
                 const results = [];
-                for (let index = 0; index < 5; index += 1) {
+                for (let index = 0; index < 10; index += 1) {
                     results.push(await ctx.callTool('svc.list_tasks', { limit: 1 }));
                 }
                 return results.length;
@@ -60,8 +60,8 @@ describe('APP-RUN-001 resource limits', () => {
             runToken: TEST_TOKEN,
             fetchImpl,
         });
-        expect(result).toBe(5);
-        expect(fetchImpl).toHaveBeenCalledTimes(5);
+        expect(result).toBe(10);
+        expect(fetchImpl).toHaveBeenCalledTimes(10);
     });
 
     test('output larger than the view-document ceiling is rejected before it is copied to the host', async () => {

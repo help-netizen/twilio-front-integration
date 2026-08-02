@@ -55,8 +55,11 @@ jest.mock('../backend/src/db/chatgptMcpQueries', () => ({
         }],
         total: 1,
     })),
-    listEstimates: jest.fn(async () => ({ rows: [{ id: 31 }], total: 1 })),
-    getEstimate: jest.fn(async () => ({ id: 31, public_token: 'hidden', items: [] })),
+    listEstimates: jest.fn(async () => ({
+        results: [{ id: 31 }],
+        pagination: { total: 1 },
+    })),
+    getEstimate: jest.fn(async () => ({ id: 31, items: [], order_list: [] })),
     listInvoices: jest.fn(async () => ({ rows: [{ id: 41 }], total: 1 })),
     getInvoice: jest.fn(async () => ({ id: 41, public_token: 'hidden', items: [] })),
 }));
@@ -269,6 +272,21 @@ describe('CHATGPT-CRM-MCP S1 read handlers', () => {
         ]) {
             expect(result.rows[0]).not.toHaveProperty(forbidden);
         }
+    });
+
+    test('listEstimates forwards accepted-date filters with the trusted company timezone', async () => {
+        const args = {
+            status: 'approved',
+            accepted_from: '2026-08-01',
+            accepted_to: '2026-08-01',
+            limit: 25,
+            offset: 0,
+        };
+        await readService.execute('listEstimates', AUTHORITY, args);
+        expect(queries.listEstimates).toHaveBeenCalledWith(COMPANY, {
+            ...args,
+            companyTimezone: 'America/New_York',
+        });
     });
 
     test('no company context fails before every service/query call', async () => {

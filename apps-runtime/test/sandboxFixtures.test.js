@@ -45,6 +45,7 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         const contactIds = new Set(fixtures.contacts.map(contact => contact.id));
         const leadIds = new Set(fixtures.leads.map(lead => lead.id));
         const jobIds = new Set(fixtures.jobs.map(job => job.id));
+        const estimateIds = new Set(fixtures.estimates.map(estimate => estimate.id));
         const invoiceIds = new Set(fixtures.invoices.map(invoice => invoice.id));
 
         expect(fixtures.contacts.every(contact => contact.company_id === fixtures.company.id)).toBe(true);
@@ -77,6 +78,18 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
             && Date.parse(task.created_at) <= Date.parse(task.due_at)
             && (task.completed_at === null || Date.parse(task.completed_at) >= Date.parse(task.created_at))
         ))).toBe(true);
+        expect(estimateIds.size).toBe(dataset.estimates.length);
+        expect(fixtures.estimates.every(estimate => (
+            estimate.company_id === fixtures.company.id
+            && jobIds.has(estimate.job_id)
+            && Date.parse(estimate.created_at) <= Date.parse(estimate.accepted_at || estimate.created_at)
+        ))).toBe(true);
+        const approvedEstimates = fixtures.estimates.filter(estimate => estimate.status === 'approved');
+        expect(approvedEstimates).toHaveLength(3);
+        expect(approvedEstimates.every(estimate => estimate.order_list.length > 0)).toBe(true);
+        expect(new Set(fixtures.estimates.map(estimate => estimate.status))).toEqual(
+            new Set(['approved', 'sent', 'draft', 'declined'])
+        );
         expect(fixtures.invoices.every(invoice => (
             invoice.company_id === fixtures.company.id
             && jobIds.has(invoice.job_id)
@@ -103,6 +116,13 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         });
         const job = projectSandboxTool(fixtures, 'svc.get_job', { job_id: firstJob.id });
         const tasks = projectSandboxTool(fixtures, 'svc.list_tasks', { status: 'open', limit: 100 });
+        const estimates = projectSandboxTool(fixtures, 'svc.list_estimates', {
+            status: 'approved',
+            limit: 100,
+        });
+        const estimate = projectSandboxTool(fixtures, 'svc.get_estimate', {
+            estimate_id: fixtures.estimates[0].id,
+        });
 
         const scheduledThatDay = fixtures.jobs
             .filter(candidate => localDate(candidate.start_date, fixtures.company.timezone) === '2026-07-31');
@@ -110,6 +130,15 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         expect(jobs.results).toHaveLength(scheduledThatDay.length);
         expect(job).toEqual(firstJob);
         expect(tasks.tasks.every(task => task.status === 'open')).toBe(true);
+        expect(estimates.results).toHaveLength(3);
+        expect(estimates.results.every(row => row.status === 'approved')).toBe(true);
+        expect(estimate.order_list).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                part_number: 'DA97-07603B',
+                part_name: expect.any(String),
+                quantity: 1,
+            }),
+        ]));
         expect(jobs.results[0]).toHaveProperty('amount_paid');
         expect(job).not.toHaveProperty('amount_paid');
         const billable = fixtures.jobs.filter(candidate => candidate.invoice_total !== null).length;
@@ -119,6 +148,7 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
             leads: dataset.leads.length,
             jobs: dataset.jobs.length,
             tasks: dataset.tasks.length,
+            estimates: dataset.estimates.length,
             invoices: billable,
             payments: billable,
         });
@@ -159,10 +189,28 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
             due_to: anchor,
             limit: 100,
         });
+        const acceptedThatDay = projectSandboxTool(fixtures, 'svc.list_estimates', {
+            status: 'approved',
+            accepted_from: anchor,
+            accepted_to: anchor,
+            limit: 100,
+        });
+        const acceptedNextDay = projectSandboxTool(fixtures, 'svc.list_estimates', {
+            status: 'approved',
+            accepted_from: '2026-08-01',
+            accepted_to: '2026-08-01',
+            limit: 100,
+        });
+        const lateEstimate = fixtures.estimates.find(estimate => (
+            estimate.accepted_at === '2026-08-01T03:30:00.000Z'
+        ));
 
         expect(localJobs.results.map(job => job.id)).toContain(lateJob.id);
         expect(nextDayJobs.results.map(job => job.id)).not.toContain(lateJob.id);
         expect(dueThatDay.tasks.map(task => task.id)).toContain(lateTask.id);
+        expect(lateEstimate).toBeDefined();
+        expect(acceptedThatDay.results.map(estimate => estimate.id)).toContain(lateEstimate.id);
+        expect(acceptedNextDay.results.map(estimate => estimate.id)).not.toContain(lateEstimate.id);
         for (const [index, plan] of dataset.jobs.entries()) {
             expect(localDate(generatedJobs[index].start_date, fixtures.company.timezone))
                 .toBe(shiftDate(anchor, plan.day_offset));

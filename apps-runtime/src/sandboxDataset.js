@@ -941,6 +941,99 @@ const LEADS = [
     }
 ];
 
+const ESTIMATES = [
+    {
+        "job_index": 20,
+        "status": "approved",
+        "created_day_offset": -1,
+        "accepted_day_offset": 0,
+        "accepted_hour": 23,
+        "accepted_minute": 30,
+        "summary": "Replace the refrigerator ice maker assembly and verify the water supply.",
+        "tax_rate": 6.25,
+        "items": [
+            { "name": "Ice maker assembly", "description": "Samsung refrigerator ice maker assembly", "quantity": 1, "unit": "each", "unit_price": 289, "item_type": "part" },
+            { "name": "Installation labor", "description": "Remove failed assembly, install replacement, and test", "quantity": 1, "unit": "service", "unit_price": 185, "item_type": "labor" }
+        ],
+        "order_list": [
+            { "part_number": "DA97-07603B", "part_name": "Refrigerator Ice Maker Assembly", "quantity": 1 }
+        ]
+    },
+    {
+        "job_index": 15,
+        "status": "approved",
+        "created_day_offset": -4,
+        "accepted_day_offset": -3,
+        "accepted_hour": 16,
+        "accepted_minute": 15,
+        "summary": "Replace the freezer evaporator fan motor and defrost thermistor.",
+        "tax_rate": 6.25,
+        "items": [
+            { "name": "Evaporator fan motor", "description": "Sub-Zero freezer fan motor", "quantity": 1, "unit": "each", "unit_price": 248, "item_type": "part" },
+            { "name": "Defrost thermistor", "description": "Freezer temperature sensor", "quantity": 1, "unit": "each", "unit_price": 94, "item_type": "part" },
+            { "name": "Repair labor", "description": "Install parts and verify temperature recovery", "quantity": 2, "unit": "hour", "unit_price": 145, "item_type": "labor" }
+        ],
+        "order_list": [
+            { "part_number": "4200160", "part_name": "Freezer Evaporator Fan Motor", "quantity": 1 },
+            { "part_number": "4204150", "part_name": "Defrost Thermistor", "quantity": 1 }
+        ]
+    },
+    {
+        "job_index": 13,
+        "status": "approved",
+        "created_day_offset": -6,
+        "accepted_day_offset": -5,
+        "accepted_hour": 11,
+        "accepted_minute": 45,
+        "summary": "Replace the dishwasher drain pump and lower rack wheels.",
+        "tax_rate": 6.25,
+        "items": [
+            { "name": "Drain pump", "description": "GE dishwasher drain pump", "quantity": 1, "unit": "each", "unit_price": 176, "item_type": "part" },
+            { "name": "Lower rack wheel assembly", "description": "Whirlpool-style lower rack wheel assembly", "quantity": 2, "unit": "each", "unit_price": 42, "item_type": "part" },
+            { "name": "Repair labor", "description": "Install parts and complete leak test", "quantity": 1.5, "unit": "hour", "unit_price": 145, "item_type": "labor" }
+        ],
+        "order_list": [
+            { "part_number": "WD19X25700", "part_name": "Dishwasher Drain Pump", "quantity": 1 },
+            { "part_number": "W10195416", "part_name": "Lower Dishrack Wheel Assembly", "quantity": 2 }
+        ]
+    },
+    {
+        "job_index": 16,
+        "status": "sent",
+        "created_day_offset": -2,
+        "summary": "Replace the washer drain pump after customer approval.",
+        "tax_rate": 6.25,
+        "items": [
+            { "name": "Drain pump", "description": "Washer drain pump assembly", "quantity": 1, "unit": "each", "unit_price": 168, "item_type": "part" },
+            { "name": "Installation labor", "description": "Install pump and run drain cycle", "quantity": 1, "unit": "service", "unit_price": 185, "item_type": "labor" }
+        ],
+        "order_list": []
+    },
+    {
+        "job_index": 23,
+        "status": "draft",
+        "created_day_offset": 0,
+        "summary": "Diagnose refrigerator compressor noise and prepare repair options.",
+        "tax_rate": 6.25,
+        "items": [
+            { "name": "Diagnostic visit", "description": "Compressor and sealed-system diagnosis", "quantity": 1, "unit": "service", "unit_price": 95, "item_type": "labor" }
+        ],
+        "order_list": []
+    },
+    {
+        "job_index": 9,
+        "status": "declined",
+        "created_day_offset": -9,
+        "summary": "Replace the washer spin basket and bearing assembly.",
+        "tax_rate": 6.25,
+        "items": [
+            { "name": "Spin basket assembly", "description": "Washer basket and bearing assembly", "quantity": 1, "unit": "each", "unit_price": 412, "item_type": "part" },
+            { "name": "Installation labor", "description": "Disassemble tub and install basket assembly", "quantity": 3, "unit": "hour", "unit_price": 145, "item_type": "labor" }
+        ],
+        "order_list": []
+    }
+];
+
 const TASKS = [
     {
         "day_offset": 0,
@@ -1036,5 +1129,6 @@ module.exports = Object.freeze({
     services: SERVICES,
     jobs: JOBS,
     leads: LEADS,
+    estimates: ESTIMATES,
     tasks: TASKS,
 });

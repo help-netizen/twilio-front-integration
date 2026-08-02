@@ -303,7 +303,8 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
             expect(jobList.results.every((row) => row.company_id === companyA)).toBe(true);
             const leadList = await leadsService.listLeads({ companyId: companyA, search: sharedEmail, only_open: false, limit: 20, offset: 0 });
             expect(leadList.results.map((row) => row.UUID)).toEqual([leadA.uuid]);
-            expect((await mcpQueries.listEstimates(companyA, { search: sharedText })).rows.every((row) => row.company_id === companyA)).toBe(true);
+            expect((await mcpQueries.listEstimates(companyA, { search: sharedText })).results
+                .map((row) => String(row.id))).toEqual([String(estimateA)]);
             expect((await mcpQueries.listInvoices(companyA, { search: sharedText })).rows.every((row) => row.company_id === companyA)).toBe(true);
             expect((await tasksQueries.listTasksPage(companyA, { status: 'open', limit: 20, offset: 0 })).tasks.every((row) => row.company_id === companyA)).toBe(true);
             expect((await scheduleService.getScheduleItems(companyA, { limit: 50, offset: 0 })).items.every((row) => row.company_id === companyA)).toBe(true);
@@ -446,7 +447,7 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
                     expect(data.users.map((row) => row.id)).not.toContain(humanB.id);
                 }],
                 ['svc.list_estimates', { search: sharedText, limit: 20 }, (data) => {
-                    expect(data.rows.map((row) => String(row.id))).toEqual([String(estimateA)]);
+                    expect(data.results.map((row) => String(row.id))).toEqual([String(estimateA)]);
                 }],
                 ['svc.get_estimate', { estimate_id: Number(estimateA) }, (data) => {
                     expect(String(data.id)).toBe(String(estimateA));

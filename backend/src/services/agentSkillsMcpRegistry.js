@@ -100,6 +100,14 @@ const APP_RUNTIME_JOB_STATUSES = Object.freeze([
     'On the way',
 ]);
 
+const APP_RUNTIME_ESTIMATE_STATUSES = Object.freeze([
+    'draft',
+    'sent',
+    'viewed',
+    'approved',
+    'declined',
+]);
+
 const APP_RUNTIME_COMMON_ERRORS = Object.freeze([
     Object.freeze({ code: 'INVALID_ARGUMENTS', description: 'The arguments do not match the documented input schema.' }),
     Object.freeze({ code: 'TOOL_NOT_CONSENTED', description: 'The published app version or installation did not grant this tool.' }),
@@ -493,8 +501,100 @@ const DISPATCHER_READ_TOOLS = [
         parent_type: enumSchema(['job', 'lead']), parent_id: stringSchema(), include_done: booleanSchema(),
     }, ['parent_type', 'parent_id'])),
     dispatcherRead('svc.list_task_assignees', 'listTaskAssignees', 'List active company users eligible for task assignment.', strictObjectSchema({ limit: integerSchema(1, 500) })),
-    dispatcherRead('svc.list_estimates', 'listEstimates', 'List actionable company Estimates without revision double-counting.', financeListSchema(true)),
-    dispatcherRead('svc.get_estimate', 'getEstimate', 'Get one company-owned Estimate and its line items.', strictObjectSchema({ estimate_id: integerSchema(1) }, ['estimate_id'])),
+    dispatcherRead(
+        'svc.list_estimates',
+        'listEstimates',
+        'List company-owned Estimates with exact status, accepted-date, and text filters. Results are ordered by newest creation time first.',
+        strictObjectSchema({
+            status: documentedSchema(
+                enumSchema(APP_RUNTIME_ESTIMATE_STATUSES),
+                'Exact Estimate status to include: `draft`, `sent`, `viewed`, `approved`, or `declined`. Omit to include every status.'
+            ),
+            accepted_from: documentedSchema(
+                dateSchema(),
+                'Inclusive lower bound on Estimate `accepted_at`, formatted `YYYY-MM-DD`. The boundary is midnight at the start of that calendar date in the owning company timezone. Estimates without `accepted_at` do not match. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound.'
+            ),
+            accepted_to: documentedSchema(
+                dateSchema(),
+                'Inclusive upper calendar date for Estimate `accepted_at`, formatted `YYYY-MM-DD`. The full company-local day is included by using the following calendar date\'s midnight as an exclusive bound. Estimates without `accepted_at` do not match. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound.'
+            ),
+            search: documentedSchema(
+                stringSchema(),
+                'Case-insensitive text contained in the Estimate number, summary, or notes. Omit for no text filter.'
+            ),
+            limit: documentedSchema(
+                integerSchema(1, 100),
+                'Maximum Estimate rows to return, from 1 through 100. Defaults to 50.',
+                50
+            ),
+            offset: documentedSchema(
+                integerSchema(0),
+                'Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages.',
+                0
+            ),
+        }),
+        {
+            outputSchema: listEstimatesOutputSchema(),
+            documentation: {
+                responseNotes: [
+                    'The value returned by `ctx.callTool` is the documented object itself; the internal gateway envelope is already removed.',
+                    '`accepted_from` and `accepted_to` are inclusive company-calendar dates applied only to `accepted_at`; the upper bound includes the entire selected day.',
+                    '`order_list_count` can be zero. Use `svc.get_estimate` to read the internal parts list for a selected Estimate.',
+                    'Use offset pagination. Results are ordered by `created_at` descending, then Estimate ID descending.',
+                ],
+                errors: appRuntimeErrors(),
+                examples: [{
+                    title: 'List approved Estimates accepted today',
+                    source: `export async function run(ctx) {
+    return ctx.callTool('svc.list_estimates', {
+        status: 'approved',
+        accepted_from: ctx.input.today,
+        accepted_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
+}`,
+                }],
+            },
+        }
+    ),
+    dispatcherRead(
+        'svc.get_estimate',
+        'getEstimate',
+        'Get one company-owned Estimate with its customer-facing line items and internal parts-to-order list.',
+        strictObjectSchema({
+            estimate_id: documentedSchema(
+                integerSchema(1),
+                'Positive Albusto Estimate ID, usually taken from `svc.list_estimates().results[].id`.'
+            ),
+        }, ['estimate_id']),
+        {
+            outputSchema: getEstimateOutputSchema(),
+            documentation: {
+                responseNotes: [
+                    'The value returned by `ctx.callTool` is the Estimate object itself, not a `results` envelope.',
+                    '`items` and `order_list` are always arrays and may be empty.',
+                    '`order_list` is the internal parts-to-order list. Each row contains only `part_number`, `part_name`, and `quantity`; it does not contain prices.',
+                ],
+                errors: appRuntimeErrors(true, 'Estimate'),
+                examples: [{
+                    title: 'Read the parts required by an approved Estimate',
+                    source: `export async function run(ctx) {
+    const page = await ctx.callTool('svc.list_estimates', {
+        status: 'approved',
+        offset: 0,
+        limit: 1,
+    });
+    if (page.results.length === 0) return [];
+    const estimate = await ctx.callTool('svc.get_estimate', {
+        estimate_id: Number(page.results[0].id),
+    });
+    return estimate.order_list;
+}`,
+                }],
+            },
+        }
+    ),
     dispatcherRead('svc.list_invoices', 'listInvoices', 'List company Invoices with balance fields.', financeListSchema(false)),
     dispatcherRead('svc.get_invoice', 'getInvoice', 'Get one company-owned Invoice, line items, and payment rollup.', strictObjectSchema({ invoice_id: integerSchema(1) }, ['invoice_id'])),
 ];
@@ -802,11 +902,16 @@ function documentedSchema(schema, description, defaultValue = NO_SCHEMA_DEFAULT)
     };
 }
 
-function appRuntimeErrors(includeNotFound = false) {
+function appRuntimeErrors(includeNotFound = false, notFoundEntity = 'Job') {
     return [
         ...APP_RUNTIME_COMMON_ERRORS.map(error => ({ ...error })),
         ...(includeNotFound
-            ? [{ code: 'NOT_FOUND', description: 'The Job does not exist or is outside the live company/provider scope.' }]
+            ? [{
+                code: 'NOT_FOUND',
+                description: notFoundEntity === 'Job'
+                    ? 'The Job does not exist or is outside the live company/provider scope.'
+                    : `The ${notFoundEntity} does not exist or is outside the live company scope.`,
+            }]
             : []),
     ];
 }
@@ -971,6 +1076,94 @@ function listTasksOutputSchema() {
                 }),
             }),
             pagination: paginationOutputSchema(),
+        },
+    });
+}
+
+function estimateSummaryOutputProperties() {
+    return {
+        id: outputField(['integer', 'string'], 'Albusto Estimate ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        estimate_number: outputField('string', 'Human-readable Estimate number.'),
+        status: outputField('string', 'Current Estimate status.', {
+            enum: APP_RUNTIME_ESTIMATE_STATUSES,
+        }),
+        subtotal: outputField(['string', 'number'], 'Estimate subtotal before tax.'),
+        tax_amount: outputField(['string', 'number'], 'Estimate tax amount.'),
+        total: outputField(['string', 'number'], 'Estimate total including tax.'),
+        contact_id: nullableOutput(['integer', 'string'], 'Linked Contact ID, when one exists.'),
+        job_id: nullableOutput(['integer', 'string'], 'Linked Job ID, when one exists.'),
+        lead_id: nullableOutput(['integer', 'string'], 'Linked Lead ID, when one exists.'),
+        accepted_at: nullableOutput('string', 'Approval timestamp in ISO 8601 format; null until the Estimate is approved.', { format: 'date-time' }),
+        created_at: outputField('string', 'Creation timestamp in ISO 8601 format.', { format: 'date-time' }),
+        items_count: outputField('integer', 'Number of line items on the Estimate.'),
+        order_list_count: outputField('integer', 'Number of internal parts-to-order rows. This can be zero.'),
+    };
+}
+
+function estimateItemOutputSchema() {
+    return outputField('object', 'One customer-facing Estimate line item.', {
+        additionalProperties: false,
+        properties: {
+            name: outputField('string', 'Line-item name.'),
+            description: nullableOutput('string', 'Line-item description, when present.'),
+            quantity: outputField(['string', 'number'], 'Line-item quantity.'),
+            unit: nullableOutput('string', 'Unit label, when present.'),
+            unit_price: outputField(['string', 'number'], 'Price per unit.'),
+            amount: outputField(['string', 'number'], 'Extended line amount.'),
+            item_type: nullableOutput('string', 'Line-item type, when classified.'),
+        },
+    });
+}
+
+function estimateOrderListOutputSchema() {
+    return outputField('object', 'One internal part that must be ordered.', {
+        additionalProperties: false,
+        properties: {
+            part_number: outputField('string', 'Manufacturer or distributor part number.'),
+            part_name: outputField('string', 'English part name.'),
+            quantity: outputField('number', 'Quantity to order.'),
+        },
+    });
+}
+
+function listEstimatesOutputSchema() {
+    return outputField('object', 'A page of company-owned Estimates and pagination metadata.', {
+        additionalProperties: false,
+        properties: {
+            results: outputField('array', 'Estimate summary rows for this page.', {
+                items: outputField('object', 'One company-owned Estimate summary.', {
+                    additionalProperties: false,
+                    properties: estimateSummaryOutputProperties(),
+                }),
+            }),
+            pagination: outputField('object', 'Offset pagination metadata for the returned Estimate page.', {
+                additionalProperties: false,
+                properties: {
+                    mode: outputField('string', 'Pagination mode. Estimate pages always use `offset`.', {
+                        enum: ['offset'],
+                    }),
+                    limit: outputField('integer', 'Applied page size.'),
+                    returned: outputField('integer', 'Number of Estimate rows in this page.'),
+                    has_more: outputField('boolean', 'Whether another Estimate page exists.'),
+                    next_cursor: nullableOutput('string', 'Always null because Estimate pages use offset pagination.'),
+                    total: outputField('integer', 'Total matching Estimates.'),
+                },
+            }),
+        },
+    });
+}
+
+function getEstimateOutputSchema() {
+    return outputField('object', 'One company-owned Estimate with line items and its internal parts-to-order list.', {
+        additionalProperties: false,
+        properties: {
+            ...estimateSummaryOutputProperties(),
+            items: outputField('array', 'Customer-facing Estimate line items in their saved display order. This array may be empty.', {
+                items: estimateItemOutputSchema(),
+            }),
+            order_list: outputField('array', 'Internal parts-to-order rows. This array may be empty.', {
+                items: estimateOrderListOutputSchema(),
+            }),
         },
     });
 }

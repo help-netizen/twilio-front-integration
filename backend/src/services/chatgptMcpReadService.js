@@ -249,7 +249,10 @@ async function execute(handler, context, args = {}) {
             break;
         }
         case 'listEstimates':
-            result = await queries.listEstimates(companyId, args);
+            result = await queries.listEstimates(companyId, {
+                ...args,
+                companyTimezone: context.companyTimezone,
+            });
             break;
         case 'getEstimate':
             result = await queries.getEstimate(companyId, args.estimate_id);

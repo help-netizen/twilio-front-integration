@@ -27,7 +27,13 @@ const EXECUTION_ROLLBACK = fs.readFileSync(
     'utf8'
 );
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
-const TOOLS = ['svc.list_jobs', 'svc.get_job', 'svc.list_tasks'];
+const TOOLS = [
+    'svc.list_jobs',
+    'svc.get_job',
+    'svc.list_tasks',
+    'svc.list_estimates',
+    'svc.get_estimate',
+];
 const SHARED_SEARCH = `blast-${randomUUID()}`;
 const SHARED_PHONE = '+16175550999';
 const SHARED_EMAIL = `blast-${randomUUID()}@example.test`;
@@ -286,6 +292,38 @@ async function setupFixture(client) {
         ]
     );
 
+    const estimateRows = await client.query(
+        `INSERT INTO estimates
+            (company_id, estimate_number, status, job_id, summary,
+             subtotal, tax_amount, total, accepted_at, order_list)
+         VALUES
+            ($1, $3::varchar, 'approved', $4, $3::text, 289.00, 18.06, 307.06,
+             '2026-08-02T03:30:00.000Z', $6::jsonb),
+            ($2, $3::varchar, 'approved', $5, $3::text, 999.00, 62.44, 1061.44,
+             '2026-08-02T03:30:00.000Z', $7::jsonb)
+         RETURNING id, company_id`,
+        [
+            companyA,
+            companyB,
+            SHARED_SEARCH,
+            ownedJobA,
+            foreignJobB,
+            JSON.stringify([{ part_number: 'WD19X25700', part_name: 'Dishwasher Drain Pump', quantity: 1 }]),
+            JSON.stringify([{ part_number: 'DA97-07603B', part_name: 'Foreign Ice Maker', quantity: 9 }]),
+        ]
+    );
+    const ownedEstimateA = estimateRows.rows.find((row) => row.company_id === companyA).id;
+    const foreignEstimateB = estimateRows.rows.find((row) => row.company_id === companyB).id;
+    await client.query(
+        `INSERT INTO estimate_items
+            (estimate_id, sort_order, name, description, quantity, unit,
+             unit_price, amount, item_type)
+         VALUES
+            ($1, 0, 'Dishwasher drain pump', 'Owned A item', 1, 'each', 289.00, 289.00, 'part'),
+            ($2, 0, 'Foreign ice maker', 'Foreign B item', 1, 'each', 999.00, 999.00, 'part')`,
+        [ownedEstimateA, foreignEstimateB]
+    );
+
     return {
         companyA,
         companyB,
@@ -305,6 +343,8 @@ async function setupFixture(client) {
         ownedTaskA: taskRows.rows.find((row) => row.owner_user_id === humanA.id).id,
         teammateTaskA: taskRows.rows.find((row) => row.owner_user_id === teammateA.id).id,
         foreignTaskB: taskRows.rows.find((row) => row.company_id === companyB).id,
+        ownedEstimateA,
+        foreignEstimateB,
     };
 }
 
@@ -360,6 +400,12 @@ async function snapshotCompanyB(client, fixture) {
                      FROM jobs row_value WHERE row_value.company_id = $1),
             'tasks', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
                       FROM tasks row_value WHERE row_value.company_id = $1),
+            'estimates', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
+                          FROM estimates row_value WHERE row_value.company_id = $1),
+            'estimate_items', (SELECT COALESCE(jsonb_agg(to_jsonb(item_value) ORDER BY item_value.id), '[]'::jsonb)
+                               FROM estimate_items item_value
+                               JOIN estimates estimate_owner ON estimate_owner.id = item_value.estimate_id
+                               WHERE estimate_owner.company_id = $1),
             'installations', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
                               FROM marketplace_installations row_value WHERE row_value.company_id = $1),
             'principals', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
@@ -474,10 +520,65 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 expect(tasks.data.tasks.every((task) => task.company_id === fixture.companyA)).toBe(true);
             }
 
+            for (const role of ['tenant_admin', 'manager', 'provider']) {
+                await setRole(client, fixture, role);
+                const estimates = await invoke(client, fixture, 'svc.list_estimates', {
+                    status: 'approved',
+                    accepted_from: '2026-08-01',
+                    accepted_to: '2026-08-01',
+                    search: SHARED_SEARCH,
+                    limit: 100,
+                    offset: 0,
+                });
+                expect(estimates.data.results.map((estimate) => estimate.id))
+                    .toEqual([fixture.ownedEstimateA]);
+                expect(estimates.data.results[0]).toEqual(expect.objectContaining({
+                    status: 'approved',
+                    accepted_at: '2026-08-02T03:30:00.000Z',
+                    items_count: 1,
+                    order_list_count: 1,
+                }));
+
+                const estimate = await invoke(client, fixture, 'svc.get_estimate', {
+                    estimate_id: Number(fixture.ownedEstimateA),
+                });
+                expect(estimate.data).toEqual(expect.objectContaining({
+                    id: fixture.ownedEstimateA,
+                    items: [expect.objectContaining({
+                        name: 'Dishwasher drain pump',
+                        quantity: '1.00',
+                        item_type: 'part',
+                    })],
+                    order_list: [{
+                        part_number: 'WD19X25700',
+                        part_name: 'Dishwasher Drain Pump',
+                        quantity: 1,
+                    }],
+                }));
+            }
+
+            await setRole(client, fixture, 'dispatcher');
+            await expect(invoke(client, fixture, 'svc.list_estimates', {}))
+                .rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+            await expect(invoke(client, fixture, 'svc.get_estimate', {
+                estimate_id: Number(fixture.ownedEstimateA),
+            })).rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+
             await setRole(client, fixture, 'manager');
             await expect(invoke(client, fixture, 'svc.get_job', {
                 job_id: Number(fixture.foreignJobB),
             })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+            await expect(invoke(client, fixture, 'svc.get_estimate', {
+                estimate_id: Number(fixture.foreignEstimateB),
+            })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+            const nextCompanyDay = await invoke(client, fixture, 'svc.list_estimates', {
+                accepted_from: '2026-08-02',
+                accepted_to: '2026-08-02',
+                search: SHARED_SEARCH,
+                limit: 100,
+                offset: 0,
+            });
+            expect(nextCompanyDay.data.results).toEqual([]);
 
             const liveDemotionContext = await createRunContext(client, fixture);
             await expect(invoke(client, fixture, 'svc.get_job', {
@@ -562,6 +663,22 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
             await client.query(
                 `DELETE FROM company_membership_permission_overrides
                  WHERE membership_id = $1 AND permission_key = 'tasks.view'`,
+                [fixture.humanA.membershipId]
+            );
+            await client.query(
+                `INSERT INTO company_membership_permission_overrides
+                    (membership_id, permission_key, override_mode, created_by)
+                 VALUES ($1, 'estimates.view', 'deny', $2)`,
+                [fixture.humanA.membershipId, fixture.humanA.id]
+            );
+            await expect(invoke(client, fixture, 'svc.list_estimates', {}))
+                .rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+            await expect(invoke(client, fixture, 'svc.get_estimate', {
+                estimate_id: Number(fixture.ownedEstimateA),
+            })).rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+            await client.query(
+                `DELETE FROM company_membership_permission_overrides
+                 WHERE membership_id = $1 AND permission_key = 'estimates.view'`,
                 [fixture.humanA.membershipId]
             );
 

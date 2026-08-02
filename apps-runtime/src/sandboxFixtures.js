@@ -236,6 +236,49 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
         return lead;
     });
 
+    const estimates = dataset.estimates.map((plan, index) => {
+        const ordinal = index + 1;
+        const job = jobs[plan.job_index];
+        const items = plan.items.map(item => ({
+            name: item.name,
+            description: item.description || null,
+            quantity: item.quantity,
+            unit: item.unit || null,
+            unit_price: money(item.unit_price),
+            amount: money(item.quantity * item.unit_price),
+            item_type: item.item_type || null,
+        }));
+        const subtotal = plan.items.reduce(
+            (sum, item) => sum + (item.quantity * item.unit_price),
+            0
+        );
+        const taxAmount = Math.round(subtotal * plan.tax_rate) / 100;
+        return {
+            id: idBase + 700 + ordinal,
+            company_id: companyId,
+            estimate_number: `EST-${String(8100 + ordinal)}`,
+            status: plan.status,
+            subtotal: money(subtotal),
+            tax_amount: money(taxAmount),
+            total: money(subtotal + taxAmount),
+            contact_id: job.contact_id,
+            job_id: job.id,
+            lead_id: job.lead_id,
+            accepted_at: plan.accepted_day_offset === undefined
+                ? null
+                : iso(
+                    day(plan.accepted_day_offset),
+                    plan.accepted_hour,
+                    plan.accepted_minute || 0
+                ),
+            created_at: iso(day(plan.created_day_offset), 10 + (index % 7)),
+            summary: plan.summary,
+            notes: null,
+            items,
+            order_list: plan.order_list.map(row => ({ ...row })),
+        };
+    });
+
     const billable = jobs.filter(job => job.invoice_total !== null);
     const invoices = billable.map((job, index) => {
         const total = Number(job.invoice_total);
@@ -299,6 +342,7 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
         leads,
         jobs,
         tasks,
+        estimates,
         invoices,
         payments,
     };
@@ -426,6 +470,77 @@ function projectListTasks(fixtures, args) {
     };
 }
 
+function projectEstimateSummary(estimate) {
+    return {
+        id: estimate.id,
+        estimate_number: estimate.estimate_number,
+        status: estimate.status,
+        subtotal: estimate.subtotal,
+        tax_amount: estimate.tax_amount,
+        total: estimate.total,
+        contact_id: estimate.contact_id ?? null,
+        job_id: estimate.job_id ?? null,
+        lead_id: estimate.lead_id ?? null,
+        accepted_at: estimate.accepted_at ?? null,
+        created_at: estimate.created_at,
+        items_count: Array.isArray(estimate.items) ? estimate.items.length : 0,
+        order_list_count: Array.isArray(estimate.order_list) ? estimate.order_list.length : 0,
+    };
+}
+
+function projectListEstimates(fixtures, args) {
+    const search = typeof args.search === 'string' ? args.search.trim().toLowerCase() : '';
+    const dateBounds = companyDateFilterBounds(
+        args.accepted_from,
+        args.accepted_to,
+        fixtures.company?.timezone
+    );
+    let rows = fixtures.estimates.filter(estimate => {
+        if (args.status && estimate.status !== args.status) return false;
+        if (dateBounds.fromInclusive
+            && (!estimate.accepted_at
+                || Date.parse(estimate.accepted_at) < Date.parse(dateBounds.fromInclusive))) return false;
+        if (dateBounds.toExclusive
+            && (!estimate.accepted_at
+                || Date.parse(estimate.accepted_at) >= Date.parse(dateBounds.toExclusive))) return false;
+        if (search && ![
+            estimate.estimate_number,
+            estimate.summary,
+            estimate.notes,
+        ].some(value => String(value || '').toLowerCase().includes(search))) return false;
+        return true;
+    });
+    rows = rows.sort((left, right) => (
+        right.created_at.localeCompare(left.created_at) || Number(right.id) - Number(left.id)
+    ));
+    const total = rows.length;
+    const offset = Number.isInteger(args.offset) ? args.offset : 0;
+    const limit = Number.isInteger(args.limit) ? args.limit : 50;
+    const results = rows.slice(offset, offset + limit).map(projectEstimateSummary);
+    const hasMore = offset + results.length < total;
+    return {
+        results,
+        pagination: pagination('offset', limit, results.length, hasMore, total, offset),
+    };
+}
+
+function projectGetEstimate(fixtures, args) {
+    if (!Number.isSafeInteger(args.estimate_id) || args.estimate_id < 1) {
+        throw new SandboxFixtureError(
+            'INVALID_ARGUMENTS',
+            'estimate_id must be a positive integer.',
+            422
+        );
+    }
+    const estimate = fixtures.estimates.find(candidate => candidate.id === args.estimate_id);
+    if (!estimate) throw new SandboxFixtureError('NOT_FOUND', 'Estimate not found.', 404);
+    return {
+        ...projectEstimateSummary(estimate),
+        items: clone(estimate.items || []),
+        order_list: clone(estimate.order_list || []),
+    };
+}
+
 function projectSandboxTool(fixtures, toolName, args = {}) {
     if (!fixtures || typeof fixtures !== 'object' || Array.isArray(fixtures)
         || !args || typeof args !== 'object' || Array.isArray(args)) {
@@ -438,6 +553,8 @@ function projectSandboxTool(fixtures, toolName, args = {}) {
     if (toolName === 'svc.list_jobs') return projectListJobs(fixtures, args);
     if (toolName === 'svc.get_job') return projectGetJob(fixtures, args);
     if (toolName === 'svc.list_tasks') return projectListTasks(fixtures, args);
+    if (toolName === 'svc.list_estimates') return projectListEstimates(fixtures, args);
+    if (toolName === 'svc.get_estimate') return projectGetEstimate(fixtures, args);
     throw new SandboxFixtureError('TOOL_NOT_FOUND', 'Tool not found.', 404);
 }
 
@@ -450,6 +567,7 @@ function summarizeSandboxFixtures(fixtures) {
             leads: Array.isArray(fixtures.leads) ? fixtures.leads.length : 0,
             jobs: fixtures.jobs.length,
             tasks: fixtures.tasks.length,
+            estimates: Array.isArray(fixtures.estimates) ? fixtures.estimates.length : 0,
             invoices: Array.isArray(fixtures.invoices) ? fixtures.invoices.length : 0,
             payments: Array.isArray(fixtures.payments) ? fixtures.payments.length : 0,
         };
@@ -464,6 +582,9 @@ function summarizeSandboxFixtures(fixtures) {
         tasks: Array.isArray(fixtures?.['svc.list_tasks']?.tasks)
             ? fixtures['svc.list_tasks'].tasks.length
             : 0,
+        estimates: Array.isArray(fixtures?.['svc.list_estimates']?.results)
+            ? fixtures['svc.list_estimates'].results.length
+            : 0,
         invoices: 0,
         payments: 0,
     };
@@ -476,6 +597,8 @@ module.exports = {
     SandboxFixtureError,
     generateSandboxFixtures,
     normalizeSeed,
+    projectGetEstimate,
+    projectListEstimates,
     projectSandboxTool,
     summarizeSandboxFixtures,
 };

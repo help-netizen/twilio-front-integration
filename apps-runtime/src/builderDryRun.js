@@ -24,6 +24,10 @@ const TOOL_FIXTURES = Object.freeze({
         job_id: defaultFixtureGraph().jobs[0].id,
     }),
     'svc.list_tasks': projectSandboxTool(defaultFixtureGraph(), 'svc.list_tasks'),
+    'svc.list_estimates': projectSandboxTool(defaultFixtureGraph(), 'svc.list_estimates'),
+    'svc.get_estimate': projectSandboxTool(defaultFixtureGraph(), 'svc.get_estimate', {
+        estimate_id: defaultFixtureGraph().estimates[0].id,
+    }),
 });
 
 function isFixtureGraph(fixtures) {

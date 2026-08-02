@@ -2,16 +2,16 @@
 
 # APP-TOOLS-001 — App Studio tools (MCP + gateway API)
 
-This reference is generated from the same three read-only descriptors used by Albusto App Studio and the service CRM MCP registry.
+This reference is generated from the same 5 read-only descriptors used by Albusto App Studio and the service CRM MCP registry.
 
-Exactly 3 tools are available: `svc.list_jobs`, `svc.get_job`, `svc.list_tasks`.
+Exactly 5 tools are available: `svc.list_jobs`, `svc.get_job`, `svc.list_tasks`, `svc.list_estimates`, `svc.get_estimate`.
 
 ## Availability and transport
 
 - App code calls `await ctx.callTool(name, args)`. It has no `fetch`, general HTTP API, network access, filesystem, dependencies, or arbitrary egress from the isolate.
 - The internal gateway transport returns `{"ok":true,"data":<tool output>,"request_id":"..."}`. `ctx.callTool` unwraps it and returns only `<tool output>`.
 - MCP `tools/list` exposes the same input and output schemas; a successful MCP call places the documented tool output in `structuredContent`.
-- No write, send, message-delivery, trigger, scheduler, Contact, Call, Finance, or external-egress tool is available to App Studio.
+- No write, send, message-delivery, trigger, scheduler, Contact, Call, payment, invoice, or external-egress tool is available to App Studio.
 - Live company, role, provider, Task-content, consent, masking, audit, rate, and run-call controls can narrow every call.
 
 Arguments are JSON objects. Unknown parameters are rejected. Dates use the exact `YYYY-MM-DD` calendar form described by each parameter; timestamps in responses use ISO 8601.
@@ -315,5 +315,166 @@ export async function run(ctx) {
             description: task.description,
             parent: task.parent_label,
         }));
+}
+```
+
+## `svc.list_estimates`
+
+List company-owned Estimates with exact status, accepted-date, and text filters. Results are ordered by newest creation time first.
+
+Required live permission: `estimates.view`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `status` | no | string ("draft", "sent", "viewed", "approved", "declined") | omitted | Exact Estimate status to include: `draft`, `sent`, `viewed`, `approved`, or `declined`. Omit to include every status. |
+| `accepted_from` | no | string, date | omitted | Inclusive lower bound on Estimate `accepted_at`, formatted `YYYY-MM-DD`. The boundary is midnight at the start of that calendar date in the owning company timezone. Estimates without `accepted_at` do not match. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound. |
+| `accepted_to` | no | string, date | omitted | Inclusive upper calendar date for Estimate `accepted_at`, formatted `YYYY-MM-DD`. The full company-local day is included by using the following calendar date's midnight as an exclusive bound. Estimates without `accepted_at` do not match. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound. |
+| `search` | no | string | omitted | Case-insensitive text contained in the Estimate number, summary, or notes. Omit for no text filter. |
+| `limit` | no | integer | `50` | Maximum Estimate rows to return, from 1 through 100. Defaults to 50. |
+| `offset` | no | integer | `0` | Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages. |
+
+### Response
+
+A page of company-owned Estimates and pagination metadata.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `results` | array<object> | Estimate summary rows for this page. |
+| `results[].id` | integer \| string | Albusto Estimate ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers. |
+| `results[].estimate_number` | string | Human-readable Estimate number. |
+| `results[].status` | string ("draft", "sent", "viewed", "approved", "declined") | Current Estimate status. |
+| `results[].subtotal` | string \| number | Estimate subtotal before tax. |
+| `results[].tax_amount` | string \| number | Estimate tax amount. |
+| `results[].total` | string \| number | Estimate total including tax. |
+| `results[].contact_id` | integer \| string \| null | Linked Contact ID, when one exists. |
+| `results[].job_id` | integer \| string \| null | Linked Job ID, when one exists. |
+| `results[].lead_id` | integer \| string \| null | Linked Lead ID, when one exists. |
+| `results[].accepted_at` | string \| null, date-time | Approval timestamp in ISO 8601 format; null until the Estimate is approved. |
+| `results[].created_at` | string, date-time | Creation timestamp in ISO 8601 format. |
+| `results[].items_count` | integer | Number of line items on the Estimate. |
+| `results[].order_list_count` | integer | Number of internal parts-to-order rows. This can be zero. |
+| `pagination` | object | Offset pagination metadata for the returned Estimate page. |
+| `pagination.mode` | string ("offset") | Pagination mode. Estimate pages always use `offset`. |
+| `pagination.limit` | integer | Applied page size. |
+| `pagination.returned` | integer | Number of Estimate rows in this page. |
+| `pagination.has_more` | boolean | Whether another Estimate page exists. |
+| `pagination.next_cursor` | string \| null | Always null because Estimate pages use offset pagination. |
+| `pagination.total` | integer | Total matching Estimates. |
+
+- The value returned by `ctx.callTool` is the documented object itself; the internal gateway envelope is already removed.
+
+- `accepted_from` and `accepted_to` are inclusive company-calendar dates applied only to `accepted_at`; the upper bound includes the entire selected day.
+
+- `order_list_count` can be zero. Use `svc.get_estimate` to read the internal parts list for a selected Estimate.
+
+- Use offset pagination. Results are ordered by `created_at` descending, then Estimate ID descending.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+
+### Example
+
+**List approved Estimates accepted today**
+
+```js
+export async function run(ctx) {
+    return ctx.callTool('svc.list_estimates', {
+        status: 'approved',
+        accepted_from: ctx.input.today,
+        accepted_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
+}
+```
+
+## `svc.get_estimate`
+
+Get one company-owned Estimate with its customer-facing line items and internal parts-to-order list.
+
+Required live permission: `estimates.view`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `estimate_id` | yes | integer | none | Positive Albusto Estimate ID, usually taken from `svc.list_estimates().results[].id`. |
+
+### Response
+
+One company-owned Estimate with line items and its internal parts-to-order list.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `id` | integer \| string | Albusto Estimate ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers. |
+| `estimate_number` | string | Human-readable Estimate number. |
+| `status` | string ("draft", "sent", "viewed", "approved", "declined") | Current Estimate status. |
+| `subtotal` | string \| number | Estimate subtotal before tax. |
+| `tax_amount` | string \| number | Estimate tax amount. |
+| `total` | string \| number | Estimate total including tax. |
+| `contact_id` | integer \| string \| null | Linked Contact ID, when one exists. |
+| `job_id` | integer \| string \| null | Linked Job ID, when one exists. |
+| `lead_id` | integer \| string \| null | Linked Lead ID, when one exists. |
+| `accepted_at` | string \| null, date-time | Approval timestamp in ISO 8601 format; null until the Estimate is approved. |
+| `created_at` | string, date-time | Creation timestamp in ISO 8601 format. |
+| `items_count` | integer | Number of line items on the Estimate. |
+| `order_list_count` | integer | Number of internal parts-to-order rows. This can be zero. |
+| `items` | array<object> | Customer-facing Estimate line items in their saved display order. This array may be empty. |
+| `items[].name` | string | Line-item name. |
+| `items[].description` | string \| null | Line-item description, when present. |
+| `items[].quantity` | string \| number | Line-item quantity. |
+| `items[].unit` | string \| null | Unit label, when present. |
+| `items[].unit_price` | string \| number | Price per unit. |
+| `items[].amount` | string \| number | Extended line amount. |
+| `items[].item_type` | string \| null | Line-item type, when classified. |
+| `order_list` | array<object> | Internal parts-to-order rows. This array may be empty. |
+| `order_list[].part_number` | string | Manufacturer or distributor part number. |
+| `order_list[].part_name` | string | English part name. |
+| `order_list[].quantity` | number | Quantity to order. |
+
+- The value returned by `ctx.callTool` is the Estimate object itself, not a `results` envelope.
+
+- `items` and `order_list` are always arrays and may be empty.
+
+- `order_list` is the internal parts-to-order list. Each row contains only `part_number`, `part_name`, and `quantity`; it does not contain prices.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+| `NOT_FOUND` | The Estimate does not exist or is outside the live company scope. |
+
+### Example
+
+**Read the parts required by an approved Estimate**
+
+```js
+export async function run(ctx) {
+    const page = await ctx.callTool('svc.list_estimates', {
+        status: 'approved',
+        offset: 0,
+        limit: 1,
+    });
+    if (page.results.length === 0) return [];
+    const estimate = await ctx.callTool('svc.get_estimate', {
+        estimate_id: Number(page.results[0].id),
+    });
+    return estimate.order_list;
 }
 ```

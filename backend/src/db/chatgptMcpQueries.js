@@ -2,6 +2,7 @@
 
 const db = require('./connection');
 const { requireCompanyId } = require('./crmUtils');
+const { companyDateFilterBounds } = require('../utils/companyTime');
 
 function queryFor(client) {
     return client?.query ? client.query.bind(client) : db.query;
@@ -189,65 +190,162 @@ function financeFilters(companyId, filters, alias, includeArchived = false) {
     return { params, conditions };
 }
 
+function isoTimestamp(value) {
+    if (value === null || value === undefined) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function projectEstimateSummary(row) {
+    return {
+        id: row.id,
+        estimate_number: row.estimate_number,
+        status: row.status,
+        subtotal: row.subtotal,
+        tax_amount: row.tax_amount,
+        total: row.total,
+        contact_id: row.contact_id ?? null,
+        job_id: row.job_id ?? null,
+        lead_id: row.lead_id ?? null,
+        accepted_at: isoTimestamp(row.accepted_at),
+        created_at: isoTimestamp(row.created_at),
+        items_count: Number(row.items_count || 0),
+        order_list_count: Number(row.order_list_count || 0),
+    };
+}
+
+function projectEstimateItem(item = {}) {
+    return {
+        name: item.name,
+        description: item.description ?? null,
+        quantity: item.quantity,
+        unit: item.unit ?? null,
+        unit_price: item.unit_price,
+        amount: item.amount,
+        item_type: item.item_type ?? null,
+    };
+}
+
+function projectOrderListItem(item = {}) {
+    return {
+        part_number: item.part_number,
+        part_name: item.part_name,
+        quantity: Number(item.quantity),
+    };
+}
+
 async function listEstimates(companyId, filters = {}) {
+    requireCompanyId(companyId);
     const limit = bounded(filters.limit, 50, 100);
     const offset = Number(filters.offset || 0);
     if (!Number.isInteger(offset) || offset < 0) throw Object.assign(new Error('offset must be non-negative'), { code: 'INVALID_QUERY', httpStatus: 400 });
-    const { params, conditions } = financeFilters(companyId, filters, 'e', true);
+    const params = [companyId];
+    const conditions = ['e.company_id = $1', 'e.archived_at IS NULL'];
+    const add = (sql, value) => {
+        if (value === undefined || value === null || value === '') return;
+        params.push(value);
+        conditions.push(sql.replace('?', `$${params.length}`));
+    };
+    add('e.status = ?', filters.status);
+    const dateBounds = companyDateFilterBounds(
+        filters.accepted_from,
+        filters.accepted_to,
+        filters.companyTimezone
+    );
+    add('e.accepted_at >= ?', dateBounds.fromInclusive);
+    add('e.accepted_at < ?', dateBounds.toExclusive);
     if (filters.search) {
         params.push(`%${String(filters.search).trim()}%`);
         conditions.push(`(e.estimate_number ILIKE $${params.length} OR e.summary ILIKE $${params.length} OR e.notes ILIKE $${params.length})`);
     }
     params.push(limit, offset);
     const { rows } = await db.query(
-        `SELECT e.*,
-                c.full_name AS contact_name,
-                j.job_number,
-                l.serial_id AS lead_serial_id,
+        `SELECT e.id,
+                e.estimate_number,
+                e.status,
+                e.subtotal,
+                e.tax_amount,
+                e.total,
+                e.contact_id,
+                e.job_id,
+                e.lead_id,
+                e.accepted_at,
+                e.created_at,
+                (SELECT COUNT(*)::int
+                 FROM estimate_items ei
+                 JOIN estimates item_owner
+                   ON item_owner.id = ei.estimate_id
+                  AND item_owner.company_id = e.company_id
+                 WHERE item_owner.id = e.id) AS items_count,
+                COALESCE(jsonb_array_length(e.order_list), 0)::int AS order_list_count,
                 COUNT(*) OVER()::int AS _total
          FROM estimates e
-         LEFT JOIN contacts c ON c.id = e.contact_id AND c.company_id = e.company_id
-         LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
-         LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
          WHERE ${conditions.join(' AND ')}
          ORDER BY e.created_at DESC, e.id DESC
          LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params
     );
-    const total = rows[0]?._total || 0;
-    return { rows: rows.map(({ _total, ...row }) => row), total };
+    const total = Number(rows[0]?._total || 0);
+    const results = rows.map(projectEstimateSummary);
+    return {
+        results,
+        pagination: {
+            mode: 'offset',
+            limit,
+            returned: results.length,
+            has_more: offset + results.length < total,
+            next_cursor: null,
+            total,
+        },
+    };
 }
 
 async function getEstimate(companyId, estimateId) {
     requireCompanyId(companyId);
     const { rows } = await db.query(
-        `SELECT e.*,
-                c.full_name AS contact_name, c.email AS contact_email, c.phone_e164 AS contact_phone,
-                j.job_number, l.serial_id AS lead_serial_id,
+        `SELECT e.id,
+                e.estimate_number,
+                e.status,
+                e.subtotal,
+                e.tax_amount,
+                e.total,
+                e.contact_id,
+                e.job_id,
+                e.lead_id,
+                e.accepted_at,
+                e.created_at,
+                COALESCE(items.items_count, 0)::int AS items_count,
+                COALESCE(jsonb_array_length(e.order_list), 0)::int AS order_list_count,
                 COALESCE(items.items, '[]'::jsonb) AS items,
-                inv.id AS invoice_id, inv.invoice_number
+                e.order_list
          FROM estimates e
-         LEFT JOIN contacts c ON c.id = e.contact_id AND c.company_id = e.company_id
-         LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
-         LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
          LEFT JOIN LATERAL (
-             SELECT jsonb_agg(to_jsonb(ei) ORDER BY ei.sort_order, ei.id) AS items
+             SELECT COUNT(*)::int AS items_count,
+                    jsonb_agg(jsonb_build_object(
+                        'name', ei.name,
+                        'description', ei.description,
+                        'quantity', ei.quantity,
+                        'unit', ei.unit,
+                        'unit_price', ei.unit_price,
+                        'amount', ei.amount,
+                        'item_type', ei.item_type
+                    ) ORDER BY ei.sort_order, ei.id) AS items
              FROM estimate_items ei
              JOIN estimates owner
                ON owner.id = ei.estimate_id
               AND owner.company_id = $2
              WHERE owner.id = e.id
          ) items ON true
-         LEFT JOIN LATERAL (
-             SELECT i.id, i.invoice_number
-             FROM invoices i
-             WHERE i.estimate_id = e.id AND i.company_id = e.company_id
-             ORDER BY i.created_at DESC, i.id DESC LIMIT 1
-         ) inv ON true
          WHERE e.id = $1 AND e.company_id = $2`,
         [estimateId, companyId]
     );
-    return rows[0] || null;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+        ...projectEstimateSummary(row),
+        items: (Array.isArray(row.items) ? row.items : []).map(projectEstimateItem),
+        order_list: (Array.isArray(row.order_list) ? row.order_list : []).map(projectOrderListItem),
+    };
 }
 
 async function listInvoices(companyId, filters = {}) {

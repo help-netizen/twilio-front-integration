@@ -423,7 +423,13 @@ describe('svc.* JSON-RPC protocol (ASK-MCP-13 / 14)', () => {
     });
 
     test('APP-TOOLS-001: protocol projection exposes documented input and output schemas', () => {
-        for (const name of ['svc.list_jobs', 'svc.get_job', 'svc.list_tasks']) {
+        for (const name of [
+            'svc.list_jobs',
+            'svc.get_job',
+            'svc.list_tasks',
+            'svc.list_estimates',
+            'svc.get_estimate',
+        ]) {
             const tool = protocolService.toProtocolTool(registry.getTool(name));
             expect(tool.inputSchema).toMatchObject({
                 type: 'object',

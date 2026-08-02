@@ -44,6 +44,8 @@ describe('APP-TOOLS-001 generated tool documentation gates', () => {
             'svc.list_jobs',
             'svc.get_job',
             'svc.list_tasks',
+            'svc.list_estimates',
+            'svc.get_estimate',
         ]);
         for (const tool of tools) {
             const parameters = collectProperties(tool.inputSchema);

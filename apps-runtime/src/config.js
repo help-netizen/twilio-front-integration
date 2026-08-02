@@ -3,7 +3,7 @@
 const LIMITS = Object.freeze({
     memoryMb: 32,
     cpuTimeoutMs: 100,
-    gatewayCallLimit: 5,
+    gatewayCallLimit: 10,
     // Matches the view-document ceiling the CRM validates against (APP-VIEW-001 §2.2).
     // A table of the 500 rows that spec allows runs past 64 KB, so the older, lower
     // ceiling would have killed a report the product explicitly permits.
@@ -16,6 +16,8 @@ const GATEWAY_TOOLS = Object.freeze([
     'svc.list_jobs',
     'svc.get_job',
     'svc.list_tasks',
+    'svc.list_estimates',
+    'svc.get_estimate',
 ]);
 
 module.exports = {
