@@ -7,6 +7,7 @@ const {
     projectSandboxTool,
     summarizeSandboxFixtures,
 } = require('../src/sandboxFixtures');
+const dataset = require('../src/sandboxDataset');
 const { referenceSource } = require('./helpers');
 
 describe('APP-SANDBOX-001 synthetic fixture graph', () => {
@@ -33,8 +34,12 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
             && Date.parse(lead.created_at) >= Date.parse(
                 fixtures.contacts.find(contact => contact.id === lead.contact_id).created_at
             )
-            && Date.parse(lead.converted_at) >= Date.parse(lead.created_at)
+            && (lead.status === 'Converted'
+                ? Date.parse(lead.converted_at) >= Date.parse(lead.created_at)
+                : lead.converted_at === null)
         ))).toBe(true);
+        // A sandbox where every lead converts teaches the wrong funnel shape.
+        expect(fixtures.leads.some(lead => lead.status !== 'Converted')).toBe(true);
         expect(fixtures.jobs.every(job => (
             job.company_id === fixtures.company.id
             && contactIds.has(job.contact_id)
@@ -47,8 +52,8 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         ))).toBe(true);
         expect(fixtures.tasks.every(task => (
             task.company_id === fixtures.company.id
-            && task.parent_type === 'job'
-            && jobIds.has(task.parent_id)
+            && (task.parent_type === 'job' || task.parent_type === 'lead')
+            && (task.parent_type === 'job' ? jobIds : leadIds).has(task.parent_id)
             && Date.parse(task.created_at) <= Date.parse(task.due_at)
             && (task.completed_at === null || Date.parse(task.completed_at) >= Date.parse(task.created_at))
         ))).toBe(true);
@@ -79,19 +84,23 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         const job = projectSandboxTool(fixtures, 'svc.get_job', { job_id: firstJob.id });
         const tasks = projectSandboxTool(fixtures, 'svc.list_tasks', { status: 'open', limit: 100 });
 
-        expect(jobs.results).toHaveLength(fixtures.jobs.length);
+        const scheduledThatDay = fixtures.jobs
+            .filter(candidate => candidate.start_date.slice(0, 10) === '2026-07-31');
+        expect(scheduledThatDay.length).toBeGreaterThan(0);
+        expect(jobs.results).toHaveLength(scheduledThatDay.length);
         expect(job).toEqual(firstJob);
         expect(tasks.tasks.every(task => task.status === 'open')).toBe(true);
         expect(jobs.results[0]).toHaveProperty('amount_paid');
         expect(job).not.toHaveProperty('amount_paid');
+        const billable = fixtures.jobs.filter(candidate => candidate.invoice_total !== null).length;
         expect(summarizeSandboxFixtures(fixtures)).toEqual({
             companies: 1,
-            contacts: 6,
-            leads: 6,
-            jobs: 6,
-            tasks: 8,
-            invoices: 5,
-            payments: 4,
+            contacts: dataset.customers.length,
+            leads: dataset.leads.length,
+            jobs: dataset.jobs.length,
+            tasks: dataset.tasks.length,
+            invoices: billable,
+            payments: billable,
         });
     });
 
@@ -107,9 +116,11 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
 
         expect(execution.result).toContain('Morning digest for 2026-07-31');
         expect(execution.result).toContain('Jobs today: 6');
-        expect(execution.result).toContain('Open tasks: 6');
-        expect(execution.result).toContain('Synthetic');
+        expect(execution.result).toContain('Open tasks: 8');
         expect(execution.usage).toMatchObject({ gateway_calls: 2, error_code: null });
-        expect(execution.fixturesSummary).toMatchObject({ jobs: 6, tasks: 8, payments: 4 });
+        expect(execution.fixturesSummary).toMatchObject({
+            jobs: dataset.jobs.length,
+            tasks: dataset.tasks.length,
+        });
     });
 });

@@ -1,5 +1,7 @@
 'use strict';
 
+const dataset = require('../src/sandboxDataset');
+
 const { sourceSha256 } = require('../src/runner');
 const { MAX_BODY_BYTES, createRunnerServer } = require('../src/server');
 
@@ -51,12 +53,10 @@ describe('APP-SVC-001 runner HTTP service', () => {
             usage: { gateway_calls: 0, error_code: null },
             fixtures_summary: {
                 companies: 1,
-                contacts: 6,
-                leads: 6,
-                jobs: 6,
-                tasks: 8,
-                invoices: 5,
-                payments: 4,
+                contacts: dataset.customers.length,
+                leads: dataset.leads.length,
+                jobs: dataset.jobs.length,
+                tasks: dataset.tasks.length,
             },
         });
     });

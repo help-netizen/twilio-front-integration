@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const dataset = require('./sandboxDataset');
 
 const DEFAULT_SANDBOX_SEED = 'albusto-sandbox-v1';
 // The sandbox anchor is the CALLER'S today, not a frozen date: an app that asks
@@ -75,129 +76,159 @@ function money(value) {
 
 function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
     const normalizedSeed = normalizeSeed(seed);
-    const SANDBOX_TODAY = resolveAnchorDate(anchor);
-    const DAY_BEFORE = shiftDays(SANDBOX_TODAY, -30);
-    const RECENT = shiftDays(SANDBOX_TODAY, -14);
-    const TOMORROW = shiftDays(SANDBOX_TODAY, 1);
+    const today = resolveAnchorDate(anchor);
     const marker = digest(normalizedSeed, 'marker').toString('hex').slice(0, 8).toUpperCase();
     const companyId = syntheticUuid(normalizedSeed, 'company');
     const idBase = seededNumber(normalizedSeed, 'ids', 100000, 700000);
     const actorId = syntheticUuid(normalizedSeed, 'actor');
+    const day = offset => shiftDays(today, offset);
+
     const company = {
         id: companyId,
-        name: `Sandbox Demo Company ${marker}`,
-        timezone: 'America/New_York',
-        anchor_date: SANDBOX_TODAY,
-        created_at: iso(DAY_BEFORE, 12),
+        name: dataset.companyName,
+        timezone: dataset.timezone,
+        anchor_date: today,
+        created_at: iso(day(-720), 12),
+        metadata: { sandbox: true, fixture_marker: marker },
     };
-    const services = [
-        'Synthetic HVAC inspection',
-        'Synthetic drain cleaning',
-        'Synthetic electrical diagnostic',
-        'Synthetic appliance tune-up',
-        'Synthetic leak check',
-        'Synthetic maintenance visit',
-    ];
-    const statuses = [
-        'Submitted',
-        'Waiting for parts',
-        'On the way',
-        'Visit completed',
-        'Job is Done',
-        'Canceled',
-    ];
-    const contacts = [];
-    const leads = [];
-    const jobs = [];
 
-    for (let index = 0; index < 6; index += 1) {
+    const contacts = dataset.customers.map((customer, index) => ({
+        id: idBase + 100 + index + 1,
+        company_id: companyId,
+        full_name: customer.full_name,
+        first_name: customer.first_name,
+        last_name: customer.last_name,
+        phone: customer.phone,
+        email: customer.email,
+        address: customer.address,
+        city: customer.city,
+        postal_code: customer.postal_code,
+        created_at: iso(day(-60 + index), 9 + (index % 8)),
+    }));
+
+    const technicians = dataset.technicians.map((name, index) => ({
+        id: `sandbox-tech-${index + 1}`,
+        name,
+    }));
+
+    // Jobs first: leads point at them, and invoices and payments hang off them.
+    const jobs = dataset.jobs.map((plan, index) => {
         const ordinal = index + 1;
-        const contactId = idBase + 100 + ordinal;
-        const leadId = idBase + 200 + ordinal;
-        const jobId = idBase + 300 + ordinal;
-        const minute = seededNumber(normalizedSeed, `minute-${ordinal}`, 0, 4) * 5;
-        const startDate = iso(SANDBOX_TODAY, 8 + index, minute);
-        const endDate = addHours(startDate, 2);
-        const customerName = `Synthetic Customer ${ordinal} ${marker.slice(0, 4)}`;
-        const contact = {
-            id: contactId,
-            company_id: companyId,
-            full_name: customerName,
-            phone: `+120255501${String(index).padStart(2, '0')}`,
-            email: `sandbox+${marker.toLowerCase()}-${ordinal}@example.invalid`,
-            created_at: iso(DAY_BEFORE, 10 + index),
-        };
-        const lead = {
-            id: leadId,
-            uuid: `SBX-${marker}-${ordinal}`,
-            serial_id: `SANDBOX-LEAD-${ordinal}`,
-            company_id: companyId,
-            contact_id: contactId,
-            status: 'Converted',
-            source: 'Synthetic sandbox',
-            created_at: iso(shiftDays(SANDBOX_TODAY, -16), 10 + index),
-            converted_at: iso(shiftDays(SANDBOX_TODAY, -15), 11 + index),
-        };
-        const invoiceTotal = index < 5 ? 120 + (index * 35) : null;
-        const assignedTech = {
-            id: `sandbox-tech-${(index % 2) + 1}`,
-            name: `Synthetic Technician ${(index % 2) + 1}`,
-        };
-        const job = {
-            id: jobId,
-            lead_id: leadId,
-            lead_serial_id: lead.serial_id,
-            contact_id: contactId,
-            zenbooker_job_id: `sandbox-job-${marker.toLowerCase()}-${ordinal}`,
-            blanc_status: statuses[index],
-            zb_status: statuses[index] === 'Visit completed' || statuses[index] === 'Job is Done'
-                ? 'complete'
-                : 'scheduled',
+        const contact = contacts[plan.customer_index];
+        const customer = dataset.customers[plan.customer_index];
+        const service = dataset.services[plan.service_index];
+        const technician = technicians[plan.technician_index];
+        const minute = seededNumber(normalizedSeed, `minute-${ordinal}`, 0, 4) * 15;
+        const startDate = iso(day(plan.day_offset), plan.hour, minute);
+        const closed = CLOSED_JOB_STATUSES.has(plan.status);
+        return {
+            id: idBase + 300 + ordinal,
+            lead_id: null,
+            lead_serial_id: null,
+            contact_id: contact.id,
+            zenbooker_job_id: null,
+            blanc_status: plan.status,
+            zb_status: closed || plan.status === 'Visit completed' ? 'complete' : 'scheduled',
             zb_rescheduled: false,
-            zb_canceled: statuses[index] === 'Canceled',
-            job_number: `SBX-${marker.slice(0, 4)}-${String(ordinal).padStart(3, '0')}`,
-            service_name: services[(index + seededNumber(normalizedSeed, 'service-order', 0, 6)) % 6],
+            zb_canceled: plan.status === 'Canceled',
+            job_number: `NAC-${String(1200 + ordinal)}`,
+            service_name: service.name,
             start_date: startDate,
-            end_date: endDate,
-            customer_name: customerName,
-            customer_phone: contact.phone,
-            customer_email: contact.email,
-            address: `${100 + ordinal} Sandbox Avenue`,
-            city: 'Testville',
-            territory: 'Synthetic East',
-            invoice_total: invoiceTotal === null ? null : money(invoiceTotal),
-            invoice_status: invoiceTotal === null ? null : (index < 4 ? 'partial' : 'sent'),
-            assigned_techs: [assignedTech],
+            end_date: addHours(startDate, 2),
+            customer_name: customer.full_name,
+            customer_phone: customer.phone,
+            customer_email: customer.email,
+            address: customer.address,
+            city: customer.city,
+            postal_code: customer.postal_code,
+            territory: 'Greater Boston',
+            invoice_total: plan.billing ? money(service.price) : null,
+            invoice_status: plan.billing === 'paid' ? 'paid' : (plan.billing ? 'partial' : null),
+            assigned_techs: [technician],
             assigned_provider_user_ids: [actorId],
-            notes: [{ id: `sandbox-note-${ordinal}`, text: 'Synthetic sandbox note.' }],
-            tags: [{ id: ordinal, name: 'Sandbox', color: 'slate', is_active: true }],
-            job_type: 'Synthetic service',
-            job_source: 'App Studio sandbox',
-            description: `Synthetic work order ${ordinal}; safe for sandbox testing only.`,
+            notes: [{ id: `sandbox-note-${ordinal}`, text: plan.note }],
+            tags: [{ id: ordinal, name: service.type, color: 'slate', is_active: true }],
+            job_type: service.type,
+            job_source: null,
+            description: plan.note,
             comments: null,
             metadata: { sandbox: true, fixture_marker: marker },
             company_id: companyId,
-            created_at: iso(RECENT, 10 + index),
-            updated_at: iso(SANDBOX_TODAY, 9 + index),
-            lat: 38.89 + (index / 1000),
-            lng: -77.03 - (index / 1000),
+            created_at: iso(day(plan.day_offset - 2), 9 + (index % 8)),
+            updated_at: iso(day(Math.min(plan.day_offset, 0)), 8 + (index % 10)),
+            lat: 42.34 + (index / 900),
+            lng: -71.06 - (index / 900),
         };
-        contacts.push(contact);
-        leads.push(lead);
-        jobs.push(job);
-    }
+    });
 
-    const tasks = Array.from({ length: 8 }, (_unused, index) => {
-        const job = jobs[index % jobs.length];
-        const open = index < 6;
+    const leads = dataset.leads.map((plan, index) => {
+        const ordinal = index + 1;
+        const contact = contacts[plan.customer_index];
+        const job = plan.job_index === null ? null : jobs[plan.job_index];
+        const lead = {
+            id: idBase + 200 + ordinal,
+            uuid: syntheticUuid(normalizedSeed, `lead-${ordinal}`),
+            serial_id: `L-${String(4300 + ordinal)}`,
+            company_id: companyId,
+            contact_id: contact.id,
+            status: plan.status,
+            source: plan.source,
+            job_source: plan.source,
+            notes: plan.note,
+            created_at: iso(day(plan.day_offset), 8 + (index % 11)),
+            converted_at: job ? iso(day(plan.day_offset + 1), 10 + (index % 6)) : null,
+            job_id: job ? job.id : null,
+        };
+        if (job) {
+            job.lead_id = lead.id;
+            job.lead_serial_id = lead.serial_id;
+            job.job_source = plan.source;
+            // A job cannot predate the conversion that created it.
+            job.created_at = addHours(lead.converted_at, 1);
+        }
+        return lead;
+    });
+
+    const billable = jobs.filter(job => job.invoice_total !== null);
+    const invoices = billable.map((job, index) => {
+        const total = Number(job.invoice_total);
+        const paid = job.invoice_status === 'paid' ? total : Math.round(total * 0.4 * 100) / 100;
+        return {
+            id: idBase + 500 + index + 1,
+            company_id: companyId,
+            job_id: job.id,
+            invoice_number: `INV-${String(7100 + index + 1)}`,
+            status: job.invoice_status,
+            total: money(total),
+            amount_paid: money(paid),
+            balance_due: money(Math.round((total - paid) * 100) / 100),
+            created_at: job.updated_at,
+            due_at: iso(day(7), 10),
+        };
+    });
+
+    const payments = invoices.map((invoice, index) => ({
+        id: idBase + 600 + index + 1,
+        company_id: companyId,
+        invoice_id: invoice.id,
+        job_id: invoice.job_id,
+        status: 'completed',
+        amount: invoice.amount_paid,
+        method: index % 3 === 0 ? 'card' : 'check',
+        paid_at: invoice.created_at,
+        created_at: invoice.created_at,
+    }));
+
+    const tasks = dataset.tasks.map((plan, index) => {
+        const parent = plan.parent_type === 'job' ? jobs[plan.parent_index] : leads[plan.parent_index];
         return {
             id: idBase + 400 + index + 1,
             company_id: companyId,
-            description: `Synthetic follow-up ${index + 1} for ${job.job_number}`,
-            status: open ? 'open' : 'done',
-            due_at: iso(index < 5 ? SANDBOX_TODAY : TOMORROW, 14 + (index % 4)),
-            completed_at: open ? null : iso(shiftDays(SANDBOX_TODAY, -3), 15 + (index % 2)),
-            created_at: iso(RECENT, 9 + index),
+            description: plan.description,
+            status: plan.status,
+            due_at: iso(day(plan.day_offset), 12 + (index % 6)),
+            completed_at: plan.status === 'done' ? iso(day(plan.day_offset), 16) : null,
+            created_at: iso(day(plan.day_offset - 3), 9 + (index % 7)),
             owner_user_id: actorId,
             author_user_id: actorId,
             thread_id: null,
@@ -205,39 +236,14 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
             agent_type: null,
             agent_output: null,
             actions: [],
-            assignee_name: 'Synthetic Dispatcher',
-            assignee_email: `sandbox-dispatcher-${marker.toLowerCase()}@example.invalid`,
-            author_name: 'Synthetic Sandbox Generator',
-            parent_type: 'job',
-            parent_id: job.id,
-            parent_label: job.service_name,
+            assignee_name: 'Dispatch',
+            assignee_email: 'dispatch@example.com',
+            author_name: 'Dispatch',
+            parent_type: plan.parent_type,
+            parent_id: parent.id,
+            parent_label: plan.parent_type === 'job' ? parent.service_name : parent.serial_id,
         };
     });
-
-    const invoices = jobs.slice(0, 5).map((job, index) => ({
-        id: idBase + 500 + index + 1,
-        company_id: companyId,
-        job_id: job.id,
-        invoice_number: `SBX-INV-${marker.slice(0, 4)}-${index + 1}`,
-        status: index < 4 ? 'partial' : 'sent',
-        total: money(120 + (index * 35)),
-        amount_paid: index < 4 ? money(50 + (index * 20)) : '0.00',
-        balance_due: index < 4
-            ? money((120 + (index * 35)) - (50 + (index * 20)))
-            : money(120 + (index * 35)),
-        created_at: iso(RECENT, 10 + index),
-        due_at: iso(shiftDays(SANDBOX_TODAY, 7), 10 + index),
-    }));
-    const payments = invoices.slice(0, 4).map((invoice, index) => ({
-        id: idBase + 600 + index + 1,
-        company_id: companyId,
-        invoice_id: invoice.id,
-        job_id: invoice.job_id,
-        status: 'completed',
-        amount: invoice.amount_paid,
-        paid_at: iso(shiftDays(SANDBOX_TODAY, -7), 11 + index),
-        created_at: iso(shiftDays(SANDBOX_TODAY, -7), 11 + index),
-    }));
 
     return {
         seed: normalizedSeed,
