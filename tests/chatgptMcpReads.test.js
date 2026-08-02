@@ -74,6 +74,7 @@ const COMPANY = 'company-a';
 const OWNER = 'owner-a';
 const AUTHORITY = Object.freeze({
     companyId: COMPANY,
+    companyTimezone: 'America/New_York',
     ownerUserId: OWNER,
     ownerRoleKey: 'manager',
     ownerPermissions: ['tasks.view', 'tasks.manage'],
@@ -134,7 +135,11 @@ describe('CHATGPT-CRM-MCP S1 read handlers', () => {
 
         await readService.execute('listJobs', provider, {});
         expect(jobsService.listJobs).toHaveBeenCalledWith(
-            expect.objectContaining({ companyId: COMPANY, providerScope: scope })
+            expect.objectContaining({
+                companyId: COMPANY,
+                companyTimezone: 'America/New_York',
+                providerScope: scope,
+            })
         );
         await readService.execute('getJob', provider, { job_id: 11 });
         expect(jobsService.getJobById).toHaveBeenCalledWith(11, COMPANY, scope);
@@ -165,7 +170,10 @@ describe('CHATGPT-CRM-MCP S1 read handlers', () => {
         await readService.execute('listTasks', provider, {});
         expect(tasksQueries.listTasksPage).toHaveBeenCalledWith(
             COMPANY,
-            expect.objectContaining({ scopeOwnerId: OWNER })
+            expect.objectContaining({
+                companyTimezone: 'America/New_York',
+                scopeOwnerId: OWNER,
+            })
         );
         await readService.execute('listEntityTasks', provider, {
             parent_type: 'job',

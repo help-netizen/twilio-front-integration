@@ -90,6 +90,7 @@ async function execute(handler, context, args = {}) {
         case 'listJobs':
             result = await jobsService.listJobs({
                 companyId,
+                companyTimezone: context.companyTimezone,
                 ...listFilters(args),
                 blancStatus: args.status,
                 startDate: args.start_date,
@@ -198,6 +199,7 @@ async function execute(handler, context, args = {}) {
             break;
         case 'listTasks':
             result = await tasksQueries.listTasksPage(companyId, {
+                companyTimezone: context.companyTimezone,
                 status: args.status === 'all' ? undefined : (args.status || 'open'),
                 parent_type: args.parent_type,
                 overdue: args.overdue,

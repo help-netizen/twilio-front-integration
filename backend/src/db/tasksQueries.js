@@ -27,6 +27,7 @@ const {
     timestampCursorExpression,
     bigintCursorExpression,
 } = require('../utils/listCursor');
+const { companyDateFilterBounds } = require('../utils/companyTime');
 
 // parentType → { column, table+alias, label expression, frontend path }
 const PARENTS = {
@@ -224,6 +225,11 @@ async function listEntityTasks(companyId, { parentType, parentId, includeDone = 
 function buildTaskListFilters(companyId, filters = {}) {
     const params = [companyId];
     const conditions = ['t.company_id = $1', HAS_ENTITY_PARENT];
+    const dateBounds = companyDateFilterBounds(
+        filters.due_from,
+        filters.due_to,
+        filters.companyTimezone
+    );
 
     if (Object.prototype.hasOwnProperty.call(filters, 'scopeOwnerId')) {
         if (filters.scopeOwnerId) {
@@ -249,13 +255,13 @@ function buildTaskListFilters(companyId, filters = {}) {
     if (filters.overdue) {
         conditions.push(`t.status = 'open' AND t.due_at IS NOT NULL AND t.due_at < now()`);
     }
-    if (filters.due_from) {
-        params.push(filters.due_from);
+    if (dateBounds.fromInclusive) {
+        params.push(dateBounds.fromInclusive);
         conditions.push(`t.due_at >= $${params.length}::timestamptz`);
     }
-    if (filters.due_to) {
-        params.push(filters.due_to);
-        conditions.push(`t.due_at <= $${params.length}::timestamptz`);
+    if (dateBounds.toExclusive) {
+        params.push(dateBounds.toExclusive);
+        conditions.push(`t.due_at < $${params.length}::timestamptz`);
     }
     if (filters.search && String(filters.search).trim()) {
         params.push(`%${String(filters.search).trim()}%`);
@@ -341,6 +347,11 @@ async function listTasksPage(companyId, filters = {}, client = null) {
             overdue: Boolean(filters.overdue),
             due_from: filters.due_from || null,
             due_to: filters.due_to || null,
+            company_timezone: companyDateFilterBounds(
+                filters.due_from,
+                filters.due_to,
+                filters.companyTimezone
+            ).timezone,
             search: normalizedSearch.toLocaleLowerCase('en-US'),
         },
         sort: sortBy,

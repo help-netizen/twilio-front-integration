@@ -567,7 +567,7 @@ async function resolveOAuthContext({ issuer, subject, clientId }) {
                 b.base,
                 b.oauth_client_id,
                 c.name AS company_name,
-                COALESCE(c.timezone, 'America/New_York') AS company_timezone,
+                c.timezone AS company_timezone,
                 ai.email AS ai_email,
                 ai.full_name AS ai_full_name,
                 human.email AS owner_email,
@@ -635,7 +635,7 @@ async function resolveFixedBearerContext({ companyId, agentUserId }) {
                 b.base,
                 b.oauth_client_id,
                 c.name AS company_name,
-                COALESCE(c.timezone, 'America/New_York') AS company_timezone,
+                c.timezone AS company_timezone,
                 ai.email AS ai_email,
                 ai.full_name AS ai_full_name,
                 ARRAY(

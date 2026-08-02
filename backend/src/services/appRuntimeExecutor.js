@@ -85,6 +85,7 @@ function buildReadContext(context, authz) {
     }
     return {
         companyId: context.company_id,
+        companyTimezone: context.company_timezone,
         ownerUserId: context.delegated_by_user_id,
         ownerRoleKey: authz.role_key,
         ownerPermissions: authz.permissions || [],

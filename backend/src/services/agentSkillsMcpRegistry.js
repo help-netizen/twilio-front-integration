@@ -309,11 +309,11 @@ const DISPATCHER_READ_TOOLS = [
             ),
             start_date: documentedSchema(
                 dateSchema(),
-                'Inclusive lower bound on Job `start_date`, formatted `YYYY-MM-DD`. The boundary is midnight in the database session timezone; the current gateway does not convert it through the company timezone. Omit for no lower bound.'
+                'Inclusive lower bound on Job `start_date`, formatted `YYYY-MM-DD`. The boundary is midnight at the start of that calendar date in the owning company timezone. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound.'
             ),
             end_date: documentedSchema(
                 dateSchema(),
-                'Inclusive upper calendar date for Job `start_date`, formatted `YYYY-MM-DD`. The query uses the instant before the following midnight in the database session timezone; the current gateway does not convert it through the company timezone. Omit for no upper bound.'
+                'Inclusive upper calendar date for Job `start_date`, formatted `YYYY-MM-DD`. The full day is included by using the following calendar date\'s midnight in the owning company timezone as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound.'
             ),
             only_open: documentedSchema(
                 booleanSchema(),
@@ -436,11 +436,11 @@ const DISPATCHER_READ_TOOLS = [
             ),
             due_from: documentedSchema(
                 dateSchema(),
-                'Inclusive lower bound on Task `due_at`, formatted `YYYY-MM-DD`, at midnight in the database session timezone. The current gateway does not convert it through the company timezone. Omit for no lower bound.'
+                'Inclusive lower bound on Task `due_at`, formatted `YYYY-MM-DD`, at midnight at the start of that calendar date in the owning company timezone. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound.'
             ),
             due_to: documentedSchema(
                 dateSchema(),
-                'Inclusive upper instant for Task `due_at`, formatted `YYYY-MM-DD`, at midnight at the start of that date in the database session timezone. Later times on that date are excluded; pass the following date to cover them. The current gateway does not convert it through the company timezone. Omit for no upper bound.'
+                'Inclusive upper calendar date for Task `due_at`, formatted `YYYY-MM-DD`. The full day is included by using the following calendar date\'s midnight in the owning company timezone as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound.'
             ),
             search: documentedSchema(
                 stringSchema(),
@@ -473,11 +473,12 @@ const DISPATCHER_READ_TOOLS = [
     const today = ctx.input.today;
     const page = await ctx.callTool('svc.list_tasks', {
         status: 'open',
+        due_from: today,
+        due_to: today,
         offset: 0,
         limit: 100,
     });
     return page.tasks
-        .filter((task) => task.due_at?.slice(0, 10) === today)
         .map((task) => ({
             id: task.id,
             description: task.description,

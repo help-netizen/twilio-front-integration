@@ -3,6 +3,7 @@
 // Creates UTC dates for wall-clock times in a named IANA timezone.
 
 const DEFAULT_TZ = 'America/New_York';
+const UTC_TZ = 'UTC';
 
 /**
  * Build a UTC Date that represents the given wall-clock time in `tz`.
@@ -76,6 +77,45 @@ function tomorrowAtInTZ(hour, minute, tz = DEFAULT_TZ) {
     return dateInTZ(y, m, d, hour, minute, tz);
 }
 
+/**
+ * APP-TZ-001 date filters must not guess a tenant timezone. Missing or invalid
+ * company configuration deliberately falls back to UTC.
+ */
+function normalizeCompanyTimezone(value) {
+    if (typeof value !== 'string' || !value.trim()) return UTC_TZ;
+    const timezone = value.trim();
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0));
+        return timezone;
+    } catch {
+        return UTC_TZ;
+    }
+}
+
+function shiftCalendarDate(value, days) {
+    const [year, month, day] = String(value).split('-').map(Number);
+    const shifted = new Date(Date.UTC(year, month - 1, day + days));
+    return shifted.toISOString().slice(0, 10);
+}
+
+/**
+ * Resolve inclusive calendar-date filters to UTC instants. The exclusive upper
+ * bound is the next calendar day's local midnight, computed independently so a
+ * DST transition can make the covered day 23 or 25 hours long.
+ */
+function companyDateFilterBounds(fromDate, toDate, companyTimezone) {
+    const timezone = normalizeCompanyTimezone(companyTimezone);
+    const midnight = value => {
+        const [year, month, day] = String(value).split('-').map(Number);
+        return dateInTZ(year, month, day, 0, 0, timezone).toISOString();
+    };
+    return {
+        timezone,
+        fromInclusive: fromDate ? midnight(fromDate) : null,
+        toExclusive: toDate ? midnight(shiftCalendarDate(toDate, 1)) : null,
+    };
+}
+
 // ─── Internal ────────────────────────────────────────────────────────────────
 
 function tzOffsetMinutes(utcDate, tz) {
@@ -94,9 +134,12 @@ function tzOffsetMinutes(utcDate, tz) {
 
 module.exports = {
     DEFAULT_TZ,
+    UTC_TZ,
+    companyDateFilterBounds,
     dateInTZ,
     isAtOrAfterLocalTime,
     localDateInTZ,
+    normalizeCompanyTimezone,
     startOfLocalDay,
     todayInTZ,
     tomorrowInTZ,

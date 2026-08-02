@@ -162,7 +162,11 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(response.body).toMatchObject({ ok: true, request_id: expect.stringMatching(/^app-gw-/) });
         expect(mockReadExecute).toHaveBeenCalledWith(
             handler,
-            expect.objectContaining({ companyId: COMPANY_ID, ownerUserId: DELEGATOR_ID }),
+            expect.objectContaining({
+                companyId: COMPANY_ID,
+                companyTimezone: 'America/New_York',
+                ownerUserId: DELEGATOR_ID,
+            }),
             body
         );
         expect(mockAuditRecord).toHaveBeenCalledTimes(1);

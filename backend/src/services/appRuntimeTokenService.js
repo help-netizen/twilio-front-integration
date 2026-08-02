@@ -329,7 +329,7 @@ async function resolveRunContext(claims) {
                 membership.status AS membership_status,
                 company.status AS company_status,
                 company.name AS company_name,
-                COALESCE(company.timezone, 'America/New_York') AS company_timezone,
+                company.timezone AS company_timezone,
                 ARRAY(
                     SELECT tool.tool_name
                     FROM app_version_tools tool

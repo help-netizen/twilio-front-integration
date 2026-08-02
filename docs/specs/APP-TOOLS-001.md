@@ -28,8 +28,8 @@ Required live permission: `jobs.view`.
 |---|:---:|---|---|---|
 | `status` | no | string ("Submitted", "Waiting for parts", "Part arrived", "Follow Up with Client", "Visit completed", "Job is Done", "Rescheduled", "Canceled", "On the way") | omitted | Exact Albusto Job workflow status to include. Omit to include every status. Returned Job rows expose this value as `blanc_status`; they do not contain a `status` field. |
 | `search` | no | string | omitted | Case-insensitive text contained in the Job number, service name, customer name, customer phone, address, tag name, or searchable custom metadata. Omit for no text filter. |
-| `start_date` | no | string, date | omitted | Inclusive lower bound on Job `start_date`, formatted `YYYY-MM-DD`. The boundary is midnight in the database session timezone; the current gateway does not convert it through the company timezone. Omit for no lower bound. |
-| `end_date` | no | string, date | omitted | Inclusive upper calendar date for Job `start_date`, formatted `YYYY-MM-DD`. The query uses the instant before the following midnight in the database session timezone; the current gateway does not convert it through the company timezone. Omit for no upper bound. |
+| `start_date` | no | string, date | omitted | Inclusive lower bound on Job `start_date`, formatted `YYYY-MM-DD`. The boundary is midnight at the start of that calendar date in the owning company timezone. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound. |
+| `end_date` | no | string, date | omitted | Inclusive upper calendar date for Job `start_date`, formatted `YYYY-MM-DD`. The full day is included by using the following calendar date's midnight in the owning company timezone as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound. |
 | `only_open` | no | boolean | `false` | When true, excludes `Job is Done` and `Canceled`. Defaults to false; it does not mean "scheduled today" and does not replace date filters. |
 | `limit` | no | integer | `50` | Maximum Job rows to return, from 1 through 100. Defaults to 50. |
 | `offset` | no | integer | `0` | Zero-based row offset. Defaults to 0. Pass it explicitly and add `limit` while `has_more` is true to retrieve later pages. |
@@ -235,8 +235,8 @@ Required live permission: `tasks.view`.
 | `status` | no | string ("open", "done", "all") | `"open"` | Task status to include: `open`, `done`, or `all`. Defaults to `open`. |
 | `parent_type` | no | string ("job", "lead", "estimate", "invoice", "contact", "timeline") | omitted | Restrict Tasks to one parent kind: `job`, `lead`, `estimate`, `invoice`, `contact`, or `timeline`. Omit for every parent kind. |
 | `overdue` | no | boolean | `false` | When true, returns only open Tasks whose non-null `due_at` is earlier than the current time. Defaults to false. |
-| `due_from` | no | string, date | omitted | Inclusive lower bound on Task `due_at`, formatted `YYYY-MM-DD`, at midnight in the database session timezone. The current gateway does not convert it through the company timezone. Omit for no lower bound. |
-| `due_to` | no | string, date | omitted | Inclusive upper instant for Task `due_at`, formatted `YYYY-MM-DD`, at midnight at the start of that date in the database session timezone. Later times on that date are excluded; pass the following date to cover them. The current gateway does not convert it through the company timezone. Omit for no upper bound. |
+| `due_from` | no | string, date | omitted | Inclusive lower bound on Task `due_at`, formatted `YYYY-MM-DD`, at midnight at the start of that calendar date in the owning company timezone. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound. |
+| `due_to` | no | string, date | omitted | Inclusive upper calendar date for Task `due_at`, formatted `YYYY-MM-DD`. The full day is included by using the following calendar date's midnight in the owning company timezone as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound. |
 | `search` | no | string | omitted | Case-insensitive text contained in the Task description, parent label, or assignee name. Omit for no text filter. |
 | `limit` | no | integer | `50` | Maximum Task rows to return, from 1 through 100. Defaults to 50. |
 | `offset` | no | integer | `0` | Zero-based row offset. Defaults to 0. Pass it explicitly and add `limit` while `pagination.has_more` is true to retrieve later pages. |
@@ -304,11 +304,12 @@ export async function run(ctx) {
     const today = ctx.input.today;
     const page = await ctx.callTool('svc.list_tasks', {
         status: 'open',
+        due_from: today,
+        due_to: today,
         offset: 0,
         limit: 100,
     });
     return page.tasks
-        .filter((task) => task.due_at?.slice(0, 10) === today)
         .map((task) => ({
             id: task.id,
             description: task.description,

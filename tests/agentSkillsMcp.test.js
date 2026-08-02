@@ -510,6 +510,7 @@ describe('svc.* public transport — token/env gates (ASK-MCP-09/10/11/12)', () 
             'getJob',
             expect.objectContaining({
                 companyId: '00000000-0000-0000-0000-000000000001',
+                companyTimezone: 'America/New_York',
                 ownerUserId: 'authorizer-1',
             }),
             { job_id: 7 }

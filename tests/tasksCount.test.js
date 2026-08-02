@@ -66,8 +66,13 @@ describe('buildTaskListFilters — shared predicate (TC-2)', () => {
         expect(conditions).toContain("t.status = 'open' AND t.due_at IS NOT NULL AND t.due_at < now()");
         // status $2 (param), then due_from $3, due_to $4 (parent_type/overdue = no param).
         expect(conditions).toContain('t.due_at >= $3::timestamptz');
-        expect(conditions).toContain('t.due_at <= $4::timestamptz');
-        expect(params).toEqual([COMPANY, 'open', '2026-01-01', '2026-12-31']);
+        expect(conditions).toContain('t.due_at < $4::timestamptz');
+        expect(params).toEqual([
+            COMPANY,
+            'open',
+            '2026-01-01T00:00:00.000Z',
+            '2027-01-01T00:00:00.000Z',
+        ]);
     });
 
     test('$n numbering is stable regardless of caller (pure function of inputs)', () => {

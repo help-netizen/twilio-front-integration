@@ -31,6 +31,7 @@ const {
     timestampCursorExpression,
     bigintCursorExpression,
 } = require('../utils/listCursor');
+const { companyDateFilterBounds } = require('../utils/companyTime');
 
 // =============================================================================
 // Constants
@@ -808,7 +809,7 @@ function splitList(value) {
     return [...new Set(items.map(item => String(item).trim()).filter(Boolean))].sort();
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, cursor, companyId, contactId, sortBy = 'start_date', sortOrder = 'desc', onlyOpen, paymentStatus, startDate, endDate, serviceName, jobSource, provider, tagIds, tagMatch, providerScope } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, cursor, companyId, companyTimezone, contactId, sortBy = 'start_date', sortOrder = 'desc', onlyOpen, paymentStatus, startDate, endDate, serviceName, jobSource, provider, tagIds, tagMatch, providerScope } = {}) {
     if (!companyId) throw jobsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     if (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 500) {
         throw jobsListError('INVALID_QUERY', 'limit must be an integer from 1 to 500', 400);
@@ -845,6 +846,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
     const normalizedCanceled = zbCanceled === undefined
         ? null
         : (zbCanceled === true || zbCanceled === 'true');
+    const dateBounds = companyDateFilterBounds(startDate, endDate, companyTimezone);
     const mode = offset === undefined ? 'cursor' : 'offset';
     const visibility = {
         assignedOnly: providerScope?.assignedOnly === true,
@@ -863,6 +865,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
             payment_status: paymentStatus === 'unpaid' ? 'unpaid' : null,
             start_date: startDate || null,
             end_date: endDate || null,
+            company_timezone: dateBounds.timezone,
             service_name: serviceNames,
             job_source: jobSources,
             provider: providers,
@@ -956,11 +959,11 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
         // rollup folded into the paginated WHERE (companyId is always $1).
         conditions.push(`${jobFinanceQueries.outstandingDueExpr('j', '$1')} > 0`);
     }
-    if (startDate) {
-        idx++; conditions.push(`j.start_date >= $${idx}::timestamptz`); params.push(startDate);
+    if (dateBounds.fromInclusive) {
+        idx++; conditions.push(`j.start_date >= $${idx}::timestamptz`); params.push(dateBounds.fromInclusive);
     }
-    if (endDate) {
-        idx++; conditions.push(`j.start_date < ($${idx}::date + interval '1 day')`); params.push(endDate);
+    if (dateBounds.toExclusive) {
+        idx++; conditions.push(`j.start_date < $${idx}::timestamptz`); params.push(dateBounds.toExclusive);
     }
     if (serviceNames.length > 0) {
         idx++; conditions.push(`j.service_name = ANY($${idx}::text[])`); params.push(serviceNames);

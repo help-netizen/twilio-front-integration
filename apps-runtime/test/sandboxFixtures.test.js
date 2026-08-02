@@ -10,6 +10,26 @@ const {
 const dataset = require('../src/sandboxDataset');
 const { referenceSource } = require('./helpers');
 
+function localDate(value, timezone) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(new Date(value));
+    const part = type => parts.find(candidate => candidate.type === type)?.value;
+    return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function localHour(value, timezone) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        hour: '2-digit',
+        hourCycle: 'h23',
+    }).formatToParts(new Date(value));
+    return Number(parts.find(candidate => candidate.type === 'hour')?.value);
+}
+
 describe('APP-SANDBOX-001 synthetic fixture graph', () => {
     test('one seed is byte-deterministic and a different seed changes the graph', () => {
         const first = generateSandboxFixtures('deterministic-seed');
@@ -85,7 +105,7 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         const tasks = projectSandboxTool(fixtures, 'svc.list_tasks', { status: 'open', limit: 100 });
 
         const scheduledThatDay = fixtures.jobs
-            .filter(candidate => candidate.start_date.slice(0, 10) === '2026-07-31');
+            .filter(candidate => localDate(candidate.start_date, fixtures.company.timezone) === '2026-07-31');
         expect(scheduledThatDay.length).toBeGreaterThan(0);
         expect(jobs.results).toHaveLength(scheduledThatDay.length);
         expect(job).toEqual(firstJob);
@@ -102,6 +122,53 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
             invoices: billable,
             payments: billable,
         });
+    });
+
+    test('5: company-day Job and due_to Task projection match live semantics and dataset hours are local', () => {
+        const anchor = '2026-07-31';
+        const fixtures = generateSandboxFixtures('timezone-parity-seed', anchor);
+        const generatedJobs = [...fixtures.jobs];
+        const lateJob = {
+            ...fixtures.jobs[0],
+            id: 990001,
+            job_number: 'TZ-LATE-JOB',
+            start_date: '2026-08-01T01:00:00.000Z',
+            end_date: '2026-08-01T03:00:00.000Z',
+        };
+        const lateTask = {
+            ...fixtures.tasks[0],
+            id: 990002,
+            description: 'TZ late-day task',
+            due_at: '2026-08-01T00:30:00.000Z',
+        };
+        fixtures.jobs.push(lateJob);
+        fixtures.tasks.push(lateTask);
+
+        const localJobs = projectSandboxTool(fixtures, 'svc.list_jobs', {
+            start_date: anchor,
+            end_date: anchor,
+            limit: 100,
+        });
+        const nextDayJobs = projectSandboxTool(fixtures, 'svc.list_jobs', {
+            start_date: '2026-08-01',
+            end_date: '2026-08-01',
+            limit: 100,
+        });
+        const dueThatDay = projectSandboxTool(fixtures, 'svc.list_tasks', {
+            status: 'all',
+            due_to: anchor,
+            limit: 100,
+        });
+
+        expect(localJobs.results.map(job => job.id)).toContain(lateJob.id);
+        expect(nextDayJobs.results.map(job => job.id)).not.toContain(lateJob.id);
+        expect(dueThatDay.tasks.map(task => task.id)).toContain(lateTask.id);
+        for (const [index, plan] of dataset.jobs.entries()) {
+            expect(localDate(generatedJobs[index].start_date, fixtures.company.timezone))
+                .toBe(shiftDate(anchor, plan.day_offset));
+            expect(localHour(generatedJobs[index].start_date, fixtures.company.timezone))
+                .toBe(plan.hour);
+        }
     });
 
     test('morning-digest returns a meaningful application result from generated fixtures', async () => {
@@ -124,3 +191,9 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         });
     });
 });
+
+function shiftDate(anchor, days) {
+    const value = new Date(`${anchor}T00:00:00.000Z`);
+    value.setUTCDate(value.getUTCDate() + days);
+    return value.toISOString().slice(0, 10);
+}

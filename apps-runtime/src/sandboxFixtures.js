@@ -62,8 +62,55 @@ function seededNumber(seed, label, minimum, span) {
     return minimum + (digest(seed, label).readUInt32BE(0) % span);
 }
 
-function iso(day, hour, minute = 0) {
-    return `${day}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`;
+function normalizeCompanyTimezone(value) {
+    if (typeof value !== 'string' || !value.trim()) return 'UTC';
+    const timezone = value.trim();
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date(0));
+        return timezone;
+    } catch {
+        return 'UTC';
+    }
+}
+
+function timezoneOffsetMinutes(utcDate, timezone) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        timeZoneName: 'longOffset',
+    }).formatToParts(utcDate);
+    const value = parts.find(part => part.type === 'timeZoneName')?.value || '';
+    if (value === 'GMT') return 0;
+    const match = /^GMT([+-])(\d{2}):(\d{2})$/.exec(value);
+    if (!match) return 0;
+    const sign = match[1] === '+' ? 1 : -1;
+    return sign * (Number(match[2]) * 60 + Number(match[3]));
+}
+
+function iso(day, hour, minute = 0, companyTimezone = dataset.timezone) {
+    const timezone = normalizeCompanyTimezone(companyTimezone);
+    const [year, month, date] = String(day).split('-').map(Number);
+    const guess = new Date(Date.UTC(year, month - 1, date, hour, minute, 0));
+    const offsetMinutes = timezoneOffsetMinutes(guess, timezone);
+    return new Date(guess.getTime() - offsetMinutes * 60_000).toISOString();
+}
+
+function localCalendarDate(value, companyTimezone) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: normalizeCompanyTimezone(companyTimezone),
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(new Date(value));
+    const part = type => parts.find(candidate => candidate.type === type)?.value;
+    return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function companyDateFilterBounds(fromDate, toDate, companyTimezone) {
+    const timezone = normalizeCompanyTimezone(companyTimezone);
+    return {
+        fromInclusive: fromDate ? iso(fromDate, 0, 0, timezone) : null,
+        toExclusive: toDate ? iso(shiftDays(toDate, 1), 0, 0, timezone) : null,
+    };
 }
 
 function addHours(value, hours) {
@@ -274,11 +321,18 @@ function pagination(mode, limit, returned, hasMore, total, offset) {
 
 function projectListJobs(fixtures, args) {
     const search = typeof args.search === 'string' ? args.search.trim().toLowerCase() : '';
+    const dateBounds = companyDateFilterBounds(
+        args.start_date,
+        args.end_date,
+        fixtures.company?.timezone
+    );
     let rows = fixtures.jobs.filter(job => {
         if (args.status && job.blanc_status !== args.status) return false;
         if (args.only_open === true && CLOSED_JOB_STATUSES.has(job.blanc_status)) return false;
-        if (args.start_date && job.start_date.slice(0, 10) < args.start_date) return false;
-        if (args.end_date && job.start_date.slice(0, 10) > args.end_date) return false;
+        if (dateBounds.fromInclusive
+            && Date.parse(job.start_date) < Date.parse(dateBounds.fromInclusive)) return false;
+        if (dateBounds.toExclusive
+            && Date.parse(job.start_date) >= Date.parse(dateBounds.toExclusive)) return false;
         if (search && ![
             job.job_number,
             job.service_name,
@@ -334,17 +388,22 @@ function projectGetJob(fixtures, args) {
 
 function projectListTasks(fixtures, args) {
     const search = typeof args.search === 'string' ? args.search.trim().toLowerCase() : '';
+    const companyTimezone = fixtures.company?.timezone;
+    const dateBounds = companyDateFilterBounds(args.due_from, args.due_to, companyTimezone);
     let rows = fixtures.tasks.filter(task => {
         const status = args.status === 'all' ? null : (args.status || 'open');
         if (status && task.status !== status) return false;
         if (args.parent_type && task.parent_type !== args.parent_type) return false;
         if (args.overdue === true
             && (task.status !== 'open' || !task.due_at
-                || task.due_at.slice(0, 10) >= (fixtures.company?.anchor_date || resolveAnchorDate(null)))) {
+                || localCalendarDate(task.due_at, companyTimezone)
+                    >= (fixtures.company?.anchor_date || resolveAnchorDate(null)))) {
             return false;
         }
-        if (args.due_from && (!task.due_at || task.due_at.slice(0, 10) < args.due_from)) return false;
-        if (args.due_to && (!task.due_at || task.due_at.slice(0, 10) > args.due_to)) return false;
+        if (dateBounds.fromInclusive
+            && (!task.due_at || Date.parse(task.due_at) < Date.parse(dateBounds.fromInclusive))) return false;
+        if (dateBounds.toExclusive
+            && (!task.due_at || Date.parse(task.due_at) >= Date.parse(dateBounds.toExclusive))) return false;
         if (search && ![task.description, task.parent_label, task.assignee_name]
             .some(value => String(value || '').toLowerCase().includes(search))) return false;
         return true;

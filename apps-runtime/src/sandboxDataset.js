@@ -12,6 +12,8 @@
  *
  * Dates are day offsets from the sandbox anchor, never absolute — fixtures pinned
  * to a literal date silently go stale and every "today" app then reports zero.
+ * Every `hour` is a company-local wall-clock hour; fixture generation converts
+ * it to the corresponding UTC instant using this dataset's `timezone`.
  *
  * Generated once; edit this file directly if the showcase needs to change.
  */
