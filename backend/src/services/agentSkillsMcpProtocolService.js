@@ -128,6 +128,7 @@ function toProtocolTool(tool) {
             : {}),
         description: tool.description,
         inputSchema: tool.inputSchema,
+        ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
         annotations: {
             kind: tool.kind,
             destructiveHint: tool.destructiveHint ?? tool.kind === 'write',

@@ -33,6 +33,9 @@ function projectDescriptor(name) {
         || descriptor.handler !== EXPECTED_HANDLERS[name]
         || descriptor.inputSchema?.type !== 'object'
         || descriptor.inputSchema?.additionalProperties !== false
+        || descriptor.outputSchema?.type !== 'object'
+        || descriptor.outputSchema?.additionalProperties !== false
+        || !descriptor.documentation
         || schemaHasUrlField(descriptor.inputSchema)) {
         throw new Error(`APP_RUNTIME_CATALOG_DRIFT: ${name}`);
     }
@@ -42,6 +45,8 @@ function projectDescriptor(name) {
         handler: descriptor.handler,
         description: descriptor.description,
         inputSchema: descriptor.inputSchema,
+        outputSchema: descriptor.outputSchema,
+        documentation: descriptor.documentation,
         businessPermission: BUSINESS_PERMISSIONS[name],
     });
 }
@@ -50,7 +55,17 @@ const CATALOG = Object.freeze(TOOL_NAMES.map(projectDescriptor));
 const BY_NAME = new Map(CATALOG.map((tool) => [tool.name, tool]));
 
 function listTools() {
-    return CATALOG.map((tool) => ({ ...tool, inputSchema: { ...tool.inputSchema } }));
+    return CATALOG.map((tool) => ({
+        ...tool,
+        inputSchema: { ...tool.inputSchema },
+        outputSchema: { ...tool.outputSchema },
+        documentation: {
+            ...tool.documentation,
+            responseNotes: [...tool.documentation.responseNotes],
+            errors: tool.documentation.errors.map(error => ({ ...error })),
+            examples: tool.documentation.examples.map(example => ({ ...example })),
+        },
+    }));
 }
 
 function getTool(name) {

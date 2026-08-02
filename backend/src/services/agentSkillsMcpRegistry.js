@@ -88,6 +88,28 @@ const DISPATCHER_TOOL_TITLES = Object.freeze({
     'svc.send_invoice': 'Email or text an invoice to the customer',
 });
 
+const APP_RUNTIME_JOB_STATUSES = Object.freeze([
+    'Submitted',
+    'Waiting for parts',
+    'Part arrived',
+    'Follow Up with Client',
+    'Visit completed',
+    'Job is Done',
+    'Rescheduled',
+    'Canceled',
+    'On the way',
+]);
+
+const APP_RUNTIME_COMMON_ERRORS = Object.freeze([
+    Object.freeze({ code: 'INVALID_ARGUMENTS', description: 'The arguments do not match the documented input schema.' }),
+    Object.freeze({ code: 'TOOL_NOT_CONSENTED', description: 'The published app version or installation did not grant this tool.' }),
+    Object.freeze({ code: 'ACCESS_DENIED', description: 'The live delegating user lacks the required business permission.' }),
+    Object.freeze({ code: 'RUN_CALL_LIMIT', description: 'The run used its allowed gateway calls.' }),
+    Object.freeze({ code: 'RATE_LIMITED', description: 'The installation exceeded its gateway request budget.' }),
+    Object.freeze({ code: 'AUDIT_UNAVAILABLE', description: 'Albusto could not persist the required audit record, so no data was released.' }),
+]);
+const NO_SCHEMA_DEFAULT = Symbol('no-schema-default');
+
 const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.identify_caller': ['contacts.view'],
     'svc.get_customer_overview': ['contacts.view'],
@@ -272,11 +294,99 @@ const WRITE_TOOLS = [
 // from the caller-verification skills above: the OAuth binding is the actor and
 // company authority, and each descriptor also requires its exact AI-only grant.
 const DISPATCHER_READ_TOOLS = [
-    dispatcherRead('svc.list_jobs', 'listJobs', 'List company Jobs with bounded filters.', strictObjectSchema({
-        status: stringSchema(), search: stringSchema(), start_date: dateSchema(), end_date: dateSchema(),
-        only_open: booleanSchema(), limit: integerSchema(1, 100), offset: integerSchema(0),
-    })),
-    dispatcherRead('svc.get_job', 'getJob', 'Get one company-owned Job.', strictObjectSchema({ job_id: integerSchema(1) }, ['job_id'])),
+    dispatcherRead(
+        'svc.list_jobs',
+        'listJobs',
+        'List visible company Jobs with exact status, text, and inclusive start-date filters. Results are ordered by most recently updated first.',
+        strictObjectSchema({
+            status: documentedSchema(
+                enumSchema(APP_RUNTIME_JOB_STATUSES),
+                'Exact Albusto Job workflow status to include. Omit to include every status. Returned Job rows expose this value as `blanc_status`; they do not contain a `status` field.'
+            ),
+            search: documentedSchema(
+                stringSchema(),
+                'Case-insensitive text contained in the Job number, service name, customer name, customer phone, address, tag name, or searchable custom metadata. Omit for no text filter.'
+            ),
+            start_date: documentedSchema(
+                dateSchema(),
+                'Inclusive lower bound on Job `start_date`, formatted `YYYY-MM-DD`. The boundary is midnight in the database session timezone; the current gateway does not convert it through the company timezone. Omit for no lower bound.'
+            ),
+            end_date: documentedSchema(
+                dateSchema(),
+                'Inclusive upper calendar date for Job `start_date`, formatted `YYYY-MM-DD`. The query uses the instant before the following midnight in the database session timezone; the current gateway does not convert it through the company timezone. Omit for no upper bound.'
+            ),
+            only_open: documentedSchema(
+                booleanSchema(),
+                'When true, excludes `Job is Done` and `Canceled`. Defaults to false; it does not mean "scheduled today" and does not replace date filters.',
+                false
+            ),
+            limit: documentedSchema(
+                integerSchema(1, 100),
+                'Maximum Job rows to return, from 1 through 100. Defaults to 50.',
+                50
+            ),
+            offset: documentedSchema(
+                integerSchema(0),
+                'Zero-based row offset. Defaults to 0. Pass it explicitly and add `limit` while `has_more` is true to retrieve later pages.',
+                0
+            ),
+        }),
+        {
+            outputSchema: listJobsOutputSchema(),
+            documentation: {
+                responseNotes: [
+                    'The value returned by `ctx.callTool` is the documented object itself; the internal gateway envelope is already removed.',
+                    'Read Job status from `blanc_status`. There is no `status` field in a Job row.',
+                    'Sensitive provider payloads are removed. Phone-bearing fields may also be absent when company masking applies.',
+                    'Use offset pagination. Although `pagination.next_cursor` may be present, this Phase 1 descriptor does not accept a cursor argument.',
+                ],
+                errors: appRuntimeErrors(),
+                examples: [{
+                    title: 'Count every Job scheduled for today',
+                    source: `export async function run(ctx) {
+    const today = ctx.input.today;
+    const page = await ctx.callTool('svc.list_jobs', {
+        start_date: today,
+        end_date: today,
+        offset: 0,
+        limit: 100,
+    });
+    return { count: page.results.length, has_more: page.has_more };
+}`,
+                }],
+            },
+        }
+    ),
+    dispatcherRead(
+        'svc.get_job',
+        'getJob',
+        'Get one visible company-owned Job by its Albusto numeric ID.',
+        strictObjectSchema({
+            job_id: documentedSchema(
+                integerSchema(1),
+                'Positive Albusto Job ID, usually taken from `svc.list_jobs().results[].id`.'
+            ),
+        }, ['job_id']),
+        {
+            outputSchema: getJobOutputSchema(),
+            documentation: {
+                responseNotes: [
+                    'The value returned by `ctx.callTool` is the Job object itself, not a `results` envelope.',
+                    'Read Job status from `blanc_status`. There is no `status` field in the Job object.',
+                    'Sensitive provider payloads are removed. Phone-bearing fields may also be absent when company masking applies.',
+                ],
+                errors: appRuntimeErrors(true),
+                examples: [{
+                    title: 'Open the first visible Job',
+                    source: `export async function run(ctx) {
+    const page = await ctx.callTool('svc.list_jobs', { offset: 0, limit: 1 });
+    if (page.results.length === 0) return null;
+    return ctx.callTool('svc.get_job', { job_id: Number(page.results[0].id) });
+}`,
+                }],
+            },
+        }
+    ),
     dispatcherRead('svc.get_job_transitions', 'getJobTransitions', 'List actions from the company-published Job workflow.', strictObjectSchema({ job_id: integerSchema(1) }, ['job_id'])),
     dispatcherRead('svc.list_leads', 'listLeads', 'List company Leads with bounded filters.', strictObjectSchema({
         status: stringSchema(), source: stringSchema(), search: stringSchema(), only_open: booleanSchema(),
@@ -305,11 +415,79 @@ const DISPATCHER_READ_TOOLS = [
     dispatcherRead('svc.get_schedule_item', 'getScheduleItem', 'Get one company-owned Schedule item.', strictObjectSchema({
         entity_type: enumSchema(['job', 'lead', 'task']), entity_id: integerSchema(1),
     }, ['entity_type', 'entity_id'])),
-    dispatcherRead('svc.list_tasks', 'listTasks', 'List company Tasks with bounded filters.', strictObjectSchema({
-        status: stringSchema(), parent_type: enumSchema(['job', 'lead', 'estimate', 'invoice', 'contact', 'timeline']),
-        overdue: booleanSchema(), due_from: dateSchema(), due_to: dateSchema(), search: stringSchema(),
-        limit: integerSchema(1, 100), offset: integerSchema(0),
-    })),
+    dispatcherRead(
+        'svc.list_tasks',
+        'listTasks',
+        'List visible company Tasks with status, parent, due-date, overdue, and text filters. Results are ordered by due date ascending, with undated Tasks last.',
+        strictObjectSchema({
+            status: documentedSchema(
+                enumSchema(['open', 'done', 'all']),
+                'Task status to include: `open`, `done`, or `all`. Defaults to `open`.',
+                'open'
+            ),
+            parent_type: documentedSchema(
+                enumSchema(['job', 'lead', 'estimate', 'invoice', 'contact', 'timeline']),
+                'Restrict Tasks to one parent kind: `job`, `lead`, `estimate`, `invoice`, `contact`, or `timeline`. Omit for every parent kind.'
+            ),
+            overdue: documentedSchema(
+                booleanSchema(),
+                'When true, returns only open Tasks whose non-null `due_at` is earlier than the current time. Defaults to false.',
+                false
+            ),
+            due_from: documentedSchema(
+                dateSchema(),
+                'Inclusive lower bound on Task `due_at`, formatted `YYYY-MM-DD`, at midnight in the database session timezone. The current gateway does not convert it through the company timezone. Omit for no lower bound.'
+            ),
+            due_to: documentedSchema(
+                dateSchema(),
+                'Inclusive upper instant for Task `due_at`, formatted `YYYY-MM-DD`, at midnight at the start of that date in the database session timezone. Later times on that date are excluded; pass the following date to cover them. The current gateway does not convert it through the company timezone. Omit for no upper bound.'
+            ),
+            search: documentedSchema(
+                stringSchema(),
+                'Case-insensitive text contained in the Task description, parent label, or assignee name. Omit for no text filter.'
+            ),
+            limit: documentedSchema(
+                integerSchema(1, 100),
+                'Maximum Task rows to return, from 1 through 100. Defaults to 50.',
+                50
+            ),
+            offset: documentedSchema(
+                integerSchema(0),
+                'Zero-based row offset. Defaults to 0. Pass it explicitly and add `limit` while `pagination.has_more` is true to retrieve later pages.',
+                0
+            ),
+        }),
+        {
+            outputSchema: listTasksOutputSchema(),
+            documentation: {
+                responseNotes: [
+                    'Task rows are under `tasks`, not `results`.',
+                    'The value returned by `ctx.callTool` is the documented object itself; the internal gateway envelope is already removed.',
+                    'Users without `tasks.manage` receive only Tasks they own or authored.',
+                    'Use offset pagination. Although `pagination.next_cursor` may be present, this Phase 1 descriptor does not accept a cursor argument.',
+                ],
+                errors: appRuntimeErrors(),
+                examples: [{
+                    title: 'List open Tasks due today',
+                    source: `export async function run(ctx) {
+    const today = ctx.input.today;
+    const page = await ctx.callTool('svc.list_tasks', {
+        status: 'open',
+        offset: 0,
+        limit: 100,
+    });
+    return page.tasks
+        .filter((task) => task.due_at?.slice(0, 10) === today)
+        .map((task) => ({
+            id: task.id,
+            description: task.description,
+            parent: task.parent_label,
+        }));
+}`,
+                }],
+            },
+        }
+    ),
     dispatcherRead('svc.list_entity_tasks', 'listEntityTasks', 'List Tasks on a company-owned Job or Lead.', strictObjectSchema({
         parent_type: enumSchema(['job', 'lead']), parent_id: stringSchema(), include_done: booleanSchema(),
     }, ['parent_type', 'parent_id'])),
@@ -567,7 +745,7 @@ function nullableSchema(schema) {
     return { ...schema, nullable: true };
 }
 
-function dispatcherRead(name, handler, description, inputSchema) {
+function dispatcherRead(name, handler, description, inputSchema, metadata = {}) {
     return {
         name,
         handler,
@@ -575,6 +753,7 @@ function dispatcherRead(name, handler, description, inputSchema) {
         requiredOAuthScopes: [CHATGPT_READ_SCOPE],
         description,
         inputSchema,
+        ...metadata,
     };
 }
 
@@ -611,6 +790,187 @@ function financeListSchema(estimates) {
             ? { include_archived: booleanSchema() }
             : { estimate_id: integerSchema(1) }),
         search: stringSchema(), limit: integerSchema(1, 100), offset: integerSchema(0),
+    });
+}
+
+function documentedSchema(schema, description, defaultValue = NO_SCHEMA_DEFAULT) {
+    return {
+        ...schema,
+        description,
+        ...(defaultValue === NO_SCHEMA_DEFAULT ? {} : { default: defaultValue }),
+    };
+}
+
+function appRuntimeErrors(includeNotFound = false) {
+    return [
+        ...APP_RUNTIME_COMMON_ERRORS.map(error => ({ ...error })),
+        ...(includeNotFound
+            ? [{ code: 'NOT_FOUND', description: 'The Job does not exist or is outside the live company/provider scope.' }]
+            : []),
+    ];
+}
+
+function nullableOutput(type, description, extras = {}) {
+    const types = Array.isArray(type) ? type : [type];
+    return { type: [...types, 'null'], description, ...extras };
+}
+
+function outputField(type, description, extras = {}) {
+    return { type, description, ...extras };
+}
+
+function jobOutputProperties({ includeBalances = false } = {}) {
+    return {
+        id: outputField(['integer', 'string'], 'Albusto Job ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        lead_id: nullableOutput(['integer', 'string'], 'Linked Lead ID, when one exists.'),
+        lead_serial_id: nullableOutput('string', 'Human-readable linked Lead serial ID.'),
+        contact_id: nullableOutput(['integer', 'string'], 'Linked Contact ID.'),
+        zenbooker_job_id: nullableOutput('string', 'Linked Zenbooker Job ID, when synchronized.'),
+        blanc_status: outputField('string', 'Current Albusto Job workflow status. This is the status field to use.'),
+        zb_status: nullableOutput('string', 'Current provider substatus, when available.'),
+        zb_rescheduled: outputField('boolean', 'Whether the provider marks the Job as rescheduled.'),
+        zb_canceled: outputField('boolean', 'Whether the provider marks the Job as canceled.'),
+        job_number: nullableOutput('string', 'Human-readable Job number.'),
+        service_name: nullableOutput('string', 'Service name.'),
+        start_date: nullableOutput('string', 'Scheduled start timestamp in ISO 8601 format.', { format: 'date-time' }),
+        end_date: nullableOutput('string', 'Scheduled end timestamp in ISO 8601 format.', { format: 'date-time' }),
+        customer_name: nullableOutput('string', 'Customer display name.'),
+        customer_phone: nullableOutput('string', 'Customer phone; the field can be omitted by masking.'),
+        customer_email: nullableOutput('string', 'Customer email.'),
+        address: nullableOutput('string', 'Service street address.'),
+        city: nullableOutput('string', 'Service city.'),
+        postal_code: nullableOutput('string', 'Service postal code when the projection supplies it.'),
+        territory: nullableOutput('string', 'Service territory.'),
+        invoice_total: nullableOutput(['string', 'number'], 'Provider invoice total when available.'),
+        invoice_status: nullableOutput('string', 'Provider invoice status when available.'),
+        assigned_techs: outputField('array', 'Assigned technician summaries.', {
+            items: outputField('object', 'One assigned technician summary.', { additionalProperties: true }),
+        }),
+        assigned_provider_user_ids: outputField('array', 'Albusto user IDs mirrored as assigned providers.', {
+            items: outputField('string', 'One assigned Albusto user ID.'),
+        }),
+        notes: outputField('array', 'Safe Job note summaries; secret-bearing keys are removed.', {
+            items: outputField('object', 'One safe note summary.', { additionalProperties: true }),
+        }),
+        tags: outputField('array', 'Job tags.', {
+            items: outputField('object', 'One Job tag.', {
+                additionalProperties: false,
+                properties: {
+                    id: outputField(['integer', 'string'], 'Tag ID.'),
+                    name: outputField('string', 'Tag name.'),
+                    color: nullableOutput('string', 'Tag color token.'),
+                    is_active: outputField('boolean', 'Whether the tag is active.'),
+                },
+            }),
+        }),
+        job_type: nullableOutput('string', 'Job type inherited from the originating Lead when available.'),
+        job_source: nullableOutput('string', 'Job acquisition source when available.'),
+        description: nullableOutput('string', 'Job description.'),
+        comments: nullableOutput('string', 'Job comments.'),
+        metadata: outputField('object', 'Safe app-visible custom metadata.', { additionalProperties: true }),
+        company_id: outputField('string', 'Owning company ID derived by the gateway; never accepted as input.'),
+        created_at: nullableOutput('string', 'Creation timestamp in ISO 8601 format.', { format: 'date-time' }),
+        updated_at: nullableOutput('string', 'Last update timestamp in ISO 8601 format.', { format: 'date-time' }),
+        lat: nullableOutput('number', 'Service latitude when available.'),
+        lng: nullableOutput('number', 'Service longitude when available.'),
+        ...(includeBalances ? {
+            amount_paid: nullableOutput(['string', 'number'], 'Locally recorded paid amount when an invoice exists.'),
+            balance_due: nullableOutput(['string', 'number'], 'Locally calculated outstanding amount when an invoice exists.'),
+        } : {}),
+    };
+}
+
+function paginationOutputSchema() {
+    return outputField('object', 'Pagination metadata for the returned page.', {
+        additionalProperties: false,
+        properties: {
+            mode: outputField('string', 'Pagination mode: `offset` when offset was supplied, otherwise `cursor`.', {
+                enum: ['offset', 'cursor'],
+            }),
+            limit: outputField('integer', 'Applied page size.'),
+            returned: outputField('integer', 'Number of rows in this page.'),
+            has_more: outputField('boolean', 'Whether another page exists.'),
+            next_cursor: nullableOutput('string', 'Opaque next-page cursor. Phase 1 App Studio descriptors do not accept it as input.'),
+            total: nullableOutput('integer', 'Total matching rows when calculated for this page.'),
+        },
+    });
+}
+
+function listJobsOutputSchema() {
+    return outputField('object', 'A page of visible Jobs and pagination metadata.', {
+        additionalProperties: false,
+        properties: {
+            results: outputField('array', 'Job rows for this page.', {
+                items: outputField('object', 'One visible Job row.', {
+                    additionalProperties: false,
+                    properties: jobOutputProperties({ includeBalances: true }),
+                }),
+            }),
+            total: nullableOutput('integer', 'Total matching Jobs when calculated for this page.'),
+            offset: outputField('integer', 'Applied zero-based offset.'),
+            limit: outputField('integer', 'Applied page size.'),
+            has_more: outputField('boolean', 'Whether another page exists.'),
+            facets: nullableOutput('object', 'Available list facets when calculated for this page.', {
+                additionalProperties: false,
+                properties: {
+                    providers: outputField('array', 'Distinct visible provider names.', {
+                        items: outputField('string', 'Provider display name.'),
+                    }),
+                },
+            }),
+            pagination: paginationOutputSchema(),
+        },
+    });
+}
+
+function getJobOutputSchema() {
+    return outputField('object', 'One visible Job object. It has `blanc_status` and intentionally has no `status` or raw provider payload.', {
+        additionalProperties: false,
+        properties: jobOutputProperties(),
+    });
+}
+
+function taskOutputProperties() {
+    return {
+        id: outputField(['integer', 'string'], 'Albusto Task ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        company_id: outputField('string', 'Owning company ID derived by the gateway; never accepted as input.'),
+        description: outputField('string', 'Task text.'),
+        status: outputField('string', 'Task status.', { enum: ['open', 'done'] }),
+        due_at: nullableOutput('string', 'Due timestamp in ISO 8601 format.', { format: 'date-time' }),
+        completed_at: nullableOutput('string', 'Completion timestamp in ISO 8601 format.', { format: 'date-time' }),
+        created_at: nullableOutput('string', 'Creation timestamp in ISO 8601 format.', { format: 'date-time' }),
+        owner_user_id: nullableOutput('string', 'Owning Albusto user ID.'),
+        author_user_id: nullableOutput('string', 'Authoring Albusto user ID.'),
+        thread_id: nullableOutput(['integer', 'string'], 'Parent timeline ID for conversation Tasks.'),
+        kind: nullableOutput('string', 'Task kind.'),
+        agent_type: nullableOutput('string', 'Agent type for agent-created Tasks.'),
+        agent_output: nullableOutput(['object', 'array', 'string', 'number', 'boolean'], 'Safe structured agent output when available.'),
+        actions: nullableOutput('array', 'Available Task actions when present.', {
+            items: outputField('object', 'One Task action.', { additionalProperties: true }),
+        }),
+        assignee_name: nullableOutput('string', 'Assignee display name.'),
+        assignee_email: nullableOutput('string', 'Assignee email.'),
+        author_name: nullableOutput('string', 'Author display name.'),
+        parent_type: nullableOutput('string', 'Parent entity kind.', {
+            enum: ['job', 'lead', 'estimate', 'invoice', 'contact', 'timeline', null],
+        }),
+        parent_id: nullableOutput(['integer', 'string'], 'Parent entity ID.'),
+        parent_label: nullableOutput('string', 'Human-readable parent label.'),
+    };
+}
+
+function listTasksOutputSchema() {
+    return outputField('object', 'A page of visible Tasks and pagination metadata.', {
+        additionalProperties: false,
+        properties: {
+            tasks: outputField('array', 'Task rows for this page. This key is `tasks`, not `results`.', {
+                items: outputField('object', 'One visible Task row.', {
+                    additionalProperties: false,
+                    properties: taskOutputProperties(),
+                }),
+            }),
+            pagination: paginationOutputSchema(),
+        },
     });
 }
 

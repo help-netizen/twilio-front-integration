@@ -422,6 +422,24 @@ describe('svc.* JSON-RPC protocol (ASK-MCP-13 / 14)', () => {
         })).not.toHaveProperty('title');
     });
 
+    test('APP-TOOLS-001: protocol projection exposes documented input and output schemas', () => {
+        for (const name of ['svc.list_jobs', 'svc.get_job', 'svc.list_tasks']) {
+            const tool = protocolService.toProtocolTool(registry.getTool(name));
+            expect(tool.inputSchema).toMatchObject({
+                type: 'object',
+                properties: expect.any(Object),
+            });
+            for (const property of Object.values(tool.inputSchema.properties)) {
+                expect(property.description).toEqual(expect.stringMatching(/\S/));
+            }
+            expect(tool.outputSchema).toMatchObject({
+                type: 'object',
+                description: expect.stringMatching(/\S/),
+                properties: expect.any(Object),
+            });
+        }
+    });
+
     test('tools/call read over JSON-RPC returns structuredContent from the skill layer', async () => {
         agentSkills.runSkill.mockResolvedValue({ ok: true, appointments: [], speak: 'nothing scheduled' });
         const res = await request(makeApp())
