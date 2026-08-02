@@ -15,6 +15,9 @@ export interface MarketplaceInstallationSummary {
 }
 
 export interface MarketplaceAppMetadata {
+    /** APP-VIEW-001: set by App Studio on every app it generates. Such an app has
+     *  a screen of its own, so the detail panel offers Open rather than Setup. */
+    app_studio?: { generated?: boolean };
     access_summary?: string[];
     requires_connected_gmail?: boolean;
     dependency_cta?: {

@@ -18,6 +18,7 @@ import { RateMeSettingsDialog } from './RateMeSettingsDialog';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { MarketplaceGrid } from '../components/settings/marketplace/MarketplaceGrid';
 import { MarketplaceAppDetail } from '../components/settings/marketplace/MarketplaceAppDetail';
+import { AppViewContainer } from '../components/apps/AppViewContainer';
 import { InspectorSettingsPanel } from '../components/settings/InspectorSettingsPanel';
 import { AvatarsPanel } from '../components/settings/AvatarsPanel';
 import { GoogleAdsPanel } from '../components/settings/GoogleAdsPanel';
@@ -238,6 +239,8 @@ export function IntegrationsPage() {
     function getStatusBadge(integration: Integration) { if (integration.revoked_at) return <Badge variant="destructive">Revoked</Badge>; if (integration.expires_at && new Date(integration.expires_at) < new Date()) return <Badge variant="secondary">Expired</Badge>; return <Badge className="bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)] hover:bg-[rgba(27,139,99,0.12)]">Active</Badge>; }
     const gmailConnected = mailbox?.provider === 'gmail' && mailbox.status === 'connected';
 
+    const [appViewTarget, setAppViewTarget] = useState<MarketplaceApp | null>(null);
+
     // Per-app primary actions, hosted inside the app detail panel (the card just
     // opens the panel, so no install branching lives on the card itself).
     const renderAppActions = (app: MarketplaceApp): ReactNode => (
@@ -273,6 +276,9 @@ export function IntegrationsPage() {
                     <>
                         {app.installation?.status === 'provisioning_failed' && (
                             <Button variant="outline" size="sm" onClick={() => retryMutation.mutate(app.installation!.id)} disabled={retryMutation.isPending}>Retry</Button>
+                        )}
+                        {app.metadata?.app_studio?.generated && app.installation?.status === 'connected' && (
+                            <Button size="sm" onClick={() => setAppViewTarget(app)}>Open</Button>
                         )}
                         {app.installation?.status === 'connected' && app.metadata?.setup_path && (
                             <Button size="sm" onClick={() => navigate(String(app.metadata!.setup_path))}>{app.app_key === 'inspector' ? 'Settings' : 'Setup'}</Button>
@@ -427,6 +433,15 @@ export function IntegrationsPage() {
                 companyName={company?.name || 'your company'}
             />
             <GoogleAdsPanel open={googleAdsPanelOpen} onOpenChange={setGoogleAdsPanelOpen} />
+            {appViewTarget?.installation && (
+                <AppViewContainer
+                    installationId={appViewTarget.installation.id}
+                    appName={appViewTarget.name}
+                    tools={appViewTarget.metadata?.access_summary || []}
+                    open
+                    onOpenChange={value => { if (!value) setAppViewTarget(null); }}
+                />
+            )}
             <CreateDialog open={createOpen} onOpenChange={setCreateOpen} clientName={clientName} setClientName={setClientName} onSubmit={handleCreate} isPending={createMutation.isPending} />
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />
             <RevokeDialog target={revokeTarget} onClose={() => setRevokeTarget(null)} onRevoke={() => revokeTarget && revokeMutation.mutate(revokeTarget.key_id)} isPending={revokeMutation.isPending} />
