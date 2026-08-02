@@ -18,6 +18,12 @@ jest.mock('../backend/src/db/connection', () => ({
 jest.mock('../backend/src/services/telephonyTenantService', () => ({
     resolveCompanyForInboundNumber: jest.fn(),
     resolveCompanyIdForPayload: jest.fn().mockResolvedValue('11111111-1111-1111-1111-111111111111'),
+    // TWILIO-TENANT-FIX-001: handleDialAction now resolves the tenant from the
+    // callback AccountSid (fail-closed) before the flow engine runs — real
+    // Twilio dial-action callbacks always carry it, so the fixture must too.
+    resolveCompanyByAccountSid: jest.fn().mockResolvedValue('11111111-1111-1111-1111-111111111111'),
+    getAuthTokenForAccountSid: jest.fn().mockResolvedValue('test_auth_token'),
+    DEFAULT_COMPANY_ID: '00000000-0000-0000-0000-000000000001',
 }));
 jest.mock('../backend/src/services/callMaskingService', () => ({
     CODE_DIGITS: 6,
@@ -65,7 +71,7 @@ function makeRes() {
 
 function makeReq() {
     return {
-        body: { CallSid: 'CA_test_1', DialCallStatus: 'no-answer', From: '+16175550100', To: '+16174044425' },
+        body: { AccountSid: 'AC_test', CallSid: 'CA_test_1', DialCallStatus: 'no-answer', From: '+16175550100', To: '+16174044425' },
         query: {},
         headers: {},
     };
