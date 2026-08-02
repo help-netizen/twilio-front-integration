@@ -3,7 +3,7 @@
  *
  * Mirrors MobileScheduleBar: a sticky "Jobs" title + search input, and a single
  * gear ⚙ (with an active-filter-count badge) that opens a BottomSheet
- * ("View options"). The sheet houses every secondary control — the shared
+ * ("Filters & sort"). The sheet houses every secondary control — the shared
  * JobsFilterBody (status/providers/source/job-type/tags), the date range, a Sort
  * selector, a Reset row (when filters are active), Export CSV, and New Job.
  *
@@ -145,8 +145,8 @@ export const JobsMobileBar: React.FC<JobsMobileBarProps> = ({
                 </button>
             </div>
 
-            {/* ── View options sheet ── */}
-            <BottomSheet open={sheetOpen} onClose={close} title="View options" size="standard">
+            {/* ── Filters sheet ── */}
+            <BottomSheet open={sheetOpen} onClose={close} title="Filters & sort" size="standard">
                 <div className="flex flex-col gap-5">
                     {/* Filters — shared body (single column on mobile) */}
                     <JobsFilterBody

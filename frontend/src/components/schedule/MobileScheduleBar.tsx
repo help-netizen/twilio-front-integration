@@ -3,7 +3,7 @@
  *
  * Field-tech first: the DATE is the hero (large, e.g. "Mon, Jun 30") with
  * ‹ / Today / › nav at 42px tap targets, and a single gear ⚙ on the right.
- * The gear opens a BottomSheet ("View options") that houses every secondary
+ * The gear opens a BottomSheet ("Filters") that houses every secondary
  * control — search, filters, technician selector, reset, and (dispatch only)
  * New job / Time off / Settings.
  *
@@ -160,8 +160,8 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                 onSelectDate={onSelectDate}
             />
 
-            {/* ── View options sheet ── */}
-            <BottomSheet open={sheetOpen} onClose={close} title="View options" size="standard">
+            {/* ── Filters sheet ── */}
+            <BottomSheet open={sheetOpen} onClose={close} title="Filters" size="standard">
                 <div className="flex flex-col gap-5">
                     {/* Search */}
                     <label
