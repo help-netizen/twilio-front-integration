@@ -4,6 +4,7 @@ const { GATEWAY_TOOLS, LIMITS } = require('./config');
 const { AppRunnerError, GatewayError } = require('./errors');
 
 const TOOL_NAMES = new Set(GATEWAY_TOOLS);
+const DATA_OPERATIONS = new Set(['list', 'upsert', 'delete']);
 
 function gatewayOrigin(value) {
     let url;
@@ -189,6 +190,53 @@ class GatewayClient {
             );
         }
         return payload.data;
+    }
+
+    async callData(operation, collection, payload, signal) {
+        if (!DATA_OPERATIONS.has(operation)
+            || typeof collection !== 'string'
+            || !/^[a-z][a-z0-9_]{0,63}$/.test(collection)) {
+            throw new GatewayError('INVALID_REQUEST', 'Data operation is invalid.', 400);
+        }
+        let body;
+        try {
+            body = JSON.stringify(payload);
+        } catch (_error) {
+            throw new GatewayError('INVALID_REQUEST', 'Data request must be JSON-serializable.', 400);
+        }
+        if (body === undefined) {
+            throw new GatewayError('INVALID_REQUEST', 'Data request must be JSON-serializable.', 400);
+        }
+        const url = new URL(
+            `/internal/app-runtime/v1/data/${encodeURIComponent(collection)}/${operation}`,
+            this.baseUrl
+        );
+        const { response, payload: responsePayload } = await this.fetchJson(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${this.runToken}`,
+                'Content-Type': 'application/json',
+            },
+            body,
+        }, signal);
+        if (containsSecret(responsePayload, this.runToken)) {
+            throw new AppRunnerError(
+                'APP_RUNTIME_TOKEN_EXPOSURE_BLOCKED',
+                'Gateway response was blocked by secret hygiene.'
+            );
+        }
+        if (!response.ok || responsePayload?.ok !== true) {
+            throw new GatewayError(
+                typeof responsePayload?.code === 'string'
+                    ? responsePayload.code
+                    : 'APP_RUNTIME_GATEWAY_ERROR',
+                typeof responsePayload?.message === 'string'
+                    ? responsePayload.message
+                    : 'Gateway data call failed.',
+                Number.isInteger(response.status) ? response.status : 502
+            );
+        }
+        return responsePayload.data;
     }
 
     async recordRunCompletion(metrics, signal) {

@@ -19,6 +19,9 @@ const mockScheduleService = {
     updateSchedule: jest.fn(),
     acceptVersion: jest.fn(),
 };
+const mockDataService = {
+    listForViewer: jest.fn(),
+};
 
 jest.mock('../backend/src/middleware/keycloakAuth', () => ({
     authenticate: (req, _res, next) => {
@@ -37,6 +40,7 @@ jest.mock('../backend/src/middleware/keycloakAuth', () => ({
 }));
 jest.mock('../backend/src/services/appExecutionService', () => mockService);
 jest.mock('../backend/src/services/appScheduleService', () => mockScheduleService);
+jest.mock('../backend/src/services/appDataService', () => mockDataService);
 
 const { AppRuntimeError } = require('../backend/src/services/appRuntimeErrors');
 const appViewsRouter = require('../backend/src/routes/appViews');
@@ -73,6 +77,11 @@ beforeEach(() => {
     mockScheduleService.updateSchedule.mockResolvedValue(settings);
     mockScheduleService.acceptVersion.mockResolvedValue({
         accepted_version: { version_id: VERSION_ID, consented_tools: ['svc.list_jobs'] },
+    });
+    mockDataService.listForViewer.mockResolvedValue({
+        collection: 'purchases',
+        rows: [{ data: { estimate_id: 41 }, created_at: '2026-08-02T12:00:00.000Z' }],
+        pagination: { limit: 25, offset: 0, total: 1 },
     });
 });
 
@@ -166,5 +175,30 @@ describe('APP-VIEW-001 company-scoped API', () => {
         });
         expect(JSON.stringify([current.body, updated.body, accepted.body]))
             .not.toMatch(/source_code|source_sha256|scanner_report/i);
+    });
+
+    test('Phase D human GET passes only companyFilter/actor context and bounded pagination', async () => {
+        const response = await request(buildApp())
+            .get('/api/apps/installations/91/data/purchases?limit=25&offset=0');
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({
+            ok: true,
+            collection: 'purchases',
+            pagination: { limit: 25, offset: 0, total: 1 },
+        });
+        expect(mockDataService.listForViewer).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            installationId: '91',
+            actorId: ACTOR_ID,
+            collection: 'purchases',
+            limit: 25,
+            offset: 0,
+        });
+        expect(JSON.stringify(response.body)).not.toMatch(/source_code|source_sha256|row_key/i);
+
+        const invalid = await request(buildApp())
+            .get('/api/apps/installations/91/data/purchases?company_id=foreign');
+        expect(invalid.status).toBe(400);
+        expect(mockDataService.listForViewer).toHaveBeenCalledTimes(1);
     });
 });

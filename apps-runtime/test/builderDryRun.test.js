@@ -107,4 +107,44 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
             expect(() => validateSourcePolicy(wrap(body))).toThrow(/Reflective object access/);
         }
     });
+
+    test('Phase D dry-run memory starts empty, validates the declaration, and reports data_ops', async () => {
+        const source = `
+            export async function run(ctx) {
+                const before = await ctx.data.list('purchases', { limit: 10, offset: 0 });
+                await ctx.data.upsert('purchases', [{ estimate_id: 41, part_number: 'P-41' }]);
+                const after = await ctx.data.list('purchases', { limit: 10, offset: 0 });
+                return { before: before.rows.length, after: after.rows.length };
+            }
+        `;
+        const declaration = [{
+            name: 'purchases',
+            key_fields: ['estimate_id', 'part_number'],
+            columns: [
+                { key: 'estimate_id', type: 'number' },
+                { key: 'part_number', type: 'text' },
+            ],
+        }];
+        const execute = () => validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            data_collections: declaration,
+        });
+        const first = await execute();
+        const second = await execute();
+        expect(first.result).toEqual({ before: 0, after: 1 });
+        expect(second.result).toEqual({ before: 0, after: 1 });
+        expect(first.dataOps).toEqual({
+            list: { calls: 2, rows: 1 },
+            upsert: { calls: 1, rows: 1 },
+            delete: { calls: 0, rows: 0 },
+        });
+        expect(first.usage).toMatchObject({ data_calls: 3, error_code: null });
+
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            data_collections: [{ ...declaration[0], key_fields: ['missing'] }],
+        })).rejects.toMatchObject({ code: 'DATA_COLLECTIONS_INVALID' });
+    });
 });

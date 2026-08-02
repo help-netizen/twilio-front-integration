@@ -4,6 +4,7 @@ const executor = require('./appRuntimeExecutor');
 const tokenService = require('./appRuntimeTokenService');
 const rateLimit = require('./appRuntimeRateLimit');
 const auditService = require('./appRuntimeAuditService');
+const dataService = require('./appDataService');
 const maskingService = require('./pulseMaskingService');
 const { AppRuntimeError, appRuntimeError } = require('./appRuntimeErrors');
 
@@ -127,9 +128,29 @@ async function execute(req, toolName, args) {
     return result;
 }
 
+async function executeData(req, operation, collection, args) {
+    const context = req.appRuntimeContext;
+    try {
+        const rate = rateLimit.consumeInstallation(context.installation_id);
+        if (!rate.allowed) {
+            throw appRuntimeError('RATE_LIMITED', 'Too many app runtime requests.', 429, {
+                retryAfterSeconds: rate.retryAfterSeconds,
+            });
+        }
+        await tokenService.consumeRunDataCall(context);
+        if (operation === 'list') return dataService.list(context, collection, args);
+        if (operation === 'upsert') return dataService.upsert(context, collection, args);
+        if (operation === 'delete') return dataService.remove(context, collection, args);
+        throw appRuntimeError('NOT_FOUND', 'Data operation not found.', 404);
+    } catch (error) {
+        throw normalizeError(error);
+    }
+}
+
 module.exports = {
     normalizeError,
     installRequestContext,
     authorizeExecution,
     execute,
+    executeData,
 };

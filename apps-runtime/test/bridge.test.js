@@ -1,6 +1,7 @@
 'use strict';
 
 const { TEST_TOKEN, GATEWAY_BASE_URL, app, response, runApplication } = require('./helpers');
+const runner = require('../src/runner');
 
 describe('APP-RUN-001 host gateway bridge', () => {
     test('callTool sends the exact name and arguments with the host-held token', async () => {
@@ -79,5 +80,38 @@ describe('APP-RUN-001 host gateway bridge', () => {
             runToken: TEST_TOKEN,
             fetchImpl,
         })).rejects.toMatchObject({ code: 'APP_RUNTIME_TOKEN_EXPOSURE_BLOCKED' });
+    });
+
+    test('ctx.data bridges collection and rows to the live CRM with the host-held run token', async () => {
+        const source = app("return ctx.data.upsert('purchases', [{ estimate_id: 41, part_number: 'P-41' }]);");
+        const fetchImpl = jest.fn(async url => {
+            if (url.pathname.endsWith('/upsert')) return response({ upserted: 1 });
+            return response(null);
+        });
+        let usage;
+        const result = await runner.runApplication({
+            source,
+            expectedSourceSha256: runner.sourceSha256(source),
+            input: {},
+            gatewayBaseUrl: GATEWAY_BASE_URL,
+            runToken: TEST_TOKEN,
+            fetchImpl,
+            executionMode: 'live',
+            onUsage: value => { usage = value; },
+        });
+        expect(result).toEqual({ upserted: 1 });
+        const dataCall = fetchImpl.mock.calls.find(([url]) => url.pathname.endsWith('/upsert'));
+        expect(dataCall[0].href).toBe(
+            'https://crm.albusto.test/internal/app-runtime/v1/data/purchases/upsert'
+        );
+        expect(dataCall[1]).toMatchObject({
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${TEST_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify([{ estimate_id: 41, part_number: 'P-41' }]),
+        });
+        expect(usage).toMatchObject({ gateway_calls: 0, data_calls: 1, error_code: null });
     });
 });

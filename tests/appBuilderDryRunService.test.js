@@ -27,24 +27,47 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 ok: true,
                 result: { today: '2026-07-31' },
                 validation: { entry_point: 'run', tools: [], returned_type: 'object' },
-                usage: { wall_ms: 2, gateway_calls: 0, result_bytes: 22, error_code: null },
+                usage: {
+                    wall_ms: 2,
+                    gateway_calls: 0,
+                    data_calls: 0,
+                    result_bytes: 22,
+                    error_code: null,
+                },
                 fixtures_summary: {
                     companies: 1, contacts: 6, leads: 6, jobs: 6,
                     tasks: 8, invoices: 5, payments: 4,
+                },
+                data_ops: {
+                    list: { calls: 0, rows: 0 },
+                    upsert: { calls: 0, rows: 0 },
+                    delete: { calls: 0, rows: 0 },
                 },
             }),
         });
         await expect(dryRunner.validateAndDryRun({
             source: SOURCE,
             expectedSourceSha256: SOURCE_SHA256,
+            dataCollections: [],
         }, { fetchImpl })).resolves.toEqual({
             entry_point: 'run',
             tools: [],
             returned_type: 'object',
-            usage: { wall_ms: 2, gateway_calls: 0, result_bytes: 22, error_code: null },
+            usage: {
+                wall_ms: 2,
+                gateway_calls: 0,
+                data_calls: 0,
+                result_bytes: 22,
+                error_code: null,
+            },
             fixtures_summary: {
                 companies: 1, contacts: 6, leads: 6, jobs: 6,
                 tasks: 8, invoices: 5, payments: 4,
+            },
+            data_ops: {
+                list: { calls: 0, rows: 0 },
+                upsert: { calls: 0, rows: 0 },
+                delete: { calls: 0, rows: 0 },
             },
             result: { today: '2026-07-31' },
         });
@@ -60,6 +83,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             // test against a day the fixtures no longer contain.
             input: { today: new Date().toISOString().slice(0, 10) },
             seed: 'app-studio-builder-v1',
+            data_collections: [],
         });
         expect(JSON.parse(options.body)).not.toHaveProperty('fixtures');
     });

@@ -21,6 +21,7 @@ const VIEW_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_228_app_view_phase_a.sql'),
     'utf8'
 );
+const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '230_app_data_phase_d.sql'), 'utf8');
 
 jest.setTimeout(90000);
 
@@ -303,6 +304,7 @@ describe('APP-VIEW-001 result retention and tenant isolation', () => {
             await client.query(MODERATION_SCHEMA);
             await client.query(EXECUTION_SCHEMA);
             await client.query(VIEW_SCHEMA);
+            await client.query(DATA_SCHEMA);
             const companyA = await createFixture(client, 'A');
             const companyB = await createFixture(client, 'B');
 

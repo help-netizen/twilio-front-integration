@@ -10,6 +10,7 @@ const { AppRuntimeError, appRuntimeError } = require('./appRuntimeErrors');
 const DEFAULT_TTL_SECONDS = 300;
 const MAX_TTL_SECONDS = 300;
 const RUN_CALL_LIMIT = 5;
+const DATA_CALL_LIMIT = 10;
 const CLAIM_KEYS = Object.freeze([
     'exp',
     'installation_id',
@@ -318,6 +319,7 @@ async function resolveRunContext(claims) {
                 run.expires_at,
                 run.gateway_calls_used,
                 run.gateway_call_limit,
+                run.data_calls_made,
                 run.execution_authorized_at,
                 installation.status AS installation_status,
                 installation.installed_by,
@@ -823,9 +825,73 @@ async function consumeRunCall(context) {
     return Number(rows[0].call_ordinal);
 }
 
+async function consumeRunDataCall(context) {
+    const { rows } = await db.query(
+        `UPDATE app_runs run
+         SET data_calls_made = run.data_calls_made + 1,
+             updated_at = NOW()
+         WHERE run.id = $1
+           AND run.company_id = $2
+           AND run.app_id = $3
+           AND run.installation_id = $4
+           AND run.version_id = $5
+           AND run.nonce_sha256 = $6
+           AND run.status IN ('issued', 'exhausted')
+           AND run.revoked_at IS NULL
+           AND run.expires_at > NOW()
+           AND run.execution_authorized_at IS NOT NULL
+           AND run.completed_at IS NULL
+           AND run.data_calls_made < $7
+         RETURNING run.data_calls_made AS call_ordinal`,
+        [
+            context.run_id,
+            context.company_id,
+            context.app_id,
+            context.installation_id,
+            context.version_id,
+            context.nonce_sha256,
+            DATA_CALL_LIMIT,
+        ]
+    );
+    if (rows[0]) return Number(rows[0].call_ordinal);
+    const current = await db.query(
+        `SELECT run.data_calls_made
+         FROM app_runs run
+         WHERE run.id = $1
+           AND run.company_id = $2
+           AND run.app_id = $3
+           AND run.installation_id = $4
+           AND run.version_id = $5
+           AND run.nonce_sha256 = $6
+           AND run.status IN ('issued', 'exhausted')
+           AND run.revoked_at IS NULL
+           AND run.expires_at > NOW()
+           AND run.execution_authorized_at IS NOT NULL
+           AND run.completed_at IS NULL`,
+        [
+            context.run_id,
+            context.company_id,
+            context.app_id,
+            context.installation_id,
+            context.version_id,
+            context.nonce_sha256,
+        ]
+    );
+    if (Number(current.rows[0]?.data_calls_made) >= DATA_CALL_LIMIT) {
+        throw appRuntimeError('DATA_CALL_LIMIT', 'Data call limit of 10 reached.', 429, {
+            callOrdinal: Number(current.rows[0].data_calls_made) + 1,
+        });
+    }
+    throw appRuntimeError(
+        'APP_RUNTIME_INACTIVE',
+        'App runtime authorization is not active.',
+        403
+    );
+}
+
 function validateRunMetrics(metrics) {
     const keys = Object.keys(metrics || {}).sort();
-    const expectedKeys = ['error_code', 'gateway_calls', 'result_bytes', 'wall_ms'];
+    const expectedKeys = ['data_calls', 'error_code', 'gateway_calls', 'result_bytes', 'wall_ms'];
     if (keys.length !== expectedKeys.length
         || keys.some((key, index) => key !== expectedKeys[index])
         || !Number.isInteger(metrics.wall_ms)
@@ -834,6 +900,9 @@ function validateRunMetrics(metrics) {
         || !Number.isInteger(metrics.gateway_calls)
         || metrics.gateway_calls < 0
         || metrics.gateway_calls > RUN_CALL_LIMIT
+        || !Number.isInteger(metrics.data_calls)
+        || metrics.data_calls < 0
+        || metrics.data_calls > DATA_CALL_LIMIT
         || (metrics.result_bytes !== null && (
             !Number.isInteger(metrics.result_bytes)
             || metrics.result_bytes < 0
@@ -912,6 +981,7 @@ async function recordRunCompletion(claims, rawMetrics) {
                AND run.app_id = candidate.app_id
                AND run.installation_id = candidate.installation_id
              RETURNING run.id, run.status, run.wall_ms, run.gateway_calls_made,
+                       run.data_calls_made,
                        run.result_bytes, run.error_code, run.completed_at
          ), usage AS (
              INSERT INTO app_runtime_usage
@@ -979,6 +1049,7 @@ module.exports = {
     DEFAULT_TTL_SECONDS,
     MAX_TTL_SECONDS,
     RUN_CALL_LIMIT,
+    DATA_CALL_LIMIT,
     CLAIM_KEYS,
     configuredSecret,
     normalizedTtl,
@@ -991,6 +1062,7 @@ module.exports = {
     resolveRunContext,
     authorizeRunExecution,
     consumeRunCall,
+    consumeRunDataCall,
     validateRunMetrics,
     recordRunCompletion,
 };

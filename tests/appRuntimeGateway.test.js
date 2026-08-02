@@ -22,6 +22,7 @@ const mockTokenService = {
     resolveRunContext: jest.fn(),
     authorizeRunExecution: jest.fn(),
     consumeRunCall: jest.fn(),
+    consumeRunDataCall: jest.fn(),
     validateRunMetrics: jest.fn(),
     recordRunCompletion: jest.fn(),
 };
@@ -31,12 +32,16 @@ const mockAuditRecord = jest.fn();
 const mockAuthorizationAuditRecord = jest.fn();
 const mockGetMaskViewer = jest.fn();
 const mockConsumeInstallation = jest.fn();
+const mockDataList = jest.fn();
+const mockDataUpsert = jest.fn();
+const mockDataRemove = jest.fn();
 
 jest.mock('../backend/src/services/appRuntimeTokenService', () => ({
     verifyRunToken: mockTokenService.verifyRunToken,
     resolveRunContext: mockTokenService.resolveRunContext,
     authorizeRunExecution: mockTokenService.authorizeRunExecution,
     consumeRunCall: mockTokenService.consumeRunCall,
+    consumeRunDataCall: mockTokenService.consumeRunDataCall,
     validateRunMetrics: mockTokenService.validateRunMetrics,
     recordRunCompletion: mockTokenService.recordRunCompletion,
     parseConsent: (metadata) => {
@@ -45,6 +50,11 @@ jest.mock('../backend/src/services/appRuntimeTokenService', () => ({
             ? { versionId: runtime.version_id, tools: new Set(runtime.consented_tools) }
             : null;
     },
+}));
+jest.mock('../backend/src/services/appDataService', () => ({
+    list: mockDataList,
+    upsert: mockDataUpsert,
+    remove: mockDataRemove,
 }));
 jest.mock('../backend/src/services/chatgptMcpReadService', () => ({
     execute: mockReadExecute,
@@ -89,6 +99,7 @@ function context(overrides = {}) {
         company_name: 'Company A',
         company_timezone: 'America/New_York',
         gateway_calls_used: 0,
+        data_calls_made: 0,
         allowed_tools: [...ALL_TOOLS],
         installation_metadata: {
             app_runtime: {
@@ -121,6 +132,7 @@ beforeEach(() => {
     });
     mockTokenService.resolveRunContext.mockResolvedValue(context());
     mockTokenService.consumeRunCall.mockResolvedValue(1);
+    mockTokenService.consumeRunDataCall.mockResolvedValue(1);
     mockTokenService.authorizeRunExecution.mockResolvedValue({
         execution_authorized_at: new Date().toISOString(), runs_started: 1, wall_ms_used: 0,
     });
@@ -146,6 +158,9 @@ beforeEach(() => {
         listEstimates: { results: [{ id: 31, status: 'approved' }], pagination: {} },
         getEstimate: { id: 31, status: 'approved', items: [], order_list: [] },
     })[handler]);
+    mockDataList.mockResolvedValue({ rows: [], pagination: { limit: 100, offset: 0, total: 0 } });
+    mockDataUpsert.mockResolvedValue({ upserted: 1 });
+    mockDataRemove.mockResolvedValue({ deleted: 1 });
 });
 
 describe('APP-GW-001 catalog, validation, authorization, masking, and audit', () => {
@@ -207,6 +222,70 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         }
         expect(mockReadExecute).not.toHaveBeenCalled();
         expect(mockAuditRecord).toHaveBeenCalledTimes(5);
+    });
+
+    test('Phase D data routes use only run-token context, reject tenant selectors, and consume a separate budget', async () => {
+        const app = buildApp();
+        const list = await request(app)
+            .post('/internal/app-runtime/v1/data/purchases/list')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ limit: 25, offset: 0 });
+        const upsert = await request(app)
+            .post('/internal/app-runtime/v1/data/purchases/upsert')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ rows: [{ estimate_id: 1, part_number: 'P-1' }] });
+        const removed = await request(app)
+            .post('/internal/app-runtime/v1/data/purchases/delete')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ keys: [{ estimate_id: 1, part_number: 'P-1' }] });
+        expect([list.status, upsert.status, removed.status]).toEqual([200, 200, 200]);
+        expect(mockDataList).toHaveBeenCalledWith(
+            context(),
+            'purchases',
+            { limit: 25, offset: 0 }
+        );
+        expect(mockDataUpsert).toHaveBeenCalledWith(
+            context(),
+            'purchases',
+            { rows: [{ estimate_id: 1, part_number: 'P-1' }] }
+        );
+        expect(mockDataRemove).toHaveBeenCalledWith(
+            context(),
+            'purchases',
+            { keys: [{ estimate_id: 1, part_number: 'P-1' }] }
+        );
+        expect(mockTokenService.consumeRunDataCall).toHaveBeenCalledTimes(3);
+        expect(mockTokenService.consumeRunCall).not.toHaveBeenCalled();
+
+        mockDataUpsert.mockImplementationOnce((_context, _collection, body) => {
+            const requestValidator = jest.requireActual(
+                '../backend/src/services/appRuntimeRequestValidator'
+            );
+            requestValidator.rejectTenantSelectors(body);
+        });
+        const selector = await request(app)
+            .post('/internal/app-runtime/v1/data/purchases/upsert')
+            .set('Authorization', 'Bearer valid-token')
+            .send({ rows: [{ company_id: COMPANY_ID, estimate_id: 1 }] });
+        expect(selector.status).toBe(400);
+        expect(selector.body.code).toBe('TENANT_SELECTOR_FORBIDDEN');
+    });
+
+    test('the eleventh Phase D call gets the precise independent data budget refusal', async () => {
+        mockTokenService.consumeRunDataCall.mockRejectedValueOnce(
+            new AppRuntimeError('DATA_CALL_LIMIT', 'Data call limit of 10 reached.', 429)
+        );
+        const response = await request(buildApp())
+            .post('/internal/app-runtime/v1/data/purchases/list')
+            .set('Authorization', 'Bearer valid-token')
+            .send({});
+        expect(response.status).toBe(429);
+        expect(response.body).toMatchObject({
+            code: 'DATA_CALL_LIMIT',
+            message: 'Data call limit of 10 reached.',
+        });
+        expect(mockDataList).not.toHaveBeenCalled();
+        expect(mockTokenService.consumeRunCall).not.toHaveBeenCalled();
     });
 
     test('SAB exact five read tools only: registered and URL-like out-of-scope names never dispatch', async () => {
@@ -452,6 +531,7 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         const metrics = {
             wall_ms: 37,
             gateway_calls: 2,
+            data_calls: 3,
             result_bytes: 18,
             error_code: null,
         };

@@ -57,6 +57,7 @@ function harness(overrides = {}) {
         generate: jest.fn().mockResolvedValue({
             source: SAFE_SOURCE,
             description: 'Counts open tasks.',
+            data_collections: [],
             model: 'builder-test-model',
             token_usage: { input_tokens: 20, output_tokens: 30, total_tokens: 50 },
         }),
@@ -68,12 +69,23 @@ function harness(overrides = {}) {
             tools: ['svc.list_tasks'],
             entry_point: 'run',
             returned_type: 'object',
-            usage: { wall_ms: 3, gateway_calls: 1, result_bytes: 11, error_code: null },
+            usage: {
+                wall_ms: 3,
+                gateway_calls: 1,
+                data_calls: 0,
+                result_bytes: 11,
+                error_code: null,
+            },
             fixtures_summary: {
                 companies: 1, contacts: 6, leads: 6, jobs: 6,
                 tasks: 8, invoices: 5, payments: 4,
             },
             result: { count: 6 },
+            data_ops: {
+                list: { calls: 0, rows: 0 },
+                upsert: { calls: 0, rows: 0 },
+                delete: { calls: 0, rows: 0 },
+            },
         }),
         ...overrides.dryRunner,
     };
@@ -106,6 +118,7 @@ describe('APP-BUILD-001 generation pipeline', () => {
         expect(dryRunner.validateAndDryRun).toHaveBeenCalledWith({
             source: SAFE_SOURCE,
             expectedSourceSha256: crypto.createHash('sha256').update(SAFE_SOURCE).digest('hex'),
+            dataCollections: [],
         });
         expect(repository.persistSuccess).toHaveBeenCalledWith(expect.objectContaining({
             companyId: COMPANY_ID,
@@ -121,8 +134,12 @@ describe('APP-BUILD-001 generation pipeline', () => {
                     usage: expect.objectContaining({ gateway_calls: 1 }),
                     fixtures_summary: expect.objectContaining({ jobs: 6, tasks: 8 }),
                     result: { count: 6 },
+                    data_ops: expect.objectContaining({
+                        upsert: { calls: 0, rows: 0 },
+                    }),
                 }),
             }),
+            dataCollections: [],
         }));
         expect(dryRunner.validateAndDryRun.mock.invocationCallOrder[0])
             .toBeLessThan(repository.persistSuccess.mock.invocationCallOrder[0]);

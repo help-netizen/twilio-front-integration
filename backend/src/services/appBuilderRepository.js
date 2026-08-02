@@ -4,6 +4,10 @@ const crypto = require('node:crypto');
 const db = require('../db/connection');
 const retentionPolicy = require('./appBuilderRetentionPolicy');
 const { validateCadence } = require('./appScheduleCadence');
+const {
+    validateDataCollectionEvolution,
+    validateDataCollections,
+} = require('./appDataCollectionValidator');
 
 class AppBuilderRepositoryError extends Error {
     constructor(code, message, httpStatus) {
@@ -111,6 +115,7 @@ async function listVersions(companyId, appId) {
     const { rows } = await db.query(
         `SELECT version.id, version.version_number, version.source_sha256,
                 version.scanner_report, version.suggested_schedule,
+                version.data_collections,
                 version.status, version.created_at,
                 COALESCE(
                     ARRAY_AGG(tool.tool_name ORDER BY tool.tool_name)
@@ -163,10 +168,11 @@ async function appendUserMessage(companyId, actorId, chatId, text) {
 async function getGenerationContext(companyId, chatId) {
     const chat = await db.query(
         `SELECT chat.id, chat.app_id, chat.title,
-                latest.source_code AS current_source
+                latest.source_code AS current_source,
+                latest.data_collections AS current_data_collections
          FROM app_build_chats chat
          LEFT JOIN LATERAL (
-             SELECT version.source_code
+             SELECT version.source_code, version.data_collections
              FROM app_versions version
              JOIN app_studio_apps owned
                ON owned.app_id = version.app_id
@@ -317,6 +323,7 @@ async function persistSuccess({
     sourceSha256,
     scannerReport,
     suggestedSchedule = null,
+    dataCollections = [],
     tools,
     description,
     model,
@@ -339,6 +346,7 @@ async function persistSuccess({
     const normalizedSuggestedSchedule = suggestedSchedule
         ? validateCadence(suggestedSchedule)
         : null;
+    let normalizedDataCollections = validateDataCollections(dataCollections);
     return withTransaction(async client => {
         const chatResult = await client.query(
             `SELECT id, app_id, title
@@ -396,6 +404,26 @@ async function persistSuccess({
             [companyId, appId]
         );
         if (!ownedApp.rows[0]) throw notFound();
+        const previousPublished = await client.query(
+            `SELECT version.data_collections
+             FROM app_versions version
+             JOIN app_studio_apps owned
+               ON owned.app_id = version.app_id
+              AND owned.company_id = $1
+             WHERE version.app_id = $2
+               AND version.status = 'published'
+             ORDER BY version.published_at DESC NULLS LAST,
+                      version.created_at DESC,
+                      version.id DESC
+             LIMIT 1`,
+            [companyId, appId]
+        );
+        if (previousPublished.rows[0]) {
+            normalizedDataCollections = validateDataCollectionEvolution(
+                previousPublished.rows[0].data_collections,
+                normalizedDataCollections
+            );
+        }
         const count = await client.query(
             `SELECT COUNT(*)::integer AS count
              FROM app_versions version
@@ -410,13 +438,15 @@ async function persistSuccess({
         const version = await client.query(
             `INSERT INTO app_versions
                 (app_id, version_number, source_code, source_sha256,
-                 scanner_report, suggested_schedule, status, created_by)
-             SELECT owned.app_id, $3, $4, $5, $6::jsonb, $7::jsonb, 'draft', $8
+                 scanner_report, suggested_schedule, data_collections, status, created_by)
+             SELECT owned.app_id, $3, $4, $5, $6::jsonb, $7::jsonb,
+                    $8::jsonb, 'draft', $9
              FROM app_studio_apps owned
              WHERE owned.company_id = $1
                AND owned.app_id = $2
              RETURNING id, app_id, version_number, source_sha256,
-                       scanner_report, suggested_schedule, status, created_at`,
+                       scanner_report, suggested_schedule, data_collections,
+                       status, created_at`,
             [
                 companyId,
                 appId,
@@ -427,6 +457,7 @@ async function persistSuccess({
                 normalizedSuggestedSchedule
                     ? JSON.stringify(normalizedSuggestedSchedule)
                     : null,
+                JSON.stringify(normalizedDataCollections),
                 actorId,
             ]
         );

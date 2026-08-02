@@ -15,6 +15,10 @@ const appVersionTransitionModule = require('../backend/src/services/appVersionTr
 
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const MASKING_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '208_call_masking.sql'), 'utf8');
+const ORDER_LIST_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '207_estimate_invoice_order_list.sql'),
+    'utf8'
+);
 const SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '220_app_runtime_gateway.sql'), 'utf8');
 const BUILDER_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '221_app_studio_builder.sql'), 'utf8');
 const GAP_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '222_app_studio_gap_fixes.sql'), 'utf8');
@@ -26,6 +30,7 @@ const EXECUTION_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_224_app_runtime_execution_authorization.sql'),
     'utf8'
 );
+const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '230_app_data_phase_d.sql'), 'utf8');
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
 const TOOLS = [
     'svc.list_jobs',
@@ -183,11 +188,13 @@ async function configureConsent(client, installationId, versionId) {
 }
 
 async function setupFixture(client) {
+    await client.query(ORDER_LIST_SCHEMA);
     await client.query(MASKING_SCHEMA);
     await client.query(SCHEMA);
     await client.query(BUILDER_SCHEMA);
     await client.query(GAP_SCHEMA);
     await client.query(EXECUTION_SCHEMA);
+    await client.query(DATA_SCHEMA);
     const companyA = await insertCompany(client, 'A');
     const companyB = await insertCompany(client, 'B');
     const humanA = await insertHuman(client, companyA, 'owner-a', 'manager');
@@ -229,12 +236,16 @@ async function setupFixture(client) {
             [version.rows[0].id, toolName]
         );
     }
-    await client.query(
-        `UPDATE app_versions
-         SET status = 'published', published_at = NOW()
-         WHERE id = $1 AND app_id = $2`,
-        [version.rows[0].id, app.rows[0].id]
-    );
+    await client.query(`SELECT set_config('app.version_transition_service', 'enabled', true)`);
+    for (const status of ['submitted', 'in_review', 'approved', 'published']) {
+        await client.query(
+            `UPDATE app_versions
+             SET status = $3,
+                 published_at = CASE WHEN $3 = 'published' THEN NOW() ELSE published_at END
+             WHERE id = $1 AND app_id = $2`,
+            [version.rows[0].id, app.rows[0].id, status]
+        );
+    }
     await configureConsent(client, installationA, version.rows[0].id);
     await configureConsent(client, installationB, version.rows[0].id);
 
@@ -546,7 +557,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                     id: fixture.ownedEstimateA,
                     items: [expect.objectContaining({
                         name: 'Dishwasher drain pump',
-                        quantity: '1.00',
+                        quantity: 1,
                         item_type: 'part',
                     })],
                     order_list: [{
@@ -774,6 +785,28 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 status: 'exhausted', gateway_calls_used: 5, gateway_call_limit: 5,
             });
 
+            const dataMetered = context;
+            const dataOutcomes = await Promise.allSettled(
+                Array.from({ length: 11 }, () => tokenService.consumeRunDataCall(dataMetered))
+            );
+            expect(dataOutcomes.filter(entry => entry.status === 'fulfilled'))
+                .toHaveLength(10);
+            expect(dataOutcomes.filter(entry => entry.status === 'rejected'))
+                .toHaveLength(1);
+            expect(dataOutcomes.find(entry => entry.status === 'rejected').reason)
+                .toMatchObject({
+                    code: 'DATA_CALL_LIMIT',
+                    message: 'Data call limit of 10 reached.',
+                    httpStatus: 429,
+                });
+            const dataStored = await client.query(
+                `SELECT data_calls_made
+                 FROM app_runs
+                 WHERE id = $1 AND company_id = $2`,
+                [dataMetered.run_id, fixture.companyA]
+            );
+            expect(dataStored.rows[0].data_calls_made).toBe(10);
+
             const completed = await createRunContext(client, fixture);
             await tokenService.recordRunCompletion({
                 installation_id: String(fixture.installationA),
@@ -783,6 +816,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
             }, {
                 wall_ms: 41,
                 gateway_calls: 0,
+                data_calls: 0,
                 result_bytes: 17,
                 error_code: null,
             });
@@ -870,12 +904,6 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                     params: () => [fixture.principalA.agent.id, fixture.companyA],
                 },
                 {
-                    name: 'version revoked',
-                    breakSql: `UPDATE app_versions SET status='revoked' WHERE id=$1 AND app_id=$2`,
-                    restoreSql: `UPDATE app_versions SET status='published' WHERE id=$1 AND app_id=$2`,
-                    params: () => [fixture.versionId, fixture.appId],
-                },
-                {
                     name: 'installation disconnected',
                     breakSql: `UPDATE marketplace_installations SET status='disconnected' WHERE id=$1 AND company_id=$2`,
                     restoreSql: `UPDATE marketplace_installations SET status='connected' WHERE id=$1 AND company_id=$2`,
@@ -911,6 +939,12 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                     restoreSql: `UPDATE marketplace_installations SET installed_by=$3 WHERE id=$1 AND company_id=$2`,
                     params: () => [fixture.installationA, fixture.companyA, fixture.humanA.id],
                 },
+                {
+                    name: 'version revoked',
+                    breakSql: `UPDATE app_versions SET status='revoked' WHERE id=$1 AND app_id=$2`,
+                    restoreSql: null,
+                    params: () => [fixture.versionId, fixture.appId],
+                },
             ];
 
             for (const killCase of killCases) {
@@ -927,7 +961,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                     exp: Math.floor(Date.now() / 1000) + 300,
                     nonce: live.nonce_for_test,
                 })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
-                await client.query(killCase.restoreSql, params);
+                if (killCase.restoreSql) await client.query(killCase.restoreSql, params);
             }
 
         } finally {
@@ -1000,6 +1034,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
             }, {
                 wall_ms: 29,
                 gateway_calls: 0,
+                data_calls: 0,
                 result_bytes: null,
                 error_code: 'APP_RUNTIME_SUSPENDED',
             });
@@ -1062,7 +1097,8 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 run_id: unstarted.run_id,
                 nonce: unstarted.nonce_for_test,
             }, {
-                wall_ms: 1, gateway_calls: 0, result_bytes: 4, error_code: null,
+                wall_ms: 1, gateway_calls: 0, data_calls: 0,
+                result_bytes: 4, error_code: null,
             })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
             await expect(tokenService.authorizeRunExecution(
                 unstarted,
@@ -1176,7 +1212,8 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 run_id: wallMetered.run_id,
                 nonce: wallMetered.nonce_for_test,
             }, {
-                wall_ms: 2, gateway_calls: 0, result_bytes: 4, error_code: null,
+                wall_ms: 2, gateway_calls: 0, data_calls: 0,
+                result_bytes: 4, error_code: null,
             });
             const wallSuspension = await client.query(
                 `SELECT control.suspension_reason, usage.runs_started, usage.wall_ms_used
@@ -1216,7 +1253,8 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 run_id: revoked.run_id,
                 nonce: revoked.nonce_for_test,
             }, {
-                wall_ms: 2, gateway_calls: 0, result_bytes: 4, error_code: null,
+                wall_ms: 2, gateway_calls: 0, data_calls: 0,
+                result_bytes: 4, error_code: null,
             })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
             expect(await client.query(
                 `SELECT status FROM app_runs WHERE id = $1 AND company_id = $2`,

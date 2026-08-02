@@ -3,6 +3,7 @@
 const { runApplication, sourceMatchesExpected } = require('./runner');
 const { AppRunnerError } = require('./errors');
 const { validateApplicationSource } = require('./builderValidator');
+const { createDryRunDataStore } = require('./dataCollections');
 const {
     DEFAULT_SANDBOX_SEED,
     SandboxFixtureError,
@@ -67,6 +68,7 @@ async function validateAndDryRun({
     fixtures,
     seed = DEFAULT_SANDBOX_SEED,
     anchor = null,
+    data_collections = [],
     signal,
 }) {
     if (typeof expectedSourceSha256 !== 'string'
@@ -84,12 +86,14 @@ async function validateAndDryRun({
         mismatch.usage = {
             wall_ms: 0,
             gateway_calls: 0,
+            data_calls: 0,
             result_bytes: null,
             error_code: mismatch.code,
         };
         throw mismatch;
     }
     const validation = await validateApplicationSource(source);
+    const dataStore = createDryRunDataStore(data_collections);
     const activeFixtures = fixtures === undefined
         ? generateSandboxFixtures(seed, anchor)
         : fixtures;
@@ -122,6 +126,7 @@ async function validateAndDryRun({
                 );
             },
             onUsage: value => { usage = value; },
+            dataHandler: dataStore.handle,
             signal,
         });
     } catch (error) {
@@ -138,6 +143,7 @@ async function validateAndDryRun({
         },
         usage,
         fixturesSummary: summarizeSandboxFixtures(activeFixtures),
+        dataOps: dataStore.report(),
     };
 }
 

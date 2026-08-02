@@ -41,6 +41,10 @@ const SCHEDULE_SCHEMA = fs.readFileSync(
     path.join(MIGRATIONS, '229_app_view_phase_b.sql'),
     'utf8'
 );
+const DATA_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '230_app_data_phase_d.sql'),
+    'utf8'
+);
 
 jest.setTimeout(60000);
 
@@ -306,6 +310,7 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
             await client.query(MODERATION_SCHEMA);
             await client.query(VIEW_SCHEMA);
             await client.query(SCHEDULE_SCHEMA);
+            await client.query(DATA_SCHEMA);
             const companyA = await insertCompany(client, 'A');
             const companyB = await insertCompany(client, 'B');
             const actorA = await insertAdmin(client, companyA, 'admin-a');

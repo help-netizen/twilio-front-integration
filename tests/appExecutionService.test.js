@@ -44,6 +44,7 @@ function completedRun(overrides = {}) {
         completed_at: '2026-08-01T12:00:00.010Z',
         duration_ms: 10,
         gateway_calls: 1,
+        data_calls: 0,
         result_bytes: 52,
         error_code: null,
         error_message: null,
@@ -96,6 +97,7 @@ function runnerResponse(result) {
             usage: {
                 wall_ms: 10,
                 gateway_calls: 1,
+                data_calls: 0,
                 result_bytes: resultBytes,
                 error_code: null,
             },
@@ -225,6 +227,7 @@ describe('APP-VIEW-001 execution core', () => {
                     completed_at: null,
                     duration_ms: null,
                     gateway_calls: 0,
+                    data_calls: 0,
                     result_bytes: null,
                     error_code: null,
                     error_message: null,

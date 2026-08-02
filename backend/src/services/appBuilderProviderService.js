@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateCadence } = require('./appScheduleCadence');
+const { validateDataCollections } = require('./appDataCollectionValidator');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -60,8 +61,18 @@ function parseGeneratedArtifact(raw) {
         throw new AppBuilderProviderError('Builder model returned invalid JSON', error);
     }
     if (!parsed || typeof parsed.source !== 'string' || !parsed.source.trim()
-        || typeof parsed.description !== 'string' || !parsed.description.trim()) {
+        || typeof parsed.description !== 'string' || !parsed.description.trim()
+        || !Object.prototype.hasOwnProperty.call(parsed, 'data_collections')) {
         throw new AppBuilderProviderError('Builder model returned an invalid artifact envelope');
+    }
+    let dataCollections;
+    try {
+        dataCollections = validateDataCollections(parsed.data_collections);
+    } catch (error) {
+        throw new AppBuilderProviderError(
+            `Builder model returned invalid data collections: ${error.message}`,
+            error
+        );
     }
     let suggestedSchedule = null;
     if (parsed.suggested_schedule !== undefined && parsed.suggested_schedule !== null) {
@@ -74,6 +85,7 @@ function parseGeneratedArtifact(raw) {
     const artifact = {
         source: parsed.source,
         description: parsed.description.trim().slice(0, 2000),
+        data_collections: dataCollections,
     };
     if (suggestedSchedule) artifact.suggested_schedule = suggestedSchedule;
     return artifact;
@@ -127,8 +139,38 @@ async function generate(prompt) {
                                     },
                                     required: ['kind'],
                                 },
+                                data_collections: {
+                                    type: 'ARRAY',
+                                    maxItems: 4,
+                                    items: {
+                                        type: 'OBJECT',
+                                        properties: {
+                                            name: { type: 'STRING' },
+                                            key_fields: {
+                                                type: 'ARRAY',
+                                                minItems: 1,
+                                                maxItems: 4,
+                                                items: { type: 'STRING' },
+                                            },
+                                            columns: {
+                                                type: 'ARRAY',
+                                                minItems: 1,
+                                                maxItems: 20,
+                                                items: {
+                                                    type: 'OBJECT',
+                                                    properties: {
+                                                        key: { type: 'STRING' },
+                                                        type: { type: 'STRING' },
+                                                    },
+                                                    required: ['key', 'type'],
+                                                },
+                                            },
+                                        },
+                                        required: ['name', 'key_fields', 'columns'],
+                                    },
+                                },
                             },
-                            required: ['source', 'description'],
+                            required: ['source', 'description', 'data_collections'],
                         },
                     },
                 }),

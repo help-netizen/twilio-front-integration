@@ -248,6 +248,7 @@ async function findPublishedRuntimeVersion(appId, client = null) {
     const { rows } = await runner.query(
         `SELECT version.id,
                 version.suggested_schedule,
+                version.data_collections,
                 COALESCE(
                     ARRAY(
                         SELECT tool.tool_name FROM app_version_tools tool

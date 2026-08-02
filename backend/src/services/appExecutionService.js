@@ -150,10 +150,12 @@ function normalizedUsage(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const wallMs = value.wall_ms;
     const gatewayCalls = value.gateway_calls;
+    const dataCalls = value.data_calls;
     const resultBytes = value.result_bytes;
     const errorCode = value.error_code;
     if (!Number.isInteger(wallMs) || wallMs < 0 || wallMs > 24 * 60 * 60 * 1000
         || !Number.isInteger(gatewayCalls) || gatewayCalls < 0 || gatewayCalls > 5
+        || !Number.isInteger(dataCalls) || dataCalls < 0 || dataCalls > 10
         || (resultBytes !== null && (!Number.isInteger(resultBytes) || resultBytes < 0))
         || (errorCode !== null && safeErrorCode(errorCode, null) === null)) {
         return null;
@@ -161,6 +163,7 @@ function normalizedUsage(value) {
     return {
         wall_ms: wallMs,
         gateway_calls: gatewayCalls,
+        data_calls: dataCalls,
         result_bytes: resultBytes,
         error_code: errorCode,
     };
@@ -250,6 +253,7 @@ function runSummary(row) {
         gateway_calls: row.gateway_calls === undefined
             ? row.gateway_calls_made
             : row.gateway_calls,
+        data_calls: Number(row.data_calls === undefined ? row.data_calls_made || 0 : row.data_calls),
         result_bytes: row.result_bytes,
         error_code: row.error_code,
         error_message: row.error_message,
@@ -388,6 +392,7 @@ function createAppExecutionService({
                 `SELECT id AS run_id, status, issued_at AS started_at,
                         completed_at, wall_ms AS duration_ms,
                         COALESCE(gateway_calls_made, gateway_calls_used) AS gateway_calls,
+                        data_calls_made AS data_calls,
                         result_bytes, error_code, error_message, false AS has_result
                  FROM app_runs
                  WHERE company_id = $1
@@ -462,6 +467,7 @@ function createAppExecutionService({
                 `SELECT id AS run_id, status, issued_at AS started_at,
                         completed_at, wall_ms AS duration_ms,
                         COALESCE(gateway_calls_made, gateway_calls_used) AS gateway_calls,
+                        data_calls_made AS data_calls,
                         result_bytes, error_code, error_message
                  FROM app_runs
                  WHERE company_id = $1
@@ -571,6 +577,7 @@ function createAppExecutionService({
                         run.issued_at AS started_at, run.completed_at,
                         run.wall_ms AS duration_ms,
                         COALESCE(run.gateway_calls_made, run.gateway_calls_used) AS gateway_calls,
+                        run.data_calls_made AS data_calls,
                         run.result_bytes, run.error_code, run.error_message,
                         (result.run_id IS NOT NULL) AS has_result
                  FROM app_runs run
@@ -598,6 +605,7 @@ function createAppExecutionService({
                         run.issued_at AS started_at, run.completed_at,
                         run.wall_ms AS duration_ms,
                         COALESCE(run.gateway_calls_made, run.gateway_calls_used) AS gateway_calls,
+                        run.data_calls_made AS data_calls,
                         run.result_bytes, run.error_code, run.error_message,
                         (result.run_id IS NOT NULL) AS has_result,
                         result.view_document
@@ -631,6 +639,7 @@ function createAppExecutionService({
                         run.issued_at AS started_at, run.completed_at,
                         run.wall_ms AS duration_ms,
                         COALESCE(run.gateway_calls_made, run.gateway_calls_used) AS gateway_calls,
+                        run.data_calls_made AS data_calls,
                         run.result_bytes, run.error_code, run.error_message,
                         true AS has_result, result.view_document
                  FROM marketplace_installations installation

@@ -44,5 +44,20 @@ describe('APP-GAP-FIX-001 persistence attestation boundary', () => {
         expect(mockGetClient).not.toHaveBeenCalled();
         expect(mockQuery).not.toHaveBeenCalled();
     });
-});
 
+    test('Phase D invalid data declarations are rejected before a version transaction starts', async () => {
+        await expect(repository.persistSuccess({
+            ...BASE,
+            scannerReport: { dry_run: { ok: true } },
+            dataCollections: Array.from({ length: 5 }, (_, index) => ({
+                name: `collection_${index}`,
+                key_fields: ['id'],
+                columns: [{ key: 'id', type: 'number' }],
+            })),
+        })).rejects.toMatchObject({
+            code: 'DATA_COLLECTIONS_INVALID',
+            httpStatus: 422,
+        });
+        expect(mockGetClient).not.toHaveBeenCalled();
+    });
+});

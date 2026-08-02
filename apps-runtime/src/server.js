@@ -68,7 +68,10 @@ async function readJsonBody(req) {
 function validEnvelope(body, endpoint) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
     const allowedKeys = endpoint === 'dry-run'
-        ? new Set(['source', 'expectedSourceSha256', 'input', 'fixtures', 'seed', 'anchor'])
+        ? new Set([
+            'source', 'expectedSourceSha256', 'input', 'fixtures', 'seed', 'anchor',
+            'data_collections',
+        ])
         : new Set(['source', 'expectedSourceSha256', 'runToken', 'input']);
     if (Object.keys(body).some(key => !allowedKeys.has(key))) return false;
     if (typeof body.source !== 'string' || body.source.length === 0) return false;
@@ -83,7 +86,10 @@ function validEnvelope(body, endpoint) {
             || ((typeof body.seed === 'string' || Number.isSafeInteger(body.seed))
                 && String(body.seed).length > 0
                 && String(body.seed).length <= 128);
-        return fixturesValid && seedValid && Object.prototype.hasOwnProperty.call(body, 'input');
+        return fixturesValid
+            && seedValid
+            && Array.isArray(body.data_collections)
+            && Object.prototype.hasOwnProperty.call(body, 'input');
     }
     return typeof body.runToken === 'string' && body.runToken.length > 0
         && Object.prototype.hasOwnProperty.call(body, 'input');
@@ -93,6 +99,7 @@ function usageFor(error, startedAt) {
     return error?.usage || {
         wall_ms: Date.now() - startedAt,
         gateway_calls: 0,
+        data_calls: 0,
         result_bytes: null,
         error_code: error?.code || 'APP_RUNTIME_EXECUTION_FAILED',
     };
@@ -168,6 +175,8 @@ function createRequestHandler({
                         input: body.input,
                         fixtures: body.fixtures,
                         seed: body.seed,
+                        anchor: body.anchor,
+                        data_collections: body.data_collections,
                         signal,
                     });
                 }
@@ -202,6 +211,7 @@ function createRequestHandler({
                 validation: execution.validation,
                 usage: execution.usage || usageFor(null, startedAt),
                 fixtures_summary: execution.fixturesSummary,
+                data_ops: execution.dataOps,
             });
         } catch (error) {
             writeJson(res, responseStatus(error), {

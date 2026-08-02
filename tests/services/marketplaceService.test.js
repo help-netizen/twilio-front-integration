@@ -305,6 +305,10 @@ describe('marketplaceService', () => {
         expect(queries.markDisconnected).toHaveBeenCalledWith(expect.objectContaining({
             companyId: 'company-1', installationId: 1950, status: 'disconnected',
         }), mockClient);
+        expect(mockClient.query).toHaveBeenCalledWith(
+            expect.stringContaining('DELETE FROM app_data_rows'),
+            ['company-1', 1950]
+        );
         expect(result.status).toBe('disconnected');
     });
 

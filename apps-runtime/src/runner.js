@@ -11,6 +11,7 @@ const NS_PER_MS = 1000000n;
 const BOOTSTRAP_SOURCE = String.raw`
 'use strict';
 const hostCallTool = $0;
+const hostData = $1;
 const capabilityFailure = name => {
     const error = new Error('APP_RUNTIME_CAPABILITY_DISABLED: ' + name);
     Object.defineProperties(error, {
@@ -82,8 +83,34 @@ const callTool = async function callTool(name, args = {}) {
     return envelope.data;
 };
 Object.freeze(callTool);
+const callData = async function callData(operation, collection, payload) {
+    const envelope = await hostData.apply(undefined, [operation, collection, payload], {
+        arguments: { copy: true },
+        result: { promise: true, copy: true },
+    });
+    if (!envelope || envelope.ok !== true) {
+        const failure = envelope && envelope.error ? envelope.error : {};
+        throw new GatewayError(
+            typeof failure.code === 'string' ? failure.code : 'APP_RUNTIME_GATEWAY_ERROR',
+            typeof failure.message === 'string' ? failure.message : 'Gateway data call failed.',
+            Number.isInteger(failure.status) ? failure.status : 502
+        );
+    }
+    return envelope.data;
+};
+const data = Object.freeze({
+    list: Object.freeze(async function list(collection, options = {}) {
+        return callData('list', collection, options);
+    }),
+    upsert: Object.freeze(async function upsert(collection, rows) {
+        return callData('upsert', collection, rows);
+    }),
+    delete: Object.freeze(async function remove(collection, keys) {
+        return callData('delete', collection, keys);
+    }),
+});
 Object.defineProperty(globalThis, 'albusto', {
-    value: Object.freeze({ callTool }),
+    value: Object.freeze({ callTool, data }),
     writable: false,
     enumerable: true,
     configurable: false,
@@ -152,7 +179,7 @@ const utf8Length = value => {
 
 return async function invoke(inputJson, maxOutputBytes) {
     const input = deepFreeze(JSON.parse(inputJson));
-    const ctx = Object.freeze({ callTool: albusto.callTool, input });
+    const ctx = Object.freeze({ callTool: albusto.callTool, data: albusto.data, input });
     const value = await namespace.run(ctx);
     const outputJson = JSON.stringify(value);
     if (outputJson === undefined) {
@@ -251,6 +278,7 @@ async function runApplication({
     runToken,
     fetchImpl,
     executionMode = 'live',
+    dataHandler,
     onUsage,
     signal,
 }) {
@@ -292,6 +320,15 @@ async function runApplication({
         runToken,
         fetchImpl,
     });
+    const sandboxDataHandler = typeof dataHandler === 'function'
+        ? dataHandler
+        : async () => {
+            throw new GatewayError(
+                'APP_DATA_INVALID',
+                'No data collections are declared by the dry-run artifact.',
+                422
+            );
+        };
     if (!sourceMatchesExpected(source, expectedSourceSha256)) {
         const mismatch = new AppRunnerError(
             'APP_RUNTIME_SOURCE_MISMATCH',
@@ -300,6 +337,7 @@ async function runApplication({
         const usage = {
             wall_ms: Date.now() - startedAt,
             gateway_calls: 0,
+            data_calls: 0,
             result_bytes: null,
             error_code: mismatch.code,
         };
@@ -313,6 +351,7 @@ async function runApplication({
             const usage = {
                 wall_ms: Date.now() - startedAt,
                 gateway_calls: 0,
+                data_calls: 0,
                 result_bytes: null,
                 error_code: error?.code || 'APP_RUNTIME_AUTHORIZATION_FAILED',
             };
@@ -323,6 +362,7 @@ async function runApplication({
     const isolate = new ivm.Isolate({ memoryLimit: LIMITS.memoryMb });
     const controllers = new Set();
     let gatewayCalls = 0;
+    let dataCalls = 0;
     let terminationError = null;
     let applicationCpuBaseline = null;
     let resultBytes = null;
@@ -400,7 +440,67 @@ async function runApplication({
             }
         });
 
-        await context.evalClosure(BOOTSTRAP_SOURCE, [callback], {
+        const dataCallback = new ivm.Reference(async (operation, collection, payload) => {
+            if (applicationCpuBaseline !== null
+                && isolate.cpuTime - applicationCpuBaseline
+                    >= BigInt(LIMITS.cpuTimeoutMs) * NS_PER_MS) {
+                terminate(new AppRunnerError(
+                    'APP_RUNTIME_CPU_LIMIT',
+                    'Application exceeded the CPU limit.'
+                ));
+                return { ok: false };
+            }
+            if (dataCalls >= LIMITS.dataCallLimit) {
+                return {
+                    ok: false,
+                    error: {
+                        code: 'DATA_CALL_LIMIT',
+                        message: 'Data call limit of 10 reached.',
+                        status: 429,
+                    },
+                };
+            }
+            dataCalls += 1;
+            const controller = new AbortController();
+            controllers.add(controller);
+            try {
+                const value = executionMode === 'sandbox'
+                    ? await sandboxDataHandler(operation, collection, payload)
+                    : await gateway.callData(operation, collection, payload, controller.signal);
+                if (containsSecret(value, runToken)) {
+                    terminate(new AppRunnerError(
+                        'APP_RUNTIME_TOKEN_EXPOSURE_BLOCKED',
+                        'Gateway response was blocked by secret hygiene.'
+                    ));
+                    return { ok: false };
+                }
+                return { ok: true, data: value };
+            } catch (error) {
+                if (error instanceof AppRunnerError) {
+                    terminate(error);
+                    return { ok: false };
+                }
+                const failure = error instanceof GatewayError
+                    ? error
+                    : new GatewayError(
+                        'APP_RUNTIME_GATEWAY_UNAVAILABLE',
+                        'Gateway data call failed.',
+                        502
+                    );
+                return {
+                    ok: false,
+                    error: {
+                        code: failure.code,
+                        message: failure.message,
+                        status: failure.httpStatus,
+                    },
+                };
+            } finally {
+                controllers.delete(controller);
+            }
+        });
+
+        await context.evalClosure(BOOTSTRAP_SOURCE, [callback, dataCallback], {
             timeout: LIMITS.cpuTimeoutMs,
         });
 
@@ -466,6 +566,7 @@ async function runApplication({
         const usage = {
             wall_ms: Date.now() - startedAt,
             gateway_calls: gatewayCalls,
+            data_calls: dataCalls,
             result_bytes: resultBytes,
             error_code: completionErrorCode,
         };

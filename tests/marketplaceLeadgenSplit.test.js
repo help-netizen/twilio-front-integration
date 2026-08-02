@@ -12,6 +12,7 @@ jest.mock('../backend/src/db/marketplaceQueries', () => ({
     findActiveInstallation: jest.fn(),
     listInstallations: jest.fn(),
     getInstallationById: jest.fn(),
+    findPublishedRuntimeVersion: jest.fn(),
     createInstallation: jest.fn(),
     updateInstallationCredential: jest.fn(),
     revokeCredentialById: jest.fn(),

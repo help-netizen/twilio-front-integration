@@ -1564,6 +1564,12 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
             actorId,
             status: !installation.api_integration_id || revoked || otherActive > 0 ? 'disconnected' : 'revoked',
         }, client);
+        await client.query(
+            `DELETE FROM app_data_rows
+             WHERE company_id = $1
+               AND installation_id = $2`,
+            [companyId, installationId]
+        );
 
         await marketplaceQueries.writeEvent({
             companyId,

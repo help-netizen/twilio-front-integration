@@ -12,6 +12,8 @@ const gatewayService = require('../services/appRuntimeGatewayService');
 const { AppRuntimeError, appRuntimeError } = require('../services/appRuntimeErrors');
 
 const router = express.Router();
+const runtimeJson = express.json({ limit: 32 * 1024, strict: true });
+const dataJson = express.json({ limit: 1024 * 1024, strict: true });
 
 router.use((req, res, next) => {
     requestId(req);
@@ -19,7 +21,6 @@ router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
 });
-router.use(express.json({ limit: 32 * 1024, strict: true }));
 
 function sendFailure(req, res, error) {
     const failure = error instanceof AppRuntimeError
@@ -80,6 +81,7 @@ function validateAuthorizationTransport(req, res, next) {
 // tenant-safety-allow R-route-permission: live token, consent, and delegated RBAC are re-resolved before the exact DB-pinned artifact receives one execution slot
 router.post(
     '/v1/runs/authorize',
+    runtimeJson,
     validateAuthorizationTransport,
     authenticateAppRuntime,
     async (req, res) => {
@@ -95,6 +97,7 @@ router.post(
 // tenant-safety-allow R-route-permission: signed run-token identity can only finalize its exact DB-bound run tuple
 router.post(
     '/v1/runs/complete',
+    runtimeJson,
     validateCompletionTransport,
     authenticateAppRuntimeClaims,
     async (req, res) => {
@@ -107,8 +110,71 @@ router.post(
     }
 );
 
+// tenant-safety-allow R-route-permission: run-token binding supplies the only company and installation selectors for declared data listing
+router.post(
+    '/v1/data/:collection/list',
+    dataJson,
+    validateTransport,
+    authenticateAppRuntime,
+    async (req, res) => {
+        try {
+            const data = await gatewayService.executeData(
+                req,
+                'list',
+                req.params.collection,
+                req.body
+            );
+            return res.json({ ok: true, data, request_id: req.requestId });
+        } catch (error) {
+            return sendFailure(req, res, error);
+        }
+    }
+);
+
+// tenant-safety-allow R-route-permission: run-token binding supplies the only company and installation selectors for schema-validated data upserts
+router.post(
+    '/v1/data/:collection/upsert',
+    dataJson,
+    validateTransport,
+    authenticateAppRuntime,
+    async (req, res) => {
+        try {
+            const data = await gatewayService.executeData(
+                req,
+                'upsert',
+                req.params.collection,
+                req.body
+            );
+            return res.json({ ok: true, data, request_id: req.requestId });
+        } catch (error) {
+            return sendFailure(req, res, error);
+        }
+    }
+);
+
+// tenant-safety-allow R-route-permission: run-token binding supplies the only company and installation selectors for server-keyed data deletion
+router.post(
+    '/v1/data/:collection/delete',
+    dataJson,
+    validateTransport,
+    authenticateAppRuntime,
+    async (req, res) => {
+        try {
+            const data = await gatewayService.executeData(
+                req,
+                'delete',
+                req.params.collection,
+                req.body
+            );
+            return res.json({ ok: true, data, request_id: req.requestId });
+        } catch (error) {
+            return sendFailure(req, res, error);
+        }
+    }
+);
+
 // tenant-safety-allow R-route-permission: short-lived run-token auth plus live delegated permission checks gate every allowlisted tool call
-router.post('/v1/tools/:toolName', validateTransport, authenticateAppRuntime, async (req, res) => {
+router.post('/v1/tools/:toolName', runtimeJson, validateTransport, authenticateAppRuntime, async (req, res) => {
     try {
         const data = await gatewayService.execute(req, req.params.toolName, req.body);
         return res.json({

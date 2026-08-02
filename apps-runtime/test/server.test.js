@@ -12,6 +12,7 @@ const DRY_RUN_BODY = {
     expectedSourceSha256: sourceSha256(SOURCE),
     input: { today: '2026-07-31' },
     seed: 'server-test-seed',
+    data_collections: [],
 };
 
 const servers = [];
@@ -51,6 +52,11 @@ describe('APP-SVC-001 runner HTTP service', () => {
             result: { today: '2026-07-31' },
             validation: { entry_point: 'run', returned_type: 'object' },
             usage: { gateway_calls: 0, error_code: null },
+            data_ops: {
+                list: { calls: 0, rows: 0 },
+                upsert: { calls: 0, rows: 0 },
+                delete: { calls: 0, rows: 0 },
+            },
             fixtures_summary: {
                 companies: 1,
                 contacts: dataset.customers.length,
@@ -160,7 +166,13 @@ describe('APP-SVC-001 runner HTTP service', () => {
 
     test('run endpoint passes the run token only to the real CRM gateway bridge', async () => {
         const runApplicationImpl = jest.fn().mockImplementation(async options => {
-            options.onUsage({ wall_ms: 1, gateway_calls: 0, result_bytes: 11, error_code: null });
+            options.onUsage({
+                wall_ms: 1,
+                gateway_calls: 0,
+                data_calls: 0,
+                result_bytes: 11,
+                error_code: null,
+            });
             return { ok: 'ran' };
         });
         const baseUrl = await startServer({
@@ -188,8 +200,19 @@ describe('APP-SVC-001 runner HTTP service', () => {
         const dryRunImpl = jest.fn().mockResolvedValue({
             result: null,
             validation: { source_bytes: 1, tools: [], entry_point: 'run', returned_type: 'null' },
-            usage: { wall_ms: 1, gateway_calls: 0, result_bytes: 4, error_code: null },
+            usage: {
+                wall_ms: 1,
+                gateway_calls: 0,
+                data_calls: 0,
+                result_bytes: 4,
+                error_code: null,
+            },
             fixturesSummary: {},
+            dataOps: {
+                list: { calls: 0, rows: 0 },
+                upsert: { calls: 0, rows: 0 },
+                delete: { calls: 0, rows: 0 },
+            },
         });
         const runApplicationImpl = jest.fn();
         const baseUrl = await startServer({ dryRunImpl, runApplicationImpl });

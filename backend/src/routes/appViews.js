@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { authenticate, requireCompanyAccess } = require('../middleware/keycloakAuth');
 const appExecutionService = require('../services/appExecutionService');
+const appDataService = require('../services/appDataService');
 const appScheduleService = require('../services/appScheduleService');
 const { AppRuntimeError } = require('../services/appRuntimeErrors');
 
@@ -59,6 +60,40 @@ function routeInput(req) {
     }
     return { ...context, installationId: req.params.id };
 }
+
+function optionalQueryInteger(value, name, { min, max = Number.MAX_SAFE_INTEGER }) {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+        throw new AppRuntimeError('INVALID_REQUEST', `${name} must be an integer.`, 400);
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+        throw new AppRuntimeError('INVALID_REQUEST', `${name} is outside the allowed range.`, 400);
+    }
+    return parsed;
+}
+
+// tenant-safety-allow R-route-permission: Phase A viewer gates run live before the company/installation/collection partition is listed
+router.get('/installations/:id/data/:collection', async (req, res) => {
+    try {
+        if (Object.keys(req.query || {}).some(key => !['limit', 'offset'].includes(key))) {
+            throw new AppRuntimeError(
+                'INVALID_REQUEST',
+                'Only limit and offset query parameters are accepted.',
+                400
+            );
+        }
+        const result = await appDataService.listForViewer({
+            ...routeInput(req),
+            collection: req.params.collection,
+            limit: optionalQueryInteger(req.query.limit, 'limit', { min: 1, max: 500 }),
+            offset: optionalQueryInteger(req.query.offset, 'offset', { min: 0 }),
+        });
+        return res.json({ ok: true, ...result, request_id: req.requestId });
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+});
 
 // tenant-safety-allow R-route-permission: the service re-resolves the viewer's live declared business permissions before claiming the tenant-bound installation
 router.post('/installations/:id/runs', async (req, res) => {

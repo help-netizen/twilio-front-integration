@@ -2,6 +2,10 @@
 
 const db = require('../db/connection');
 const { scrubSecrets } = require('./appBuilderSecretScrubber');
+const {
+    validateDataCollectionEvolution,
+    validateDataCollections,
+} = require('./appDataCollectionValidator');
 
 const ALLOWED_TRANSITIONS = Object.freeze({
     draft: Object.freeze(['submitted']),
@@ -68,6 +72,7 @@ function versionResponse(version) {
         source_sha256: version.source_sha256,
         scanner_report: version.scanner_report,
         suggested_schedule: version.suggested_schedule || null,
+        data_collections: version.data_collections || [],
         status: version.status,
         created_at: version.created_at,
         updated_at: version.updated_at,
@@ -113,6 +118,8 @@ function createAppVersionTransitionService({
                     version.source_code, version.source_sha256,
                     version.scanner_report, version.status,
                     to_jsonb(version)->'suggested_schedule' AS suggested_schedule,
+                    COALESCE(to_jsonb(version)->'data_collections', '[]'::jsonb)
+                        AS data_collections,
                     version.created_by, version.created_at,
                     version.updated_at,
                     (to_jsonb(version)->>'submitted_at')::timestamptz AS submitted_at,
@@ -165,6 +172,31 @@ function createAppVersionTransitionService({
             ]
         );
         if (rows.length !== 1) throw new Error('App version transition audit insert failed');
+    }
+
+    async function validateSubmissionDataCollections(client, version) {
+        const normalized = validateDataCollections(version.data_collections || []);
+        const previous = await client.query(
+            `SELECT prior.data_collections
+             FROM app_versions prior
+             JOIN app_studio_apps owned
+               ON owned.app_id = prior.app_id
+              AND owned.company_id = $1
+             WHERE prior.app_id = $2
+               AND prior.id <> $3
+               AND prior.status = 'published'
+             ORDER BY prior.published_at DESC NULLS LAST,
+                      prior.created_at DESC,
+                      prior.id DESC
+             LIMIT 1`,
+            [version.company_id, version.app_id, version.id]
+        );
+        if (previous.rows[0]) {
+            validateDataCollectionEvolution(
+                previous.rows[0].data_collections,
+                normalized
+            );
+        }
     }
 
     async function updateStatus(client, version, toStatus, actorId, reason) {
@@ -293,6 +325,9 @@ function createAppVersionTransitionService({
             if (!ALLOWED_TRANSITIONS[version.status]?.includes(toStatus)) {
                 throw conflict(version.status, toStatus);
             }
+            if (toStatus === 'submitted') {
+                await validateSubmissionDataCollections(client, version);
+            }
             const rejectionReason = toStatus === 'rejected' ? cleanReason(reason) : null;
             const updated = await updateStatus(
                 client,
@@ -342,8 +377,9 @@ function createAppVersionTransitionService({
             const fork = await client.query(
                 `INSERT INTO app_versions
                     (app_id, version_number, source_code, source_sha256,
-                     scanner_report, suggested_schedule, status, created_by)
-                 SELECT owned.app_id, $3, $4, $5, $6::jsonb, $7::jsonb, 'draft', $8
+                     scanner_report, suggested_schedule, data_collections, status, created_by)
+                 SELECT owned.app_id, $3, $4, $5, $6::jsonb, $7::jsonb,
+                        $8::jsonb, 'draft', $9
                  FROM app_studio_apps owned
                  WHERE owned.company_id = $1
                    AND owned.app_id = $2
@@ -358,6 +394,7 @@ function createAppVersionTransitionService({
                     source.suggested_schedule
                         ? JSON.stringify(source.suggested_schedule)
                         : null,
+                    JSON.stringify(source.data_collections || []),
                     actorId,
                 ]
             );
