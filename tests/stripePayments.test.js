@@ -8,6 +8,8 @@ const crypto = require('crypto');
 
 // Mock all DB / service dependencies so the service can be unit-tested in isolation.
 jest.mock('../backend/src/db/stripePaymentsQueries');
+jest.mock('../backend/src/db/stripeSavedCardsQueries');
+jest.mock('../backend/src/db/jobFinanceQueries');
 jest.mock('../backend/src/db/paymentsQueries');
 jest.mock('../backend/src/services/paymentsService');
 jest.mock('../backend/src/services/invoicesService');
@@ -48,11 +50,15 @@ jest.mock('../backend/src/services/financialActivityService', () => ({
 }));
 
 const mockAddNote = jest.fn();
+const mockGetJobById = jest.fn();
 jest.mock('../backend/src/services/jobsService', () => ({
     addNote: (...a) => mockAddNote(...a),
+    getJobById: (...a) => mockGetJobById(...a),
 }));
 
 const q = require('../backend/src/db/stripePaymentsQueries');
+const savedCardsQueries = require('../backend/src/db/stripeSavedCardsQueries');
+const jobFinanceQueries = require('../backend/src/db/jobFinanceQueries');
 const paymentsQueries = require('../backend/src/db/paymentsQueries');
 const paymentsService = require('../backend/src/services/paymentsService');
 const invoicesService = require('../backend/src/services/invoicesService');
@@ -72,6 +78,19 @@ beforeEach(() => {
     mockTransactionClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
     eventBus.emit.mockResolvedValue(null);
+    provider.createCustomer = jest.fn().mockResolvedValue({ id: 'cus_contact_5' });
+    savedCardsQueries.lockContact.mockResolvedValue(undefined);
+    savedCardsQueries.getContactCustomer.mockResolvedValue(null);
+    savedCardsQueries.upsertContactCustomer.mockResolvedValue({
+        id: 31,
+        company_id: COMPANY,
+        contact_id: 5,
+        stripe_account_id: ACCT,
+        stripe_customer_id: 'cus_contact_5',
+    });
+    savedCardsQueries.upsertSavedCard.mockResolvedValue({ id: 41 });
+    jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 95 }]);
+    mockGetJobById.mockResolvedValue({ id: 7, contact_id: 5 });
     paymentsQueries.findByExternalSourceId.mockResolvedValue(null);
     paymentsQueries.createTransaction.mockImplementation(async (companyId, data) => ({
         id: 909,
@@ -907,6 +926,66 @@ describe('manual-card server confirmation (CARDFRAME-001 P2a)', () => {
         expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
         expect(q.updateSession).not.toHaveBeenCalled();
     });
+
+    it('provider scope: confirm/finalize/result require the provider-owned session on an assigned job', async () => {
+        const providerAccess = {
+            actorId: 'provider-1',
+            providerLimited: true,
+            providerScope: { assignedOnly: true, userId: 'provider-1' },
+        };
+        q.getSessionById.mockResolvedValue({
+            ...merchantSession,
+            created_by: 'provider-1',
+            job_id: 7,
+        });
+        mockGetJobById.mockResolvedValue({ id: 7, contact_id: 5 });
+        provider.confirmPaymentIntent.mockResolvedValue({
+            status: 'requires_action',
+            client_secret: 'pi_action_secret',
+        });
+        provider.retrievePaymentIntent.mockResolvedValue({
+            status: 'requires_action',
+            client_secret: 'pi_action_secret',
+            amount: 9500,
+            payment_method: null,
+        });
+
+        await expect(svc.confirmManualCardSession(
+            COMPANY, 11, 'pm_card_11', providerAccess
+        )).resolves.toMatchObject({ status: 'requires_action' });
+        await expect(svc.finalizeManualCardSession(COMPANY, 11, providerAccess))
+            .resolves.toMatchObject({ status: 'requires_action' });
+        await expect(svc.getManualCardSessionResult(COMPANY, 11, providerAccess))
+            .resolves.toMatchObject({ status: 'requires_action' });
+
+        expect(mockGetJobById).toHaveBeenCalledWith(
+            7,
+            COMPANY,
+            providerAccess.providerScope
+        );
+    });
+
+    it.each([
+        ['another provider session', { actorId: 'provider-2' }, { id: 7 }],
+        ['an unassigned job', { actorId: 'provider-1' }, null],
+    ])('provider scope: rejects %s before Stripe mutation', async (_label, accessPatch, scopedJob) => {
+        q.getSessionById.mockResolvedValue({
+            ...merchantSession,
+            created_by: 'provider-1',
+            job_id: 7,
+        });
+        mockGetJobById.mockResolvedValue(scopedJob);
+        const access = {
+            actorId: accessPatch.actorId,
+            providerLimited: true,
+            providerScope: { assignedOnly: true, userId: accessPatch.actorId },
+        };
+
+        await expect(svc.confirmManualCardSession(
+            COMPANY, 11, 'pm_card_11', access
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(provider.confirmPaymentIntent).not.toHaveBeenCalled();
+    });
 });
 
 describe('sendManualCardReceipt', () => {
@@ -985,6 +1064,202 @@ describe('sendManualCardReceipt', () => {
             .rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
         expect(paymentsQueries.findByExternalSourceId).not.toHaveBeenCalled();
         expect(paymentsService.emailTransactionReceipt).not.toHaveBeenCalled();
+    });
+});
+
+describe('CARD-ON-FILE-001 saved-card charge', () => {
+    const readyAccount = {
+        company_id: COMPANY,
+        stripe_account_id: ACCT,
+        details_submitted: true,
+        charges_enabled: true,
+        payouts_enabled: true,
+        capabilities: { card_payments: 'active' },
+        status: 'connected_ready',
+    };
+    const actor = { id: '22222222-2222-4222-8222-222222222222' };
+    const requestKey = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const savedCard = {
+        id: 41,
+        company_id: COMPANY,
+        contact_id: 5,
+        stripe_account_id: ACCT,
+        stripe_customer_id: 'cus_contact_5',
+        stripe_payment_method_id: 'pm_saved_41',
+        brand: 'visa',
+        last4: '4242',
+    };
+
+    function primeCharge() {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        q.getSessionByRequestKey.mockResolvedValue(null);
+        q.insertSession.mockResolvedValue({
+            id: 71,
+            company_id: COMPANY,
+            job_id: 7,
+            contact_id: 5,
+            created_by: actor.id,
+            surface: 'saved_card',
+            amount: 95,
+            currency: 'USD',
+            status: 'open',
+            metadata: { saved_card_id: 41 },
+        });
+        savedCardsQueries.getUsableCard.mockResolvedValue(savedCard);
+        savedCardsQueries.getContactCustomer.mockResolvedValue({
+            id: 31,
+            stripe_account_id: ACCT,
+            stripe_customer_id: 'cus_contact_5',
+        });
+        provider.retrievePaymentMethod = jest.fn().mockResolvedValue({
+            id: 'pm_saved_41',
+            customer: 'cus_contact_5',
+            card: { brand: 'visa', last4: '4242' },
+        });
+        provider.createOffSessionPaymentIntent = jest.fn().mockResolvedValue({
+            id: 'pi_saved_71',
+            status: 'succeeded',
+            amount: 9500,
+            amount_received: 9500,
+            currency: 'usd',
+            latest_charge: 'ch_saved_71',
+        });
+        savedCardsQueries.markCardUsed.mockResolvedValue(savedCard);
+    }
+
+    it('charges the server-computed due and records the current standalone Stripe ledger shape', async () => {
+        primeCharge();
+
+        const result = await svc.chargeJobSavedCard(COMPANY, actor, 7, {
+            savedCardId: 41,
+            expectedDue: 95,
+            requestKey,
+        });
+
+        expect(provider.createOffSessionPaymentIntent).toHaveBeenCalledWith(
+            ACCT,
+            expect.objectContaining({
+                amount: 95,
+                customerId: 'cus_contact_5',
+                paymentMethodId: 'pm_saved_41',
+                metadata: expect.objectContaining({ surface: 'saved_card' }),
+            }),
+            { idempotencyKey: 'saved-card-session-71' }
+        );
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                transaction_type: 'payment',
+                payment_method: 'credit_card',
+                status: 'completed',
+                amount: 95,
+                invoice_id: null,
+                contact_id: 5,
+                job_id: 7,
+                external_id: 'pi_saved_71',
+                external_source: 'stripe',
+                metadata: expect.objectContaining({ surface: 'saved_card' }),
+            }),
+            mockTransactionClient
+        );
+        expect(invoicesQueries.recordPayment).not.toHaveBeenCalled();
+        expect(savedCardsQueries.markCardUsed).toHaveBeenCalledWith(
+            COMPANY,
+            41,
+            mockTransactionClient
+        );
+        expect(result).toMatchObject({ status: 'succeeded', amount: 95 });
+    });
+
+    it('double-submit with the same completed request key returns the existing ledger row without Stripe', async () => {
+        primeCharge();
+        const payment = { id: 909, external_id: 'pi_saved_71' };
+        q.getSessionByRequestKey.mockResolvedValue({
+            id: 71,
+            job_id: 7,
+            created_by: actor.id,
+            status: 'complete',
+            amount: 95,
+            stripe_payment_intent_id: 'pi_saved_71',
+        });
+        paymentsQueries.findByExternalSourceId.mockResolvedValue(payment);
+
+        await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
+            savedCardId: 41,
+            expectedDue: 95,
+            requestKey,
+        })).resolves.toEqual({ status: 'succeeded', amount: 95, payment });
+        expect(provider.retrievePaymentMethod).not.toHaveBeenCalled();
+        expect(provider.createOffSessionPaymentIntent).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('DUE_CHANGED requires a fresh confirmation and never reaches Stripe', async () => {
+        primeCharge();
+        jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 80 }]);
+
+        await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
+            savedCardId: 41,
+            expectedDue: 95,
+            requestKey,
+        })).rejects.toMatchObject({
+            code: 'DUE_CHANGED',
+            httpStatus: 409,
+            details: { current_due: 80 },
+        });
+        expect(provider.retrievePaymentMethod).not.toHaveBeenCalled();
+        expect(provider.createOffSessionPaymentIntent).not.toHaveBeenCalled();
+    });
+
+    it('T-blast: a foreign or expired card fails closed before Stripe or ledger mutation', async () => {
+        primeCharge();
+        savedCardsQueries.getUsableCard.mockResolvedValue(null);
+
+        await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
+            savedCardId: 999,
+            expectedDue: 95,
+            requestKey,
+        })).rejects.toMatchObject({
+            code: 'CARD_EXPIRED',
+            httpStatus: 409,
+            details: { can_enter_card: true },
+        });
+        expect(savedCardsQueries.getUsableCard).toHaveBeenCalledWith(
+            COMPANY,
+            5,
+            ACCT,
+            999
+        );
+        expect(provider.retrievePaymentMethod).not.toHaveBeenCalled();
+        expect(q.insertSession).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('authentication_required records the failed attempt and offers fresh card entry', async () => {
+        primeCharge();
+        provider.createOffSessionPaymentIntent.mockRejectedValue(Object.assign(
+            new Error('Authentication is required'),
+            {
+                stripeCode: 'authentication_required',
+                stripePaymentIntent: { id: 'pi_requires_action', status: 'requires_action' },
+            }
+        ));
+
+        await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
+            savedCardId: 41,
+            expectedDue: 95,
+            requestKey,
+        })).rejects.toMatchObject({
+            code: 'AUTHENTICATION_REQUIRED',
+            httpStatus: 402,
+            details: { can_enter_card: true },
+        });
+        expect(q.updateSession).toHaveBeenCalledWith(COMPANY, 71, {
+            status: 'failed',
+            stripe_payment_intent_id: 'pi_requires_action',
+            failure_reason: 'Authentication is required',
+        });
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
     });
 });
 

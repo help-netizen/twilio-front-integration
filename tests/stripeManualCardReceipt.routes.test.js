@@ -59,7 +59,10 @@ async function dispatch({
             email: 'agent@x.com',
             crmUser: crmUserId ? { id: crmUserId } : undefined,
         } : undefined,
-        authz: authed ? { scope: 'tenant', company: { id: company }, permissions } : undefined,
+        authz: authed ? {
+            scope: 'tenant', company: { id: company }, permissions,
+            scopes: { job_visibility: 'all' },
+        } : undefined,
         companyFilter: authed ? { company_id: company } : undefined,
         companyId: 'LEGACY-DO-NOT-USE',
         get(name) {
@@ -124,7 +127,12 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
                 label: null,
                 source: 'crm',
             },
-            'manual-card-route-11'
+            'manual-card-route-11',
+            {
+                actorId: CRM_USER_ID,
+                providerLimited: false,
+                providerScope: { assignedOnly: false, userId: null },
+            }
         );
     });
 
@@ -145,7 +153,12 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
                 label: null,
                 source: 'crm',
             },
-            'manual-card-route-11'
+            'manual-card-route-11',
+            {
+                actorId: null,
+                providerLimited: false,
+                providerScope: { assignedOnly: false, userId: null },
+            }
         );
     });
 
@@ -185,7 +198,12 @@ describe('POST /api/payments/manual-card-sessions/:sessionId/receipt', () => {
                 label: null,
                 source: 'crm',
             },
-            'manual-card-route-11'
+            'manual-card-route-11',
+            {
+                actorId: CRM_USER_ID,
+                providerLimited: false,
+                providerScope: { assignedOnly: false, userId: null },
+            }
         );
     });
 

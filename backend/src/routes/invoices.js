@@ -9,6 +9,7 @@ const invoicesService = require('../services/invoicesService');
 const { actorFromRequest } = require('../services/documentSendNoteService');
 const { userActor } = require('../services/financialActivityService');
 const { withTransaction } = require('../services/transactionService');
+const { getProviderScope } = require('../middleware/providerScope');
 
 // Resolve the active company scope from any of the supported middleware shapes.
 function getCompanyId(req) {
@@ -33,6 +34,15 @@ function getCrmUserId(req) {
 // getUserId stays for invoice_events.actor_id (VARCHAR, sub is legitimate).
 function getStripeActor(req) {
     return { id: req.user?.crmUser?.id || null };
+}
+
+function stripeSessionAccess(req) {
+    const providerScope = getProviderScope(req);
+    return {
+        actorId: req.user?.crmUser?.id || null,
+        providerLimited: !req.user?._devMode && providerScope.assignedOnly,
+        providerScope,
+    };
 }
 
 // Actor email — tags the sender on outbound mail (EMAIL-TIMELINE-001).
@@ -543,7 +553,8 @@ router.post('/:id/stripe-manual-card-session', requirePermission('payments.colle
             actor,
             { invoiceId: req.params.id, amount: req.body?.amount },
             client,
-            userActor(actor.id)
+            userActor(actor.id),
+            stripeSessionAccess(req)
         ));
         res.json({ ok: true, data });
     } catch (err) { stripeError(err, req, res, 'manual-card-session'); }

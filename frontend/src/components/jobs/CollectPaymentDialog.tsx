@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowLeft, Copy, CreditCard, Loader2, Mail, MessageSquare, Send } from 'lucide-react';
 import { Button } from '../ui/button';
 import {
     Dialog, DialogContent, DialogDescription,
     DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle,
+    DialogHeader, DialogFooter,
 } from '../ui/dialog';
 import { FloatingField } from '../ui/floating-field';
 import { PhoneInput, formatUSPhone, isValidUSPhone, toE164 } from '../ui/PhoneInput';
 import { maskMoneyDigits } from '../ui/MoneyInput';
 import { jobStripeApi, type ManualCardSessionResult } from '../../services/stripePaymentsApi';
 import ManualCardDialog from '../invoices/ManualCardDialog';
+import type { SavedPaymentMethod } from '../../types/savedCard';
 
 interface Props {
     open: boolean;
@@ -74,6 +77,14 @@ export function amountAfterCollectionRefresh(
 // Client mirror of the server email shape (stripePaymentsService RECEIPT_EMAIL_SHAPE). UX-only.
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+export function savedCardChargeLabel(
+    card: Pick<SavedPaymentMethod, 'brand' | 'last4'>,
+    due: number,
+): string {
+    const brand = card.brand.charAt(0).toUpperCase() + card.brand.slice(1);
+    return `Charge ${brand} •••• ${card.last4} — $${due.toFixed(2)}`;
+}
+
 type SendChannel = 'email' | 'sms';
 
 /**
@@ -99,8 +110,20 @@ export function CollectPaymentDialog({
     onDone,
 }: Props) {
     const [amount, setAmount] = useState('');
-    const [busy, setBusy] = useState<null | 'send' | 'copy'>(null);
+    const [busy, setBusy] = useState<null | 'send' | 'copy' | 'charge'>(null);
     const [manualCardOpen, setManualCardOpen] = useState(false);
+    const [confirmCard, setConfirmCard] = useState<SavedPaymentMethod | null>(null);
+    const [confirmDue, setConfirmDue] = useState(0);
+    const [requestKey, setRequestKey] = useState('');
+    const [savedCardError, setSavedCardError] = useState<string | null>(null);
+    const queryClient = useQueryClient();
+    const savedCardsQueryKey = ['job-saved-payment-methods', String(jobId)];
+    const { data: savedCardsData } = useQuery({
+        queryKey: savedCardsQueryKey,
+        queryFn: () => jobStripeApi.savedPaymentMethods(jobId),
+        enabled: open && Boolean(hasContact),
+    });
+    const primarySavedCard = savedCardsData?.cards[0] || null;
 
     // PAYLINK-SEND-001: the "Send payment link" card opens a send sub-form instead of
     // dispatching immediately — the operator picks the channel and edits the recipient.
@@ -117,6 +140,8 @@ export function CollectPaymentDialog({
         if (manualCardOpen) return;
         setMode('choose');
         setBusy(null);
+        setConfirmCard(null);
+        setSavedCardError(null);
         const em = (contactEmail || '').trim();
         const ph = contactPhone ? formatUSPhone(contactPhone) : '';
         setEmail(em);
@@ -197,6 +222,57 @@ export function CollectPaymentDialog({
         }
     };
 
+    const openSavedCardConfirm = (card: SavedPaymentMethod) => {
+        const due = Number(savedCardsData?.due || 0);
+        if (due < MIN_AMOUNT) return;
+        setConfirmCard(card);
+        setConfirmDue(due);
+        setRequestKey(crypto.randomUUID());
+        setSavedCardError(null);
+    };
+
+    const chargeSavedCard = async () => {
+        if (!confirmCard || busy === 'charge') return;
+        setBusy('charge');
+        try {
+            const result = await jobStripeApi.chargeSavedPaymentMethod(jobId, {
+                savedCardId: confirmCard.id,
+                expectedDue: confirmDue,
+                requestKey,
+            });
+            await onPaymentConfirmed?.({
+                status: result.status,
+                amount: result.amount,
+                brand: confirmCard.brand,
+                last4: confirmCard.last4,
+            });
+            await queryClient.invalidateQueries({ queryKey: savedCardsQueryKey });
+            onSuccess?.();
+            toast.success(`Charged $${result.amount.toFixed(2)}`);
+            setConfirmCard(null);
+            onOpenChange(false);
+            onDone?.();
+        } catch (caught) {
+            const error = caught as Error & { code?: string; currentDue?: number; canEnterCard?: boolean };
+            if (error.code === 'DUE_CHANGED' && Number.isFinite(error.currentDue)) {
+                setConfirmDue(Number(error.currentDue));
+                setRequestKey(crypto.randomUUID());
+                toast.error('The job balance changed. Confirm the new amount.');
+            } else {
+                setConfirmCard(null);
+                toast.error(error.message || 'The saved card could not be charged.');
+                if (error.canEnterCard) {
+                    setAmount(confirmDue.toFixed(2));
+                    setManualCardOpen(true);
+                } else {
+                    setSavedCardError(error.message || 'The saved card could not be charged.');
+                }
+            }
+        } finally {
+            setBusy(null);
+        }
+    };
+
     return (
         <>
             <Dialog open={open} onOpenChange={onOpenChange}>
@@ -215,6 +291,31 @@ export function CollectPaymentDialog({
 
                     <DialogBody className="md:px-8 md:py-7">
                         <div className="mx-auto w-full max-w-[740px] space-y-6">
+                            {primarySavedCard && Number(savedCardsData?.due || 0) >= MIN_AMOUNT && mode === 'choose' && (
+                                <div>
+                                    <button
+                                        type="button"
+                                        disabled={busy != null}
+                                        onClick={() => openSavedCardConfirm(primarySavedCard)}
+                                        className="flex w-full items-center gap-3 rounded-2xl bg-[var(--blanc-accent)] px-4 py-4 text-left text-[var(--blanc-surface-strong)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                                    >
+                                        <CreditCard className="size-4 shrink-0" />
+                                        <span className="min-w-0 flex-1 text-sm font-semibold tabular-nums">
+                                            {savedCardChargeLabel(primarySavedCard, Number(savedCardsData?.due || 0))}
+                                        </span>
+                                    </button>
+                                </div>
+                            )}
+
+                            {savedCardError && mode === 'choose' && (
+                                <div className="space-y-3.5" role="alert">
+                                    <p className="text-sm text-[var(--blanc-danger)]">{savedCardError}</p>
+                                    <Button type="button" onClick={() => setManualCardOpen(true)}>
+                                        Enter a different card
+                                    </Button>
+                                </div>
+                            )}
+
                             {/* Amount step */}
                             <div className="space-y-3.5">
                                 <FloatingField
@@ -362,6 +463,26 @@ export function CollectPaymentDialog({
                     <DialogPanelFooter>
                         <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy != null}>Close</Button>
                     </DialogPanelFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!confirmCard} onOpenChange={nextOpen => { if (!nextOpen && busy !== 'charge') setConfirmCard(null); }}>
+                <DialogContent variant="dialog" size="sm">
+                    <DialogHeader>
+                        <DialogTitle>Charge saved card?</DialogTitle>
+                        <DialogDescription>
+                            {confirmCard
+                                ? `Charge $${confirmDue.toFixed(2)} to ${confirmCard.brand.charAt(0).toUpperCase() + confirmCard.brand.slice(1)} ending ${confirmCard.last4}.`
+                                : 'Confirm the saved-card payment.'}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setConfirmCard(null)} disabled={busy === 'charge'}>Cancel</Button>
+                        <Button onClick={chargeSavedCard} disabled={busy === 'charge'}>
+                            {busy === 'charge' && <Loader2 className="size-4 animate-spin" />}
+                            Charge ${confirmDue.toFixed(2)}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

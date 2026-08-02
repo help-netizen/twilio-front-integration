@@ -56,6 +56,8 @@ async function call(method, path, body, opts = {}) {
     if (!res.ok) {
         const err = new Error(json.error?.message || `Stripe ${res.status}`);
         err.stripeCode = json.error?.code;
+        err.stripeDeclineCode = json.error?.decline_code;
+        err.stripeType = json.error?.type;
         err.httpStatus = res.status;
         err.stripePaymentIntent = json.error?.payment_intent || null;
         throw err;
@@ -206,7 +208,13 @@ async function createPaymentIntent(accountId, { amount, currency = 'usd', metada
 }
 
 /** Create a card-only PaymentIntent for the merchant keyed-card Card Element. */
-async function createCardPaymentIntent(accountId, { amount, currency = 'usd', metadata = {} }, { idempotencyKey } = {}) {
+async function createCardPaymentIntent(accountId, {
+    amount,
+    currency = 'usd',
+    metadata = {},
+    customerId = null,
+    saveForFuture = false,
+}, { idempotencyKey } = {}) {
     const amountCents = Math.round(Number(amount) * 100);
     return call('POST', '/payment_intents', {
         amount: amountCents,
@@ -215,6 +223,8 @@ async function createCardPaymentIntent(accountId, { amount, currency = 'usd', me
         // Stripe's required payment_method_types[0]=card without touching the
         // existing public or Terminal request serialization.
         payment_method_types: { 0: 'card' },
+        customer: customerId || undefined,
+        setup_future_usage: saveForFuture ? 'off_session' : undefined,
         application_fee_amount: applicationFeeFor(amountCents),
         metadata,
     }, { stripeAccount: accountId, idempotencyKey });
@@ -227,8 +237,8 @@ async function retrievePaymentIntent(accountId, paymentIntentId) {
 /**
  * Confirm a connected-account PaymentIntent with a client-created PaymentMethod.
  * `use_stripe_sdk` keeps next-action data compatible with the popup's Stripe.js
- * challenge handler. This is a one-off, on-session payment: no future-use or MOTO
- * flag is set, so the PaymentMethod is not saved and 3DS remains available.
+ * challenge handler. The PaymentIntent creation path decides whether the card is
+ * saved with setup_future_usage; confirmation remains compatible with 3DS.
  */
 async function confirmPaymentIntent(
     accountId,
@@ -244,6 +254,48 @@ async function confirmPaymentIntent(
 
 async function retrievePaymentMethod(accountId, paymentMethodId) {
     return call('GET', `/payment_methods/${encodeURIComponent(paymentMethodId)}`, undefined, { stripeAccount: accountId });
+}
+
+/** Create a Customer inside one connected account. */
+async function createCustomer(accountId, { name, email, phone, metadata = {} } = {}, { idempotencyKey } = {}) {
+    return call('POST', '/customers', {
+        name: name || undefined,
+        email: email || undefined,
+        phone: phone || undefined,
+        metadata,
+    }, { stripeAccount: accountId, idempotencyKey });
+}
+
+/** Confirm a saved card entirely server-side as a direct connected-account charge. */
+async function createOffSessionPaymentIntent(accountId, {
+    amount,
+    currency = 'usd',
+    customerId,
+    paymentMethodId,
+    metadata = {},
+}, { idempotencyKey } = {}) {
+    const amountCents = Math.round(Number(amount) * 100);
+    return call('POST', '/payment_intents', {
+        amount: amountCents,
+        currency: String(currency).toLowerCase(),
+        customer: customerId,
+        payment_method: paymentMethodId,
+        payment_method_types: { 0: 'card' },
+        off_session: true,
+        confirm: true,
+        error_on_requires_action: true,
+        application_fee_amount: applicationFeeFor(amountCents),
+        metadata,
+    }, { stripeAccount: accountId, idempotencyKey });
+}
+
+async function detachPaymentMethod(accountId, paymentMethodId) {
+    return call(
+        'POST',
+        `/payment_methods/${encodeURIComponent(paymentMethodId)}/detach`,
+        {},
+        { stripeAccount: accountId }
+    );
 }
 
 async function retrieveCharge(accountId, chargeId) {
@@ -334,6 +386,9 @@ module.exports = {
     retrievePaymentIntent,
     confirmPaymentIntent,
     retrievePaymentMethod,
+    createCustomer,
+    createOffSessionPaymentIntent,
+    detachPaymentMethod,
     retrieveCharge,
     createConnectionToken,
     createTerminalLocation,

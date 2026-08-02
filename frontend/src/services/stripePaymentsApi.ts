@@ -1,4 +1,5 @@
 import { authedFetch } from './apiClient';
+import type { JobSavedPaymentMethods } from '../types/savedCard';
 
 const API_BASE = '/api/stripe-payments';
 
@@ -159,6 +160,7 @@ export interface ManualCardSession {
     payment_intent_id: string;
     account_id: string;
     amount: number;
+    save_for_future: boolean;
 }
 
 async function postData<T>(url: string, body?: unknown): Promise<T> {
@@ -224,4 +226,43 @@ export const jobStripeApi = {
     },
     manualCardSession: (jobId: number | string, amount?: number): Promise<ManualCardSession> =>
         postData(`/api/jobs/${jobId}/stripe-manual-card-session`, { amount }),
+    savedPaymentMethods: async (jobId: number | string): Promise<JobSavedPaymentMethods> => {
+        const res = await authedFetch(`/api/jobs/${jobId}/saved-payment-methods`);
+        const json = await res.json();
+        if (!res.ok || json.ok === false) {
+            const error = new Error(json.error?.message || `Request failed: ${res.status}`) as Error & {
+                code?: string; currentDue?: number; canEnterCard?: boolean;
+            };
+            error.code = json.error?.code;
+            error.currentDue = json.error?.current_due;
+            error.canEnterCard = json.error?.can_enter_card;
+            throw error;
+        }
+        return json.data;
+    },
+    chargeSavedPaymentMethod: async (
+        jobId: number | string,
+        body: { savedCardId: number; expectedDue: number; requestKey: string },
+    ): Promise<{ status: 'succeeded'; amount: number }> => {
+        const res = await authedFetch(`/api/jobs/${jobId}/charge-saved-payment-method`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                saved_card_id: body.savedCardId,
+                expected_due: body.expectedDue,
+                request_key: body.requestKey,
+            }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.ok === false) {
+            const error = new Error(json.error?.message || `Request failed: ${res.status}`) as Error & {
+                code?: string; currentDue?: number; canEnterCard?: boolean;
+            };
+            error.code = json.error?.code;
+            error.currentDue = json.error?.current_due;
+            error.canEnterCard = json.error?.can_enter_card;
+            throw error;
+        }
+        return json.data;
+    },
 };

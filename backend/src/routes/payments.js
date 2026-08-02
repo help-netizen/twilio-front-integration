@@ -42,6 +42,15 @@ function sendScopeError(res, err) {
     return res.status(err.status).json({ ok: false, error: { code: err.code, message: err.message } });
 }
 
+function manualCardAccess(req) {
+    const providerScope = getProviderScope(req);
+    return {
+        actorId: req.user?.crmUser?.id || null,
+        providerLimited: !req.user?._devMode && providerScope.assignedOnly,
+        providerScope,
+    };
+}
+
 // =============================================================================
 // Payment transactions
 // =============================================================================
@@ -179,7 +188,11 @@ router.get('/manual-card-sessions/:sessionId/result', requirePermission('payment
     try {
         const stripePaymentsService = require('../services/stripePaymentsService');
         const companyId = req.companyFilter?.company_id;
-        const result = await stripePaymentsService.getManualCardSessionResult(companyId, req.params.sessionId);
+        const result = await stripePaymentsService.getManualCardSessionResult(
+            companyId,
+            req.params.sessionId,
+            manualCardAccess(req)
+        );
         res.json(result);
     } catch (err) {
         const status = err.httpStatus || 500;
@@ -196,7 +209,8 @@ router.post('/manual-card-sessions/:sessionId/confirm', requirePermission('payme
         const result = await stripePaymentsService.confirmManualCardSession(
             companyId,
             req.params.sessionId,
-            req.body?.payment_method_id
+            req.body?.payment_method_id,
+            manualCardAccess(req)
         );
         res.json(result);
     } catch (err) {
@@ -213,7 +227,8 @@ router.post('/manual-card-sessions/:sessionId/finalize', requirePermission('paym
         const companyId = req.companyFilter?.company_id;
         const result = await stripePaymentsService.finalizeManualCardSession(
             companyId,
-            req.params.sessionId
+            req.params.sessionId,
+            manualCardAccess(req)
         );
         res.json(result);
     } catch (err) {
@@ -236,7 +251,8 @@ router.post('/manual-card-sessions/:sessionId/receipt', requirePermission('payme
             actorFromRequest(req),
             null,
             userActor(req.user?.crmUser?.id || null),
-            req.get?.('Idempotency-Key')
+            req.get?.('Idempotency-Key'),
+            manualCardAccess(req)
         );
         res.json(result);
     } catch (err) {

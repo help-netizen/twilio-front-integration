@@ -13,6 +13,7 @@ const path = require('path');
 
 // Mirror the invoice harness.
 jest.mock('../backend/src/db/stripePaymentsQueries');
+jest.mock('../backend/src/db/stripeSavedCardsQueries');
 jest.mock('../backend/src/db/paymentsQueries');
 jest.mock('../backend/src/services/paymentsService');
 jest.mock('../backend/src/services/invoicesService');
@@ -54,6 +55,7 @@ jest.mock('../backend/src/utils/phoneUtils', () => ({ toE164: jest.fn() }));
 jest.mock('../backend/src/db/companyQueries', () => ({ getCompanyById: jest.fn().mockResolvedValue({ name: 'Acme' }) }));
 
 const q = require('../backend/src/db/stripePaymentsQueries');
+const savedCardsQueries = require('../backend/src/db/stripeSavedCardsQueries');
 const paymentsQueries = require('../backend/src/db/paymentsQueries');
 const invoicesService = require('../backend/src/services/invoicesService');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
@@ -86,6 +88,16 @@ beforeEach(() => {
     provider.createCheckoutSession = jest.fn();
     provider.createPaymentIntent = jest.fn();
     provider.createCardPaymentIntent = jest.fn();
+    provider.createCustomer = jest.fn().mockResolvedValue({ id: 'cus_contact_5' });
+    savedCardsQueries.lockContact.mockResolvedValue(undefined);
+    savedCardsQueries.getContactCustomer.mockResolvedValue(null);
+    savedCardsQueries.upsertContactCustomer.mockResolvedValue({
+        id: 31,
+        company_id: COMPANY,
+        contact_id: 5,
+        stripe_account_id: ACCT,
+        stripe_customer_id: 'cus_contact_5',
+    });
 });
 
 // ── A. assertAdhocAmount (§4.4) ─────────────────────────────────────────────
@@ -193,7 +205,8 @@ describe('createManualCardSession (job branch)', () => {
         expect(q.insertSession).toHaveBeenCalledWith(
             COMPANY,
             expect.objectContaining({
-                job_id: 'job-1', invoice_id: null, surface: 'manual_card', metadata: {},
+                job_id: 'job-1', invoice_id: null, surface: 'manual_card',
+                metadata: { save_for_future: true, contact_customer_id: 31 },
             }),
             null
         );

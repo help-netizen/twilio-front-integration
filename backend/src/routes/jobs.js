@@ -1235,10 +1235,22 @@ const { withTransaction: withFinancialTransaction } = require('../services/trans
 
 function jobStripeError(err, res) {
     if (err instanceof stripePaymentsService.StripePaymentsError) {
-        return res.status(err.httpStatus || 400).json({ ok: false, error: { code: err.code, message: err.message } });
+        return res.status(err.httpStatus || 400).json({
+            ok: false,
+            error: { code: err.code, message: err.message, ...(err.details || {}) },
+        });
     }
     console.error('[Jobs API] stripe error:', err.message);
     return res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+}
+
+function jobStripeAccess(req) {
+    const providerScope = getProviderScope(req);
+    return {
+        actorId: req.user?.crmUser?.id || null,
+        providerLimited: !req.user?._devMode && providerScope.assignedOnly,
+        providerScope,
+    };
 }
 
 router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
@@ -1251,9 +1263,39 @@ router.post('/:id/stripe-manual-card-session', requirePermission('payments.colle
                 actor,
                 { jobId: req.params.id, amount: req.body?.amount },
                 client,
-                financialUserActor(actor.id)
+                financialUserActor(actor.id),
+                jobStripeAccess(req)
             )
         ));
+        res.json({ ok: true, data });
+    } catch (err) { jobStripeError(err, res); }
+});
+
+router.get('/:id/saved-payment-methods', requirePermission('payments.collect_online'), async (req, res) => {
+    try {
+        const data = await stripePaymentsService.listJobSavedCards(
+            req.companyFilter?.company_id,
+            req.params.id,
+            jobStripeAccess(req)
+        );
+        res.json({ ok: true, data });
+    } catch (err) { jobStripeError(err, res); }
+});
+
+router.post('/:id/charge-saved-payment-method', requirePermission('payments.collect_online'), async (req, res) => {
+    try {
+        const actor = { id: req.user?.crmUser?.id || null };
+        const data = await stripePaymentsService.chargeJobSavedCard(
+            req.companyFilter?.company_id,
+            actor,
+            req.params.id,
+            {
+                savedCardId: req.body?.saved_card_id,
+                expectedDue: req.body?.expected_due,
+                requestKey: req.body?.request_key,
+            },
+            jobStripeAccess(req)
+        );
         res.json({ ok: true, data });
     } catch (err) { jobStripeError(err, res); }
 });

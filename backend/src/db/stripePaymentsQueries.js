@@ -151,22 +151,45 @@ async function insertSession(companyId, data, client = null) {
         surface = 'checkout_link', amount, currency = 'USD', status = 'open',
         stripe_checkout_session_id = null, stripe_payment_intent_id = null,
         stripe_charge_id = null, stripe_account_id = null, url = null,
-        expires_at = null, metadata = {},
+        expires_at = null, metadata = {}, request_key = null,
     } = data;
     const { rows } = await query(
         `INSERT INTO stripe_payment_sessions
             (company_id, invoice_id, job_id, contact_id, created_by, surface, amount,
              currency, status, stripe_checkout_session_id, stripe_payment_intent_id,
-             stripe_charge_id, stripe_account_id, url, expires_at, metadata)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             stripe_charge_id, stripe_account_id, url, expires_at, metadata, request_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING *`,
         [
             companyId, invoice_id, job_id, contact_id, created_by, surface, amount,
             currency, status, stripe_checkout_session_id, stripe_payment_intent_id,
             stripe_charge_id, stripe_account_id, url, expires_at, JSON.stringify(metadata),
+            request_key,
         ]
     );
     return rows[0];
+}
+
+async function getSessionByRequestKey(companyId, requestKey, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT * FROM stripe_payment_sessions
+         WHERE company_id = $1 AND request_key = $2 AND surface = 'saved_card'`,
+        [companyId, requestKey]
+    );
+    return rows[0] || null;
+}
+
+async function getOpenSavedCardSession(companyId, jobId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT * FROM stripe_payment_sessions
+         WHERE company_id = $1 AND job_id = $2
+           AND surface = 'saved_card' AND status = 'open'
+         ORDER BY created_at DESC LIMIT 1`,
+        [companyId, jobId]
+    );
+    return rows[0] || null;
 }
 
 async function getSessionByCheckoutId(companyId, checkoutSessionId, client = null) {
@@ -356,6 +379,8 @@ module.exports = {
     getSessionByCheckoutId,
     getSessionByPaymentIntent,
     getSessionById,
+    getSessionByRequestKey,
+    getOpenSavedCardSession,
     getSessionReceiptContact,
     updateSession,
     listSessionsForInvoice,

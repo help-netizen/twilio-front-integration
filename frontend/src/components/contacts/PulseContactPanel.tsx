@@ -28,6 +28,7 @@ import { isOpenLead, isOpenJob } from './contactBarHelpers';
 import { TaskStack } from '../tasks/TaskStack';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogTitle, DialogDescription } from '../ui/dialog';
 import { CreateLeadJobWizard } from '../conversations/CreateLeadJobWizard';
+import { ContactSavedCardsSection } from './ContactSavedCardsSection';
 
 interface PulseContactPanelProps {
     contact: Contact; leads: ContactLead[]; loading: boolean; timelineId?: number | null;
@@ -225,6 +226,8 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: j
                     ) : null}
                 </div>
             </div>
+
+            <ContactSavedCardsSection contactId={contact.id} className="px-5 pb-4" />
 
             {/* ── Body ── */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 px-5 pb-5">

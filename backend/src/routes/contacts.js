@@ -260,6 +260,56 @@ router.get('/:id/call-masking', requirePermission('call_masking.use'), async (re
 // =============================================================================
 // GET /api/contacts/:id — Get contact detail
 // =============================================================================
+router.get(
+    '/:id/saved-payment-methods',
+    requirePermission('contacts.view'),
+    requirePermission('payments.view'),
+    async (req, res) => {
+        const reqId = requestId();
+        try {
+            const stripePaymentsService = require('../services/stripePaymentsService');
+            const data = await stripePaymentsService.listContactSavedCards(
+                req.companyFilter?.company_id,
+                req.params.id
+            );
+            res.json(successResponse(data, reqId));
+        } catch (err) {
+            const status = err.httpStatus || 500;
+            res.status(status).json(errorResponse(
+                err.code || 'INTERNAL_ERROR',
+                status >= 500 ? 'An unexpected error occurred' : err.message,
+                reqId
+            ));
+        }
+    }
+);
+
+router.delete(
+    '/:id/saved-payment-methods/:savedCardId',
+    requirePermission('contacts.edit'),
+    requirePermission('payments.view'),
+    async (req, res) => {
+        const reqId = requestId();
+        try {
+            const stripePaymentsService = require('../services/stripePaymentsService');
+            const data = await stripePaymentsService.removeContactSavedCard(
+                req.companyFilter?.company_id,
+                { id: req.user?.crmUser?.id || null },
+                req.params.id,
+                req.params.savedCardId
+            );
+            res.json(successResponse(data, reqId));
+        } catch (err) {
+            const status = err.httpStatus || 500;
+            res.status(status).json(errorResponse(
+                err.code || 'INTERNAL_ERROR',
+                status >= 500 ? 'An unexpected error occurred' : err.message,
+                reqId
+            ));
+        }
+    }
+);
+
 router.get('/:id', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
@@ -695,6 +745,13 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
             await client.query('COMMIT');
         } catch (txErr) {
             await client.query('ROLLBACK').catch(() => {});
+            if (txErr?.name === 'ContactSavedCardMergeBlockedError') {
+                return res.status(409).json(errorResponse(
+                    'SAVED_CARD_MERGE_BLOCKED',
+                    txErr.message,
+                    reqId
+                ));
+            }
             // A conflict born INSIDE the tx (sentinel from step 5 / the FR-3
             // execution-time re-check) or a lock-order deadlock (40P01, review
             // fix a belt-and-braces) → fresh 409, NEVER a 500. The payload is

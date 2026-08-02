@@ -16,6 +16,7 @@ import * as contactsApi from '../../services/contactsApi';
 import { pulseApi } from '../../services/pulseApi';
 import { useAuthz } from '../../hooks/useAuthz';
 import { ContactInfoSections } from './ContactInfoSections';
+import { ContactSavedCardsSection } from './ContactSavedCardsSection';
 import { EditContactDialog } from './EditContactDialog';
 import { JobsList } from './ContactJobsList';
 import { LEAD_STATUS_COLORS, hexToRgba } from '../leads/leadStatusStyles';
@@ -121,6 +122,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
 
                     {/* Contact + Address tiles */}
                     <ContactInfoSections contact={contact} onAddressesChanged={onAddressesChanged} />
+                    <ContactSavedCardsSection contactId={contact.id} />
 
                     {/* Mobile-only: right column content inline */}
                     <div className="md:hidden px-5 pb-6 space-y-5">

@@ -33,14 +33,22 @@ const resultRouteIndex = paymentsRouter.stack.findIndex(
 const transactionRouteIndex = paymentsRouter.stack.findIndex(layer => layer.route?.path === '/:id');
 const resultRoute = paymentsRouter.stack[resultRouteIndex].route;
 
-async function dispatch({ permissions = ['payments.collect_keyed'], company = COMPANY_A, authed = true } = {}) {
+async function dispatch({
+    permissions = ['payments.collect_keyed'],
+    company = COMPANY_A,
+    authed = true,
+    jobVisibility = 'all',
+} = {}) {
     const req = {
         method: 'GET',
         originalUrl: '/api/payments/manual-card-sessions/11/result',
         params: { sessionId: '11' },
         ip: '127.0.0.1',
         user: authed ? { sub: 'kc-sub', crmUser: { id: 'crm-user-1' } } : undefined,
-        authz: authed ? { scope: 'tenant', company: { id: company }, permissions } : undefined,
+        authz: authed ? {
+            scope: 'tenant', company: { id: company }, permissions,
+            scopes: { job_visibility: jobVisibility },
+        } : undefined,
         companyFilter: authed ? { company_id: company } : undefined,
         companyId: 'LEGACY-DO-NOT-USE',
     };
@@ -86,7 +94,15 @@ describe('GET /api/payments/manual-card-sessions/:sessionId/result', () => {
         expect(res.status).toBe(200);
         expect(res.body).toEqual(result);
         expect(Object.keys(res.body)).toEqual(['status', 'amount', 'brand', 'last4']);
-        expect(mockStripeService.getManualCardSessionResult).toHaveBeenCalledWith(COMPANY_A, '11');
+        expect(mockStripeService.getManualCardSessionResult).toHaveBeenCalledWith(
+            COMPANY_A,
+            '11',
+            {
+                actorId: 'crm-user-1',
+                providerLimited: false,
+                providerScope: { assignedOnly: false, userId: null },
+            }
+        );
         expect(mockPaymentsService.getTransaction).not.toHaveBeenCalled();
         expect(resultRouteIndex).toBeGreaterThanOrEqual(0);
         expect(resultRouteIndex).toBeLessThan(transactionRouteIndex);
@@ -105,6 +121,24 @@ describe('GET /api/payments/manual-card-sessions/:sessionId/result', () => {
         expect(mockStripeService.getManualCardSessionResult).not.toHaveBeenCalled();
     });
 
+    it('forwards provider own-session + assigned-job scope', async () => {
+        mockStripeService.getManualCardSessionResult.mockResolvedValue({
+            status: 'succeeded', amount: 95, brand: 'visa', last4: '4242',
+        });
+
+        await dispatch({ jobVisibility: 'assigned_only' });
+
+        expect(mockStripeService.getManualCardSessionResult).toHaveBeenCalledWith(
+            COMPANY_A,
+            '11',
+            {
+                actorId: 'crm-user-1',
+                providerLimited: true,
+                providerScope: { assignedOnly: true, userId: 'crm-user-1' },
+            }
+        );
+    });
+
     it('uses req.companyFilter and maps a foreign-company session to 404', async () => {
         mockStripeService.getManualCardSessionResult.mockRejectedValue(
             new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404)
@@ -117,6 +151,10 @@ describe('GET /api/payments/manual-card-sessions/:sessionId/result', () => {
             ok: false,
             error: { code: 'NOT_FOUND', message: 'Manual card session not found' },
         });
-        expect(mockStripeService.getManualCardSessionResult).toHaveBeenCalledWith(COMPANY_B, '11');
+        expect(mockStripeService.getManualCardSessionResult).toHaveBeenCalledWith(
+            COMPANY_B,
+            '11',
+            expect.objectContaining({ providerLimited: false })
+        );
     });
 });

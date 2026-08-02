@@ -137,15 +137,16 @@ describe('resolveAddedEmail — 4-way dispatch', () => {
 
 const IDENTITY_TABLES = [
     'jobs', 'leads', 'estimates', 'invoices', 'payment_transactions',
-    'stripe_payment_sessions', 'portal_access_tokens', 'portal_sessions',
+    'stripe_payment_sessions', 'stripe_saved_payment_methods',
+    'portal_access_tokens', 'portal_sessions',
     'portal_events', 'crm_account_contacts', 'crm_deal_contacts',
     'crm_activities', 'tasks', 'contact_addresses',
 ];
 
 describe('isContactEmailOnly — emptiness gate', () => {
-    // TC-CEM-U05 — TRUE only when no phone AND zero rows; enumerates all 14,
+    // TC-CEM-U05 — TRUE only when no phone AND zero rows; enumerates all identity tables,
     // excludes contact_emails / email_messages / timelines.
-    it('U05: TRUE when no phone and no identity rows; SQL enumerates all 14 identity tables and NOT the footprint tables', async () => {
+    it('U05: TRUE when no phone and no identity rows; SQL enumerates every identity table and NOT the footprint tables', async () => {
         const client = mkClient((sql) => {
             if (/SELECT phone_e164, secondary_phone/i.test(sql)) {
                 return P({ rows: [{ phone_e164: null, secondary_phone: null }] });
@@ -169,10 +170,10 @@ describe('isContactEmailOnly — emptiness gate', () => {
         expect(existsSql).toMatch(/company_id = \$2/);
     });
 
-    // The exported catalog is exactly the 14 tables, split by company_id. Only
+    // The exported catalog is exact, split by company_id. Only
     // contact_addresses / portal_sessions / portal_events lack a company_id column;
     // leads DOES carry company_id (NOT NULL, mig 012) → company-scoped.
-    it('U05b: IDENTITY_TABLES = the 14 tables; only contact_addresses/portal_sessions/portal_events lack company_id (leads is company-scoped)', () => {
+    it('U05b: only contact_addresses/portal_sessions/portal_events lack company_id (leads is company-scoped)', () => {
         expect(svc.IDENTITY_TABLES.map(t => t.table).sort()).toEqual([...IDENTITY_TABLES].sort());
         const noCompany = svc.IDENTITY_TABLES.filter(t => !t.hasCompanyId).map(t => t.table).sort();
         expect(noCompany).toEqual(['contact_addresses', 'portal_events', 'portal_sessions'].sort());
@@ -289,6 +290,26 @@ describe('mergeContacts — FK order + tenant guard', () => {
         const client = mkClient();
         await svc.mergeContacts(10, 10, A, client);
         expect(client.query).not.toHaveBeenCalled();
+    });
+
+    it('CARD-ON-FILE blocks and preserves a duplicate that still has a saved card', async () => {
+        const client = mkClient(sql => {
+            if (/SELECT id, company_id FROM contacts WHERE id IN/i.test(sql)) {
+                return P({ rows: [{ id: 10, company_id: A }, { id: 77, company_id: A }] });
+            }
+            if (/FROM stripe_saved_payment_methods/i.test(sql)) {
+                return P({ rows: [{ has_saved_card: true }] });
+            }
+            return P({ rows: [], rowCount: 0 });
+        });
+
+        await expect(svc.mergeContacts(10, 77, A, client)).rejects.toMatchObject({
+            code: 'SAVED_CARD_MERGE_BLOCKED',
+            httpStatus: 409,
+            contactId: 77,
+        });
+        expect(timelinesQueries.findOrCreateTimelineByContact).not.toHaveBeenCalled();
+        expect(client.calls.some(call => /UPDATE|DELETE/i.test(call.sql))).toBe(false);
     });
 
     // TC-CEM-U09 — M2M children moved with NOT-EXISTS guards.

@@ -16,6 +16,7 @@ vi.mock('../invoices/ManualCardDialog', () => ({ default: () => null }));
 import {
     amountAfterCollectionRefresh,
     createManualCardCollectionCallbacks,
+    savedCardChargeLabel,
 } from './CollectPaymentDialog';
 
 const PAYMENT: ManualCardSessionResult = {
@@ -26,6 +27,11 @@ const PAYMENT: ManualCardSessionResult = {
 };
 
 describe('CollectPaymentDialog manual-card wiring', () => {
+    it('renders the saved-card action without TTL copy', () => {
+        const label = savedCardChargeLabel({ brand: 'visa', last4: '4242' }, 123.45);
+        expect(label).toBe('Charge Visa •••• 4242 — $123.45');
+        expect(label.toLowerCase()).not.toContain('expire');
+    });
     it('preserves the charged amount when Finance refreshes the parent balance', () => {
         expect(amountAfterCollectionRefresh('1.00', 0, true)).toBe('1.00');
         expect(amountAfterCollectionRefresh('1.00', 0, false)).toBe('');

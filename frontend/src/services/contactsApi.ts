@@ -9,6 +9,7 @@ import type {
 } from '../types/contact';
 
 import { authedFetch } from './apiClient';
+import type { SavedPaymentMethod } from '../types/savedCard';
 
 // CONTACT-MERGE-001 — conflict contract types, re-exported so surfaces can import
 // everything API-shaped from one module.
@@ -97,6 +98,20 @@ export async function listContacts(params: ContactsListParams = {}, signal?: Abo
  */
 export async function getContact(id: number): Promise<ContactDetailResponse> {
     return request<ContactDetailResponse>(`${API_BASE}/${id}`);
+}
+
+export async function listSavedPaymentMethods(contactId: number): Promise<SavedPaymentMethod[]> {
+    const response = await request<{ ok: true; data: SavedPaymentMethod[] }>(
+        `${API_BASE}/${contactId}/saved-payment-methods`
+    );
+    return response.data;
+}
+
+export async function removeSavedPaymentMethod(contactId: number, cardId: number): Promise<void> {
+    await request<{ ok: true; data: { removed: true } }>(
+        `${API_BASE}/${contactId}/saved-payment-methods/${cardId}`,
+        { method: 'DELETE' }
+    );
 }
 
 /**

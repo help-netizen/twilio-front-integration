@@ -233,6 +233,7 @@ describe('manual-card popup integration', () => {
             payment_intent_id: 'pi_11',
             account_id: 'acct_11',
             amount: 95,
+            save_for_future: true,
         };
 
         const handle = openManualCardEntryPopup(session, undefined, {
@@ -291,6 +292,7 @@ describe('manual-card popup integration', () => {
             payment_intent_id: 'pi_11',
             account_id: 'acct_11',
             amount: 95,
+            save_for_future: true,
         };
         const confirmSession = vi.fn().mockResolvedValue({
             status: 'requires_action',
@@ -327,6 +329,7 @@ describe('manual-card popup integration', () => {
                 payment_intent_id: 'pi_11',
                 account_id: 'acct_11',
                 amount: 95,
+                save_for_future: true,
             },
             paymentMethodId: 'pm_declined',
             confirmSession: vi.fn().mockResolvedValue({
@@ -359,6 +362,7 @@ describe('manual-card popup integration', () => {
             payment_intent_id: 'pi_11',
             account_id: 'acct_11',
             amount: 95,
+            save_for_future: true,
         }, fallback, { hostWindow })).toBeNull();
 
         expect(toastError).toHaveBeenCalledWith(
@@ -384,6 +388,7 @@ describe('manual-card popup integration', () => {
             payment_intent_id: 'pi_11',
             account_id: 'acct_11',
             amount: 95,
+            save_for_future: true,
         }, 'pi_action_secret', fallback, { hostWindow })).toBeNull();
 
         expect(toastError).toHaveBeenCalledWith(
@@ -438,6 +443,7 @@ describe('ambiguous result reconciliation', () => {
                 payment_intent_id: 'pi_11',
                 account_id: 'acct_11',
                 amount: 95,
+                save_for_future: true,
             },
             paymentMethodId: 'pm_card_11',
             confirmSession: vi.fn().mockResolvedValue({ status: 'succeeded' }),

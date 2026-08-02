@@ -37,6 +37,7 @@ async function dispatch(
         company = COMPANY_A,
         authed = true,
         body = {},
+        jobVisibility = 'all',
     } = {}
 ) {
     const route = routeByPath(path);
@@ -48,7 +49,7 @@ async function dispatch(
         ip: '127.0.0.1',
         user: authed ? { sub: 'kc-sub', crmUser: { id: 'crm-user-1' } } : undefined,
         authz: authed
-            ? { scope: 'tenant', company: { id: company }, permissions }
+            ? { scope: 'tenant', company: { id: company }, permissions, scopes: { job_visibility: jobVisibility } }
             : undefined,
         companyFilter: authed ? { company_id: company } : undefined,
         companyId: 'LEGACY-DO-NOT-USE',
@@ -113,7 +114,12 @@ describe('manual-card confirm/finalize routes', () => {
         expect(mockStripeService.confirmManualCardSession).toHaveBeenCalledWith(
             COMPANY_A,
             '11',
-            'pm_card_11'
+            'pm_card_11',
+            {
+                actorId: 'crm-user-1',
+                providerLimited: false,
+                providerScope: { assignedOnly: false, userId: null },
+            }
         );
     });
 
@@ -128,7 +134,35 @@ describe('manual-card confirm/finalize routes', () => {
         });
         expect(mockStripeService.finalizeManualCardSession).toHaveBeenCalledWith(
             COMPANY_A,
-            '11'
+            '11',
+            {
+                actorId: 'crm-user-1',
+                providerLimited: false,
+                providerScope: { assignedOnly: false, userId: null },
+            }
+        );
+    });
+
+    it.each([
+        ['confirm', confirmPath, 'confirmManualCardSession'],
+        ['finalize', finalizePath, 'finalizeManualCardSession'],
+    ])('provider %s forwards own-session + assigned-job scope', async (_label, path, method) => {
+        mockStripeService[method].mockResolvedValue({ status: 'succeeded' });
+
+        await dispatch(path, {
+            jobVisibility: 'assigned_only',
+            body: { payment_method_id: 'pm_card_11' },
+        });
+
+        expect(mockStripeService[method]).toHaveBeenCalledWith(
+            COMPANY_A,
+            '11',
+            ...(method === 'confirmManualCardSession' ? ['pm_card_11'] : []),
+            {
+                actorId: 'crm-user-1',
+                providerLimited: true,
+                providerScope: { assignedOnly: true, userId: 'crm-user-1' },
+            }
         );
     });
 

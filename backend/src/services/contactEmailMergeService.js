@@ -63,6 +63,16 @@ class ContactConflictError extends Error {
     }
 }
 
+class ContactSavedCardMergeBlockedError extends Error {
+    constructor(contactId) {
+        super('Remove the duplicate contact\'s saved card before merging contacts.');
+        this.name = 'ContactSavedCardMergeBlockedError';
+        this.code = 'SAVED_CARD_MERGE_BLOCKED';
+        this.httpStatus = 409;
+        this.contactId = contactId;
+    }
+}
+
 // ─── small shared normalizers (CONTACT-MERGE-001) ────────────────────────────
 
 /** '+1 (617) 555-0022' → '16175550022'; empty/nullish → null. */
@@ -390,7 +400,7 @@ async function detectAttributeConflicts(targetContactId, added = {}, companyId, 
 }
 
 /**
- * The 14 identity tables carrying a `contact_id` FK to contacts(id), split by
+ * The identity tables carrying a `contact_id` FK to contacts(id), split by
  * whether the table also carries a `company_id` column (verified against the
  * migrations). A table WITHOUT company_id is scoped through contact_id only — the
  * dup contact is company-verified up front, so a contact_id match cannot straddle
@@ -405,6 +415,7 @@ const IDENTITY_TABLES = [
     { table: 'invoices', hasCompanyId: true },
     { table: 'payment_transactions', hasCompanyId: true },
     { table: 'stripe_payment_sessions', hasCompanyId: true },
+    { table: 'stripe_saved_payment_methods', hasCompanyId: true },
     { table: 'portal_access_tokens', hasCompanyId: true },
     { table: 'portal_sessions', hasCompanyId: false }, // no company_id column
     { table: 'portal_events', hasCompanyId: false }, // no company_id column
@@ -544,6 +555,21 @@ async function mergeContacts(survivorId, dupId, companyId, client = db) {
     if (String(survivor.company_id) !== String(companyId) ||
         String(dup.company_id) !== String(companyId)) {
         throw new Error('[ContactEmailMerge] cross-tenant merge blocked: survivor/dup company mismatch');
+    }
+
+    // CARD-ON-FILE-001: never silently re-home or detach a duplicate contact's
+    // saved card. The row disappears after explicit removal or TTL cleanup, at
+    // which point the merge can be retried normally.
+    const { rows: savedCardRows } = await client.query(
+        `SELECT EXISTS (
+            SELECT 1
+            FROM stripe_saved_payment_methods
+            WHERE company_id = $1 AND contact_id = $2 AND removed_at IS NULL
+         ) AS has_saved_card`,
+        [companyId, dupId]
+    );
+    if (savedCardRows[0]?.has_saved_card === true) {
+        throw new ContactSavedCardMergeBlockedError(dupId);
     }
 
     // 1. Adopt/merge the survivor's timeline FIRST (inside the tx). This also
@@ -1062,4 +1088,5 @@ module.exports = {
     transferEmail,
     assertTransferAllowed,
     ContactConflictError,
+    ContactSavedCardMergeBlockedError,
 };

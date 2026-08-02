@@ -13,6 +13,8 @@
 
 const provider = require('./stripeConnectProvider');
 const q = require('../db/stripePaymentsQueries');
+const savedCardsQueries = require('../db/stripeSavedCardsQueries');
+const jobFinanceQueries = require('../db/jobFinanceQueries');
 const paymentsQueries = require('../db/paymentsQueries');
 const paymentsService = require('./paymentsService');
 const invoicesService = require('./invoicesService');
@@ -60,11 +62,12 @@ const CHECKOUT_KEY_VERSION = 'v2';
 const PAYMENT_LINK_RECIPIENT_MAX_LENGTH = 254;
 
 class StripePaymentsError extends Error {
-    constructor(code, message, httpStatus = 400) {
+    constructor(code, message, httpStatus = 400, details = null) {
         super(message);
         this.name = 'StripePaymentsError';
         this.code = code;
         this.httpStatus = httpStatus;
+        this.details = details;
     }
 }
 
@@ -608,7 +611,8 @@ async function sendJobPaymentLink(companyId, actor, jobId, { channel, amount, me
 async function resolveSurfaceContext(
     companyId,
     { invoiceId, jobId, contactId, amount },
-    client = null
+    client = null,
+    access = null
 ) {
     let ctx = {
         invoiceId: invoiceId || null,
@@ -645,7 +649,9 @@ async function resolveSurfaceContext(
         // Ad-hoc job collect (no invoice). Load the job company-scoped so a foreign
         // id 404s (no cross-tenant leak); pull recipient contact for the send path.
         const jobsService = require('./jobsService');
-        const job = await jobsService.getJobById(jobId, companyId);
+        const job = access?.providerScope
+            ? await jobsService.getJobById(jobId, companyId, access.providerScope)
+            : await jobsService.getJobById(jobId, companyId);
         if (!job) throw new StripePaymentsError('NOT_FOUND', `Job ${jobId} not found`, 404);
         ctx.jobId = job.id;
         ctx.contactId = job.contact_id || null;
@@ -656,7 +662,45 @@ async function resolveSurfaceContext(
     } else {
         ctx.amount = assertAdhocAmount(amount);
     }
+    if (access?.providerLimited) {
+        if (!ctx.jobId) {
+            throw new StripePaymentsError('NOT_FOUND', 'Job not found', 404);
+        }
+        const jobsService = require('./jobsService');
+        const scopedJob = await jobsService.getJobById(
+            ctx.jobId,
+            companyId,
+            access.providerScope
+        );
+        if (!scopedJob) throw new StripePaymentsError('NOT_FOUND', 'Job not found', 404);
+    }
     return ctx;
+}
+
+async function getOrCreateContactCustomer(companyId, contactId, accountId, ctx, client) {
+    if (client) await savedCardsQueries.lockContact(companyId, contactId, client);
+    let mapping = await savedCardsQueries.getContactCustomer(companyId, contactId, client);
+    if (mapping?.stripe_account_id === accountId) return mapping;
+
+    const customer = await provider.createCustomer(accountId, {
+        name: ctx.customerName || undefined,
+        email: ctx.email || undefined,
+        phone: ctx.phone || undefined,
+        metadata: {
+            albusto_company_id: companyId,
+            albusto_contact_id: String(contactId),
+        },
+    }, {
+        idempotencyKey: `contact-customer-${companyId}-${contactId}-${accountId}`,
+    });
+    mapping = await savedCardsQueries.upsertContactCustomer(
+        companyId,
+        contactId,
+        accountId,
+        customer.id,
+        client
+    );
+    return mapping;
 }
 
 async function createCardSession(
@@ -665,10 +709,20 @@ async function createCardSession(
     surface,
     params,
     client = null,
-    activityActor = null
+    activityActor = null,
+    access = null
 ) {
     const account = await assertCollectable(companyId);
-    const ctx = await resolveSurfaceContext(companyId, params, client);
+    const ctx = await resolveSurfaceContext(companyId, params, client, access);
+    const customerMapping = surface === 'manual_card' && ctx.contactId
+        ? await getOrCreateContactCustomer(
+            companyId,
+            ctx.contactId,
+            account.stripe_account_id,
+            ctx,
+            client
+        )
+        : null;
     const metadata = {
         company_id: companyId,
         invoice_id: ctx.invoiceId != null ? String(ctx.invoiceId) : '',
@@ -679,12 +733,21 @@ async function createCardSession(
     const idempotencyKey = `${surface}-${companyId}-${ctx.invoiceId || ctx.jobId || 'adhoc'}-${ctx.amount}-${Date.now()}`;
     const pi = surface === 'tap_to_pay'
         ? await provider.createTerminalPaymentIntent(account.stripe_account_id, { amount: ctx.amount, metadata }, { idempotencyKey })
-        : await provider.createCardPaymentIntent(account.stripe_account_id, { amount: ctx.amount, metadata }, { idempotencyKey });
+        : await provider.createCardPaymentIntent(account.stripe_account_id, {
+            amount: ctx.amount,
+            metadata,
+            customerId: customerMapping?.stripe_customer_id || null,
+            saveForFuture: Boolean(customerMapping),
+        }, { idempotencyKey });
 
     const row = await q.insertSession(companyId, {
         invoice_id: ctx.invoiceId, job_id: ctx.jobId, contact_id: ctx.contactId,
         created_by: actor?.id || null, surface, amount: ctx.amount, status: 'open',
-        stripe_payment_intent_id: pi.id, stripe_account_id: account.stripe_account_id, metadata: {},
+        stripe_payment_intent_id: pi.id,
+        stripe_account_id: account.stripe_account_id,
+        metadata: customerMapping
+            ? { save_for_future: true, contact_customer_id: customerMapping.id }
+            : {},
     }, client);
     if (activityActor) {
         const paymentTarget = {
@@ -721,6 +784,7 @@ async function createCardSession(
         payment_intent_id: pi.id,
         account_id: account.stripe_account_id,
         amount: ctx.amount,
+        save_for_future: Boolean(customerMapping),
     };
 }
 
@@ -729,14 +793,16 @@ const createManualCardSession = (
     actor,
     params,
     client = null,
-    activityActor = null
+    activityActor = null,
+    access = null
 ) => createCardSession(
     companyId,
     actor,
     'manual_card',
     params,
     client,
-    activityActor
+    activityActor,
+    access
 );
 
 function parseSessionMetadata(value) {
@@ -758,6 +824,61 @@ async function getMerchantManualCardSession(companyId, sessionId, client = null)
         throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
     }
     return session;
+}
+
+async function assertManualCardSessionAccess(companyId, session, access = null) {
+    if (!access?.providerLimited) return;
+    if (!access.actorId || String(session.created_by || '') !== String(access.actorId)) {
+        throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
+    }
+    if (!session.job_id) {
+        throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
+    }
+    const jobsService = require('./jobsService');
+    const job = await jobsService.getJobById(
+        session.job_id,
+        companyId,
+        access.providerScope
+    );
+    if (!job) throw new StripePaymentsError('NOT_FOUND', 'Manual card session not found', 404);
+}
+
+async function cacheSuccessfulManualCard(companyId, session, pi) {
+    const metadata = parseSessionMetadata(session.metadata);
+    if (!session.contact_id || metadata.save_for_future !== true) return null;
+    const mapping = await savedCardsQueries.getContactCustomer(companyId, session.contact_id);
+    if (!mapping || mapping.stripe_account_id !== session.stripe_account_id) return null;
+
+    let paymentMethod = pi.payment_method && typeof pi.payment_method === 'object'
+        ? pi.payment_method
+        : null;
+    const paymentMethodId = typeof pi.payment_method === 'string'
+        ? pi.payment_method
+        : pi.payment_method?.id;
+    if (!paymentMethod && paymentMethodId) {
+        paymentMethod = await provider.retrievePaymentMethod(
+            session.stripe_account_id,
+            paymentMethodId
+        );
+    }
+    const card = paymentMethod?.card;
+    const attachedCustomer = typeof paymentMethod?.customer === 'string'
+        ? paymentMethod.customer
+        : paymentMethod?.customer?.id;
+    if (!paymentMethod?.id || !card || attachedCustomer !== mapping.stripe_customer_id) {
+        return null;
+    }
+    return savedCardsQueries.upsertSavedCard(companyId, {
+        contactId: session.contact_id,
+        contactCustomerId: mapping.id,
+        stripeAccountId: session.stripe_account_id,
+        stripeCustomerId: mapping.stripe_customer_id,
+        stripePaymentMethodId: paymentMethod.id,
+        brand: String(card.brand || 'card').toLowerCase(),
+        last4: String(card.last4 || ''),
+        expMonth: Number(card.exp_month),
+        expYear: Number(card.exp_year),
+    });
 }
 
 function manualCardFailure(pi, fallbackMessage = 'The card could not be charged') {
@@ -798,6 +919,11 @@ async function reconcileSuccessfulManualCardPayment(companyId, session, pi) {
             },
         }, client, stripeActor());
     });
+    try {
+        await cacheSuccessfulManualCard(companyId, session, pi);
+    } catch (error) {
+        console.error('[StripePayments] saved-card cache failed:', error.message);
+    }
 }
 
 async function resolveManualCardConfirmation(companyId, session, pi) {
@@ -823,8 +949,9 @@ async function resolveManualCardConfirmation(companyId, session, pi) {
  * PaymentMethod created in the popup. The stable key makes a transport retry of
  * the same session + PaymentMethod safe.
  */
-async function confirmManualCardSession(companyId, sessionId, paymentMethodId) {
+async function confirmManualCardSession(companyId, sessionId, paymentMethodId, access = null) {
     const session = await getMerchantManualCardSession(companyId, sessionId);
+    await assertManualCardSessionAccess(companyId, session, access);
     if (!/^pm_[A-Za-z0-9_]+$/.test(String(paymentMethodId || ''))) {
         throw new StripePaymentsError('INVALID_PAYMENT_METHOD', 'Choose a valid card', 400);
     }
@@ -858,8 +985,9 @@ async function confirmManualCardSession(companyId, sessionId, paymentMethodId) {
  * After Stripe.js handles a next action in the popup, retrieve the same owned
  * PaymentIntent and synchronously project a success into the canonical ledger.
  */
-async function finalizeManualCardSession(companyId, sessionId) {
+async function finalizeManualCardSession(companyId, sessionId, access = null) {
     const session = await getMerchantManualCardSession(companyId, sessionId);
+    await assertManualCardSessionAccess(companyId, session, access);
     const pi = await provider.retrievePaymentIntent(
         session.stripe_account_id,
         session.stripe_payment_intent_id
@@ -871,8 +999,9 @@ async function finalizeManualCardSession(companyId, sessionId) {
  * Reconcile one merchant manual-card session without exposing Stripe/session ids.
  * Ownership and merchant/public classification are resolved before any Stripe call.
  */
-async function getManualCardSessionResult(companyId, sessionId) {
+async function getManualCardSessionResult(companyId, sessionId, access = null) {
     const session = await getMerchantManualCardSession(companyId, sessionId);
+    await assertManualCardSessionAccess(companyId, session, access);
 
     const pi = await provider.retrievePaymentIntent(
         session.stripe_account_id,
@@ -898,6 +1027,330 @@ async function getManualCardSessionResult(companyId, sessionId) {
     };
 }
 
+function publicSavedCard(card) {
+    return {
+        id: Number(card.id),
+        brand: card.brand,
+        last4: card.last4,
+        exp_month: Number(card.exp_month),
+        exp_year: Number(card.exp_year),
+    };
+}
+
+async function getScopedJob(companyId, jobId, access = null) {
+    const jobsService = require('./jobsService');
+    const job = access?.providerScope
+        ? await jobsService.getJobById(jobId, companyId, access.providerScope)
+        : await jobsService.getJobById(jobId, companyId);
+    if (!job) throw new StripePaymentsError('NOT_FOUND', 'Job not found', 404);
+    return job;
+}
+
+async function getJobDue(companyId, jobId, client = null) {
+    const rollups = await jobFinanceQueries.listJobPaymentRollups(
+        companyId,
+        [Number(jobId)],
+        client
+    );
+    return Number(Number(rollups[0]?.total_due || 0).toFixed(2));
+}
+
+async function listJobSavedCards(companyId, jobId, access = null) {
+    const job = await getScopedJob(companyId, jobId, access);
+    const due = await getJobDue(companyId, job.id);
+    if (!job.contact_id) return { due, cards: [] };
+    const account = await assertCollectable(companyId);
+    const cards = await savedCardsQueries.listUsableContactCards(
+        companyId,
+        job.contact_id,
+        account.stripe_account_id
+    );
+    return { due, cards: cards.map(publicSavedCard) };
+}
+
+async function listContactSavedCards(companyId, contactId) {
+    const contact = await estimatesQueries.getContactContext(companyId, contactId);
+    if (!contact) throw new StripePaymentsError('NOT_FOUND', 'Contact not found', 404);
+    const account = await q.getAccountByCompany(companyId);
+    if (!account) return [];
+    const cards = await savedCardsQueries.listUsableContactCards(
+        companyId,
+        contactId,
+        account.stripe_account_id
+    );
+    return cards.map(publicSavedCard);
+}
+
+async function removeContactSavedCard(companyId, actor, contactId, cardId) {
+    const contact = await estimatesQueries.getContactContext(companyId, contactId);
+    if (!contact) throw new StripePaymentsError('NOT_FOUND', 'Contact not found', 404);
+    const card = await savedCardsQueries.getOwnedCard(companyId, contactId, cardId);
+    if (!card) throw new StripePaymentsError('NOT_FOUND', 'Saved card not found', 404);
+    try {
+        await provider.detachPaymentMethod(
+            card.stripe_account_id,
+            card.stripe_payment_method_id
+        );
+    } catch (error) {
+        if (error.stripeCode !== 'resource_missing') throw error;
+    }
+    await savedCardsQueries.deleteOwnedCard(companyId, contactId, cardId);
+    await auditService.log({
+        actor_id: actor?.id || null,
+        action: 'contact.saved_card_removed',
+        target_type: 'contact',
+        target_id: String(contactId),
+        company_id: companyId,
+        details: { saved_card_id: Number(cardId) },
+    });
+    return { removed: true };
+}
+
+function validateSavedCardChargeInput({ expectedDue, requestKey }) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(requestKey || ''))) {
+        throw new StripePaymentsError('INVALID_REQUEST_KEY', 'A valid request key is required', 400);
+    }
+    const amount = Number(expectedDue);
+    if (!Number.isFinite(amount)) {
+        throw new StripePaymentsError('INVALID_AMOUNT', 'Expected due is required', 400);
+    }
+    return { expectedDue: Number(amount.toFixed(2)), requestKey: String(requestKey) };
+}
+
+function savedCardFailure(error) {
+    const requiresAuthentication = error.stripeCode === 'authentication_required'
+        || error.stripePaymentIntent?.status === 'requires_action';
+    if (requiresAuthentication) {
+        return new StripePaymentsError(
+            'AUTHENTICATION_REQUIRED',
+            'This saved card needs verification. Enter the card again to continue.',
+            402,
+            { can_enter_card: true }
+        );
+    }
+    if (error.stripeCode === 'card_declined' || error.stripeDeclineCode) {
+        return new StripePaymentsError(
+            'CARD_DECLINED',
+            error.message || 'The saved card was declined.',
+            402,
+            { can_enter_card: true }
+        );
+    }
+    return error;
+}
+
+async function chargeJobSavedCard(companyId, actor, jobId, input, access = null) {
+    const { expectedDue, requestKey } = validateSavedCardChargeInput(input);
+    const job = await getScopedJob(companyId, jobId, access);
+    if (!job.contact_id) {
+        throw new StripePaymentsError('NO_CONTACT', 'This job has no contact with a saved card', 409);
+    }
+    const account = await assertCollectable(companyId);
+    const prior = await q.getSessionByRequestKey(companyId, requestKey);
+    if (prior) {
+        if (String(prior.job_id) !== String(job.id)
+            || String(prior.created_by || '') !== String(actor?.id || '')) {
+            throw new StripePaymentsError('IDEMPOTENCY_CONFLICT', 'Request key was already used', 409);
+        }
+        if (prior.status === 'complete') {
+            const payment = await paymentsQueries.findByExternalSourceId(
+                companyId,
+                'stripe',
+                prior.stripe_payment_intent_id
+            );
+            return { status: 'succeeded', amount: Number(prior.amount), payment };
+        }
+        if (prior.status !== 'open') {
+            throw new StripePaymentsError(
+                'PAYMENT_ATTEMPT_FAILED',
+                prior.failure_reason || 'This payment attempt failed. Try again.',
+                409,
+                { can_enter_card: true }
+            );
+        }
+    }
+
+    const due = await getJobDue(companyId, job.id);
+    if (due < 0.5) {
+        throw new StripePaymentsError('NOTHING_DUE', 'This job has no chargeable balance', 409);
+    }
+    if (Math.round(expectedDue * 100) !== Math.round(due * 100)) {
+        throw new StripePaymentsError(
+            'DUE_CHANGED',
+            'The job balance changed. Confirm the new amount.',
+            409,
+            { current_due: due }
+        );
+    }
+
+    const cardId = Number(input.savedCardId);
+    if (!Number.isInteger(cardId) || cardId <= 0) {
+        throw new StripePaymentsError('CARD_UNAVAILABLE', 'Saved card is unavailable', 409);
+    }
+    if (prior) {
+        const priorMetadata = parseSessionMetadata(prior.metadata);
+        if (Number(priorMetadata.saved_card_id) !== cardId) {
+            throw new StripePaymentsError('IDEMPOTENCY_CONFLICT', 'Request key was already used', 409);
+        }
+        if (Math.round(Number(prior.amount) * 100) !== Math.round(due * 100)) {
+            await q.updateSession(companyId, prior.id, {
+                status: 'failed',
+                failure_reason: 'Job due changed before charge completion',
+            });
+            throw new StripePaymentsError(
+                'DUE_CHANGED',
+                'The job balance changed. Confirm the new amount.',
+                409,
+                { current_due: due }
+            );
+        }
+    }
+    // CARD-ON-FILE-001 fail-closed control: this lookup contains the independent
+    // saved_at > NOW() - 14 days predicate. Cleanup timing cannot widen access.
+    const card = await savedCardsQueries.getUsableCard(
+        companyId,
+        job.contact_id,
+        account.stripe_account_id,
+        cardId
+    );
+    if (!card) {
+        throw new StripePaymentsError(
+            'CARD_EXPIRED',
+            'This saved card has expired. Enter the card again.',
+            409,
+            { can_enter_card: true }
+        );
+    }
+    const mapping = await savedCardsQueries.getContactCustomer(companyId, job.contact_id);
+    if (!mapping
+        || mapping.stripe_account_id !== account.stripe_account_id
+        || mapping.stripe_customer_id !== card.stripe_customer_id) {
+        throw new StripePaymentsError('CARD_UNAVAILABLE', 'Saved card is unavailable', 409);
+    }
+
+    let paymentMethod;
+    try {
+        paymentMethod = await provider.retrievePaymentMethod(
+            account.stripe_account_id,
+            card.stripe_payment_method_id
+        );
+    } catch (error) {
+        if (error.stripeCode === 'resource_missing') {
+            await savedCardsQueries.deleteOwnedCard(companyId, job.contact_id, card.id);
+            throw new StripePaymentsError(
+                'CARD_UNAVAILABLE',
+                'This saved card is no longer available. Enter the card again.',
+                409,
+                { can_enter_card: true }
+            );
+        }
+        throw error;
+    }
+    const attachedCustomer = typeof paymentMethod.customer === 'string'
+        ? paymentMethod.customer
+        : paymentMethod.customer?.id;
+    if (attachedCustomer !== mapping.stripe_customer_id || !paymentMethod.card) {
+        throw new StripePaymentsError('CARD_UNAVAILABLE', 'Saved card is unavailable', 409);
+    }
+
+    let session = prior;
+    if (!session) {
+        try {
+            session = await withTransaction(client => q.insertSession(companyId, {
+                job_id: job.id,
+                contact_id: job.contact_id,
+                created_by: actor?.id || null,
+                surface: 'saved_card',
+                amount: due,
+                currency: 'USD',
+                status: 'open',
+                stripe_account_id: account.stripe_account_id,
+                metadata: { saved_card_id: card.id },
+                request_key: requestKey,
+            }, client));
+        } catch (error) {
+            if (error.code === '23505') {
+                throw new StripePaymentsError(
+                    'PAYMENT_IN_PROGRESS',
+                    'Another saved-card payment is already in progress for this job.',
+                    409
+                );
+            }
+            throw error;
+        }
+    }
+
+    let pi;
+    try {
+        pi = await provider.createOffSessionPaymentIntent(account.stripe_account_id, {
+            amount: Number(session.amount),
+            currency: session.currency || 'USD',
+            customerId: mapping.stripe_customer_id,
+            paymentMethodId: card.stripe_payment_method_id,
+            metadata: {
+                company_id: companyId,
+                invoice_id: '',
+                job_id: String(job.id),
+                contact_id: String(job.contact_id),
+                surface: 'saved_card',
+            },
+        }, { idempotencyKey: `saved-card-session-${session.id}` });
+    } catch (error) {
+        const knownFailure = error.stripeCode === 'authentication_required'
+            || error.stripeCode === 'card_declined'
+            || Boolean(error.stripeDeclineCode)
+            || error.stripePaymentIntent?.status === 'requires_action'
+            || error.stripePaymentIntent?.status === 'requires_payment_method';
+        if (knownFailure) {
+            await q.updateSession(companyId, session.id, {
+                status: 'failed',
+                stripe_payment_intent_id: error.stripePaymentIntent?.id || null,
+                failure_reason: error.message || 'Saved-card payment failed',
+            });
+        }
+        throw savedCardFailure(error);
+    }
+    if (pi.status !== 'succeeded') {
+        await q.updateSession(companyId, session.id, {
+            status: 'failed',
+            stripe_payment_intent_id: pi.id,
+            failure_reason: 'Saved-card payment was not completed',
+        });
+        throw new StripePaymentsError(
+            'PAYMENT_NOT_FINAL',
+            'The saved-card payment was not completed. Enter the card again.',
+            409,
+            { can_enter_card: true }
+        );
+    }
+
+    let paymentResult;
+    await withTransaction(async client => {
+        await q.updateSession(companyId, session.id, {
+            status: 'complete',
+            stripe_payment_intent_id: pi.id,
+            stripe_charge_id: typeof pi.latest_charge === 'string'
+                ? pi.latest_charge
+                : pi.latest_charge?.id || null,
+        }, client);
+        paymentResult = await applyStripePayment(companyId, {
+            externalId: pi.id,
+            invoiceId: null,
+            contactId: job.contact_id,
+            jobId: job.id,
+            amount: (pi.amount_received ?? pi.amount) / 100,
+            currency: pi.currency,
+            metadata: { surface: 'saved_card', payment_intent_id: pi.id, tip: 0 },
+        }, client, userActor(actor?.id || null));
+        await savedCardsQueries.markCardUsed(companyId, card.id, client);
+    });
+    return {
+        status: 'succeeded',
+        amount: Number(session.amount),
+        payment: paymentResult?.tx || null,
+    };
+}
+
 const RECEIPT_EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
@@ -911,11 +1364,13 @@ async function sendManualCardReceipt(
     noteActor = null,
     client = null,
     activityActor = null,
-    idempotencyKey = null
+    idempotencyKey = null,
+    access = null
 ) {
     // Resolve tenant ownership before the ledger lookup so foreign/public
     // session ids retain a uniform 404 with no provider or email side effects.
     const session = await getMerchantManualCardSession(companyId, sessionId, client);
+    await assertManualCardSessionAccess(companyId, session, access);
     const payment = await paymentsQueries.findByExternalSourceId(
         companyId,
         'stripe',
@@ -1626,6 +2081,7 @@ async function handleWebhook(rawBody, signature) {
             }
             case 'payment_intent.succeeded': {
                 const obj = event.data;
+                let successfulSession = null;
                 await withTransaction(async (client) => {
                     const byIntent = await q.getSessionByPaymentIntent(
                         companyId,
@@ -1641,6 +2097,7 @@ async function handleWebhook(rawBody, signature) {
                             )
                             : null
                     );
+                    successfulSession = session;
                     const meta = obj.metadata || {};
                     const invId = session?.invoice_id
                         || (meta.invoice_id ? Number(meta.invoice_id) : null);
@@ -1667,6 +2124,13 @@ async function handleWebhook(rawBody, signature) {
                         },
                     }, client, stripeActor());
                 });
+                if (successfulSession?.surface === 'manual_card') {
+                    try {
+                        await cacheSuccessfulManualCard(companyId, successfulSession, obj);
+                    } catch (error) {
+                        console.error('[StripePayments] webhook saved-card cache failed:', error.message);
+                    }
+                }
                 break;
             }
             case 'payment_intent.payment_failed': {
@@ -1885,6 +2349,10 @@ module.exports = {
     confirmManualCardSession,
     finalizeManualCardSession,
     getManualCardSessionResult,
+    listJobSavedCards,
+    listContactSavedCards,
+    removeContactSavedCard,
+    chargeJobSavedCard,
     sendManualCardReceipt,
     getConnectionToken,
     createTapToPayIntent,
