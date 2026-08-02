@@ -77,8 +77,7 @@ function validateAuthorizationTransport(req, res, next) {
     }
 }
 
-// tenant-safety-allow R-route-permission: live token, consent, and delegated RBAC
-// are re-resolved before the exact DB-pinned artifact receives one execution slot
+// tenant-safety-allow R-route-permission: live token, consent, and delegated RBAC are re-resolved before the exact DB-pinned artifact receives one execution slot
 router.post(
     '/v1/runs/authorize',
     validateAuthorizationTransport,

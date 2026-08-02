@@ -28,7 +28,7 @@ const router = require('../backend/src/routes/estimates');
 const COMPANY_A = '00000000-0000-0000-0000-0000000000a1';
 const ACTOR_A = '10000000-0000-0000-0000-0000000000a1';
 
-function app({ roleKey = 'provider', companyId = COMPANY_A } = {}) {
+function app({ roleKey = 'provider', companyId = COMPANY_A, membership } = {}) {
     const server = express();
     server.use(express.json());
     server.use((req, _res, next) => {
@@ -37,7 +37,9 @@ function app({ roleKey = 'provider', companyId = COMPANY_A } = {}) {
         req.authz = {
             permissions: [],
             company: companyId ? { id: companyId } : null,
-            membership: { role_key: roleKey },
+            // `undefined` keeps the default provider membership; pass `null` to
+            // model an authenticated caller with no resolved tenant membership.
+            membership: membership === undefined ? { role_key: roleKey } : membership,
         };
         next();
     });
@@ -114,6 +116,37 @@ describe('POST /api/estimates/polish-report', () => {
             expect(reportPolishService.polishReport).not.toHaveBeenCalled();
         }
     );
+
+    test('an authenticated caller with no resolved tenant membership is rejected before app or LLM access', async () => {
+        // The runtime mount only guarantees authenticate + requireCompanyAccess,
+        // so a plain authenticated user (no provider role) must not reach the
+        // feature: the route owns a fail-closed provider gate, not open access.
+        const response = await request(app({ membership: null }))
+            .post('/api/estimates/polish-report')
+            .send({ text: 'Garbage disposal jammed.' });
+
+        expect(response.status).toBe(403);
+        expect(response.body).toEqual({
+            ok: false,
+            error: {
+                code: 'provider_only',
+                message: 'Only providers can polish reports.',
+            },
+        });
+        expect(marketplaceService.isAppConnected).not.toHaveBeenCalled();
+        expect(reportPolishService.polishReport).not.toHaveBeenCalled();
+    });
+
+    test('an unrecognized custom role is denied like any other non-provider role', async () => {
+        const response = await request(app({ roleKey: 'estimator' }))
+            .post('/api/estimates/polish-report')
+            .send({ text: 'Ice maker leaking.' });
+
+        expect(response.status).toBe(403);
+        expect(response.body.error.code).toBe('provider_only');
+        expect(marketplaceService.isAppConnected).not.toHaveBeenCalled();
+        expect(reportPolishService.polishReport).not.toHaveBeenCalled();
+    });
 
     test('disconnected app returns app_disabled before LLM access', async () => {
         marketplaceService.isAppConnected.mockResolvedValue(false);

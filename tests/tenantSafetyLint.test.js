@@ -82,7 +82,6 @@ const NON_REQUEST_FILE_RE = /backend\/src\/(?:cli|scripts|webhooks)\/|backend\/s
 
 // Exact, reviewed statement exceptions. Key format: rule:file:line.
 const SQL_ALLOWLIST = new Map([
-    ['R-write-scope:backend/src/routes/calls.js:346', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
     ['R-write-scope:backend/src/routes/contacts.js:446', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
     ['R-write-scope:backend/src/routes/contacts.js:722', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
     ['R-write-scope:backend/src/routes/integrations-leads.js:101', 'Pre-existing integration write scoped only by entity id; remediation deferred.'],
@@ -94,7 +93,6 @@ const SQL_ALLOWLIST = new Map([
     ['R-write-scope:backend/src/routes/leads.js:519', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
     ['R-write-scope:backend/src/routes/leads.js:639', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
     ['R-write-scope:backend/src/routes/leads.js:692', 'Pre-existing lead UUID write lacks company_id; remediation deferred.'],
-    ['R-write-scope:backend/src/routes/pulse.js:889', 'Pre-existing unscoped route write; remediation deferred to the post-audit triage.'],
     ['R-natural-key:backend/src/routes/calls.js:675', 'Pre-existing transcript delete uses only Twilio call SID; remediation deferred.'],
     ['R-natural-key:backend/src/routes/leads.js:692', 'Pre-existing lead write uses only UUID; remediation deferred.'],
     ['R-natural-key:backend/src/db/conversationsQueries.js:247', 'Pre-existing message update uses only Twilio message SID; remediation deferred.'],
@@ -167,6 +165,7 @@ const ROUTE_PERMISSION_EXCEPTIONS = new Map([
     ['backend/src/routes/crmMcp.js:router:GET:/tools', 'Authenticated tenant transport filters discovery through per-tool permission metadata; unmapped tools fail closed.'],
     ['backend/src/routes/crmMcp.js:router:POST:/call', 'Authenticated tenant transport enforces each tool permission in the shared executor before dispatch.'],
     ['backend/src/routes/crmMcp.js:router:POST:/jsonrpc', 'Authenticated tenant JSON-RPC uses filtered discovery and the shared per-tool executor gate.'],
+    ['backend/src/routes/estimates.js:router:POST:/polish-report', 'Route-local fail-closed provider-only role gate plus Report-to-Estimate app-connected gate and req.companyFilter company scope; deliberately not estimates.create so a provider lacking it can still polish notes (REPORT-POLISH-001).'],
     ['backend/src/routes/events.js:router:GET:/stats', 'Authenticated (role-neutral) operational counters; no longer public (TENANCY-RBAC-AUDIT-001 follow-up).'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/webhooks', 'Zenbooker legacy callback is public by design (audit flags optional-secret fail-open behavior).'],
     ['backend/src/routes/integrations-zenbooker.js:router:POST:/wh/:key', 'Zenbooker callback derives tenant from a minimum-32-character opaque URL key.'],

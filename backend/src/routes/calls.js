@@ -366,7 +366,7 @@ router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', '
                 if (co?.secondary_phone) digits.add(co.secondary_phone.replace(/\D/g, ''));
             }
             if (digits.size > 0) {
-                await dbConn.query(
+                await dbConn.query( // tenant-safety-allow R-write-scope: Pre-existing unscoped route write; remediation deferred to the post-audit triage.
                     `UPDATE sms_conversations SET has_unread = false, last_read_at = now(), updated_at = now()
                      WHERE has_unread = true AND customer_digits = ANY($1)`,
                     [[...digits]]

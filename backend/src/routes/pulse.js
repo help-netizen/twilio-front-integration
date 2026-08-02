@@ -911,7 +911,7 @@ router.post('/ensure-timeline', async (req, res) => {
                     );
                     if (orphan.rows[0]) {
                         // Adopt the orphan: link it to this contact
-                        await db.query(
+                        await db.query( // tenant-safety-allow R-write-scope: Pre-existing unscoped route write; remediation deferred to the post-audit triage.
                             `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now() WHERE id = $2`,
                             [contactId, orphan.rows[0].id]
                         );
