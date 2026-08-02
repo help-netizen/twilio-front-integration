@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CircleCheckBig } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
@@ -40,8 +40,18 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
     const [memo, setMemo] = useState('');
     const [submitting, setSubmitting] = useState(false);
 
+    // Initialize form state once per open. Keying on `outstanding` too would
+    // re-run this AFTER a successful payment (onSuccess refetches → outstanding
+    // drops), wiping the success screen (setRecorded(null)) and flashing the
+    // user back to a fresh entry form. Guard to the closed→open transition only.
+    const initializedRef = useRef(false);
     useEffect(() => {
-        if (!open) return;
+        if (!open) {
+            initializedRef.current = false;
+            return;
+        }
+        if (initializedRef.current) return;
+        initializedRef.current = true;
         setAmount(outstanding > 0 ? String(outstanding) : '');
         setPaymentMethod('cash');
         setReferenceNumber('');
