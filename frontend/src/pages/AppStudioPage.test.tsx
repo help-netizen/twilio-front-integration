@@ -5,6 +5,7 @@ import apiSource from '../services/appStudioApi.ts?raw';
 import {
     AppStudioAccessDenied,
     AppStudioWorkspace,
+    appStudioSandboxResult,
     appStudioVersionLabel,
     canAccessAppStudio,
 } from './AppStudioPage';
@@ -14,6 +15,7 @@ const version = {
     version_number: 'builder-1',
     status: 'draft',
     tools: ['svc.list_tasks'],
+    scanner_report: { dry_run: { result: 'Today: 6 jobs scheduled.' } },
 };
 
 const baseProps = {
@@ -65,6 +67,18 @@ describe('APP-SVC-001 App Studio page', () => {
         expect(pageSource).toContain('<DialogBody className="md:px-8 md:py-7">');
         expect(pageSource).toContain('<FloatingField');
         expect(pageSource).not.toMatch(/>Blanc</);
+    });
+
+    it('shows what the draft returned in the sandbox, not just the bot\'s description', () => {
+        const markup = renderToStaticMarkup(<AppStudioWorkspace {...baseProps} />);
+        expect(markup).toContain('Sandbox result');
+        expect(markup).toContain('Today: 6 jobs scheduled.');
+
+        expect(appStudioSandboxResult({ ...version, scanner_report: {} })).toBeNull();
+        expect(appStudioSandboxResult({
+            ...version,
+            scanner_report: { dry_run: { result: { jobs: 6 } } },
+        })).toContain('"jobs": 6');
     });
 
     it('renders empty, loading, error, and quota states', () => {

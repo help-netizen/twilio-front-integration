@@ -38,6 +38,34 @@ export function appStudioVersionLabel(version: AppStudioVersion): string {
     return `Version ${number} · ${version.status}`;
 }
 
+// What the draft actually returned when it ran against the sandbox. Without this
+// the author only sees the bot's account of the app, never its output — and a
+// draft that quietly returns nothing looks exactly like one that works.
+export function appStudioSandboxResult(version: AppStudioVersion): string | null {
+    const report = version.scanner_report as { dry_run?: { result?: unknown } } | undefined;
+    const result = report?.dry_run?.result;
+    if (result === undefined || result === null) return null;
+    const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    return text.trim() ? text.slice(0, 2000) : null;
+}
+
+function SandboxResult({ version }: { version: AppStudioVersion }) {
+    const result = appStudioSandboxResult(version);
+    if (!result) return null;
+    return (
+        <div
+            data-testid="app-studio-sandbox-result"
+            className="mt-3 rounded-xl px-3 py-2.5"
+            style={{ background: 'var(--blanc-surface-muted)' }}
+        >
+            <div className="blanc-eyebrow">Sandbox result</div>
+            <p className="mt-1 whitespace-pre-wrap text-[13px] leading-5 text-[var(--blanc-ink-2)]">
+                {result}
+            </p>
+        </div>
+    );
+}
+
 export function AppStudioAccessDenied() {
     return (
         <div
@@ -78,6 +106,7 @@ function ProfileContent({ profile }: { profile: AppStudioProfile | null }) {
                     <div>
                         <div className="blanc-eyebrow">Version status</div>
                         <p className="mt-2 text-sm font-medium">{appStudioVersionLabel(profile.version)}</p>
+                        <SandboxResult version={profile.version} />
                     </div>
                     {profile.version.tools.length > 0 && (
                         <div>
@@ -240,13 +269,16 @@ export function AppStudioWorkspace({
                                                 )}
                                                 <p>{message.text}</p>
                                                 {version && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => onProfileOpenChange(true)}
-                                                        className="mt-3 rounded-lg bg-[var(--blanc-accent-soft)] px-2.5 py-1.5 text-xs font-semibold text-[var(--blanc-accent)]"
-                                                    >
-                                                        {appStudioVersionLabel(version)}
-                                                    </button>
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => onProfileOpenChange(true)}
+                                                            className="mt-3 rounded-lg bg-[var(--blanc-accent-soft)] px-2.5 py-1.5 text-xs font-semibold text-[var(--blanc-accent)]"
+                                                        >
+                                                            {appStudioVersionLabel(version)}
+                                                        </button>
+                                                        <SandboxResult version={version} />
+                                                    </>
                                                 )}
                                             </div>
                                         );
