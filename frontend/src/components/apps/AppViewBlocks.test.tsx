@@ -17,14 +17,17 @@ describe('APP-VIEW-001 view document renderer', () => {
             view_version: 1,
             blocks: [
                 { type: 'stat_row', items: [{ label: 'Outstanding', value: '$4,180', tone: 'danger', trend: '+$620 this week' }] },
-                { type: 'chart', chart: 'bar', series: [{ label: 'Miles', value: 1640 }], format: 'currency' },
+                { type: 'chart', chart_type: 'bar', series: [{ label: 'Miles', value: 1640 }], format: 'currency' },
                 {
                     type: 'table',
                     title: 'Jobs',
-                    columns: [{ key: 'job', label: 'Job' }, { key: 'amount', label: 'Balance', align: 'right' }],
-                    rows: [{ job: { type: 'entity', ref: { entity: 'job', id: 1219, label: 'NAC-1219' } }, amount: '$192.00' }],
+                    columns: [
+                        { key: 'job', label: 'Job', type: 'entity', align: 'left' },
+                        { key: 'amount', label: 'Balance', type: 'currency', align: 'right' },
+                    ],
+                    rows: [{ job: { entity: 'job', id: 1219, label: 'NAC-1219' }, amount: 192 }],
                 },
-                { type: 'list', items: [{ title: 'Second visit needed', badge: { text: '14 days', tone: 'danger' } }] },
+                { type: 'list', items: [{ title: 'Second visit needed', badge: { label: '14 days', tone: 'danger' } }] },
                 { type: 'text', text: 'Collected before noon.' },
                 { type: 'empty', text: 'Nothing outstanding.' },
             ],
@@ -34,6 +37,7 @@ describe('APP-VIEW-001 view document renderer', () => {
         expect(markup).toContain('+$620 this week');
         expect(markup).toContain('$1,640');
         expect(markup).toContain('NAC-1219');
+        expect(markup).toContain('$192.00');
         expect(markup).toContain('14 days');
         expect(markup).toContain('Collected before noon.');
         expect(markup).toContain('Nothing outstanding.');

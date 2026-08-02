@@ -95,7 +95,9 @@ function finiteNumber(value, path) {
 
 function entityValue(value, path) {
     requireObject(value, path);
-    requireExactKeys(value, ['entity', 'id'], ['entity', 'id'], path);
+    // A reference carries optional display text: without it a table can only
+    // show a raw id where the reader expects a job number.
+    requireExactKeys(value, ['entity', 'id', 'label'], ['entity', 'id'], path);
     if (typeof value.entity !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(value.entity)) {
         fail(`${path}.entity`, 'must be a valid entity type.');
     }
@@ -105,7 +107,9 @@ function entityValue(value, path) {
         && value.id.length <= 128
         && /^[A-Za-z0-9_-]+$/.test(value.id);
     if (!idIsNumber && !idIsString) fail(`${path}.id`, 'must be a valid entity id.');
-    return { entity: value.entity, id: value.id };
+    const reference = { entity: value.entity, id: value.id };
+    if (value.label !== undefined) reference.label = boundedString(value.label, `${path}.label`);
+    return reference;
 }
 
 function badgeValue(value, path) {
@@ -207,7 +211,7 @@ function validateChart(block, path) {
 }
 
 function validateTable(block, path) {
-    requireExactKeys(block, ['type', 'columns', 'rows'], ['type', 'columns', 'rows'], path);
+    requireExactKeys(block, ['type', 'title', 'columns', 'rows'], ['type', 'columns', 'rows'], path);
     if (!Array.isArray(block.columns)
         || block.columns.length < 1
         || block.columns.length > MAX_TABLE_COLUMNS) {
@@ -251,7 +255,7 @@ function validateTable(block, path) {
 }
 
 function validateList(block, path) {
-    requireExactKeys(block, ['type', 'items'], ['type', 'items'], path);
+    requireExactKeys(block, ['type', 'title', 'items'], ['type', 'items'], path);
     if (!Array.isArray(block.items) || block.items.length > MAX_TABLE_ROWS) {
         fail(`${path}.items`, `must contain no more than ${MAX_TABLE_ROWS} items.`);
     }
@@ -290,6 +294,17 @@ function validateBlock(block, index) {
 
 function validateViewDocument(document) {
     rejectForbiddenContent(document);
+    // An app that answers in one sentence is the most common app there is, and
+    // making it assemble a document for a single line would be ceremony. A plain
+    // string is shorthand for one text block; it is escaped on render like any
+    // other app-supplied string, so the shortcut costs nothing.
+    if (typeof document === 'string') {
+        return validateViewDocument({
+            view_version: 1,
+            title: 'Result',
+            blocks: [{ type: 'text', text: document }],
+        });
+    }
     requireObject(document, 'View document');
     requireExactKeys(
         document,
@@ -325,7 +340,36 @@ function validateViewDocument(document) {
     return { document: normalized, bytes };
 }
 
+// The contract the code generator is shown. It is rendered from the same
+// constants the validator enforces, so the two cannot drift — a generator told
+// a limit we do not enforce produces apps that fail on their first run.
+function renderViewDocumentContract() {
+    return [
+        'YOUR RETURN VALUE BUILDS THE SCREEN.',
+        'Return either a plain string (shown as one line of text) or a view document:',
+        '{"view_version":1,"title":"...","subtitle":"...","blocks":[...]}',
+        'Blocks — use the one that fits; a table is usually the most useful:',
+        '  {"type":"stat_row","items":[{"label":"Outstanding","value":"$4,180","tone":"danger","trend":"+$620 this week"}]}',
+        '  {"type":"chart","chart_type":"bar","series":[{"label":"Miles","value":1640}],"format":"currency"}',
+        '  {"type":"table","title":"Jobs","columns":[',
+        '     {"key":"job","label":"Job","type":"entity","align":"left"},',
+        '     {"key":"amount","label":"Balance","type":"currency","align":"right"}],',
+        '   "rows":[{"job":{"entity":"job","id":1219,"label":"NAC-1219"},"amount":192}]}',
+        '  {"type":"list","title":"Follow up","items":[{"title":"Second visit needed","subtitle":"Cambridge","badge":{"label":"14 days","tone":"danger"}}]}',
+        '  {"type":"text","text":"..."}   {"type":"empty","text":"Nothing outstanding"}',
+        'Every table column declares key, label, type and align — all four are required.',
+        'A cell must match its column type: currency and number take a plain number (192, not "$192.00"),',
+        'date takes "YYYY-MM-DD", badge takes {"label":"...","tone":"..."}, entity takes {"entity":"job","id":1219}.',
+        `tone is one of ${[...TONES].join(', ')}.`,
+        'To link to a record, emit an entity reference — {"entity":"job","id":1219,"label":"NAC-1219"}.',
+        'You cannot emit HTML, a URL, an image or a style: such a document is rejected and the run fails.',
+        `Limits: ${MAX_BLOCKS} blocks, ${MAX_TABLE_ROWS} rows and ${MAX_TABLE_COLUMNS} columns per table,`,
+        `${MAX_CHART_SERIES} chart series, ${MAX_STRING_LENGTH} characters per string, ${MAX_DOCUMENT_BYTES} bytes in total.`,
+    ].join('\n');
+}
+
 module.exports = {
+    renderViewDocumentContract,
     MAX_BLOCKS,
     MAX_TABLE_ROWS,
     MAX_TABLE_COLUMNS,

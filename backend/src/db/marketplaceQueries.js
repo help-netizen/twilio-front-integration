@@ -241,6 +241,30 @@ async function getPublishedAppByKey(appKey, client = null) {
     return rows[0] || null;
 }
 
+// APP-VIEW-001: the one approved version an installation may run, with the tools
+// it declared. Returns null for every app that is not App Studio-generated.
+async function findPublishedRuntimeVersion(appId, client = null) {
+    const runner = client || db;
+    const { rows } = await runner.query(
+        `SELECT version.id,
+                COALESCE(
+                    ARRAY(
+                        SELECT tool.tool_name FROM app_version_tools tool
+                         WHERE tool.version_id = version.id
+                         ORDER BY tool.tool_name
+                    ),
+                    ARRAY[]::text[]
+                ) AS tools
+           FROM app_versions version
+          WHERE version.app_id = $1
+            AND version.status = 'published'
+          ORDER BY version.published_at DESC NULLS LAST
+          LIMIT 1`,
+        [appId]
+    );
+    return rows[0] || null;
+}
+
 async function findActiveInstallation(companyId, appId, client = null) {
     await ensureMarketplaceSchema(client);
     const query = queryFor(client);
@@ -622,6 +646,7 @@ async function writeEvent({
 }
 
 module.exports = {
+    findPublishedRuntimeVersion,
     ensureMarketplaceSchema,
     reconcileRevokedInstallations,
     listPublishedAppsWithInstallation,

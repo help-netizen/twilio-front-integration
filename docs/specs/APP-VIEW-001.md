@@ -60,7 +60,7 @@ Block types in v1:
 | Type | Purpose | Payload |
 |---|---|---|
 | `stat_row` | 1–4 headline numbers | `items[]`: `label`, `value`, optional `tone`, `trend` |
-| `chart` | `bar` or `line` | `series[]`: `label`, `value`; optional `format` |
+| `chart` | `chart_type` is `bar` or `line` | `series[]`: `label`, `value`; optional `format` |
 | `table` | the workhorse | `columns[]`: `key`, `label`, `type`, `align`; `rows[]` |
 | `list` | scannable records | `items[]`: `title`, `subtitle`, optional `badge`, `ref` |
 | `text` | a sentence of context | `text` |

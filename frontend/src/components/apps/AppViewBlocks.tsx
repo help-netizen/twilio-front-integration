@@ -11,21 +11,22 @@ import { useNavigate } from 'react-router-dom';
  */
 
 export type EntityRef = { entity: 'job' | 'lead' | 'contact' | 'invoice' | 'estimate'; id: number | string; label?: string };
+export type BadgeValue = { label: string; tone?: Tone };
 
-export type ViewValue =
-    | string
-    | number
-    | null
-    | { type: 'badge'; text: string; tone?: Tone }
-    | { type: 'entity'; ref: EntityRef };
+/** A cell is read according to its column's declared type, so the shapes stay flat. */
+export type ViewValue = string | number | null | BadgeValue | EntityRef;
 
-export type Tone = 'neutral' | 'accent' | 'success' | 'danger';
+export type ValueType = 'text' | 'number' | 'currency' | 'date' | 'badge' | 'entity';
+
+export type Tone =
+    | 'neutral' | 'positive' | 'negative' | 'warning'
+    | 'critical' | 'info' | 'success' | 'danger';
 
 export type ViewBlock =
     | { type: 'stat_row'; items: { label: string; value: string; tone?: Tone; trend?: string }[] }
-    | { type: 'chart'; chart: 'bar' | 'line'; series: { label: string; value: number }[]; format?: 'number' | 'currency' }
-    | { type: 'table'; title?: string; columns: { key: string; label: string; align?: 'left' | 'right' }[]; rows: Record<string, ViewValue>[] }
-    | { type: 'list'; title?: string; items: { title: string; subtitle?: string; badge?: { text: string; tone?: Tone }; ref?: EntityRef }[] }
+    | { type: 'chart'; chart_type: 'bar' | 'line'; series: { label: string; value: number }[]; format?: 'number' | 'currency' }
+    | { type: 'table'; title?: string; columns: { key: string; label: string; type: ValueType; align: 'left' | 'right' }[]; rows: Record<string, ViewValue>[] }
+    | { type: 'list'; title?: string; items: { title: string; subtitle?: string; badge?: BadgeValue | string; ref?: EntityRef }[] }
     | { type: 'text'; text: string }
     | { type: 'empty'; text: string };
 
@@ -44,15 +45,19 @@ const ENTITY_ROUTES: Record<EntityRef['entity'], string> = {
     estimate: '/estimates',
 };
 
+const ALARMING = new Set<Tone>(['danger', 'critical', 'negative']);
+const REASSURING = new Set<Tone>(['success', 'positive']);
+
 function toneColor(tone?: Tone): string {
-    if (tone === 'danger') return 'var(--blanc-danger)';
-    if (tone === 'success') return 'var(--blanc-success)';
-    if (tone === 'accent') return 'var(--blanc-accent)';
+    if (tone && ALARMING.has(tone)) return 'var(--blanc-danger)';
+    if (tone && REASSURING.has(tone)) return 'var(--blanc-success)';
+    if (tone === 'warning') return 'var(--blanc-lead, #b26a1d)';
+    if (tone === 'info') return 'var(--blanc-accent)';
     return 'var(--blanc-ink-1)';
 }
 
-function Badge({ text, tone }: { text: string; tone?: Tone }) {
-    const danger = tone === 'danger';
+function Badge({ label, tone }: BadgeValue) {
+    const danger = Boolean(tone && ALARMING.has(tone));
     return (
         <span
             className="inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold"
@@ -61,7 +66,7 @@ function Badge({ text, tone }: { text: string; tone?: Tone }) {
                 color: danger ? 'var(--blanc-danger)' : 'var(--blanc-accent)',
             }}
         >
-            {text}
+            {label}
         </span>
     );
 }
@@ -82,12 +87,16 @@ function EntityLink({ entity, id, label }: EntityRef) {
     );
 }
 
-function Cell({ value }: { value: ViewValue }) {
+const CURRENCY = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+function Cell({ value, type }: { value: ViewValue; type: ValueType }) {
     if (value === null || value === undefined) return null;
-    if (typeof value === 'string' || typeof value === 'number') return <>{value}</>;
-    if (value.type === 'badge') return <Badge text={value.text} tone={value.tone} />;
-    if (value.type === 'entity') return <EntityLink {...value.ref} />;
-    return null;
+    if (type === 'currency' && typeof value === 'number') return <>{CURRENCY.format(value)}</>;
+    if (type === 'number' && typeof value === 'number') return <>{value.toLocaleString('en-US')}</>;
+    if (type === 'badge' && typeof value === 'object') return <Badge {...(value as BadgeValue)} />;
+    if (type === 'entity' && typeof value === 'object') return <EntityLink {...(value as EntityRef)} />;
+    if (typeof value === 'object') return null;
+    return <>{value}</>;
 }
 
 function StatRow({ block }: { block: Extract<ViewBlock, { type: 'stat_row' }> }) {
@@ -120,9 +129,15 @@ function Chart({ block }: { block: Extract<ViewBlock, { type: 'chart' }> }) {
             : value.toLocaleString('en-US')
     );
     return (
-        <div className="flex h-[148px] items-end gap-2.5">
+        // A single series must not become a slab: bars keep a sane width and the
+        // row centres, so one bar and twelve bars both read as a chart.
+        <div className="flex h-[148px] items-end justify-center gap-2.5">
             {series.map((point, index) => (
-                <div key={index} className="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
+                <div
+                    key={index}
+                    className="flex h-full flex-1 flex-col items-center justify-end gap-1.5"
+                    style={{ maxWidth: 96 }}
+                >
                     <span className="text-[11.5px] tabular-nums" style={{ color: 'var(--blanc-ink-2)' }}>
                         {format(point.value)}
                     </span>
@@ -168,7 +183,7 @@ function Table({ block }: { block: Extract<ViewBlock, { type: 'table' }> }) {
                                     className={`py-2.5 pr-2.5 align-top ${column.align === 'right' ? 'pr-0 text-right font-semibold tabular-nums' : ''}`}
                                     style={rowIndex > 0 ? { borderTop: '1px solid var(--blanc-line)' } : undefined}
                                 >
-                                    <Cell value={row[column.key]} />
+                                    <Cell value={row[column.key]} type={column.type} />
                                 </td>
                             ))}
                         </tr>
@@ -199,7 +214,11 @@ function List({ block }: { block: Extract<ViewBlock, { type: 'list' }> }) {
                             </div>
                         )}
                     </div>
-                    {item.badge && <span className="ml-auto"><Badge text={item.badge.text} tone={item.badge.tone} /></span>}
+                    {item.badge && (
+                        <span className="ml-auto">
+                            <Badge {...(typeof item.badge === 'string' ? { label: item.badge } : item.badge)} />
+                        </span>
+                    )}
                 </div>
             ))}
         </div>

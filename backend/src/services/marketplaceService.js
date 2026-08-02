@@ -1276,6 +1276,17 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
             throw new MarketplaceServiceError('App is already installed for this company.', 'APP_ALREADY_INSTALLED', 409);
         }
         let installationMetadata = {};
+        // APP-VIEW-001: an App Studio app is only runnable while its installation
+        // names the exact approved version and the tools consented to at install
+        // time. Without that binding a published app can be installed and can
+        // never run, which is how it behaved before this.
+        const runtimeVersion = await marketplaceQueries.findPublishedRuntimeVersion(app.id, client);
+        if (runtimeVersion) {
+            installationMetadata.app_runtime = {
+                version_id: runtimeVersion.id,
+                consented_tools: runtimeVersion.tools,
+            };
+        }
         if (app.app_key === REPORT_TO_ESTIMATE_APP_KEY) {
             const previous = await marketplaceQueries.findLatestInstallation(
                 companyId,

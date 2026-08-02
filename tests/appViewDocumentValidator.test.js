@@ -1,8 +1,11 @@
 'use strict';
 
 const {
+    MAX_BLOCKS,
     MAX_STRING_LENGTH,
+    MAX_TABLE_ROWS,
     TRUNCATION_MARKER,
+    renderViewDocumentContract,
     validateViewDocument,
 } = require('../backend/src/services/appViewDocumentValidator');
 
@@ -137,5 +140,56 @@ describe('APP-VIEW-001 view_version 1 CRM validator', () => {
             })),
         }];
         expect(() => validateViewDocument(tooLarge)).toThrow(/must not exceed 262144 bytes/i);
+    });
+
+    test('a plain sentence is accepted as one text block, markup still is not', () => {
+        const { document } = validateViewDocument('Today: 6 jobs scheduled.');
+        expect(document).toEqual({
+            view_version: 1,
+            title: 'Result',
+            blocks: [{ type: 'text', text: 'Today: 6 jobs scheduled.' }],
+        });
+        expect(() => validateViewDocument('<img src=x onerror=alert(1)>')).toThrow(/markup/i);
+    });
+
+    test('the contract shown to the generator states the limits this file enforces', () => {
+        const contract = renderViewDocumentContract();
+        expect(contract).toContain('view_version');
+        expect(contract).toContain('"type":"table"');
+        expect(contract).toContain(String(MAX_TABLE_ROWS));
+        expect(contract).toContain(String(MAX_BLOCKS));
+    });
+
+    test('every block example shown to the generator survives this validator', () => {
+        // Three live runs failed today on examples the validator rejects: a chart
+        // key, a table title, and an entity shape. The contract and the check are
+        // the same file now, so a drifting example fails here instead of in an
+        // app someone just published.
+        const text = renderViewDocumentContract();
+        const examples = [];
+        let buffer = '';
+        for (const line of text.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('{"type"') && !buffer) continue;
+            buffer += trimmed;
+            let depth = 0;
+            for (const character of buffer) {
+                if (character === '{') depth += 1;
+                if (character === '}') depth -= 1;
+            }
+            if (depth === 0) {
+                for (const piece of buffer.split(/(?<=\})\s+(?=\{)/)) examples.push(piece);
+                buffer = '';
+            }
+        }
+        expect(examples.length).toBeGreaterThanOrEqual(6);
+        for (const example of examples) {
+            const block = JSON.parse(example);
+            expect(() => validateViewDocument({
+                view_version: 1,
+                title: 'Contract check',
+                blocks: [block],
+            })).not.toThrow();
+        }
     });
 });
