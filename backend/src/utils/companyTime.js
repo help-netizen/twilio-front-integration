@@ -41,6 +41,29 @@ function localDateInTZ(value = new Date(), tz = DEFAULT_TZ) {
     return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+function localDateTimeParts(value = new Date(), tz = DEFAULT_TZ) {
+    const date = value instanceof Date ? value : new Date(value);
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+    }).formatToParts(date);
+    const get = type => Number(parts.find(part => part.type === type)?.value);
+    return {
+        year: get('year'),
+        month: get('month'),
+        day: get('day'),
+        hour: get('hour'),
+        minute: get('minute'),
+        second: get('second'),
+    };
+}
+
 function startOfLocalDay(value = new Date(), tz = DEFAULT_TZ) {
     const [year, month, day] = localDateInTZ(value, tz).split('-').map(Number);
     return dateInTZ(year, month, day, 0, 0, tz);
@@ -139,7 +162,9 @@ module.exports = {
     dateInTZ,
     isAtOrAfterLocalTime,
     localDateInTZ,
+    localDateTimeParts,
     normalizeCompanyTimezone,
+    shiftCalendarDate,
     startOfLocalDay,
     todayInTZ,
     tomorrowInTZ,

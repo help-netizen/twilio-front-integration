@@ -219,6 +219,7 @@ async function getReview(versionId, {
                 version_number: version.version_number,
                 source_sha256: version.source_sha256,
                 scanner_report: version.scanner_report,
+                suggested_schedule: version.suggested_schedule || null,
                 sandbox_run: version.scanner_report?.dry_run || null,
                 status: version.status,
                 created_at: version.created_at,

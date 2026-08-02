@@ -70,7 +70,10 @@ function buildPrompt(context) {
 
     return [
         `You generate one dependency-free Albusto App Studio JavaScript module.
-Return exactly one JSON object: {"source":"...","description":"..."}.
+Return exactly one JSON object: {"source":"...","description":"...","suggested_schedule":null}.
+suggested_schedule may be null or exactly one of: {"kind":"every_minutes","n":15},
+{"kind":"hourly","minute":5}, {"kind":"daily","at":"07:00"},
+{"kind":"weekly","dow":1,"at":"07:00"}, or {"kind":"monthly","dom":1,"at":"07:00"}.
 The source must export exactly: export async function run(ctx).
 ctx has only ctx.callTool(name, args) and ctx.input.
 Use only literal tool names from the trusted catalog below.
@@ -203,6 +206,7 @@ function createAppBuilderService({
                         result: report.result,
                     },
                 },
+                suggestedSchedule: generated.suggested_schedule || null,
                 tools: report.tools,
                 description,
                 model: generated.model,

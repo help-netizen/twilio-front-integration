@@ -15,6 +15,7 @@ const scheduleService = require('./scheduleService');
 const inspectorSettingsService = require('./inspectorSettingsService');
 const chatgptMcpIdentityService = require('./chatgptMcpIdentityService');
 const appRuntimeIdentityService = require('./appRuntimeIdentityService');
+const appScheduleService = require('./appScheduleService');
 const {
     DEFAULT_INSTRUCTION,
     MAX_INSTRUCTION_CHARS,
@@ -1329,6 +1330,15 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
             status: 'provisioning_failed',
             metadata: installationMetadata,
         }, client);
+
+        if (runtimeVersion?.suggested_schedule) {
+            await appScheduleService.applySuggestedSchedule({
+                client,
+                companyId,
+                installationId: installation.id,
+                cadence: runtimeVersion.suggested_schedule,
+            });
+        }
 
         if (app.provisioning_mode !== 'none') {
             credential = await createCredentialForInstallation({

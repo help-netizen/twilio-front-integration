@@ -67,6 +67,7 @@ function versionResponse(version) {
         version_number: version.version_number,
         source_sha256: version.source_sha256,
         scanner_report: version.scanner_report,
+        suggested_schedule: version.suggested_schedule || null,
         status: version.status,
         created_at: version.created_at,
         updated_at: version.updated_at,
@@ -111,6 +112,7 @@ function createAppVersionTransitionService({
             `SELECT version.id, version.app_id, version.version_number,
                     version.source_code, version.source_sha256,
                     version.scanner_report, version.status,
+                    to_jsonb(version)->'suggested_schedule' AS suggested_schedule,
                     version.created_by, version.created_at,
                     version.updated_at,
                     (to_jsonb(version)->>'submitted_at')::timestamptz AS submitted_at,
@@ -268,30 +270,9 @@ function createAppVersionTransitionService({
             [version.company_id, version.app_id]
         );
         if (app.rows.length !== 1) throw notFound();
-
-        await client.query(
-            `UPDATE marketplace_installations installation
-             SET metadata = jsonb_set(
-                    jsonb_set(
-                        COALESCE(installation.metadata, '{}'::jsonb),
-                        '{app_runtime}',
-                        COALESCE(installation.metadata->'app_runtime', '{}'::jsonb),
-                        true
-                    ),
-                    '{app_runtime,version_id}',
-                    to_jsonb($3::text),
-                    true
-                 ),
-                 updated_at = NOW()
-             WHERE installation.company_id = $1
-               AND installation.app_id = $2
-               AND installation.status = 'connected'
-               AND jsonb_typeof(installation.metadata->'app_runtime') = 'object'
-               AND jsonb_typeof(
-                    installation.metadata->'app_runtime'->'consented_tools'
-               ) = 'array'`,
-            [version.company_id, version.app_id, version.id]
-        );
+        // APP-VIEW-001 Phase B: publication only makes the version available.
+        // Existing installations remain pinned until accept-version records
+        // explicit tool consent for this exact artifact.
     }
 
     async function transitionVersion({
@@ -361,8 +342,8 @@ function createAppVersionTransitionService({
             const fork = await client.query(
                 `INSERT INTO app_versions
                     (app_id, version_number, source_code, source_sha256,
-                     scanner_report, status, created_by)
-                 SELECT owned.app_id, $3, $4, $5, $6::jsonb, 'draft', $7
+                     scanner_report, suggested_schedule, status, created_by)
+                 SELECT owned.app_id, $3, $4, $5, $6::jsonb, $7::jsonb, 'draft', $8
                  FROM app_studio_apps owned
                  WHERE owned.company_id = $1
                    AND owned.app_id = $2
@@ -374,6 +355,9 @@ function createAppVersionTransitionService({
                     source.source_code,
                     source.source_sha256,
                     JSON.stringify(source.scanner_report || {}),
+                    source.suggested_schedule
+                        ? JSON.stringify(source.suggested_schedule)
+                        : null,
                     actorId,
                 ]
             );

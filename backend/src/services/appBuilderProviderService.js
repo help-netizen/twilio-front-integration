@@ -1,5 +1,7 @@
 'use strict';
 
+const { validateCadence } = require('./appScheduleCadence');
+
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_OUTPUT_TOKENS = 8192;
@@ -61,10 +63,20 @@ function parseGeneratedArtifact(raw) {
         || typeof parsed.description !== 'string' || !parsed.description.trim()) {
         throw new AppBuilderProviderError('Builder model returned an invalid artifact envelope');
     }
-    return {
+    let suggestedSchedule = null;
+    if (parsed.suggested_schedule !== undefined && parsed.suggested_schedule !== null) {
+        try {
+            suggestedSchedule = validateCadence(parsed.suggested_schedule);
+        } catch (_error) {
+            throw new AppBuilderProviderError('Builder model returned an invalid suggested schedule');
+        }
+    }
+    const artifact = {
         source: parsed.source,
         description: parsed.description.trim().slice(0, 2000),
     };
+    if (suggestedSchedule) artifact.suggested_schedule = suggestedSchedule;
+    return artifact;
 }
 
 async function generate(prompt) {
@@ -102,6 +114,19 @@ async function generate(prompt) {
                             properties: {
                                 source: { type: 'STRING' },
                                 description: { type: 'STRING' },
+                                suggested_schedule: {
+                                    type: 'OBJECT',
+                                    nullable: true,
+                                    properties: {
+                                        kind: { type: 'STRING' },
+                                        n: { type: 'INTEGER' },
+                                        minute: { type: 'INTEGER' },
+                                        at: { type: 'STRING' },
+                                        dow: { type: 'INTEGER' },
+                                        dom: { type: 'INTEGER' },
+                                    },
+                                    required: ['kind'],
+                                },
                             },
                             required: ['source', 'description'],
                         },

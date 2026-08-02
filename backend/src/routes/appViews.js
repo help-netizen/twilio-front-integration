@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { authenticate, requireCompanyAccess } = require('../middleware/keycloakAuth');
 const appExecutionService = require('../services/appExecutionService');
+const appScheduleService = require('../services/appScheduleService');
 const { AppRuntimeError } = require('../services/appRuntimeErrors');
 
 const router = express.Router();
@@ -136,6 +137,64 @@ router.get('/installations/:id/latest', async (req, res) => {
         }
         const run = await appExecutionService.getLatestResult(routeInput(req));
         return res.json({ ok: true, run, request_id: req.requestId });
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+});
+
+// tenant-safety-allow R-route-permission: the service re-resolves live declared business permissions before reading the tenant-paired schedule and version metadata
+router.get('/installations/:id/schedule', async (req, res) => {
+    try {
+        if (Object.keys(req.query || {}).length > 0) {
+            throw new AppRuntimeError(
+                'INVALID_REQUEST',
+                'Query parameters are not accepted.',
+                400
+            );
+        }
+        const result = await appScheduleService.getSchedule(routeInput(req));
+        return res.json({ ok: true, ...result, request_id: req.requestId });
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+});
+
+// tenant-safety-allow R-route-permission: the service locks the company/installation pair and re-resolves live declared business permissions before mutation
+router.put('/installations/:id/schedule', async (req, res) => {
+    try {
+        if (Object.keys(req.query || {}).length > 0) {
+            throw new AppRuntimeError(
+                'INVALID_REQUEST',
+                'Query parameters are not accepted.',
+                400
+            );
+        }
+        const result = await appScheduleService.updateSchedule({
+            ...routeInput(req),
+            body: req.body,
+        });
+        return res.json({ ok: true, ...result, request_id: req.requestId });
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+});
+
+// tenant-safety-allow R-route-permission: acceptance is company-paired, checks both current and requested version permissions live, and returns no source artifact
+router.post('/installations/:id/accept-version', async (req, res) => {
+    try {
+        if (Object.keys(req.query || {}).length > 0) {
+            throw new AppRuntimeError(
+                'INVALID_REQUEST',
+                'Query parameters are not accepted.',
+                400
+            );
+        }
+        const result = await appScheduleService.acceptVersion({
+            ...routeInput(req),
+            body: req.body,
+            requestId: req.requestId,
+        });
+        return res.json({ ok: true, ...result, request_id: req.requestId });
     } catch (error) {
         return sendError(req, res, error);
     }

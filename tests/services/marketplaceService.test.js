@@ -14,6 +14,7 @@ jest.mock('../../backend/src/db/marketplaceQueries', () => ({
     reconcileRevokedInstallations: jest.fn(),
     listPublishedAppsWithInstallation: jest.fn(),
     getPublishedAppByKey: jest.fn(),
+    findPublishedRuntimeVersion: jest.fn(),
     findActiveInstallation: jest.fn(),
     listInstallations: jest.fn(),
     getInstallationById: jest.fn(),
@@ -25,6 +26,10 @@ jest.mock('../../backend/src/db/marketplaceQueries', () => ({
     markDisconnected: jest.fn(),
     countOtherActiveInstallationsOnCredential: jest.fn(),
     writeEvent: jest.fn(),
+}));
+
+jest.mock('../../backend/src/services/appScheduleService', () => ({
+    applySuggestedSchedule: jest.fn(),
 }));
 
 jest.mock('../../backend/src/db/emailQueries', () => ({
@@ -68,6 +73,7 @@ const integrationsService = require('../../backend/src/services/integrationsServ
 const provisioningService = require('../../backend/src/services/marketplaceProvisioningService');
 const chatgptMcpIdentityService = require('../../backend/src/services/chatgptMcpIdentityService');
 const appRuntimeIdentityService = require('../../backend/src/services/appRuntimeIdentityService');
+const appScheduleService = require('../../backend/src/services/appScheduleService');
 const marketplaceService = require('../../backend/src/services/marketplaceService');
 
 describe('marketplaceService', () => {
@@ -81,6 +87,7 @@ describe('marketplaceService', () => {
         chatgptMcpIdentityService.revokeInstallation.mockResolvedValue(1);
         appRuntimeIdentityService.revokeInstallationPrincipal.mockResolvedValue(0);
         queries.countOtherActiveInstallationsOnCredential.mockResolvedValue(0);
+        queries.findPublishedRuntimeVersion.mockResolvedValue(null);
         emailQueries.getMailboxByCompany.mockResolvedValue({
             id: 'mailbox-1',
             provider: 'gmail',
@@ -180,6 +187,45 @@ describe('marketplaceService', () => {
         expect(queries.updateInstallationCredential).not.toHaveBeenCalled();
         expect(result.status).toBe('connected');
         expect(result.key_id).toBeUndefined();
+    });
+
+    test('runtime install pins the published version and applies its suggested schedule', async () => {
+        const app = {
+            id: 22,
+            app_key: 'scheduled-digest',
+            name: 'Scheduled Digest',
+            provider_name: 'Albusto App Studio',
+            category: 'ai',
+            requested_scopes: [],
+            provisioning_mode: 'none',
+        };
+        const suggestion = { kind: 'daily', at: '07:00' };
+        queries.getPublishedAppByKey.mockResolvedValue(app);
+        queries.findActiveInstallation.mockResolvedValue(null);
+        queries.findPublishedRuntimeVersion.mockResolvedValue({
+            id: '30000000-0000-4000-8000-000000000001',
+            tools: ['svc.list_jobs'],
+            suggested_schedule: suggestion,
+        });
+        queries.createInstallation.mockResolvedValue({ id: 220, status: 'provisioning_failed' });
+        queries.markInstallationConnected.mockResolvedValue({ id: 220, status: 'connected' });
+
+        await marketplaceService.installApp('company-1', 'user-1', app.app_key);
+
+        expect(queries.createInstallation).toHaveBeenCalledWith(expect.objectContaining({
+            metadata: {
+                app_runtime: {
+                    version_id: '30000000-0000-4000-8000-000000000001',
+                    consented_tools: ['svc.list_jobs'],
+                },
+            },
+        }), mockClient);
+        expect(appScheduleService.applySuggestedSchedule).toHaveBeenCalledWith({
+            client: mockClient,
+            companyId: 'company-1',
+            installationId: 220,
+            cadence: suggestion,
+        });
     });
 
     test('ChatGPT connector install is tenant-admin-only and provisions the bound AI identity', async () => {

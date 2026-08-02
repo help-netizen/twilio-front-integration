@@ -16,6 +16,7 @@ require('./inspectorScheduler').registerScheduler(schedulerRegistry);
 require('./googleAdsSyncService').registerScheduler(schedulerRegistry);
 require('./taskNotificationScheduler').registerScheduler(schedulerRegistry);
 require('./savedCardCleanupScheduler').registerScheduler(schedulerRegistry);
+require('./appScheduleWorker').registerScheduler(schedulerRegistry);
 
 // ── Condition evaluation: {all|any: [{field, op, value}]} over a context ─────
 

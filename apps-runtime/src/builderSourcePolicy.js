@@ -3,6 +3,7 @@
 const { GATEWAY_TOOLS } = require('./config');
 
 const MAX_SOURCE_BYTES = 64 * 1024;
+const ENUMERATION_MEMBERS = new Set(['keys', 'values', 'entries', 'fromEntries']);
 const FORBIDDEN_IDENTIFIERS = new Set([
     'require',
     'process',
@@ -227,11 +228,26 @@ function validateSourcePolicy(source) {
     const tools = [];
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
-        if (token.type === 'identifier' && ['Reflect', 'Object'].includes(token.value)) {
+        if (token.type === 'identifier' && token.value === 'Reflect') {
             fail(
                 'CALL_TOOL_INVALID',
                 'Reflective object access is not allowed in App Studio source.'
             );
+        }
+        if (token.type === 'identifier' && token.value === 'Object') {
+            // Counting things by key is ordinary JavaScript, and banning it made
+            // every app author — human or model — rewrite loops by hand. The
+            // isolate is the wall; what stays out here are the members that
+            // reshape objects or read their descriptors, not the ones that walk
+            // a plain object the app just built.
+            const method = tokens[index + 1]?.value === '.' ? tokens[index + 2]?.value : null;
+            if (!ENUMERATION_MEMBERS.has(method)) {
+                fail(
+                    'CALL_TOOL_INVALID',
+                    'Reflective object access is not allowed in App Studio source. '
+                    + `Only ${[...ENUMERATION_MEMBERS].sort().join(', ')} are available on Object.`
+                );
+            }
         }
         if (token.type === 'string' && token.value === 'callTool') {
             fail(

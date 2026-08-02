@@ -81,4 +81,30 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
         expect(execution.result).toBe(1);
         expect(execution.fixturesSummary).toMatchObject({ companies: 0, tasks: 1 });
     });
+
+    test('plain object enumeration is allowed while object reshaping is not', () => {
+        // Banning the identifier Object outright made every author rewrite a
+        // key count as a hand-rolled loop, for no security gain: the isolate is
+        // the wall. What stays out is the part that reshapes objects.
+        const { validateSourcePolicy } = require('../src/builderSourcePolicy');
+        const wrap = body => `export async function run(ctx){ ${body} }`;
+
+        for (const body of [
+            'const o = {a: 1}; return Object.keys(o).length;',
+            'const o = {a: 1}; return Object.values(o).length;',
+            'const o = {a: 1}; return Object.entries(o).length;',
+            'return Object.fromEntries([["a", 1]]);',
+        ]) {
+            expect(() => validateSourcePolicy(wrap(body))).not.toThrow();
+        }
+
+        for (const body of [
+            'return Object.assign({}, {a: 1});',
+            'const o = {}; Object.defineProperty(o, "x", {value: 1}); return 1;',
+            'return Object.getPrototypeOf({});',
+            'return Reflect.get({a: 1}, "a");',
+        ]) {
+            expect(() => validateSourcePolicy(wrap(body))).toThrow(/Reflective object access/);
+        }
+    });
 });

@@ -14,6 +14,8 @@ const RUNTIME_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '220_app_runtime_ga
 const BUILDER_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '221_app_studio_builder.sql'), 'utf8');
 const GAP_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '222_app_studio_gap_fixes.sql'), 'utf8');
 const MOD_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '223_app_version_moderation.sql'), 'utf8');
+const VIEW_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '228_app_view_phase_a.sql'), 'utf8');
+const SCHEDULE_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '229_app_view_phase_b.sql'), 'utf8');
 const MOD_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_223_app_version_moderation.sql'),
     'utf8'
@@ -274,6 +276,8 @@ describe('APP-MOD-001 migration and transition matrix', () => {
             await client.query(GAP_SCHEMA);
             await client.query(MOD_SCHEMA);
             await client.query(MOD_SCHEMA);
+            await client.query(VIEW_SCHEMA);
+            await client.query(SCHEDULE_SCHEMA);
 
             const companyA = await insertCompany(client, 'A');
             const companyB = await insertCompany(client, 'B');
@@ -351,7 +355,7 @@ describe('APP-MOD-001 migration and transition matrix', () => {
                 [installation.rows[0].id, companyA]
             );
             expect(afterPublish.rows[0].runtime).toEqual({
-                version_id: rollout.id,
+                version_id: previouslyLiveVersionId,
                 consented_tools: ['svc.list_jobs'],
             });
 

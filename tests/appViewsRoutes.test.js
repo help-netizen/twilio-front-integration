@@ -6,12 +6,18 @@ const request = require('supertest');
 const COMPANY_A = '10000000-0000-4000-8000-000000000001';
 const ACTOR_ID = '20000000-0000-4000-8000-000000000001';
 const RUN_ID = '30000000-0000-4000-8000-000000000001';
+const VERSION_ID = '40000000-0000-4000-8000-000000000001';
 
 const mockService = {
     run: jest.fn(),
     listRuns: jest.fn(),
     getRunResult: jest.fn(),
     getLatestResult: jest.fn(),
+};
+const mockScheduleService = {
+    getSchedule: jest.fn(),
+    updateSchedule: jest.fn(),
+    acceptVersion: jest.fn(),
 };
 
 jest.mock('../backend/src/middleware/keycloakAuth', () => ({
@@ -30,6 +36,7 @@ jest.mock('../backend/src/middleware/keycloakAuth', () => ({
     },
 }));
 jest.mock('../backend/src/services/appExecutionService', () => mockService);
+jest.mock('../backend/src/services/appScheduleService', () => mockScheduleService);
 
 const { AppRuntimeError } = require('../backend/src/services/appRuntimeErrors');
 const appViewsRouter = require('../backend/src/routes/appViews');
@@ -54,6 +61,19 @@ beforeEach(() => {
     mockService.listRuns.mockResolvedValue([run]);
     mockService.getRunResult.mockResolvedValue(run);
     mockService.getLatestResult.mockResolvedValue(run);
+    const settings = {
+        schedule: {
+            enabled: true,
+            cadence: { kind: 'daily', at: '07:00' },
+            cost_forecast: { runs_per_day: 1, runs_per_month: 30.417 },
+        },
+        version: { update_available: true },
+    };
+    mockScheduleService.getSchedule.mockResolvedValue(settings);
+    mockScheduleService.updateSchedule.mockResolvedValue(settings);
+    mockScheduleService.acceptVersion.mockResolvedValue({
+        accepted_version: { version_id: VERSION_ID, consented_tools: ['svc.list_jobs'] },
+    });
 });
 
 describe('APP-VIEW-001 company-scoped API', () => {
@@ -116,5 +136,35 @@ describe('APP-VIEW-001 company-scoped API', () => {
         expect(denied.body).toMatchObject({ ok: false, code: 'ACCESS_DENIED' });
         expect(foreign.body).not.toHaveProperty('run');
         expect(denied.body).not.toHaveProperty('run');
+    });
+
+    test('the three Phase B endpoints pass tenant/actor context and never expose source code', async () => {
+        const app = buildApp();
+        const current = await request(app).get('/api/apps/installations/91/schedule');
+        const updated = await request(app)
+            .put('/api/apps/installations/91/schedule')
+            .send({ enabled: true, cadence: { kind: 'daily', at: '07:00' } });
+        const accepted = await request(app)
+            .post('/api/apps/installations/91/accept-version')
+            .send({ version_id: VERSION_ID });
+
+        expect([current.status, updated.status, accepted.status]).toEqual([200, 200, 200]);
+        const context = {
+            companyId: COMPANY_A,
+            installationId: '91',
+            actorId: ACTOR_ID,
+        };
+        expect(mockScheduleService.getSchedule).toHaveBeenCalledWith(context);
+        expect(mockScheduleService.updateSchedule).toHaveBeenCalledWith({
+            ...context,
+            body: { enabled: true, cadence: { kind: 'daily', at: '07:00' } },
+        });
+        expect(mockScheduleService.acceptVersion).toHaveBeenCalledWith({
+            ...context,
+            body: { version_id: VERSION_ID },
+            requestId: expect.stringMatching(/^app-view-/),
+        });
+        expect(JSON.stringify([current.body, updated.body, accepted.body]))
+            .not.toMatch(/source_code|source_sha256|scanner_report/i);
     });
 });

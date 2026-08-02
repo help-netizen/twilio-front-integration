@@ -79,10 +79,10 @@ function requireRunInput({ companyId, installationId, trigger, actorId }) {
     if (!validInstallationId(String(installationId || ''))) {
         throw appRuntimeError('NOT_FOUND', 'App installation was not found.', 404);
     }
-    if (trigger !== 'manual') {
+    if (!['manual', 'schedule'].includes(trigger)) {
         throw appRuntimeError(
             'INVALID_TRIGGER',
-            'Only manual app runs are available.',
+            'App run trigger is invalid.',
             422
         );
     }
@@ -677,4 +677,5 @@ module.exports = {
     normalizedUsage,
     runnerBaseUrl,
     runnerServiceToken,
+    runnerTimeoutMs,
 };

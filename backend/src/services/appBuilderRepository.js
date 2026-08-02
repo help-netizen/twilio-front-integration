@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const db = require('../db/connection');
 const retentionPolicy = require('./appBuilderRetentionPolicy');
+const { validateCadence } = require('./appScheduleCadence');
 
 class AppBuilderRepositoryError extends Error {
     constructor(code, message, httpStatus) {
@@ -109,7 +110,8 @@ async function listVersions(companyId, appId) {
     if (!owned.rows[0]) throw notFound();
     const { rows } = await db.query(
         `SELECT version.id, version.version_number, version.source_sha256,
-                version.scanner_report, version.status, version.created_at,
+                version.scanner_report, version.suggested_schedule,
+                version.status, version.created_at,
                 COALESCE(
                     ARRAY_AGG(tool.tool_name ORDER BY tool.tool_name)
                         FILTER (WHERE tool.tool_name IS NOT NULL),
@@ -314,6 +316,7 @@ async function persistSuccess({
     source,
     sourceSha256,
     scannerReport,
+    suggestedSchedule = null,
     tools,
     description,
     model,
@@ -333,6 +336,9 @@ async function persistSuccess({
             422
         );
     }
+    const normalizedSuggestedSchedule = suggestedSchedule
+        ? validateCadence(suggestedSchedule)
+        : null;
     return withTransaction(async client => {
         const chatResult = await client.query(
             `SELECT id, app_id, title
@@ -404,13 +410,13 @@ async function persistSuccess({
         const version = await client.query(
             `INSERT INTO app_versions
                 (app_id, version_number, source_code, source_sha256,
-                 scanner_report, status, created_by)
-             SELECT owned.app_id, $3, $4, $5, $6::jsonb, 'draft', $7
+                 scanner_report, suggested_schedule, status, created_by)
+             SELECT owned.app_id, $3, $4, $5, $6::jsonb, $7::jsonb, 'draft', $8
              FROM app_studio_apps owned
              WHERE owned.company_id = $1
                AND owned.app_id = $2
              RETURNING id, app_id, version_number, source_sha256,
-                       scanner_report, status, created_at`,
+                       scanner_report, suggested_schedule, status, created_at`,
             [
                 companyId,
                 appId,
@@ -418,6 +424,9 @@ async function persistSuccess({
                 source,
                 sourceSha256,
                 JSON.stringify(scannerReport),
+                normalizedSuggestedSchedule
+                    ? JSON.stringify(normalizedSuggestedSchedule)
+                    : null,
                 actorId,
             ]
         );

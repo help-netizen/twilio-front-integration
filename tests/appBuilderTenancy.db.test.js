@@ -29,6 +29,18 @@ const GAP_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_222_app_studio_gap_fixes.sql'),
     'utf8'
 );
+const MODERATION_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '223_app_version_moderation.sql'),
+    'utf8'
+);
+const VIEW_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '228_app_view_phase_a.sql'),
+    'utf8'
+);
+const SCHEDULE_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '229_app_view_phase_b.sql'),
+    'utf8'
+);
 
 jest.setTimeout(60000);
 
@@ -291,6 +303,9 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
             await client.query(BUILDER_SCHEMA);
             await client.query(BUILDER_SCHEMA);
             await client.query(GAP_SCHEMA);
+            await client.query(MODERATION_SCHEMA);
+            await client.query(VIEW_SCHEMA);
+            await client.query(SCHEDULE_SCHEMA);
             const companyA = await insertCompany(client, 'A');
             const companyB = await insertCompany(client, 'B');
             const actorA = await insertAdmin(client, companyA, 'admin-a');
