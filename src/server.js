@@ -41,6 +41,7 @@ const chatgptMcpOAuthRouter = require('../backend/src/routes/chatgptMcp');
 const appRuntimeGatewayRouter = require('../backend/src/routes/appRuntimeGateway');
 const appRuntimeDevTokensRouter = require('../backend/src/routes/appRuntimeDevTokens');
 const appStudioRouter = require('../backend/src/routes/appStudio');
+const appViewsRouter = require('../backend/src/routes/appViews');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -166,6 +167,7 @@ app.get('/api/messaging/media/:mediaId/temporary-url', async (req, res, next) =>
 });
 app.use('/api/messaging', authenticate, requireCompanyAccess, messagingRouter);
 app.use('/api/app-studio', authenticate, requireCompanyAccess, appStudioRouter);
+app.use('/api/apps', authenticate, requireCompanyAccess, appViewsRouter);
 app.use('/api/pulse', authenticate, requireCompanyAccess, pulseRouter);
 app.use('/api/quick-messages', authenticate, requireCompanyAccess, quickMessagesRouter);
 app.use('/api/text/polish', authenticate, requireCompanyAccess, textPolishRouter);

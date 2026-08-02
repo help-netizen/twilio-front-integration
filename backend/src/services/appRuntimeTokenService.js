@@ -138,135 +138,146 @@ function verifyRunToken(token) {
     }
 }
 
-async function mintRunToken({ installationId, versionId, ttlSeconds }) {
+async function mintRunTokenWithClient({ installationId, versionId, ttlSeconds }, client) {
     const secret = configuredSecret();
     const ttl = normalizedTtl(ttlSeconds);
     if (!validUuid(versionId)) {
         throw appRuntimeError('INVALID_REQUEST', 'Version id is invalid.', 400);
     }
-    const client = await db.pool.connect();
-    let committed = false;
-    try {
-        await client.query('BEGIN');
-        const provisioned = await identityService.provisionInstallationPrincipal({
-            installationId,
-        }, client);
-        const { installation, principal } = provisioned;
-        const control = await client.query(
-            `SELECT suspended_at, suspension_reason
-             FROM app_runtime_installation_controls
-             WHERE company_id = $1
-               AND app_id = $2
-               AND installation_id = $3
-             FOR UPDATE`,
-            [installation.company_id, installation.app_id, installation.installation_id]
+    if (!client?.query) {
+        throw appRuntimeError(
+            'APP_RUNTIME_TRANSACTION_REQUIRED',
+            'App runtime token creation requires a transaction.',
+            500
         );
-        if (control.rows.length !== 1 || control.rows[0].suspended_at) {
-            throw appRuntimeError(
-                'APP_RUNTIME_SUSPENDED',
-                'App runtime installation is suspended.',
-                403
-            );
-        }
-        const { rows } = await client.query(
-            `SELECT version.id,
-                    version.app_id,
-                    version.source_code,
-                    version.source_sha256,
-                    ARRAY(
-                        SELECT tool.tool_name
-                        FROM app_version_tools tool
-                        WHERE tool.version_id = version.id
-                        ORDER BY tool.tool_name
-                    ) AS allowed_tools
-             FROM app_versions version
-             WHERE version.id = $1
-               AND version.app_id = $2
-               AND version.status = 'published'
-             FOR SHARE OF version`,
-            [versionId, installation.app_id]
+    }
+    const provisioned = await identityService.provisionInstallationPrincipal({
+        installationId,
+    }, client);
+    const { installation, principal } = provisioned;
+    const control = await client.query(
+        `SELECT suspended_at, suspension_reason
+         FROM app_runtime_installation_controls
+         WHERE company_id = $1
+           AND app_id = $2
+           AND installation_id = $3
+         FOR UPDATE`,
+        [installation.company_id, installation.app_id, installation.installation_id]
+    );
+    if (control.rows.length !== 1 || control.rows[0].suspended_at) {
+        throw appRuntimeError(
+            'APP_RUNTIME_SUSPENDED',
+            'App runtime installation is suspended.',
+            403
         );
-        if (rows.length !== 1) {
-            throw appRuntimeError(
-                'APP_RUNTIME_INACTIVE',
-                'App runtime authorization is not active.',
-                403
-            );
-        }
-        const version = rows[0];
-        if (!sameDigest(sourceDigest(version.source_code), version.source_sha256)) {
-            throw appRuntimeError(
-                'APP_RUNTIME_INACTIVE',
-                'App runtime authorization is not active.',
-                403
-            );
-        }
-        const consent = parseConsent(installation.installation_metadata);
-        const allowedTools = new Set(version.allowed_tools || []);
-        const effectiveTools = catalog.TOOL_NAMES.filter((name) => (
-            consent?.versionId === versionId
-            && consent.tools.has(name)
-            && allowedTools.has(name)
-        ));
-        if (effectiveTools.length === 0) {
-            throw appRuntimeError(
-                'TOOL_NOT_CONSENTED',
-                'No app runtime tools are consented.',
-                403
-            );
-        }
-
-        const runId = crypto.randomUUID();
-        const nonce = crypto.randomBytes(32).toString('base64url');
-        const nowSeconds = Math.floor(Date.now() / 1000);
-        const exp = nowSeconds + ttl;
-        const issuedAt = new Date(nowSeconds * 1000);
-        const expiresAt = new Date(exp * 1000);
-        await client.query(
-            `INSERT INTO app_runs
-                (id, company_id, app_id, installation_id, version_id, principal_id,
-                 artifact_sha256, nonce_sha256, status, gateway_calls_used,
-                 gateway_call_limit, issued_at, expires_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'issued', 0, $9, $10, $11, NOW())`,
-            [
-                runId,
-                installation.company_id,
-                installation.app_id,
-                installation.installation_id,
-                version.id,
-                principal.id,
+    }
+    const { rows } = await client.query(
+        `SELECT version.id,
+                version.app_id,
+                version.source_code,
                 version.source_sha256,
-                sha256(nonce),
-                RUN_CALL_LIMIT,
-                issuedAt,
-                expiresAt,
-            ]
+                ARRAY(
+                    SELECT tool.tool_name
+                    FROM app_version_tools tool
+                    WHERE tool.version_id = version.id
+                    ORDER BY tool.tool_name
+                ) AS allowed_tools
+         FROM app_versions version
+         WHERE version.id = $1
+           AND version.app_id = $2
+           AND version.status = 'published'
+         FOR SHARE OF version`,
+        [versionId, installation.app_id]
+    );
+    if (rows.length !== 1) {
+        throw appRuntimeError(
+            'APP_RUNTIME_INACTIVE',
+            'App runtime authorization is not active.',
+            403
         );
-        await client.query('COMMIT');
-        committed = true;
+    }
+    const version = rows[0];
+    if (!sameDigest(sourceDigest(version.source_code), version.source_sha256)) {
+        throw appRuntimeError(
+            'APP_RUNTIME_INACTIVE',
+            'App runtime authorization is not active.',
+            403
+        );
+    }
+    const consent = parseConsent(installation.installation_metadata);
+    const allowedTools = new Set(version.allowed_tools || []);
+    const effectiveTools = catalog.TOOL_NAMES.filter((name) => (
+        consent?.versionId === versionId
+        && consent.tools.has(name)
+        && allowedTools.has(name)
+    ));
+    if (effectiveTools.length === 0) {
+        throw appRuntimeError(
+            'TOOL_NOT_CONSENTED',
+            'No app runtime tools are consented.',
+            403
+        );
+    }
 
-        const payload = {
-            installation_id: String(installation.installation_id),
-            version_id: String(version.id),
-            run_id: runId,
-            exp,
-            nonce,
-        };
-        const token = jwt.sign(payload, secret, {
-            algorithm: 'HS256',
-            noTimestamp: true,
-        });
-        return {
-            token,
+    const runId = crypto.randomUUID();
+    const nonce = crypto.randomBytes(32).toString('base64url');
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const exp = nowSeconds + ttl;
+    const issuedAt = new Date(nowSeconds * 1000);
+    const expiresAt = new Date(exp * 1000);
+    await client.query(
+        `INSERT INTO app_runs
+            (id, company_id, app_id, installation_id, version_id, principal_id,
+             artifact_sha256, nonce_sha256, status, gateway_calls_used,
+             gateway_call_limit, issued_at, expires_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'issued', 0, $9, $10, $11, NOW())`,
+        [
             runId,
-            expiresAt: expiresAt.toISOString(),
-            artifactSha256: version.source_sha256,
-        };
+            installation.company_id,
+            installation.app_id,
+            installation.installation_id,
+            version.id,
+            principal.id,
+            version.source_sha256,
+            sha256(nonce),
+            RUN_CALL_LIMIT,
+            issuedAt,
+            expiresAt,
+        ]
+    );
+
+    const payload = {
+        installation_id: String(installation.installation_id),
+        version_id: String(version.id),
+        run_id: runId,
+        exp,
+        nonce,
+    };
+    const token = jwt.sign(payload, secret, {
+        algorithm: 'HS256',
+        noTimestamp: true,
+    });
+    return {
+        token,
+        runId,
+        expiresAt: expiresAt.toISOString(),
+        artifactSha256: version.source_sha256,
+    };
+}
+
+async function mintRunToken(input, { client = null } = {}) {
+    if (client) return mintRunTokenWithClient(input, client);
+    const ownedClient = await db.pool.connect();
+    try {
+        await ownedClient.query('BEGIN');
+        const minted = await mintRunTokenWithClient(input, ownedClient);
+        await ownedClient.query('COMMIT');
+        return minted;
     } catch (error) {
-        if (!committed) await client.query('ROLLBACK').catch(() => {});
+        await ownedClient.query('ROLLBACK').catch(() => {});
         throw error;
     } finally {
-        client.release();
+        ownedClient.release();
     }
 }
 

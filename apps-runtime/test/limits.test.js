@@ -64,9 +64,9 @@ describe('APP-RUN-001 resource limits', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(5);
     });
 
-    test('output larger than 64 KB is rejected before it is copied to the host', async () => {
+    test('output larger than the view-document ceiling is rejected before it is copied to the host', async () => {
         await expect(runApplication({
-            source: app("return 'x'.repeat(64 * 1024 + 1);", ''),
+            source: app("return 'x'.repeat(256 * 1024 + 1);", ''),
             input: {},
             gatewayBaseUrl: GATEWAY_BASE_URL,
             runToken: TEST_TOKEN,
