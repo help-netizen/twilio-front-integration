@@ -9,6 +9,8 @@ const mockListPayments = jest.fn();
 const mockGetPaymentDetail = jest.fn();
 const mockSyncPayments = jest.fn();
 const mockIsDefaultSyncCompany = jest.fn(() => true);
+const mockListPaymentsForExport = jest.fn();
+const mockUpdateCheckDeposited = jest.fn();
 
 // The route imports services/zenbookerPaymentsSyncService (the Zenbooker sync
 // layer was relocated out of paymentsService). Mock the module the route
@@ -18,8 +20,8 @@ jest.mock('../backend/src/services/zenbookerPaymentsSyncService', () => ({
     getPaymentDetail: mockGetPaymentDetail,
     syncPayments: mockSyncPayments,
     isDefaultSyncCompany: mockIsDefaultSyncCompany,
-    listPaymentsForExport: jest.fn(),
-    updateCheckDeposited: jest.fn(),
+    listPaymentsForExport: mockListPaymentsForExport,
+    updateCheckDeposited: mockUpdateCheckDeposited,
 }));
 
 const express = require('express');
@@ -29,15 +31,19 @@ const paymentsRouter = require('../backend/src/routes/zenbooker/payments');
 
 const TEST_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
-function createApp() {
+function createApp(permissions = [
+    'payments.view',
+    'payments.collect_offline',
+    'tenant.integrations.manage',
+]) {
     const app = express();
     app.use(express.json());
     // Simulate auth middleware
     app.use((req, _res, next) => {
-        req.user = { company_id: TEST_COMPANY_ID };
+        req.user = { company_id: TEST_COMPANY_ID, crmUser: { id: 'crm-user-1' } };
         req.authz = {
             scope: 'tenant',
-            permissions: ['payments.view', 'tenant.integrations.manage'],
+            permissions,
         };
         req.companyFilter = { company_id: TEST_COMPANY_ID };
         next();
@@ -204,6 +210,13 @@ describe('Payments Route (DB-backed)', () => {
     // ── GET /:id (detail) ─────────────────────────────────────────────────────
 
     describe('GET /:id (detail)', () => {
+        test('requires payments.view before reading detail', async () => {
+            const res = await request(createApp(['tenant.integrations.manage']), 'GET', '/10778');
+
+            expect(res.status).toBe(403);
+            expect(mockGetPaymentDetail).not.toHaveBeenCalled();
+        });
+
         test('returns 404 when transaction not found', async () => {
             mockGetPaymentDetail.mockResolvedValue(null);
 
@@ -246,6 +259,66 @@ describe('Payments Route (DB-backed)', () => {
 
             // Company scoping
             expect(mockGetPaymentDetail).toHaveBeenCalledWith(TEST_COMPANY_ID, 10778);
+        });
+    });
+
+    describe('GET /export', () => {
+        test('requires payments.view and exports the company-scoped canonical result', async () => {
+            const denied = await request(
+                createApp(['tenant.integrations.manage']),
+                'GET',
+                '/export?date_from=2026-02-01&date_to=2026-02-28'
+            );
+            expect(denied.status).toBe(403);
+            expect(mockListPaymentsForExport).not.toHaveBeenCalled();
+
+            mockListPaymentsForExport.mockResolvedValue([
+                { external_source: 'stripe', amount_paid: '95.00' },
+                { external_source: 'manual', amount_paid: '25.00' },
+            ]);
+            const allowed = await request(
+                createApp(),
+                'GET',
+                '/export?date_from=2026-02-01&date_to=2026-02-28'
+            );
+
+            expect(allowed.status).toBe(200);
+            expect(allowed.body.data.map(row => row.external_source)).toEqual(['stripe', 'manual']);
+            expect(mockListPaymentsForExport).toHaveBeenCalledWith(TEST_COMPANY_ID, {
+                dateFrom: '2026-02-01',
+                dateTo: '2026-02-28',
+                paymentMethod: undefined,
+                search: undefined,
+            });
+        });
+    });
+
+    describe('PATCH /:id deposited state', () => {
+        test('requires payments.collect_offline and preserves foreign 404 behavior', async () => {
+            const denied = await request(
+                createApp(['payments.view']),
+                'PATCH',
+                '/81',
+                { check_deposited: true }
+            );
+            expect(denied.status).toBe(403);
+            expect(mockUpdateCheckDeposited).not.toHaveBeenCalled();
+
+            mockUpdateCheckDeposited.mockResolvedValue(null);
+            const foreign = await request(
+                createApp(),
+                'PATCH',
+                '/81',
+                { check_deposited: true }
+            );
+            expect(foreign.status).toBe(404);
+            expect(mockUpdateCheckDeposited).toHaveBeenCalledWith(
+                TEST_COMPANY_ID,
+                81,
+                true,
+                expect.objectContaining({ query: expect.any(Function) }),
+                expect.objectContaining({ id: 'crm-user-1', type: 'user' })
+            );
         });
     });
 

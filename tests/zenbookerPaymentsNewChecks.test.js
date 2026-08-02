@@ -69,14 +69,14 @@ describe('zenbookerPaymentsSyncService listPayments new checks filter', () => {
         const [countSql, countParams] = db.query.mock.calls[0];
         const [rowsSql, rowsParams] = db.query.mock.calls[1];
 
-        expect(countSql).toContain('check_deposited IS NOT TRUE');
-        expect(countSql).toContain('payment_methods ILIKE');
-        expect(countSql).toContain('display_payment_method ILIKE');
+        expect(countSql).toContain('p.is_check IS TRUE');
+        expect(countSql).toContain('p.check_deposited IS NOT TRUE');
+        expect(countSql).toContain("t.payment_method IN ('check', 'zb_check')");
         expect(rowsSql).toContain('check_deposited IS NOT TRUE');
-        expect(rowsSql).toContain('LIMIT $5');
+        expect(rowsSql).toContain('LIMIT $4');
         expect(rowsSql).not.toContain('OFFSET');
-        expect(countParams).toEqual(['company-1', '2026-05-01', '2026-06-14', '%check%']);
-        expect(rowsParams).toEqual(['company-1', '2026-05-01', '2026-06-14', '%check%', 1001]);
+        expect(countParams).toEqual(['company-1', '2026-05-01', '2026-06-14']);
+        expect(rowsParams).toEqual(['company-1', '2026-05-01', '2026-06-14', 1001]);
     });
 });
 
@@ -100,7 +100,6 @@ describe('zenbookerPaymentsSyncService check deposit activity', () => {
     ])('logs the coalesced check action for deposited=%s', async (deposited, action, status) => {
         client.query.mockResolvedValue({
             rows: [{
-                zb_payment_id: 7,
                 check_deposited: deposited,
                 id: 81,
                 job_id: 42,
@@ -121,6 +120,10 @@ describe('zenbookerPaymentsSyncService check deposit activity', () => {
         expect(client.query.mock.calls[0][0]).toContain(
             'WHERE company_id = $1 AND id = $2'
         );
+        expect(client.query.mock.calls[0][0]).toContain('UPDATE payment_transactions');
+        expect(client.query.mock.calls[0][0]).toContain("'{check_deposited}'");
+        expect(client.query.mock.calls[0][0]).toContain("- 'pay_ledger_unify_001_check_deposited_backfill'");
+        expect(client.query.mock.calls[0][0]).not.toContain('UPDATE zb_payments');
         expect(mockLogFinancialActivity).toHaveBeenCalledWith({
             companyId: 'company-1',
             entityType: 'payment',

@@ -122,7 +122,7 @@ function requireCursor(page, label) {
 }
 
 async function representativeCompany(table, where = 'TRUE') {
-    const allowed = new Set(['leads', 'jobs', 'tasks', 'contacts', 'zb_payments']);
+    const allowed = new Set(['leads', 'jobs', 'tasks', 'contacts', 'payment_transactions']);
     if (!allowed.has(table)) throw new Error(`Unsupported discovery table: ${table}`);
     const result = await originalQuery(
         `SELECT company_id, COUNT(*)::int AS count
@@ -152,7 +152,7 @@ async function dateBounds(table, column, companyId) {
     const allowed = {
         leads: 'created_at',
         jobs: 'start_date',
-        zb_payments: 'payment_date',
+        payment_transactions: 'processed_at',
     };
     if (allowed[table] !== column) throw new Error('Unsupported date-bound discovery');
     const result = await originalQuery(
@@ -458,17 +458,21 @@ describeDb('LIST-PAGINATION-UNIFY-001 production-copy EXPLAIN gate', () => {
     });
 
     test('Payments: default pages, all-match aggregate/facets, filters, and alternate sorts', async () => {
-        const companyId = await representativeCompany('zb_payments');
-        const bounds = await dateBounds('zb_payments', 'payment_date', companyId);
+        const companyId = await representativeCompany('payment_transactions');
+        const bounds = await dateBounds('payment_transactions', 'processed_at', companyId);
         const dateFrom = dateOnly(bounds.min_value);
         const dateTo = dateOnly(bounds.max_value);
         const representative = await originalQuery(
-            `SELECT p.payment_methods, p.display_payment_method, p.client,
-                    p.invoice_paid_in_full,
-                    NULLIF(BTRIM(split_part(COALESCE(p.tech, ''), ',', 1)), '') AS provider
-             FROM zb_payments p
-             WHERE p.company_id = $1
-             ORDER BY p.payment_date DESC NULLS LAST
+            `SELECT t.payment_method,
+                    COALESCE(t.external_id, t.reference_number, t.memo) AS search,
+                    i.balance_due <= 0 AS invoice_paid_in_full,
+                    NULLIF(BTRIM(provider.value->>'name'), '') AS provider
+             FROM payment_transactions t
+             LEFT JOIN invoices i ON i.company_id = t.company_id AND i.id = t.invoice_id
+             LEFT JOIN jobs j ON j.company_id = t.company_id AND j.id = COALESCE(t.job_id, i.job_id)
+             LEFT JOIN LATERAL jsonb_array_elements(COALESCE(j.assigned_techs, '[]'::jsonb)) provider(value) ON true
+             WHERE t.company_id = $1
+             ORDER BY COALESCE(t.processed_at, t.created_at) DESC NULLS LAST
              LIMIT 1`,
             [companyId],
         );
@@ -477,7 +481,7 @@ describeDb('LIST-PAGINATION-UNIFY-001 production-copy EXPLAIN gate', () => {
         const first = await capture('payments/default-page-1-aggregate-facets', () => paymentsService.listPayments(companyId, {
             dateFrom, dateTo, sortField: 'payment_date', sortDir: 'desc', limit: 50,
         }));
-        expectIndex(first.record, 'idx_lpu_zb_payments_company_date_id');
+        expectIndex(first.record, 'idx_payment_tx_company_payment_date_cursor');
         const cursor = requireCursor(first.value, 'Payments default');
         const second = await capture('payments/default-page-2', () => paymentsService.listPayments(companyId, {
             dateFrom, dateTo, sortField: 'payment_date', sortDir: 'desc', limit: 50, cursor,
@@ -487,16 +491,16 @@ describeDb('LIST-PAGINATION-UNIFY-001 production-copy EXPLAIN gate', () => {
         await capture('payments/full-filter-metadata', () => paymentsService.listPayments(companyId, {
             dateFrom,
             dateTo,
-            paymentMethod: values.display_payment_method || values.payment_methods || undefined,
+            paymentMethod: values.payment_method || undefined,
             quickFilter: 'new_checks',
-            search: values.client || undefined,
+            search: values.search || undefined,
             provider: values.provider || undefined,
             paidStatus: values.invoice_paid_in_full === true ? 'paid' : 'due',
             limit: 50,
         }));
-        if (values.client) {
+        if (values.search) {
             await capture('payments/search', () => paymentsService.listPayments(companyId, {
-                dateFrom, dateTo, search: String(values.client).slice(0, 80), limit: 50,
+                dateFrom, dateTo, search: String(values.search).slice(0, 80), limit: 50,
             }));
         }
         await capture('payments/amount-sort', () => paymentsService.listPayments(companyId, {

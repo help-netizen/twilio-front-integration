@@ -177,31 +177,35 @@ async function seedFixtures() {
     );
 
     fixture.paymentsA = await idsFromInsert(
-        `INSERT INTO zb_payments (
-            company_id, transaction_id, job_number, client,
-            payment_methods, display_payment_method, amount_paid, payment_date,
-            tech, invoice_amount_due, invoice_paid_in_full, check_deposited
+        `INSERT INTO payment_transactions (
+            company_id, job_id, transaction_type, payment_method, status,
+            amount, currency, external_id, external_source, metadata, processed_at
          )
          SELECT $1,
-                $2 || '-txn-' || g,
-                $2 || '-job-' || g,
-                $2 || '-client-' || g,
-                CASE WHEN g % 2 = 0 THEN 'check' ELSE 'card' END,
-                CASE WHEN g % 2 = 0 THEN 'check' ELSE 'card' END,
-                g::numeric,
-                TIMESTAMPTZ '2026-04-01 12:00:00+00' + g * interval '1 second',
-                CASE WHEN g % 2 = 0 THEN 'Alex, Sam' ELSE 'Sam' END,
-                (102 - g)::numeric,
-                g % 2 = 0,
-                false
-         FROM generate_series(1, 101) AS g
+                seeded_jobs.id,
+                'payment',
+                CASE WHEN seeded_jobs.g % 2 = 0 THEN 'check' ELSE 'credit_card' END,
+                'completed',
+                seeded_jobs.g::numeric,
+                'USD',
+                $2 || '-txn-' || seeded_jobs.g,
+                CASE WHEN seeded_jobs.g % 3 = 0 THEN 'stripe' ELSE 'manual' END,
+                '{}'::jsonb,
+                TIMESTAMPTZ '2026-04-01 12:00:00+00' + seeded_jobs.g * interval '1 second'
+         FROM (
+             SELECT id, row_number() OVER (ORDER BY id)::int AS g
+             FROM jobs
+             WHERE company_id = $1 AND job_number LIKE $2 || '-job-%'
+         ) seeded_jobs
          RETURNING id::text AS id`,
         [COMPANY_A, TAG],
     );
     await db.query(
-        `INSERT INTO zb_payments (
-            company_id, transaction_id, amount_paid, payment_date, tech
-         ) VALUES ($1, $2, 9999, '2098-04-01T00:00:00Z', 'Foreign')`,
+        `INSERT INTO payment_transactions (
+            company_id, transaction_type, payment_method, status,
+            amount, currency, external_id, external_source, processed_at
+         ) VALUES ($1, 'payment', 'cash', 'completed',
+                   9999, 'USD', $2, 'manual', '2098-04-01T00:00:00Z')`,
         [COMPANY_B, `${TAG}-foreign-payment`],
     );
 }
@@ -210,6 +214,7 @@ async function cleanupFixtures() {
     const companyIds = [COMPANY_A, COMPANY_B];
     await db.query('DELETE FROM tasks WHERE company_id = ANY($1::uuid[])', [companyIds]);
     await db.query('DELETE FROM lead_custom_fields WHERE company_id = ANY($1::uuid[])', [companyIds]);
+    await db.query('DELETE FROM payment_transactions WHERE company_id = ANY($1::uuid[])', [companyIds]);
     await db.query('DELETE FROM zb_payments WHERE company_id = ANY($1::uuid[])', [companyIds]);
     await db.query('DELETE FROM jobs WHERE company_id = ANY($1::uuid[])', [companyIds]);
     await db.query('DELETE FROM leads WHERE company_id = ANY($1::uuid[])', [companyIds]);
@@ -325,8 +330,8 @@ describeDb('LIST-PAGINATION-UNIFY-001 real PostgreSQL gate', () => {
         expect(page.pagination).toMatchObject({ total: 101, returned: 50, has_more: true });
         expect(page.aggregates).toEqual({ transaction_count: 101, total_amount: '5151.00' });
         expect(page.facets).toEqual({
-            payment_methods: ['card', 'check'],
-            providers: ['Alex', 'Sam'],
+            payment_methods: ['Card', 'check'],
+            providers: ['Alex'],
             undeposited_check_count: 50,
         });
     });
@@ -432,9 +437,11 @@ describeDb('LIST-PAGINATION-UNIFY-001 real PostgreSQL gate', () => {
             }),
             getRows: page => page.rows.map(payment => payment.id),
             insertAhead: () => concurrentInsert(
-                `INSERT INTO zb_payments (
-                    company_id, transaction_id, amount_paid, payment_date, tech
-                 ) VALUES ($1, $2, 999999, '2099-04-01T00:00:00Z', 'Alex')
+                `INSERT INTO payment_transactions (
+                    company_id, transaction_type, payment_method, status,
+                    amount, currency, external_id, external_source, processed_at
+                 ) VALUES ($1, 'payment', 'cash', 'completed',
+                           999999, 'USD', $2, 'manual', '2099-04-01T00:00:00Z')
                  RETURNING id::text AS id`,
                 [COMPANY_A, `${TAG}-inserted-payment`],
             ),

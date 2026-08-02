@@ -74,7 +74,7 @@ router.post('/sync', requirePermission('tenant.integrations.manage'), async (req
 // GET /api/zenbooker/payments/export  — Export data enriched with Albusto job info
 // ═══════════════════════════════════════════════════════════════════════════════
 
-router.get('/export', async (req, res) => {
+router.get('/export', requirePermission('payments.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         if (!companyId) {
@@ -162,7 +162,7 @@ router.get('/', requirePermission('payments.view'), async (req, res) => {
 // GET /api/zenbooker/payments/:id  — Payment detail from local DB
 // ═══════════════════════════════════════════════════════════════════════════════
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('payments.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         if (!companyId) {

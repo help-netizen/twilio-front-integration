@@ -12,6 +12,7 @@ const request = require('supertest');
 const db = require('../backend/src/db/connection');
 const paymentsService = require('../backend/src/services/zenbookerPaymentsSyncService');
 const paymentsRouter = require('../backend/src/routes/zenbooker/payments');
+const { createCursorFingerprint, encodeCursor } = require('../backend/src/utils/listCursor');
 
 function paymentRow(id, overrides = {}) {
     return {
@@ -55,7 +56,7 @@ function useListDispatch({
     rows = [],
 } = {}) {
     db.query.mockImplementation(async (sql) => {
-        if (/WITH base_rows AS/i.test(sql)) {
+        if (/base_rows AS/i.test(sql)) {
             return {
                 rows: [{
                     transaction_count: transactionCount,
@@ -143,7 +144,7 @@ describe('Payments list route and validation', () => {
         expect(response.status).toBe(200);
         expect(response.body.data.pagination).toMatchObject({ mode: 'cursor', limit: 50, total: 1 });
         const pageSql = db.query.mock.calls[1][0];
-        expect(pageSql).toMatch(/BTRIM\(provider_name\.value\) = \$4/);
+        expect(pageSql).toMatch(/\$4 = ANY\(p\.provider_names\)/);
         expect(pageSql).toMatch(/p\.invoice_paid_in_full IS NOT TRUE/);
         expect(pageSql).toMatch(/ORDER BY LOWER\(COALESCE\(p\.tech, ''\)\) COLLATE "C" ASC, p\.id ASC/);
 
@@ -202,31 +203,32 @@ describe('Payments complete predicates, aggregates, and facets', () => {
 
         const [metadataSql, metadataParams] = db.query.mock.calls[0];
         const [pageSql, pageParams] = db.query.mock.calls[1];
-        expect(metadataSql).toMatch(/WITH base_rows AS \([\s\S]*p\.company_id = \$1[\s\S]*aggregate AS \(/);
-        expect(metadataSql.match(/BTRIM\(provider_name\.value\) = \$7/g)).toHaveLength(1);
+        expect(metadataSql).toMatch(/WITH ledger_rows AS \([\s\S]*FROM payment_transactions t[\s\S]*base_rows AS \([\s\S]*p\.company_id = \$1[\s\S]*aggregate AS \(/);
+        expect(metadataSql.match(/\$6 = ANY\(p\.provider_names\)/g)).toHaveLength(1);
         expect(metadataSql.match(/p\.invoice_paid_in_full IS NOT TRUE/g)).toHaveLength(1);
         expect(metadataSql).toMatch(/SUM\(COALESCE\(p\.amount_paid, 0\)\)/);
         expect(metadataSql).toMatch(/FROM base_rows[\s\S]*display_payment_method/);
-        expect(pageSql).toMatch(/BTRIM\(provider_name\.value\) = \$7/);
+        expect(pageSql).toMatch(/\$6 = ANY\(p\.provider_names\)/);
         expect(pageSql).toMatch(/p\.invoice_paid_in_full IS NOT TRUE/);
+        expect(pageSql).toContain('LEFT JOIN zb_payments zp');
+        expect(pageSql).toContain('zp.company_id = t.company_id');
+        expect(pageSql).not.toMatch(/\bUNION\b/i);
         expect(metadataParams).toEqual([
             COMPANY,
             '2026-07-01',
             '2026-07-31',
             '%check%',
-            '%check%',
             '%repair%',
             'Alex',
         ]);
-        expect(pageParams.slice(0, 7)).toEqual(metadataParams);
+        expect(pageParams.slice(0, 6)).toEqual(metadataParams);
     });
 
     test('provider matching is exact across trimmed comma-separated names', async () => {
         await paymentsService.listPayments(COMPANY, { provider: 'Alex', limit: 50 });
 
         for (const [sql, params] of db.query.mock.calls) {
-            expect(sql).toMatch(/unnest\(string_to_array\(COALESCE\(p\.tech, ''\), ','\)\)/);
-            expect(sql).toMatch(/BTRIM\(provider_name\.value\) = \$2/);
+            expect(sql).toMatch(/\$2 = ANY\(p\.provider_names\)/);
             expect(sql).not.toMatch(/p\.tech ILIKE/);
             expect(params.slice(0, 2)).toEqual([COMPANY, 'Alex']);
         }
@@ -364,6 +366,44 @@ describe('Payments cursor boundaries', () => {
             provider: 'Sam',
             limit: 50,
             cursor: first.pagination.next_cursor,
+        })).rejects.toMatchObject({ code: 'INVALID_CURSOR' });
+        expect(db.query).not.toHaveBeenCalled();
+    });
+
+    test('CTRL-PAY-LEDGER-CURSOR-GENERATION: pre-cutover cursor is rejected before SQL', async () => {
+        const oldFingerprint = createCursorFingerprint({
+            endpoint: 'payments',
+            company: COMPANY,
+            filters: {
+                date_from: null,
+                date_to: null,
+                payment_method: '',
+                quick_filter: 'all',
+                search: '',
+                provider: '',
+                paid_status: null,
+            },
+            sort: 'payment_date',
+            direction: 'desc',
+            limit: 50,
+        });
+        const oldCursor = encodeCursor({
+            endpoint: 'payments',
+            sort: 'payment_date',
+            direction: 'desc',
+            fingerprint: oldFingerprint,
+            values: [false, CURSOR_TS, '51'],
+        }, {
+            endpoint: 'payments',
+            sort: 'payment_date',
+            direction: 'desc',
+            fingerprint: oldFingerprint,
+            valueTypes: ['boolean', { type: 'timestamp', nullable: true }, 'bigint'],
+        });
+
+        await expect(paymentsService.listPayments(COMPANY, {
+            limit: 50,
+            cursor: oldCursor,
         })).rejects.toMatchObject({ code: 'INVALID_CURSOR' });
         expect(db.query).not.toHaveBeenCalled();
     });

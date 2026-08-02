@@ -187,7 +187,8 @@ describe('getPaymentDetail links the local job by stable id', () => {
         const detail = await sync.getPaymentDetail(COMPANY, 10778);
 
         const sql = db.query.mock.calls[0][0];
-        expect(sql).toContain('j.zenbooker_job_id = p.job_id');
+        expect(sql).toContain("zb_job.zenbooker_job_id = NULLIF(t.metadata->>'zb_job_id', '')");
+        expect(sql).toContain('zb_job.company_id = t.company_id');
         expect(sql).not.toMatch(/LEFT JOIN jobs j ON j\.job_number = p\.job_number/);
         expect(detail.local_job_id).toBe(1283);
     });
