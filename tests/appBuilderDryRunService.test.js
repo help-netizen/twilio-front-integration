@@ -55,7 +55,10 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
         expect(JSON.parse(options.body)).toMatchObject({
             source: SOURCE,
             expectedSourceSha256: SOURCE_SHA256,
-            input: { today: '2026-07-31' },
+            // The sandbox is anchored to the real current day, so the dry-run input
+            // must follow it: a pinned date silently made every date-aware draft
+            // test against a day the fixtures no longer contain.
+            input: { today: new Date().toISOString().slice(0, 10) },
             seed: 'app-studio-builder-v1',
         });
         expect(JSON.parse(options.body)).not.toHaveProperty('fixtures');

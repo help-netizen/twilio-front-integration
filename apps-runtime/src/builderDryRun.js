@@ -11,16 +11,19 @@ const {
     summarizeSandboxFixtures,
 } = require('./sandboxFixtures');
 
-const DRY_RUN_INPUT = Object.freeze({ today: '2026-07-31' });
+// The sandbox is anchored to the real current day, so the dry-run input must be
+// too: a frozen 'today' made every date-aware app test against a day the
+// fixtures no longer contain and report zero while the code was correct.
+const dryRunInput = () => Object.freeze({ today: new Date().toISOString().slice(0, 10) });
 const DRY_RUN_TOKEN = 'app-builder-dry-run-host-token-0000000000000000';
 const DRY_RUN_GATEWAY = 'https://app-builder-fixtures.albusto.invalid';
-const DEFAULT_FIXTURE_GRAPH = generateSandboxFixtures(DEFAULT_SANDBOX_SEED);
+const defaultFixtureGraph = () => generateSandboxFixtures(DEFAULT_SANDBOX_SEED);
 const TOOL_FIXTURES = Object.freeze({
-    'svc.list_jobs': projectSandboxTool(DEFAULT_FIXTURE_GRAPH, 'svc.list_jobs'),
-    'svc.get_job': projectSandboxTool(DEFAULT_FIXTURE_GRAPH, 'svc.get_job', {
-        job_id: DEFAULT_FIXTURE_GRAPH.jobs[0].id,
+    'svc.list_jobs': projectSandboxTool(defaultFixtureGraph(), 'svc.list_jobs'),
+    'svc.get_job': projectSandboxTool(defaultFixtureGraph(), 'svc.get_job', {
+        job_id: defaultFixtureGraph().jobs[0].id,
     }),
-    'svc.list_tasks': projectSandboxTool(DEFAULT_FIXTURE_GRAPH, 'svc.list_tasks'),
+    'svc.list_tasks': projectSandboxTool(defaultFixtureGraph(), 'svc.list_tasks'),
 });
 
 function isFixtureGraph(fixtures) {
@@ -56,9 +59,10 @@ function fixtureResponse(toolName, args, fixtures) {
 async function validateAndDryRun({
     source,
     expectedSourceSha256,
-    input = DRY_RUN_INPUT,
+    input = dryRunInput(),
     fixtures,
     seed = DEFAULT_SANDBOX_SEED,
+    anchor = null,
     signal,
 }) {
     if (typeof expectedSourceSha256 !== 'string'
@@ -83,7 +87,7 @@ async function validateAndDryRun({
     }
     const validation = await validateApplicationSource(source);
     const activeFixtures = fixtures === undefined
-        ? generateSandboxFixtures(seed)
+        ? generateSandboxFixtures(seed, anchor)
         : fixtures;
     if (!activeFixtures || typeof activeFixtures !== 'object' || Array.isArray(activeFixtures)) {
         const error = new Error('Dry-run fixtures must be an object.');
@@ -134,7 +138,7 @@ async function validateAndDryRun({
 }
 
 module.exports = {
-    DRY_RUN_INPUT,
+    dryRunInput,
     TOOL_FIXTURES,
     validateAndDryRun,
 };

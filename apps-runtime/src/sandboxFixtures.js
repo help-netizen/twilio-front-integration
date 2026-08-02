@@ -3,7 +3,18 @@
 const crypto = require('node:crypto');
 
 const DEFAULT_SANDBOX_SEED = 'albusto-sandbox-v1';
-const SANDBOX_TODAY = '2026-07-31';
+// The sandbox anchor is the CALLER'S today, not a frozen date: an app that asks
+// "how many jobs today" must be testable. A frozen anchor made every
+// today-based app report zero and look broken while the code was correct.
+// Callers may pin an explicit anchor for reproducible tests.
+function resolveAnchorDate(anchor) {
+    if (typeof anchor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(anchor)) return anchor;
+    return new Date().toISOString().slice(0, 10);
+}
+function shiftDays(anchorDate, days) {
+    const base = Date.parse(anchorDate + 'T00:00:00.000Z');
+    return new Date(base + (days * 86400000)).toISOString().slice(0, 10);
+}
 const CLOSED_JOB_STATUSES = new Set(['Job is Done', 'Canceled']);
 
 class SandboxFixtureError extends Error {
@@ -62,8 +73,12 @@ function money(value) {
     return value.toFixed(2);
 }
 
-function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
+function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
     const normalizedSeed = normalizeSeed(seed);
+    const SANDBOX_TODAY = resolveAnchorDate(anchor);
+    const DAY_BEFORE = shiftDays(SANDBOX_TODAY, -30);
+    const RECENT = shiftDays(SANDBOX_TODAY, -14);
+    const TOMORROW = shiftDays(SANDBOX_TODAY, 1);
     const marker = digest(normalizedSeed, 'marker').toString('hex').slice(0, 8).toUpperCase();
     const companyId = syntheticUuid(normalizedSeed, 'company');
     const idBase = seededNumber(normalizedSeed, 'ids', 100000, 700000);
@@ -73,7 +88,7 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
         name: `Sandbox Demo Company ${marker}`,
         timezone: 'America/New_York',
         anchor_date: SANDBOX_TODAY,
-        created_at: iso('2026-07-01', 12),
+        created_at: iso(DAY_BEFORE, 12),
     };
     const services = [
         'Synthetic HVAC inspection',
@@ -110,7 +125,7 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
             full_name: customerName,
             phone: `+120255501${String(index).padStart(2, '0')}`,
             email: `sandbox+${marker.toLowerCase()}-${ordinal}@example.invalid`,
-            created_at: iso('2026-07-02', 10 + index),
+            created_at: iso(DAY_BEFORE, 10 + index),
         };
         const lead = {
             id: leadId,
@@ -120,8 +135,8 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
             contact_id: contactId,
             status: 'Converted',
             source: 'Synthetic sandbox',
-            created_at: iso('2026-07-03', 10 + index),
-            converted_at: iso('2026-07-04', 10 + index),
+            created_at: iso(shiftDays(SANDBOX_TODAY, -16), 10 + index),
+            converted_at: iso(shiftDays(SANDBOX_TODAY, -15), 11 + index),
         };
         const invoiceTotal = index < 5 ? 120 + (index * 35) : null;
         const assignedTech = {
@@ -162,8 +177,8 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
             comments: null,
             metadata: { sandbox: true, fixture_marker: marker },
             company_id: companyId,
-            created_at: iso('2026-07-05', 10 + index),
-            updated_at: iso('2026-07-20', 10 + index),
+            created_at: iso(RECENT, 10 + index),
+            updated_at: iso(SANDBOX_TODAY, 9 + index),
             lat: 38.89 + (index / 1000),
             lng: -77.03 - (index / 1000),
         };
@@ -180,9 +195,9 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
             company_id: companyId,
             description: `Synthetic follow-up ${index + 1} for ${job.job_number}`,
             status: open ? 'open' : 'done',
-            due_at: iso(index < 5 ? SANDBOX_TODAY : '2026-08-01', 14 + (index % 4)),
-            completed_at: open ? null : iso('2026-07-25', 15 + (index % 2)),
-            created_at: iso('2026-07-06', 9 + index),
+            due_at: iso(index < 5 ? SANDBOX_TODAY : TOMORROW, 14 + (index % 4)),
+            completed_at: open ? null : iso(shiftDays(SANDBOX_TODAY, -3), 15 + (index % 2)),
+            created_at: iso(RECENT, 9 + index),
             owner_user_id: actorId,
             author_user_id: actorId,
             thread_id: null,
@@ -210,8 +225,8 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
         balance_due: index < 4
             ? money((120 + (index * 35)) - (50 + (index * 20)))
             : money(120 + (index * 35)),
-        created_at: iso('2026-07-07', 10 + index),
-        due_at: iso('2026-08-07', 10 + index),
+        created_at: iso(RECENT, 10 + index),
+        due_at: iso(shiftDays(SANDBOX_TODAY, 7), 10 + index),
     }));
     const payments = invoices.slice(0, 4).map((invoice, index) => ({
         id: idBase + 600 + index + 1,
@@ -220,8 +235,8 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED) {
         job_id: invoice.job_id,
         status: 'completed',
         amount: invoice.amount_paid,
-        paid_at: iso('2026-07-08', 11 + index),
-        created_at: iso('2026-07-08', 11 + index),
+        paid_at: iso(shiftDays(SANDBOX_TODAY, -7), 11 + index),
+        created_at: iso(shiftDays(SANDBOX_TODAY, -7), 11 + index),
     }));
 
     return {
@@ -318,7 +333,8 @@ function projectListTasks(fixtures, args) {
         if (status && task.status !== status) return false;
         if (args.parent_type && task.parent_type !== args.parent_type) return false;
         if (args.overdue === true
-            && (task.status !== 'open' || !task.due_at || task.due_at.slice(0, 10) >= SANDBOX_TODAY)) {
+            && (task.status !== 'open' || !task.due_at
+                || task.due_at.slice(0, 10) >= (fixtures.company?.anchor_date || resolveAnchorDate(null)))) {
             return false;
         }
         if (args.due_from && (!task.due_at || task.due_at.slice(0, 10) < args.due_from)) return false;
@@ -390,7 +406,8 @@ function summarizeSandboxFixtures(fixtures) {
 
 module.exports = {
     DEFAULT_SANDBOX_SEED,
-    SANDBOX_TODAY,
+    resolveAnchorDate,
+    shiftDays,
     SandboxFixtureError,
     generateSandboxFixtures,
     normalizeSeed,

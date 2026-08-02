@@ -20,7 +20,7 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
     });
 
     test('SAB APP-SANDBOX-001 fixture connectivity: every child has its synthetic parent and consistent dates', () => {
-        const fixtures = generateSandboxFixtures('connectivity-seed');
+        const fixtures = generateSandboxFixtures('connectivity-seed', '2026-07-31');
         const contactIds = new Set(fixtures.contacts.map(contact => contact.id));
         const leadIds = new Set(fixtures.leads.map(lead => lead.id));
         const jobIds = new Set(fixtures.jobs.map(job => job.id));
@@ -69,7 +69,7 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
     });
 
     test('catalog projections filter generated jobs, detail, and tasks without exposing raw fixtures', () => {
-        const fixtures = generateSandboxFixtures('projection-seed');
+        const fixtures = generateSandboxFixtures('projection-seed', '2026-07-31');
         const firstJob = fixtures.jobs[0];
         const jobs = projectSandboxTool(fixtures, 'svc.list_jobs', {
             start_date: '2026-07-31',
@@ -102,6 +102,7 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
             expectedSourceSha256: sourceSha256(source),
             input: { today: '2026-07-31' },
             seed: 'morning-digest-seed',
+            anchor: '2026-07-31',
         });
 
         expect(execution.result).toContain('Morning digest for 2026-07-31');

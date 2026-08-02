@@ -2,7 +2,10 @@
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
-const DRY_RUN_INPUT = Object.freeze({ today: '2026-07-31' });
+// The sandbox is anchored to the real current day, so the dry-run input must be
+// too: a frozen 'today' made every date-aware app test against a day the
+// fixtures no longer contain and report zero while the code was correct.
+const dryRunInput = () => Object.freeze({ today: new Date().toISOString().slice(0, 10) });
 const SANDBOX_SEED = 'app-studio-builder-v1';
 
 class AppBuilderDryRunError extends Error {
@@ -183,7 +186,7 @@ async function validateAndDryRun(
             body: JSON.stringify({
                 source,
                 expectedSourceSha256,
-                input: DRY_RUN_INPUT,
+                input: dryRunInput(),
                 seed: SANDBOX_SEED,
             }),
             signal: controller.signal,
@@ -210,7 +213,7 @@ async function validateAndDryRun(
 
 module.exports = {
     DEFAULT_TIMEOUT_MS,
-    DRY_RUN_INPUT,
+    dryRunInput,
     MAX_RESPONSE_BYTES,
     SANDBOX_SEED,
     AppBuilderDryRunError,

@@ -9,6 +9,7 @@ const userService = require('../services/userService');
 const auditService = require('../services/auditService');
 const authorizationService = require('../services/authorizationService');
 const avatarBases = require('../config/avatarBases');
+const db = require('../db/connection');
 
 const KEYCLOAK_REALM_URL = process.env.KEYCLOAK_REALM_URL;
 const FEATURE_AUTH = process.env.FEATURE_AUTH_ENABLED === 'true';
@@ -68,7 +69,7 @@ function extractRoles(decoded) {
     return Array.from(roles);
 }
 
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
     req.traceId = crypto.randomUUID().split('-')[0];
 
     if (!FEATURE_AUTH) {
@@ -91,6 +92,24 @@ function authenticate(req, res, next) {
         };
         req.authz = authorizationService.buildDevAuthzContext();
         req.companyFilter = { company_id: req.user.company_id };
+        // Surfaces that write rows owned by a person (App Studio build chats,
+        // notes, tasks) need a REAL crm_users.id, not the synthetic dev subject —
+        // otherwise they fail closed in dev while working in production. Resolve
+        // an active admin of the dev company; never invent an id.
+        try {
+            const { rows } = await db.query(
+                `SELECT m.user_id
+                   FROM company_memberships m
+                  WHERE m.company_id = $1
+                    AND m.status = 'active'
+                  ORDER BY (m.role_key = 'tenant_admin') DESC, m.created_at
+                  LIMIT 1`,
+                [req.user.company_id]
+            );
+            if (rows[0]?.user_id) req.user.crmUser = { id: rows[0].user_id };
+        } catch (err) {
+            console.warn('[Auth] dev crmUser lookup failed (non-fatal):', err.message);
+        }
         return next();
     }
 

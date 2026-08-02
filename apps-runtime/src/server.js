@@ -68,10 +68,12 @@ async function readJsonBody(req) {
 function validEnvelope(body, endpoint) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
     const allowedKeys = endpoint === 'dry-run'
-        ? new Set(['source', 'expectedSourceSha256', 'input', 'fixtures', 'seed'])
+        ? new Set(['source', 'expectedSourceSha256', 'input', 'fixtures', 'seed', 'anchor'])
         : new Set(['source', 'expectedSourceSha256', 'runToken', 'input']);
     if (Object.keys(body).some(key => !allowedKeys.has(key))) return false;
     if (typeof body.source !== 'string' || body.source.length === 0) return false;
+    if (Object.prototype.hasOwnProperty.call(body, 'anchor')
+        && !(typeof body.anchor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.anchor))) return false;
     if (typeof body.expectedSourceSha256 !== 'string'
         || !/^[0-9a-f]{64}$/.test(body.expectedSourceSha256)) return false;
     if (endpoint === 'dry-run') {
