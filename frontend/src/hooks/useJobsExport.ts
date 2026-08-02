@@ -26,19 +26,27 @@ export function useJobsExport({
             // (search, only_open, status, type, provider, tag, source) are
             // intentionally NOT applied so the CSV is a complete picture for
             // the period. Sort is preserved for ordering only.
-            const qs = new URLSearchParams();
-            if (sortBy) qs.set('sort_by', sortBy);
-            if (sortOrder) qs.set('sort_order', sortOrder);
-            if (startDate) qs.set('start_date', startDate);
-            if (endDate) qs.set('end_date', endDate);
-            qs.set('limit', '10000');
-            qs.set('offset', '0');
+            // The list endpoint caps `limit` at 500, so page through the whole
+            // date range by offset and accumulate — a period can legitimately
+            // hold more than 500 jobs and the CSV must be the complete picture.
+            const PAGE = 500;
+            const exportJobs: LocalJob[] = [];
+            for (let offset = 0, guard = 0; guard < 400; guard++, offset += PAGE) {
+                const qs = new URLSearchParams();
+                if (sortBy) qs.set('sort_by', sortBy);
+                if (sortOrder) qs.set('sort_order', sortOrder);
+                if (startDate) qs.set('start_date', startDate);
+                if (endDate) qs.set('end_date', endDate);
+                qs.set('limit', String(PAGE));
+                qs.set('offset', String(offset));
 
-            const res = await authedFetch(`/api/jobs?${qs.toString()}`);
-            const json = await res.json();
-            console.log('[Export] Fetched from backend:', { url: `/api/jobs?${qs.toString()}`, ok: json.ok, count: json.data?.results?.length, total: json.data?.total });
-            if (!json.ok) throw new Error(json.error || 'Export failed');
-            const exportJobs: LocalJob[] = json.data.results || [];
+                const res = await authedFetch(`/api/jobs?${qs.toString()}`);
+                const json = await res.json();
+                if (!json.ok) throw new Error(json.error || 'Export failed');
+                const page: LocalJob[] = json.data?.results || [];
+                exportJobs.push(...page);
+                if (page.length < PAGE) break; // last page reached
+            }
 
             const headers = [
                 'Job #', 'Tags', 'Job Type', 'Job End',
