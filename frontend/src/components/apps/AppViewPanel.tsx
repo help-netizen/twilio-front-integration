@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { History, Loader2, RefreshCw } from 'lucide-react';
+import { CalendarClock, History, Loader2, RefreshCw } from 'lucide-react';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { AppViewDocument, type ViewDocument } from './AppViewBlocks';
@@ -33,6 +33,9 @@ export interface AppViewPanelProps {
     history: AppRunSummary[];
     onRun: () => void;
     onSelectRun: (runId: string) => void;
+    /** Phase B: the schedule editor, and the banner offering a newer approved version. */
+    schedule?: React.ReactNode;
+    updateBanner?: React.ReactNode;
 }
 
 function relativeTime(iso: string | null): string | null {
@@ -90,11 +93,14 @@ function RunHistory({ history, onSelectRun }: { history: AppRunSummary[]; onSele
     );
 }
 
+type PanelView = 'result' | 'history' | 'schedule';
+
 export function AppViewPanel({
     open, onOpenChange, appName, tools, document, lastRunAt, lastWallMs,
-    running, error, history, onRun, onSelectRun,
+    running, error, history, onRun, onSelectRun, schedule, updateBanner,
 }: AppViewPanelProps) {
-    const [showHistory, setShowHistory] = useState(false);
+    const [view, setView] = useState<PanelView>('result');
+    const showHistory = view === 'history';
     const meta = [relativeTime(lastRunAt), seconds(lastWallMs)].filter(Boolean).join(' · ');
 
     return (
@@ -124,7 +130,11 @@ export function AppViewPanel({
                             </div>
                         )}
 
-                        {showHistory
+                        {updateBanner}
+
+                        {view === 'schedule'
+                            ? schedule
+                            : showHistory
                             ? <RunHistory history={history} onSelectRun={onSelectRun} />
                             : (running && !document
                                 ? (
@@ -143,10 +153,22 @@ export function AppViewPanel({
                 </DialogBody>
 
                 <DialogPanelFooter>
-                    <Button variant="ghost" onClick={() => setShowHistory(value => !value)}>
+                    <Button
+                        variant="ghost"
+                        onClick={() => setView(current => (current === 'history' ? 'result' : 'history'))}
+                    >
                         <History className="mr-1.5 size-4" />
                         {showHistory ? 'Result' : 'History'}
                     </Button>
+                    {schedule && (
+                        <Button
+                            variant="ghost"
+                            onClick={() => setView(current => (current === 'schedule' ? 'result' : 'schedule'))}
+                        >
+                            <CalendarClock className="mr-1.5 size-4" />
+                            {view === 'schedule' ? 'Result' : 'Schedule'}
+                        </Button>
+                    )}
                     <Button onClick={onRun} disabled={running}>
                         {running ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <RefreshCw className="mr-1.5 size-4" />}
                         {running ? 'Running' : 'Run again'}

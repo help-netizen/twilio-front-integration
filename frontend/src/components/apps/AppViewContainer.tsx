@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppViewPanel, type AppRunSummary } from './AppViewPanel';
+import { AppScheduleEditor } from './AppSchedule';
 import type { ViewDocument } from './AppViewBlocks';
 import {
     AppViewApiError,
     type AppRun,
+    type Cadence,
+    acceptAppVersion,
     fetchAppRun,
     fetchAppRuns,
+    fetchAppSchedule,
     fetchLatestAppRun,
     runApp,
+    saveAppSchedule,
 } from '../../services/appViewsApi';
 
 export interface AppViewContainerProps {
@@ -54,6 +59,37 @@ export function AppViewContainer({ installationId, appName, tools = [], open, on
         enabled: open && Boolean(selectedRunId),
     });
 
+    const schedule = useQuery({
+        queryKey: ['app-schedule', installationId],
+        queryFn: () => fetchAppSchedule(installationId),
+        enabled: open,
+    });
+
+    const invalidateSchedule = () => queryClient.invalidateQueries({
+        queryKey: ['app-schedule', installationId],
+    });
+
+    const saveSchedule = useMutation({
+        mutationFn: (body: { enabled: boolean; cadence: Cadence | null }) => saveAppSchedule(installationId, body),
+        onMutate: () => setError(null),
+        onSuccess: invalidateSchedule,
+        onError: (failure: unknown) => setError(
+            failure instanceof AppViewApiError ? failure.message : 'The schedule could not be saved.'
+        ),
+    });
+
+    const acceptVersion = useMutation({
+        mutationFn: (versionId: string) => acceptAppVersion(installationId, versionId),
+        onMutate: () => setError(null),
+        onSuccess: () => {
+            invalidateSchedule();
+            queryClient.invalidateQueries({ queryKey: ['app-run-latest', installationId] });
+        },
+        onError: (failure: unknown) => setError(
+            failure instanceof AppViewApiError ? failure.message : 'This version could not be accepted.'
+        ),
+    });
+
     const run = useMutation({
         mutationFn: () => runApp(installationId),
         onMutate: () => setError(null),
@@ -97,6 +133,33 @@ export function AppViewContainer({ installationId, appName, tools = [], open, on
             }))}
             onRun={() => run.mutate()}
             onSelectRun={setSelectedRunId}
+            schedule={schedule.data && (
+                <AppScheduleEditor
+                    schedule={schedule.data.schedule}
+                    saving={saveSchedule.isPending}
+                    onSave={body => saveSchedule.mutate(body)}
+                />
+            )}
+            updateBanner={schedule.data?.version?.update_available && schedule.data.version.available && (
+                <div
+                    className="flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3"
+                    style={{ background: 'var(--blanc-accent-soft)' }}
+                >
+                    <span className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
+                        Version {schedule.data.version.available.version_number.replace(/^builder-/, '')} is
+                        approved and ready. It runs the old one until you accept.
+                    </span>
+                    <button
+                        type="button"
+                        className="ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold"
+                        style={{ background: 'var(--blanc-accent)', color: '#fff' }}
+                        disabled={acceptVersion.isPending}
+                        onClick={() => acceptVersion.mutate(schedule.data!.version.available!.version_id)}
+                    >
+                        Accept
+                    </button>
+                </div>
+            )}
         />
     );
 }

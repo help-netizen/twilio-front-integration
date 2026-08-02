@@ -71,3 +71,97 @@ export async function fetchAppRun(installationId: number, runId: string): Promis
     const payload = await call(`/installations/${installationId}/runs/${runId}`);
     return payload.run as AppRun;
 }
+
+/** APP-VIEW-001 phase B: the cadence a tenant picks, and what it will cost. */
+export type Cadence =
+    | { kind: 'every_minutes'; n: number }
+    | { kind: 'hourly'; minute: number }
+    | { kind: 'daily'; at: string }
+    | { kind: 'weekly'; dow: number; at: string }
+    | { kind: 'monthly'; dom: number; at: string };
+
+export interface CostForecast {
+    runs_per_day: number;
+    runs_per_month: number;
+    maximum_data_reads_per_month: number;
+    maximum_compute_ms_per_day: number;
+    warnings: string[];
+}
+
+export interface AppSchedule {
+    enabled: boolean;
+    cadence: Cadence | null;
+    next_run_at: string | null;
+    last_run_at: string | null;
+    last_status: string | null;
+    failure_count: number;
+    suspended_reason: string | null;
+    timezone: string;
+    cost_forecast: CostForecast | null;
+}
+
+export interface AppVersionState {
+    current: { version_id: string; version_number: string; consented_tools: string[] };
+    update_available: boolean;
+    available: {
+        version_id: string;
+        version_number: string;
+        tools: string[];
+        suggested_schedule: Cadence | null;
+    } | null;
+}
+
+export interface AppScheduleResponse {
+    schedule: AppSchedule;
+    version: AppVersionState;
+}
+
+export async function fetchAppSchedule(installationId: number): Promise<AppScheduleResponse> {
+    const response = await authedFetch(`${API_BASE}/installations/${installationId}/schedule`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new AppViewApiError(
+            payload.code || 'REQUEST_FAILED',
+            payload.message || 'The schedule could not be loaded.',
+            response.status
+        );
+    }
+    return payload as AppScheduleResponse;
+}
+
+export async function saveAppSchedule(
+    installationId: number,
+    body: { enabled: boolean; cadence: Cadence | null }
+): Promise<AppScheduleResponse> {
+    const response = await authedFetch(`${API_BASE}/installations/${installationId}/schedule`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new AppViewApiError(
+            payload.code || 'REQUEST_FAILED',
+            payload.message || 'The schedule could not be saved.',
+            response.status
+        );
+    }
+    return payload as AppScheduleResponse;
+}
+
+export async function acceptAppVersion(installationId: number, versionId: string): Promise<AppVersionState> {
+    const response = await authedFetch(`${API_BASE}/installations/${installationId}/accept-version`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version_id: versionId }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new AppViewApiError(
+            payload.code || 'REQUEST_FAILED',
+            payload.message || 'This version could not be accepted.',
+            response.status
+        );
+    }
+    return (payload as { version: AppVersionState }).version;
+}
