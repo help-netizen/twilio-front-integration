@@ -150,8 +150,29 @@ not add finance tools or write capabilities.
 No request or fixture path queries CRM storage. The generator has no database
 client, network client, company credential, run-token, or production
 identifier. Its company ID and every child identifier are seed-derived
-synthetic values. Names contain `Synthetic`/`Sandbox`, email addresses use
-`example.invalid`, and phone numbers use the reserved 555 test range.
+synthetic values. Email addresses use `example.com`, which cannot receive mail,
+and phone numbers use the 555-01xx range reserved for fiction.
+
+### 5.1 Where the showcase data comes from
+
+The sandbox is a company's first impression of App Studio, so the fixture graph
+in `apps-runtime/src/sandboxDataset.js` is modelled on the *shape* of two weeks
+of real field-service traffic: the status mix, lead sources, city spread, hours
+of the day, ticket sizes, and a funnel where roughly a third of leads never
+convert. An app that behaves correctly here behaves correctly against a live
+company — the earlier placeholder rows were too uniform to prove that.
+
+The shape is all that was taken. Every person, street address, phone number and
+email address is invented. Note text was rewritten from real notes by an AI
+editing pass that strips identifiers, drops anything not decision-useful and
+shortens each note to a single line; each rewritten note was then matched to the
+appliance its job is actually about. No customer, address or contact detail from
+any tenant survives in the dataset, and the generation was a one-time authoring
+step — nothing in the runtime reads production data.
+
+Dates in the dataset are day offsets from the anchor, never literal dates. A
+fixture pinned to a literal day silently goes stale, and every "what is
+happening today" app then reports zero while its code is correct.
 
 The live `/v1/run` path is unchanged. Live tenant authority still comes only
 from the CRM-issued run-token and installation binding. Phase 5 does not create
