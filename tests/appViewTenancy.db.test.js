@@ -16,9 +16,9 @@ const EXECUTION_SCHEMA = fs.readFileSync(
     path.join(MIGRATIONS, '224_app_runtime_execution_authorization.sql'),
     'utf8'
 );
-const VIEW_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '227_app_view_phase_a.sql'), 'utf8');
+const VIEW_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '228_app_view_phase_a.sql'), 'utf8');
 const VIEW_ROLLBACK = fs.readFileSync(
-    path.join(MIGRATIONS, 'rollback_227_app_view_phase_a.sql'),
+    path.join(MIGRATIONS, 'rollback_228_app_view_phase_a.sql'),
     'utf8'
 );
 

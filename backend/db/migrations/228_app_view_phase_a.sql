@@ -1,4 +1,4 @@
--- Migration 227 — APP-VIEW-001 Phase A: trusted view results and latest pointer.
+-- Migration 228 — APP-VIEW-001 Phase A: trusted view results and latest pointer.
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_marketplace_installations_company_id
     ON marketplace_installations(company_id, id);

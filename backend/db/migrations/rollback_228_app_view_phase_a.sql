@@ -1,4 +1,4 @@
--- Roll back migration 227 (APP-VIEW-001 Phase A). Safe to run repeatedly.
+-- Roll back migration 228 (APP-VIEW-001 Phase A). Safe to run repeatedly.
 
 ALTER TABLE marketplace_installations
     DROP CONSTRAINT IF EXISTS fk_marketplace_installations_latest_run,
