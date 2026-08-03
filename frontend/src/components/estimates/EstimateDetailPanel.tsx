@@ -562,6 +562,18 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <span>Total</span>
                                 <span className="font-mono">{money(estimate.total)}</span>
                             </div>
+                            {Number(estimate.deposit_paid || 0) > 0 && (
+                                <>
+                                    <div className="flex justify-between">
+                                        <span className="text-[var(--blanc-ink-2)]">Total Paid</span>
+                                        <span className="font-mono">{money(estimate.deposit_paid)}</span>
+                                    </div>
+                                    <div className="flex justify-between font-semibold">
+                                        <span>Total Due</span>
+                                        <span className="font-mono">{money(estimate.balance_due ?? Number(estimate.total) - Number(estimate.deposit_paid))}</span>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </section>
                 </main>

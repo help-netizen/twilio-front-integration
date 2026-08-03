@@ -10,7 +10,6 @@ const aiGenerationLogService = require('../services/aiGenerationLogService');
 const { actorFromRequest } = require('../services/documentSendNoteService');
 const { userActor } = require('../services/financialActivityService');
 const { withTransaction } = require('../services/transactionService');
-const { getProviderScope } = require('../middleware/providerScope');
 
 // Resolve the active company scope from any of the supported middleware shapes.
 function getCompanyId(req) {
@@ -27,23 +26,6 @@ function getUserId(req) {
 // FK/audit-bound writes must never fall back to the Keycloak subject.
 function getCrmUserId(req) {
     return req.user?.crmUser?.id || null;
-}
-
-// Stripe actor for stripe_payment_sessions.created_by (UUID FK → crm_users).
-// getUserId's sub fallback passes the UUID regex — the Keycloak sub IS a UUID —
-// and would violate that FK; FK-bound Stripe writes take crmUser.id or null.
-// getUserId stays for invoice_events.actor_id (VARCHAR, sub is legitimate).
-function getStripeActor(req) {
-    return { id: req.user?.crmUser?.id || null };
-}
-
-function stripeSessionAccess(req) {
-    const providerScope = getProviderScope(req);
-    return {
-        actorId: req.user?.crmUser?.id || null,
-        providerLimited: !req.user?._devMode && providerScope.assignedOnly,
-        providerScope,
-    };
 }
 
 // Actor email — tags the sender on outbound mail (EMAIL-TIMELINE-001).
@@ -241,30 +223,6 @@ router.post('/:id/void', requirePermission('invoices.create'), async (req, res) 
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/void error:', err.message);
-        const status = err.httpStatus || 500;
-        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
-    }
-});
-
-// POST /api/invoices/:id/record-payment — Record payment against invoice
-router.post('/:id/record-payment', requirePermission('payments.collect_offline'), async (req, res) => {
-    try {
-        const companyId = getCompanyId(req);
-        const userId = getCrmUserId(req);
-        const { id } = req.params;
-        const { amount, payment_method, reference } = req.body;
-
-        const result = await withTransaction(client => invoicesService.recordPayment(
-            companyId,
-            userId,
-            id,
-            { amount, payment_method, reference },
-            client,
-            userActor(userId)
-        ));
-        res.json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Invoices] POST /:id/record-payment error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
@@ -516,76 +474,12 @@ function stripeError(err, req, res, tag) {
     return res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
 }
 
-// POST /api/invoices/:id/stripe-payment-link — create or reuse a Checkout link.
-router.post('/:id/stripe-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
-    try {
-        const actor = getStripeActor(req);
-        const link = await withTransaction(client => stripePaymentsService.ensurePaymentLink(
-            getCompanyId(req),
-            actor,
-            req.params.id,
-            { amount: req.body?.amount },
-            client,
-            userActor(actor.id)
-        ));
-        res.json({ ok: true, data: link });
-    } catch (err) { stripeError(err, req, res, 'stripe-payment-link POST'); }
-});
-
 // GET /api/invoices/:id/stripe-payment-link — active link + attempt history.
 router.get('/:id/stripe-payment-link', requirePermission('payments.view'), async (req, res) => {
     try {
         const data = await stripePaymentsService.getPaymentLink(getCompanyId(req), req.params.id);
         res.json({ ok: true, data });
     } catch (err) { stripeError(err, req, res, 'stripe-payment-link GET'); }
-});
-
-// POST /api/invoices/:id/send-payment-link — send link via email/SMS (event-logged).
-router.post('/:id/send-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
-    try {
-        const actor = getStripeActor(req);
-        const { channel, message } = req.body || {};
-        const result = await withTransaction(client => stripePaymentsService.sendPaymentLink(
-            getCompanyId(req),
-            actor,
-            req.params.id,
-            { channel, message },
-            client,
-            userActor(actor.id)
-        ));
-        res.json({ ok: true, data: result });
-    } catch (err) { stripeError(err, req, res, 'send-payment-link'); }
-});
-
-// POST /api/invoices/:id/stripe-manual-card-session — Payment Element (keyed).
-router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
-    try {
-        const actor = getStripeActor(req);
-        const data = await withTransaction(client => stripePaymentsService.createManualCardSession(
-            getCompanyId(req),
-            actor,
-            { invoiceId: req.params.id, amount: req.body?.amount },
-            client,
-            userActor(actor.id),
-            stripeSessionAccess(req)
-        ));
-        res.json({ ok: true, data });
-    } catch (err) { stripeError(err, req, res, 'manual-card-session'); }
-});
-
-// POST /api/invoices/:id/tap-to-pay/payment-intent — Terminal card_present intent.
-router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collect_terminal'), async (req, res) => {
-    try {
-        const actor = getStripeActor(req);
-        const data = await withTransaction(client => stripePaymentsService.createTapToPayIntent(
-            getCompanyId(req),
-            actor,
-            { invoiceId: req.params.id, amount: req.body?.amount },
-            client,
-            userActor(actor.id)
-        ));
-        res.json({ ok: true, data });
-    } catch (err) { stripeError(err, req, res, 'tap-to-pay-intent'); }
 });
 
 module.exports = router;

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
     calculateJobFinanceSummary,
-    completedStandaloneDueOffset,
-    completedStandalonePaid,
+    completedJobPoolDueOffset,
+    completedJobPoolPaid,
     formatSignedCurrency,
 } from './jobFinanceMath';
 
@@ -31,13 +31,13 @@ describe('calculateJobFinanceSummary', () => {
             external_source: 'zenbooker',
         };
 
-        expect(completedStandalonePaid([payment])).toBe(95);
-        expect(completedStandaloneDueOffset([payment])).toBe(0);
+        expect(completedJobPoolPaid([payment])).toBe(95);
+        expect(completedJobPoolDueOffset([payment])).toBe(0);
         expect(calculateJobFinanceSummary([], [], [payment]))
             .toEqual({ estimated: 0, invoiced: 0, paid: 95, due: 0 });
     });
 
-    it('nets a completed refund against standalone payments and ignores invoice-linked/pending rows', () => {
+    it('nets completed refunds, includes invoice-referenced payments, and ignores pending rows', () => {
         const payments = [
             { id: 1, amount: '25', invoice_id: null, transaction_type: 'payment', status: 'completed', external_source: 'manual' },
             { id: 2, amount: '100', invoice_id: 8, transaction_type: 'payment', status: 'completed' },
@@ -45,14 +45,14 @@ describe('calculateJobFinanceSummary', () => {
             { id: 4, amount: '10', invoice_id: null, transaction_type: 'refund', status: 'completed' },
         ];
 
-        // 25 completed payment − 10 completed refund = 15 (pending + invoice-linked ignored).
-        expect(completedStandalonePaid(payments)).toBe(15);
-        expect(completedStandaloneDueOffset(payments)).toBe(15);
+        // 25 + 100 completed payments − 10 completed refund = 115; pending contributes nothing.
+        expect(completedJobPoolPaid(payments)).toBe(115);
+        expect(completedJobPoolDueOffset(payments)).toBe(115);
         expect(calculateJobFinanceSummary(
             [{ total: '150' }],
-            [{ total: '100', amount_paid: '40' }],
+            [{ total: '100', amount_paid: '100', job_payment_allocated: '60' }],
             payments,
-        )).toEqual({ estimated: 150, invoiced: 100, paid: 55, due: 45 });
+        )).toEqual({ estimated: 150, invoiced: 100, paid: 155, due: -55 });
     });
 
     it('TXN-STATUS-VOID-001: gross counts refunded originals, nets the refund, excludes voided', () => {
@@ -63,8 +63,8 @@ describe('calculateJobFinanceSummary', () => {
         ];
 
         // $100 payment (now 'refunded') still counts gross; −$30 refund → net $70; the voided $40 contributes nothing.
-        expect(completedStandalonePaid(payments)).toBe(70);
-        expect(completedStandaloneDueOffset(payments)).toBe(70);
+        expect(completedJobPoolPaid(payments)).toBe(70);
+        expect(completedJobPoolDueOffset(payments)).toBe(70);
     });
 
     it('a refund of a Zenbooker payment inherits the zenbooker source (Paid nets, Due gets no credit)', () => {
@@ -73,8 +73,8 @@ describe('calculateJobFinanceSummary', () => {
             { id: 11, amount: '30', invoice_id: null, transaction_type: 'refund', status: 'completed', external_source: null, metadata: { original_transaction_id: 10 } },
         ];
 
-        expect(completedStandalonePaid(payments)).toBe(70);
-        expect(completedStandaloneDueOffset(payments)).toBe(0);
+        expect(completedJobPoolPaid(payments)).toBe(70);
+        expect(completedJobPoolDueOffset(payments)).toBe(0);
     });
 
     it('drops a voided invoice from Invoiced/Paid/Due', () => {
@@ -91,6 +91,33 @@ describe('calculateJobFinanceSummary', () => {
             [{ total: '100', amount_paid: '30' }],
             [],
         )).toEqual({ estimated: 250, invoiced: 100, paid: 30, due: 70 });
+    });
+
+    it('PAY-JOB-CENTRIC-001: job 1603 shape does not double count linked and unlinked pool rows', () => {
+        expect(calculateJobFinanceSummary(
+            [],
+            [{ total: '280', amount_paid: '280', job_payment_allocated: '280', status: 'paid' }],
+            [
+                { id: 1, amount: '95', invoice_id: 44, transaction_type: 'payment', status: 'completed', external_source: 'manual' },
+                { id: 2, amount: '185', invoice_id: null, transaction_type: 'payment', status: 'completed', external_source: 'stripe' },
+            ],
+        )).toEqual({ estimated: 0, invoiced: 280, paid: 280, due: 0 });
+    });
+
+    it('keeps linked Zenbooker money materialized and excludes it from the native pool', () => {
+        expect(calculateJobFinanceSummary(
+            [],
+            [{ total: '100', amount_paid: '40', job_payment_allocated: '0' }],
+            [{ id: 5, amount: '40', invoice_id: 12, transaction_type: 'payment', status: 'completed', external_source: 'zenbooker' }],
+        )).toEqual({ estimated: 0, invoiced: 100, paid: 40, due: 60 });
+    });
+
+    it('counts tips in Paid but applies only the service amount to Due', () => {
+        expect(calculateJobFinanceSummary(
+            [],
+            [{ total: '100', amount_paid: '100', job_payment_allocated: '100' }],
+            [{ id: 6, amount: '115', invoice_id: 12, transaction_type: 'payment', status: 'completed', external_source: 'stripe', metadata: { tip: 15 } }],
+        )).toEqual({ estimated: 0, invoiced: 100, paid: 115, due: 0 });
     });
 });
 

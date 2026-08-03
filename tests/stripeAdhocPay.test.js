@@ -654,7 +654,7 @@ describe('webhook job ledger (invoice_id NULL)', () => {
         expect(res).toEqual({ ok: true });
         expect(paymentsQueries.createTransaction).toHaveBeenCalledTimes(1);
         expect(paymentsQueries.createTransaction.mock.calls[0][1]).toMatchObject({ external_source: 'stripe', external_id: 'pi_job', invoice_id: null, job_id: 'job-1', amount: 180 });
-        expect(invoicesQueries.recordPayment).not.toHaveBeenCalled();
+        expect(invoicesQueries.recordPayment).toBeUndefined();
         expect(invoicesQueries.updateInvoiceStatus).not.toHaveBeenCalled();
     });
 

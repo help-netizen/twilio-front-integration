@@ -10,7 +10,7 @@ import { fetchTransactions, type PaymentTransaction } from '../services/payments
 import type { ManualCardSessionResult } from '../services/stripePaymentsApi';
 import { toast } from 'sonner';
 import { useAuthz } from './useAuthz';
-import { completedStandalonePaid } from '../components/jobs/jobFinanceMath';
+import { completedJobPoolPaid } from '../components/jobs/jobFinanceMath';
 
 export const FINANCE_REVALIDATION_DELAYS_MS = [0, 1000, 2000, 4000, 8000] as const;
 
@@ -41,7 +41,7 @@ export async function fetchJobFinanceSnapshot(jobId: number, toleratePaymentFail
 
 interface PollJobFinanceOptions {
     jobId: number;
-    baselineStandalonePaid: number;
+    baselineJobPoolPaid: number;
     paymentAmount: number;
     fetchSnapshot?: (jobId: number) => Promise<JobFinanceSnapshot>;
     onSnapshot?: (snapshot: JobFinanceSnapshot) => void;
@@ -52,7 +52,7 @@ interface PollJobFinanceOptions {
 
 export async function pollJobFinanceAfterPayment({
     jobId,
-    baselineStandalonePaid,
+    baselineJobPoolPaid,
     paymentAmount,
     fetchSnapshot = fetchJobFinanceSnapshot,
     onSnapshot,
@@ -60,7 +60,7 @@ export async function pollJobFinanceAfterPayment({
     isCancelled = () => false,
     delays = FINANCE_REVALIDATION_DELAYS_MS,
 }: PollJobFinanceOptions): Promise<boolean> {
-    const expectedPaidCents = Math.round((baselineStandalonePaid + paymentAmount) * 100);
+    const expectedPaidCents = Math.round((baselineJobPoolPaid + paymentAmount) * 100);
     for (const delay of delays) {
         if (delay > 0) await wait(delay);
         if (isCancelled()) return false;
@@ -68,7 +68,7 @@ export async function pollJobFinanceAfterPayment({
             const snapshot = await fetchSnapshot(jobId);
             if (isCancelled()) return false;
             onSnapshot?.(snapshot);
-            const observedPaidCents = Math.round(completedStandalonePaid(snapshot.jobPayments) * 100);
+            const observedPaidCents = Math.round(completedJobPoolPaid(snapshot.jobPayments) * 100);
             if (observedPaidCents >= expectedPaidCents) return true;
         } catch {
             // Webhook-backed finance may lag or a poll may fail; continue within the bound.
@@ -161,11 +161,11 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
         if (!jobId || !canViewFinancials || payment.status !== 'succeeded') return false;
         cancelPaymentRevalidation();
         const generation = pollGenerationRef.current;
-        const baselineStandalonePaid = completedStandalonePaid(jobPaymentsRef.current);
+        const baselineJobPoolPaid = completedJobPoolPaid(jobPaymentsRef.current);
 
         return pollJobFinanceAfterPayment({
             jobId,
-            baselineStandalonePaid,
+            baselineJobPoolPaid,
             paymentAmount: payment.amount,
             wait: waitForPoll,
             isCancelled: () => generation !== pollGenerationRef.current,

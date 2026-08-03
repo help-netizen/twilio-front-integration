@@ -18,8 +18,8 @@ import { InvoiceSendDialog } from '../invoices/InvoiceSendDialog';
 import { fetchEstimate, fetchEstimateEvents } from '../../services/estimatesApi';
 import { fetchInvoiceEvents } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
-import type { InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
-import { recordPayment, voidInvoice, sendInvoice } from '../../services/invoicesApi';
+import type { InvoiceEvent } from '../../services/invoicesApi';
+import { voidInvoice, sendInvoice } from '../../services/invoicesApi';
 import { approveEstimate, archiveEstimate, declineEstimate, restoreEstimate, sendEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
 import { deleteInvoice } from '../../services/invoicesApi';
 import { toast } from 'sonner';
@@ -149,11 +149,10 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
         }
     };
 
-    // Show every standalone payment — including voided — so history is never silently
+    // Show every Job payment — including invoice-referenced and voided rows — so history is never silently
     // dropped (TXN-STATUS-VOID-001). Money math stays status-aware in jobFinanceMath.
     const jobLedgerPayments = (jobPayments || []).filter(payment => (
-        payment.invoice_id == null
-        && payment.transaction_type === 'payment'
+        payment.transaction_type === 'payment'
     ));
     // Newest → oldest (owner directive). Fall back to created_at when unprocessed.
     const sortedJobPayments = [...jobLedgerPayments].sort((a, b) => (
@@ -549,13 +548,6 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                                     toast.success('Invoice voided');
                                     refresh();
                                     setSelectedInvoice(null);
-                                } catch (err: any) { toast.error(err.message); }
-                            }}
-                            onRecordPayment={async (data: RecordPaymentData) => {
-                                try {
-                                    await recordPayment(selectedInvoice.id, data);
-                                    toast.success('Payment recorded');
-                                    refresh();
                                 } catch (err: any) { toast.error(err.message); }
                             }}
                             onSyncEstimate={async () => {

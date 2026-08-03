@@ -102,28 +102,6 @@ router.get('/', requirePermission('payments.view', 'financial_data.view'), async
     }
 });
 
-// POST /api/payments — Create payment transaction
-router.post('/', requirePermission('payments.collect_online'), async (req, res) => {
-    try {
-        const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || null;
-        const data = req.body;
-
-        const result = await withTransaction(client => paymentsService.createTransaction(
-            companyId,
-            userId,
-            data,
-            client,
-            userActor(userId)
-        ));
-        res.status(201).json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Payments] POST / error:', err.message);
-        const status = err.httpStatus || 500;
-        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
-    }
-});
-
 // GET /api/payments/summary — Aggregate summary (BEFORE /:id to avoid conflict)
 router.get('/summary', requirePermission('payments.view'), async (req, res) => {
     try {
@@ -159,28 +137,6 @@ router.get('/stripe-readiness',
             res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
         }
     });
-
-// POST /api/payments/manual — Record manual/offline payment (BEFORE /:id routes)
-router.post('/manual', requirePermission('payments.collect_offline'), async (req, res) => {
-    try {
-        const companyId = req.companyFilter?.company_id;
-        const userId = req.user?.crmUser?.id || null;
-        const data = req.body;
-
-        const result = await withTransaction(client => paymentsService.recordManualPayment(
-            companyId,
-            userId,
-            data,
-            client,
-            userActor(userId)
-        ));
-        res.status(201).json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Payments] POST /manual error:', err.message);
-        const status = err.httpStatus || 500;
-        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
-    }
-});
 
 // GET /api/payments/manual-card-sessions/:sessionId/result — reconcile keyed card.
 // Literal route stays before /:id; success intentionally has exactly four keys.

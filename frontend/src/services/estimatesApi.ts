@@ -54,6 +54,7 @@ export interface Estimate {
     deposit_type: string | null;
     deposit_value: string | null;
     deposit_paid: string;
+    balance_due?: string;
     signature_required: boolean;
     signature_name?: string | null;
     signature_consented_at?: string | null;

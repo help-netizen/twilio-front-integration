@@ -586,9 +586,8 @@ async function getTransactionForInvoice(companyId, invoiceId, paymentId, client 
 }
 
 /**
- * Lock and void one canonical manual payment. Invoice-linked and standalone
- * Job payments use this same statement; an optional invoice id makes the
- * nested invoice route a tenant-scoped compatibility adapter.
+ * Lock and void one canonical manual payment. invoice_id is an informational
+ * receipt reference; document money is re-derived from the Job pool on read.
  */
 async function voidPayment(
     companyId,
@@ -632,42 +631,6 @@ async function voidPayment(
                     )
               )
             RETURNING pt.*
-        ),
-        updated_invoice AS (
-            UPDATE invoices i
-            SET amount_paid = GREATEST(
-                    COALESCE(i.amount_paid, 0) - ABS(v.amount),
-                    0
-                ),
-                balance_due = COALESCE(i.total, 0) - GREATEST(
-                    COALESCE(i.amount_paid, 0) - ABS(v.amount),
-                    0
-                ),
-                status = CASE
-                    WHEN i.status IN ('void', 'refunded') THEN i.status
-                    WHEN COALESCE(i.total, 0) - GREATEST(
-                        COALESCE(i.amount_paid, 0) - ABS(v.amount),
-                        0
-                    ) <= 0 THEN 'paid'
-                    WHEN GREATEST(
-                        COALESCE(i.amount_paid, 0) - ABS(v.amount),
-                        0
-                    ) > 0 THEN 'partial'
-                    ELSE 'sent'
-                END,
-                paid_at = CASE
-                    WHEN COALESCE(i.total, 0) - GREATEST(
-                        COALESCE(i.amount_paid, 0) - ABS(v.amount),
-                        0
-                    ) <= 0 THEN COALESCE(i.paid_at, NOW())
-                    ELSE NULL
-                END,
-                updated_at = NOW()
-            FROM voided_payment v
-            WHERE v.invoice_id IS NOT NULL
-              AND i.id = v.invoice_id
-              AND i.company_id = $1
-            RETURNING i.*
         )
         SELECT
             c.id AS candidate_id,
@@ -686,10 +649,7 @@ async function voidPayment(
                 )
             END AS linked_invoice_owned,
             EXISTS (SELECT 1 FROM voided_payment) AS did_void,
-            CASE
-                WHEN c.invoice_id IS NULL THEN TRUE
-                ELSE EXISTS (SELECT 1 FROM updated_invoice)
-            END AS invoice_updated
+            TRUE AS invoice_updated
         FROM candidate c`,
         [companyId, paymentId, voidedBy, voidReason, expectedInvoiceId]
     );

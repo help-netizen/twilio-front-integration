@@ -79,65 +79,6 @@ async function validateLinkedEntities(companyId, data = {}, client = null) {
     }
 }
 
-async function updateInvoicePaymentStatus(companyId, invoiceId, client = null) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
-    if (!invoice) {
-        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
-    }
-
-    if (Number(invoice.balance_due) <= 0) {
-        return invoicesQueries.updateInvoiceStatus(
-            invoiceId,
-            companyId,
-            'paid',
-            null,
-            client
-        );
-    }
-    if (Number(invoice.amount_paid) > 0) {
-        return invoicesQueries.updateInvoiceStatus(
-            invoiceId,
-            companyId,
-            'partial',
-            null,
-            client
-        );
-    }
-    return invoice;
-}
-
-/**
- * Absorb eligible standalone payments from an invoice's Job.
- * The ledger claim is idempotent; invoice aggregates are changed only for rows
- * claimed by this invocation.
- */
-async function absorbUnappliedJobPayments(companyId, invoiceId, client) {
-    const claimed = await invoicesQueries.claimUnappliedJobPayments(
-        companyId,
-        invoiceId,
-        client
-    );
-
-    if (claimed.count > 0) {
-        const updated = await invoicesQueries.recordPayment(
-            invoiceId,
-            companyId,
-            claimed.amount,
-            client
-        );
-        if (!updated) {
-            throw new InvoicesServiceError(
-                'NOT_FOUND',
-                `Invoice ${invoiceId} not found`,
-                404
-            );
-        }
-        await updateInvoicePaymentStatus(companyId, invoiceId, client);
-    }
-
-    return getInvoice(companyId, invoiceId, client);
-}
-
 /**
  * Create a new invoice with optional line items.
  * Resolves contact_id from the linked job/lead/estimate when not explicitly provided.
@@ -263,10 +204,6 @@ async function createInvoice(companyId, userId, data, client = null, activityAct
             await invoicesQueries.addInvoiceItem(companyId, invoice.id, item, client);
         }
         await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id, client);
-    }
-
-    if (invoice.job_id) {
-        await absorbUnappliedJobPayments(companyId, invoice.id, client);
     }
 
     // Log creation event
@@ -851,64 +788,6 @@ async function voidInvoice(
 }
 
 /**
- * Record a payment against an invoice.
- */
-async function recordPayment(
-    companyId,
-    userId,
-    id,
-    { amount, payment_method, reference },
-    client = null,
-    activityActor = null
-) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
-    if (!invoice) {
-        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
-    }
-
-    if (['void', 'refunded'].includes(invoice.status)) {
-        throw new InvoicesServiceError(
-            'INVALID_STATUS',
-            `Cannot record payment for invoice with status '${invoice.status}'.`,
-            400
-        );
-    }
-
-    if (!amount || amount <= 0) {
-        throw new InvoicesServiceError('VALIDATION', 'amount must be greater than 0', 400);
-    }
-
-    const transaction = await paymentsService.recordManualPayment(
-        companyId,
-        userId,
-        {
-            invoice_id: id,
-            contact_id: invoice.contact_id,
-            job_id: invoice.job_id,
-            amount,
-            currency: invoice.currency,
-            payment_method,
-            reference_number: reference,
-        },
-        client,
-        activityActor
-    );
-
-    await updateInvoicePaymentStatus(companyId, id, client);
-
-    // Log event
-    await invoicesQueries.createEvent(companyId, id, 'payment_recorded', 'user', userId, {
-        amount,
-        payment_method: payment_method || null,
-        reference: reference || null,
-        payment_id: String(transaction.id),
-        source: 'manual',
-    }, client);
-
-    return getInvoice(companyId, id, client);
-}
-
-/**
  * Void a manual/offline payment while preserving its canonical ledger row.
  */
 async function voidPayment(
@@ -1055,7 +934,6 @@ module.exports = {
     listInvoices,
     getInvoice,
     createInvoice,
-    absorbUnappliedJobPayments,
     updateInvoice,
     deleteInvoice,
     addItem,
@@ -1064,7 +942,6 @@ module.exports = {
     removeItem,
     sendInvoice,
     voidInvoice,
-    recordPayment,
     voidPayment,
     syncItemsFromEstimate,
     getRevisions,

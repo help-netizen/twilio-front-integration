@@ -76,17 +76,23 @@ async function createInvoice({
     amountPaid = 0,
     status = amountPaid >= total ? 'paid' : amountPaid > 0 ? 'partial' : 'sent',
 }) {
+    const { rows: jobs } = await db.query(
+        `INSERT INTO jobs (company_id, job_number, blanc_status)
+         VALUES ($1, $2, 'Submitted')
+         RETURNING id`,
+        [companyId, `${TAG}-JOB-${label}`]
+    );
     const { rows } = await db.query(
         `INSERT INTO invoices (
-            company_id, invoice_number, status, total, amount_paid,
+            company_id, job_id, invoice_number, status, total, amount_paid,
             balance_due, currency, paid_at
          ) VALUES (
-            $1::UUID, $2::VARCHAR, $3::VARCHAR, $4::NUMERIC, $5::NUMERIC,
-            $4::NUMERIC - $5::NUMERIC, 'USD',
-            CASE WHEN $3::VARCHAR = 'paid' THEN NOW() ELSE NULL END
+            $1::UUID, $2::BIGINT, $3::VARCHAR, $4::VARCHAR, $5::NUMERIC, $6::NUMERIC,
+            $5::NUMERIC - $6::NUMERIC, 'USD',
+            CASE WHEN $4::VARCHAR = 'paid' THEN NOW() ELSE NULL END
          )
          RETURNING *`,
-        [companyId, `${TAG}-${label}`, status, total, amountPaid]
+        [companyId, jobs[0].id, `${TAG}-${label}`, status, total, amountPaid]
     );
     return rows[0];
 }
@@ -94,21 +100,29 @@ async function createInvoice({
 async function createPayment({
     companyId = companyA,
     invoiceId,
+    jobId = null,
     amount,
     source,
     method = 'cash',
     recordedBy = companyId === companyA ? userA : userB,
 }) {
+    if (jobId == null && invoiceId != null) {
+        const { rows: invoices } = await db.query(
+            `SELECT job_id FROM invoices WHERE id = $1`,
+            [invoiceId]
+        );
+        jobId = invoices[0]?.job_id || null;
+    }
     const { rows } = await db.query(
         `INSERT INTO payment_transactions (
-            company_id, invoice_id, transaction_type, payment_method,
+            company_id, job_id, invoice_id, transaction_type, payment_method,
             status, amount, currency, external_source, processed_at,
             recorded_by
          ) VALUES (
-            $1, $2, 'payment', $3, 'completed', $4, 'USD', $5, NOW(), $6
+            $1, $2, $3, 'payment', $4, 'completed', $5, 'USD', $6, NOW(), $7
          )
          RETURNING *`,
-        [companyId, invoiceId, method, amount, source, recordedBy]
+        [companyId, jobId, invoiceId, method, amount, source, recordedBy]
     );
     return rows[0];
 }
@@ -190,14 +204,20 @@ describe('manual invoice payment void contract', () => {
     test('records card as a manual ledger row, then voids it without deleting it and reopens a paid invoice', async () => {
         const invoice = await createInvoice({ label: 'fully-paid-record-flow' });
 
-        const paid = await invoicesService.recordPayment(
+        await paymentsService.recordManualPayment(
             companyA,
             userA,
-            invoice.id,
-            { amount: 100, payment_method: 'card', reference: 'OFFLINE-100' },
+            {
+                job_id: invoice.job_id,
+                invoice_id: invoice.id,
+                amount: 100,
+                payment_method: 'card',
+                reference_number: 'OFFLINE-100',
+            },
             client,
             userActor(userA)
         );
+        const paid = await invoicesService.getInvoice(companyA, invoice.id, client);
         expect({
             amount_paid: Number(paid.amount_paid),
             balance_due: Number(paid.balance_due),
@@ -280,8 +300,8 @@ describe('manual invoice payment void contract', () => {
                         amount: 100,
                         currency: 'USD',
                     },
-                    parent_type: null,
-                    parent_id: null,
+                    parent_type: 'job',
+                    parent_id: String(invoice.job_id),
                 }),
             }),
         ]);

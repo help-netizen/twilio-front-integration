@@ -3,6 +3,7 @@
  * PF002-R2 Estimates Composer Refresh
  */
 const db = require('./connection');
+const { applyEstimatePayments } = require('./documentPaymentQueries');
 
 function queryFor(client) {
     return client?.query ? client.query.bind(client) : db.query;
@@ -119,7 +120,7 @@ async function listEstimates(companyId, filters = {}) {
     );
 
     return {
-        rows: rows.map(stripTotal),
+        rows: await applyEstimatePayments(companyId, rows.map(stripTotal)),
         total: rows.length > 0 ? parseInt(rows[0]._total, 10) : 0,
     };
 }
@@ -175,7 +176,9 @@ async function getEstimateById(companyId, id, client = null) {
          WHERE e.id = $1 AND e.company_id = $2`,
         [id, companyId]
     );
-    return rows[0] || null;
+    if (!rows[0]) return null;
+    const [estimate] = await applyEstimatePayments(companyId, [rows[0]], client);
+    return estimate;
 }
 
 /**
@@ -677,7 +680,13 @@ async function getEstimateByPublicToken(publicToken, client = null) {
          LIMIT 1`,
         [publicToken]
     );
-    return rows[0] || null;
+    if (!rows[0]) return null;
+    const [estimate] = await applyEstimatePayments(
+        rows[0].company_id,
+        [rows[0]],
+        client
+    );
+    return estimate;
 }
 
 /** Persist a public_token on the estimate (idempotent — caller checks if one already exists first). */

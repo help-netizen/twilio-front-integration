@@ -2,14 +2,12 @@ import { useState } from 'react';
 import { useTransactions } from '../hooks/useTransactions';
 import { TransactionReview } from '../components/payments/TransactionReview';
 import { RefundDialog } from '../components/transactions/RefundDialog';
-import { RecordPaymentDialog } from '../components/transactions/RecordPaymentDialog';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, TrendingDown, Clock, Minus, Undo2 } from 'lucide-react';
+import { MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, TrendingDown, Clock, Minus, Undo2 } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
-import { useAuthz } from '../hooks/useAuthz';
 import { paymentMethodLabel } from '../lib/paymentMethodLabels';
 import { isVoidablePayment } from '../components/payments/paymentStatus';
 import { VoidPaymentDialog } from '../components/payments/VoidPaymentDialog';
@@ -89,9 +87,6 @@ export function TransactionsPage() {
     const [refundOpen, setRefundOpen] = useState(false);
     // Bumped after a parent-driven change (refund) to remount the Review with fresh data.
     const [reviewNonce, setReviewNonce] = useState(0);
-    const { hasAnyPermission } = useAuthz();
-    const canRecordPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
-    const [recordOpen, setRecordOpen] = useState(false);
     const selected = page.selectedTransaction;
     const canRefundSelected = selected?.status === 'completed' && selected?.transaction_type === 'payment';
 
@@ -151,11 +146,6 @@ export function TransactionsPage() {
                             ))}
                         </SelectContent>
                     </Select>
-                    {canRecordPayment && (
-                        <button onClick={() => setRecordOpen(true)} className="blanc-control-chip-primary">
-                            <Plus className="size-4" />Record Payment
-                        </button>
-                    )}
                 </div>
             </div>
 
@@ -275,12 +265,6 @@ export function TransactionsPage() {
             </div>
 
             {/* -- Dialogs -------------------------------------------------------- */}
-            <RecordPaymentDialog
-                open={recordOpen}
-                onOpenChange={setRecordOpen}
-                onSave={page.handleRecordManual}
-            />
-
             <VoidPaymentDialog
                 open={!!voidTarget}
                 onOpenChange={o => { if (!o) setVoidTarget(null); }}

@@ -186,14 +186,6 @@ export function InvoicesPage() {
                                                     {inv.status === 'draft' && (
                                                         <DropdownMenuItem onClick={() => handleSend(inv.id)}>Send</DropdownMenuItem>
                                                     )}
-                                                    {(inv.status === 'sent' || inv.status === 'partial' || inv.status === 'overdue') && (
-                                                        <DropdownMenuItem onClick={() => {
-                                                            const amount = prompt('Enter payment amount:');
-                                                            if (amount && !isNaN(Number(amount))) {
-                                                                page.handleRecordPayment(inv.id, { amount });
-                                                            }
-                                                        }}>Record Payment</DropdownMenuItem>
-                                                    )}
                                                     {inv.status !== 'void' && inv.status !== 'refunded' && (
                                                         <DropdownMenuItem onClick={() => page.handleVoidInvoice(inv.id)}>Void</DropdownMenuItem>
                                                     )}
@@ -269,7 +261,6 @@ export function InvoicesPage() {
                         onClose={page.closeDetail}
                         onSend={() => handleSend(page.selectedInvoice!.id)}
                         onVoid={() => page.handleVoidInvoice(page.selectedInvoice!.id)}
-                        onRecordPayment={(data) => page.handleRecordPayment(page.selectedInvoice!.id, data)}
                         onSyncEstimate={() => page.handleSyncItems(page.selectedInvoice!.id)}
                         onDelete={() => page.handleDeleteInvoice(page.selectedInvoice!.id)}
                         onChanged={() => page.loadInvoices()}

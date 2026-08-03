@@ -5,6 +5,7 @@
  * Database queries for invoices, invoice items, revisions, and events.
  */
 const db = require('./connection');
+const { applyInvoiceAllocations } = require('./documentPaymentQueries');
 
 function queryFor(client) {
     return client?.query ? client.query.bind(client) : db.query;
@@ -147,7 +148,10 @@ async function listInvoices(companyId, filters = {}) {
     // Strip the _total column from each row
     const cleaned = rows.map(({ _total, ...rest }) => withCalculatedBalance(rest));
 
-    return { rows: cleaned, total };
+    return {
+        rows: await applyInvoiceAllocations(companyId, cleaned),
+        total,
+    };
 }
 
 /**
@@ -175,7 +179,10 @@ async function getInvoiceById(companyId, id, client = null) {
          WHERE i.id = $1 AND i.company_id = $2`,
         [id, companyId]
     );
-    return withCalculatedBalance(rows[0] || null);
+    const invoice = withCalculatedBalance(rows[0] || null);
+    if (!invoice) return null;
+    const [allocated] = await applyInvoiceAllocations(companyId, [invoice], client);
+    return allocated;
 }
 
 /**
@@ -327,7 +334,14 @@ async function updateInvoice(id, companyId, data, client = null) {
          RETURNING *`,
         params
     );
-    return withCalculatedBalance(rows[0] || null);
+    const invoice = withCalculatedBalance(rows[0] || null);
+    if (!invoice) return null;
+    const [allocated] = await applyInvoiceAllocations(
+        invoice.company_id,
+        [invoice],
+        client
+    );
+    return allocated;
 }
 
 /**
@@ -718,64 +732,6 @@ async function listEvents(invoiceId) {
 }
 
 // =============================================================================
-// Payments
-// =============================================================================
-
-/**
- * Atomically move eligible standalone Job payments under an owned invoice.
- * Returns the claimed ledger amount so the caller can apply it through
- * recordPayment, which remains the single invoice aggregate mutation.
- */
-async function claimUnappliedJobPayments(companyId, invoiceId, client = null) {
-    const query = queryFor(client);
-    const { rows } = await query(
-        `WITH target_invoice AS (
-            SELECT job_id
-            FROM invoices
-            WHERE company_id = $1
-              AND id = $2
-              AND job_id IS NOT NULL
-        ),
-        absorbed AS (
-            UPDATE payment_transactions pt
-            SET invoice_id = $2
-            FROM target_invoice i
-            WHERE pt.company_id = $1
-              AND pt.job_id = i.job_id
-              AND pt.invoice_id IS NULL
-              AND pt.transaction_type = 'payment'
-              AND pt.status = 'completed'
-              AND pt.external_source IS DISTINCT FROM 'zenbooker'
-            RETURNING pt.amount
-        )
-        SELECT COALESCE(SUM(amount), 0)::NUMERIC AS amount,
-               COUNT(*)::INT AS count
-        FROM absorbed`,
-        [companyId, invoiceId]
-    );
-    return rows[0] || { amount: '0', count: 0 };
-}
-
-/**
- * Record a payment against an invoice.
- * Updates amount_paid and balance_due. Sets paid_at if fully paid.
- */
-async function recordPayment(id, companyId, amount, client = null) {
-    const query = queryFor(client);
-    const { rows } = await query(
-        `UPDATE invoices SET
-            amount_paid = COALESCE(amount_paid, 0) + $3,
-            balance_due = total - (COALESCE(amount_paid, 0) + $3),
-            paid_at = CASE WHEN total - (COALESCE(amount_paid, 0) + $3) <= 0 THEN NOW() ELSE paid_at END,
-            updated_at = NOW()
-         WHERE id = $1 AND company_id = $2
-         RETURNING *`,
-        [id, companyId, amount]
-    );
-    return withCalculatedBalance(rows[0] || null);
-}
-
-// =============================================================================
 // Exports
 // =============================================================================
 
@@ -800,7 +756,14 @@ async function getInvoiceByPublicToken(publicToken, client = null) {
          LIMIT 1`,
         [publicToken]
     );
-    return withCalculatedBalance(rows[0] || null);
+    const invoice = withCalculatedBalance(rows[0] || null);
+    if (!invoice) return null;
+    const [allocated] = await applyInvoiceAllocations(
+        invoice.company_id,
+        [invoice],
+        client
+    );
+    return allocated;
 }
 
 /** Persist a public_token on the invoice (idempotent — caller checks if one already exists first). */
@@ -838,6 +801,4 @@ module.exports = {
     listRevisions,
     createEvent,
     listEvents,
-    claimUnappliedJobPayments,
-    recordPayment,
 };

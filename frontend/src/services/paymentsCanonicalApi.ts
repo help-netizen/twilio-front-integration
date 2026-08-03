@@ -100,20 +100,6 @@ export interface TransactionsListResult {
     limit: number;
 }
 
-export interface CreateTransactionData {
-    contact_id?: number | null;
-    invoice_id?: number | null;
-    estimate_id?: number | null;
-    job_id?: number | null;
-    transaction_type: 'payment' | 'refund' | 'adjustment';
-    payment_method: 'credit_card' | 'ach' | 'check' | 'cash' | 'other';
-    amount: string;
-    currency?: string;
-    reference_number?: string;
-    memo?: string;
-    processed_at?: string;
-}
-
 export interface RecordJobPaymentData {
     amount: number;
     payment_method: 'cash' | 'check';
@@ -188,20 +174,6 @@ export interface StripeReadiness {
 }
 export async function fetchStripeReadiness(): Promise<StripeReadiness> {
     return paymentsRequest<StripeReadiness>(`${PAYMENTS_BASE}/stripe-readiness`);
-}
-
-export async function createTransaction(data: CreateTransactionData): Promise<PaymentTransaction> {
-    return paymentsRequest<PaymentTransaction>(PAYMENTS_BASE, {
-        method: 'POST',
-        body: JSON.stringify(data),
-    });
-}
-
-export async function recordManualPayment(data: CreateTransactionData): Promise<PaymentTransaction> {
-    return paymentsRequest<PaymentTransaction>(`${PAYMENTS_BASE}/manual`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-    });
 }
 
 export async function recordJobPayment(

@@ -242,7 +242,7 @@ describe('handleWebhook', () => {
         expect(paymentsService.createTransaction).not.toHaveBeenCalled();
     });
 
-    it('TC-31 checkout.session.completed writes one ledger row + flips invoice to paid', async () => {
+    it('TC-31 public invoice payment writes one Job-pool row without mutating invoice aggregates', async () => {
         q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
         q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
         q.getSessionByCheckoutId.mockResolvedValue({ id: 7, invoice_id: 42, contact_id: 5, job_id: null });
@@ -250,9 +250,15 @@ describe('handleWebhook', () => {
         q.markWebhookEvent.mockResolvedValue(undefined);
         paymentsQueries.findByExternalSourceId.mockResolvedValue(null); // not seen
         paymentsQueries.createTransaction.mockResolvedValue({ id: 100, external_id: 'pi_1' });
-        invoicesQueries.recordPayment.mockResolvedValue({});
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 0, amount_paid: 50 });
-        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
+        invoicesQueries.getInvoiceById.mockResolvedValue({
+            id: 42,
+            company_id: COMPANY,
+            contact_id: 5,
+            job_id: 7,
+            balance_due: 50,
+            amount_paid: 0,
+        });
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 0, amount_paid: 50, job_id: 7 });
         invoicesQueries.createEvent.mockResolvedValue({});
 
         const { body, sig } = signed({
@@ -264,21 +270,15 @@ describe('handleWebhook', () => {
         // Ledger write goes through the low-level query (so the service can split balance vs tip).
         expect(paymentsQueries.createTransaction).toHaveBeenCalledTimes(1);
         const txArg = paymentsQueries.createTransaction.mock.calls[0][1];
-        expect(txArg).toMatchObject({ external_source: 'stripe', external_id: 'pi_1', invoice_id: 42, amount: 50 });
-        // No tip → full amount applied to the invoice.
-        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(
-            42,
-            COMPANY,
-            50,
-            mockTransactionClient
-        );
-        expect(invoicesQueries.updateInvoiceStatus).toHaveBeenCalledWith(
-            42,
-            COMPANY,
-            'paid',
-            'paid_at',
-            mockTransactionClient
-        );
+        expect(txArg).toMatchObject({
+            external_source: 'stripe',
+            external_id: 'pi_1',
+            invoice_id: 42,
+            job_id: 7,
+            amount: 50,
+        });
+        expect(invoicesQueries.recordPayment).toBeUndefined();
+        expect(invoicesQueries.updateInvoiceStatus).not.toHaveBeenCalled();
         expect(mockLogFinancialActivity.mock.calls.map(([activity]) => activity.action))
             .toEqual(['payment.succeeded', 'invoice.payment_succeeded']);
         expect(mockLogFinancialActivity.mock.calls.every(([activity]) => (
@@ -296,9 +296,15 @@ describe('handleWebhook', () => {
         q.markWebhookEvent.mockResolvedValue(undefined);
         paymentsQueries.findByExternalSourceId.mockResolvedValue(null);
         paymentsQueries.createTransaction.mockResolvedValue({ id: 101, external_id: 'pi_tip' });
-        invoicesQueries.recordPayment.mockResolvedValue({});
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 0, amount_paid: 100 });
-        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
+        invoicesQueries.getInvoiceById.mockResolvedValue({
+            id: 42,
+            company_id: COMPANY,
+            contact_id: 5,
+            job_id: 7,
+            balance_due: 100,
+            amount_paid: 0,
+        });
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 0, amount_paid: 100, job_id: 7 });
         invoicesQueries.createEvent.mockResolvedValue({});
         // amount_received 11500 = $115 ($100 balance + $15 tip)
         const { body, sig } = signed({
@@ -309,12 +315,8 @@ describe('handleWebhook', () => {
         const txArg = paymentsQueries.createTransaction.mock.calls[0][1];
         expect(Number(txArg.amount)).toBe(115);            // full charge on ledger
         expect(txArg.metadata.tip).toBe(15);               // tip recorded
-        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(
-            42,
-            COMPANY,
-            100,
-            mockTransactionClient
-        ); // only balance to invoice
+        expect(txArg.job_id).toBe(7);
+        expect(invoicesQueries.recordPayment).toBeUndefined();
     });
 
     it('TC-33 idempotent on (company, external_id) — existing tx → no duplicate', async () => {
@@ -610,6 +612,23 @@ describe('createPublicPayIntent provider invariant', () => {
             activity.actor.type === 'client' && activity.actor.id === null
         ))).toBe(true);
     });
+
+    it('rejects a public invoice without a Job before creating a PaymentIntent', async () => {
+        invoicesQueries.getInvoiceByPublicToken.mockResolvedValue({
+            id: 42,
+            company_id: COMPANY,
+            status: 'sent',
+            balance_due: 80,
+            currency: 'USD',
+            job_id: null,
+            contact_id: 5,
+        });
+
+        await expect(svc.createPublicPayIntent('public-token', { tip: 0 }))
+            .rejects.toMatchObject({ code: 'JOB_REQUIRED', httpStatus: 400 });
+        expect(provider.createPaymentIntent).not.toHaveBeenCalled();
+        expect(q.insertSession).not.toHaveBeenCalled();
+    });
 });
 
 describe('contact-only payment sessions', () => {
@@ -778,8 +797,8 @@ describe('manual-card server confirmation (CARDFRAME-001 P2a)', () => {
         stripe_payment_intent_id: 'pi_merchant',
         stripe_account_id: ACCT,
         invoice_id: null,
-        job_id: null,
-        contact_id: null,
+        job_id: 7,
+        contact_id: 5,
         metadata: {},
     };
 
@@ -1162,7 +1181,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
             }),
             mockTransactionClient
         );
-        expect(invoicesQueries.recordPayment).not.toHaveBeenCalled();
+        expect(invoicesQueries.recordPayment).toBeUndefined();
         expect(savedCardsQueries.markCardUsed).toHaveBeenCalledWith(
             COMPANY,
             41,
@@ -1361,9 +1380,6 @@ describe('refunds (Phase 5)', () => {
             .mockResolvedValueOnce({ id: 100, invoice_id: 42, external_id: 'pi_1' }); // original lookup
         paymentsQueries.createTransaction.mockResolvedValue({ id: 200, external_id: 're_1' });
         paymentsQueries.updateTransactionStatus.mockResolvedValue({});
-        invoicesQueries.recordPayment.mockResolvedValue({});
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 50, amount_paid: 0 });
-        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
         invoicesQueries.createEvent.mockResolvedValue({});
 
         const res = await svc.refundStripePayment(COMPANY, { id: null }, 100, { amount: 50 });
@@ -1393,16 +1409,23 @@ describe('refunds (Phase 5)', () => {
             .mockResolvedValueOnce({ id: 100, invoice_id: 42, amount: 115, metadata: { tip: 15 } }); // original
         paymentsQueries.createTransaction.mockResolvedValue({ id: 201, external_id: 're_tip' });
         paymentsQueries.updateTransactionStatus.mockResolvedValue({});
-        invoicesQueries.recordPayment.mockResolvedValue({});
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 100, amount_paid: 0 });
-        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
         invoicesQueries.createEvent.mockResolvedValue({});
 
         await svc.applyStripeRefund(COMPANY, { refundId: 're_tip', paymentIntentId: 'pi_tip', amount: 115 });
         // Ledger refund row is the full -$115...
         expect(Number(paymentsQueries.createTransaction.mock.calls[0][1].amount)).toBe(-115);
-        // ...but only the $100 balance portion is reversed against the invoice.
-        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, -100, null);
+        // ...and the receipt event identifies the $100 document-balance reversal
+        // without mutating invoice aggregates.
+        expect(invoicesQueries.createEvent).toHaveBeenCalledWith(
+            COMPANY,
+            42,
+            'payment_recorded',
+            'system',
+            null,
+            expect.objectContaining({ amount: -100, tip_refunded: 15, refund: true }),
+            null
+        );
+        expect(invoicesQueries.recordPayment).toBeUndefined();
     });
 });
 

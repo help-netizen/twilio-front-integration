@@ -12,9 +12,9 @@ import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
 import { InvoiceDetailPanel } from '../invoices/InvoiceDetailPanel';
 import { InvoiceSendDialog } from '../invoices/InvoiceSendDialog';
 import { archiveEstimate, fetchEstimate, fetchEstimateEvents, approveEstimate, declineEstimate, sendEstimate, restoreEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
-import { fetchInvoiceEvents, recordPayment, voidInvoice, deleteInvoice, sendInvoice } from '../../services/invoicesApi';
+import { fetchInvoiceEvents, voidInvoice, deleteInvoice, sendInvoice } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
-import type { InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
+import type { InvoiceEvent } from '../../services/invoicesApi';
 import { toast } from 'sonner';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -283,13 +283,6 @@ export function LeadFinancialsTab({ leadId }: Props) {
                                     toast.success('Invoice voided');
                                     refresh();
                                     setSelectedInvoice(null);
-                                } catch (err: any) { toast.error(err.message); }
-                            }}
-                            onRecordPayment={async (data: RecordPaymentData) => {
-                                try {
-                                    await recordPayment(selectedInvoice.id, data);
-                                    toast.success('Payment recorded');
-                                    refresh();
                                 } catch (err: any) { toast.error(err.message); }
                             }}
                             onSyncEstimate={async () => {

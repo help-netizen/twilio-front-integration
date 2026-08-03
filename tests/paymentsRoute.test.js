@@ -431,15 +431,15 @@ describe('PF007: canonical payments router', () => {
         expect(mockCanonical.getSummary).not.toHaveBeenCalled();
     });
 
-    it('online collection requires payments.collect_online', async () => {
-        const res = await request(canonicalApp({ permissions: ['payments.view'] }), 'POST', '/', { amount: 10 });
-        expect(res.status).toBe(403);
+    it('the generic ledger collection endpoint does not exist', async () => {
+        const res = await request(canonicalApp({ permissions: ['payments.collect_online'] }), 'POST', '/', { amount: 10 });
+        expect(res.status).toBe(404);
         expect(mockCanonical.createTransaction).not.toHaveBeenCalled();
     });
 
-    it('manual collection requires payments.collect_offline', async () => {
-        const res = await request(canonicalApp({ permissions: ['payments.view', 'payments.collect_online'] }), 'POST', '/manual', { amount: 10 });
-        expect(res.status).toBe(403);
+    it('the generic manual collection endpoint does not exist', async () => {
+        const res = await request(canonicalApp({ permissions: ['payments.collect_offline'] }), 'POST', '/manual', { amount: 10 });
+        expect(res.status).toBe(404);
         expect(mockCanonical.recordManualPayment).not.toHaveBeenCalled();
     });
 

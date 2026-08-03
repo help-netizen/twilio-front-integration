@@ -11,7 +11,6 @@ import type {
     InvoicesListResult,
     InvoiceCreateData,
     InvoiceSendData,
-    RecordPaymentData,
     InvoiceEvent,
 } from '../services/invoicesApi';
 
@@ -137,16 +136,6 @@ export function useInvoices() {
         }
     }, [loadInvoices, selectedInvoice]);
 
-    const handleRecordPayment = useCallback(async (id: number, data: RecordPaymentData) => {
-        const invoice = await invoicesApi.recordPayment(id, data);
-        toast.success('Payment recorded');
-        await loadInvoices();
-        if (selectedInvoice?.id === id) {
-            setSelectedInvoice(invoice);
-        }
-        return invoice;
-    }, [loadInvoices, selectedInvoice]);
-
     const handleSyncItems = useCallback(async (id: number) => {
         const invoice = await invoicesApi.syncItemsFromEstimate(id);
         toast.success('Items synced from estimate');
@@ -190,7 +179,6 @@ export function useInvoices() {
         handleDeleteInvoice,
         handleSendInvoice,
         handleVoidInvoice,
-        handleRecordPayment,
         handleSyncItems,
         setStatus,
         setSearch,

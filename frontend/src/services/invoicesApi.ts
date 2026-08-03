@@ -44,6 +44,8 @@ export interface Invoice {
     total: string;
     amount_paid: string;
     balance_due: string;
+    /** Native Job-pool money allocated by the live invoice serializer. */
+    job_payment_allocated?: string;
     currency: string;
     payment_terms: string | null;
     due_date: string | null;
@@ -123,12 +125,6 @@ export interface InvoiceSendData {
     recipient: string;
     message?: string;
     includePaymentLink?: boolean;
-}
-
-export interface RecordPaymentData {
-    amount: string;
-    payment_method?: string;
-    reference?: string;
 }
 
 export interface InvoiceItemCreateData {
@@ -217,13 +213,6 @@ export async function voidInvoice(id: number): Promise<Invoice> {
 export async function ensureInvoicePublicLink(id: number): Promise<{ token: string; url: string }> {
     return invoicesRequest<{ token: string; url: string }>(`${INVOICES_BASE}/${id}/public-link`, {
         method: 'POST',
-    });
-}
-
-export async function recordPayment(id: number, data: RecordPaymentData): Promise<Invoice> {
-    return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}/record-payment`, {
-        method: 'POST',
-        body: JSON.stringify(data),
     });
 }
 

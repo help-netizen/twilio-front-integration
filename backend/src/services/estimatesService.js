@@ -1045,13 +1045,6 @@ async function convertToInvoiceInTransaction(
     }
 
     await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id, client);
-    if (invoice.job_id) {
-        await invoicesService.absorbUnappliedJobPayments(
-            companyId,
-            invoice.id,
-            client
-        );
-    }
     await invoicesQueries.createEvent(
         companyId,
         invoice.id,
@@ -1221,6 +1214,8 @@ async function getPublicEstimate(publicToken, { recordView = false } = {}) {
         discount_amount: Number(estimate.discount_amount),
         tax_amount: Number(estimate.tax_amount),
         total: Number(estimate.total),
+        deposit_paid: Number(estimate.deposit_paid || 0),
+        balance_due: Number(estimate.balance_due ?? estimate.total),
     };
     if (recordView) {
         const { clientActor } = require('./financialActivityService');

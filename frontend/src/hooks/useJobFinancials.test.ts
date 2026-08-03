@@ -87,7 +87,7 @@ describe('pollJobFinanceAfterPayment', () => {
 
         await expect(pollJobFinanceAfterPayment({
             jobId: 7,
-            baselineStandalonePaid: 0,
+            baselineJobPoolPaid: 0,
             paymentAmount: 95,
             fetchSnapshot,
             onSnapshot,
@@ -106,7 +106,7 @@ describe('pollJobFinanceAfterPayment', () => {
 
         await expect(pollJobFinanceAfterPayment({
             jobId: 7,
-            baselineStandalonePaid: 0,
+            baselineJobPoolPaid: 0,
             paymentAmount: 95,
             fetchSnapshot,
             wait,
@@ -127,7 +127,7 @@ describe('pollJobFinanceAfterPayment', () => {
 
         await expect(pollJobFinanceAfterPayment({
             jobId: 7,
-            baselineStandalonePaid: 0,
+            baselineJobPoolPaid: 0,
             paymentAmount: 95,
             fetchSnapshot,
             onSnapshot,

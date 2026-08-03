@@ -7,6 +7,7 @@ interface EstimateMoney {
 interface InvoiceMoney {
     total?: MoneyValue;
     amount_paid?: MoneyValue;
+    job_payment_allocated?: MoneyValue;
     status?: string | null;
 }
 
@@ -18,7 +19,7 @@ interface JobPaymentMoney {
     status?: string;
     external_source?: string | null;
     voided_at?: string | null;
-    metadata?: { original_transaction_id?: number | string | null } | null;
+    metadata?: { original_transaction_id?: number | string | null; tip?: MoneyValue } | null;
 }
 
 export interface JobFinanceSummary {
@@ -33,12 +34,11 @@ function moneyNumber(value: MoneyValue): number {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
-// TXN-STATUS-VOID-001 (T3) — mirrors the backend refund formula verbatim
-// (backend/src/db/jobFinanceQueries.js + paymentsQueries.js): a standalone payment
-// counts at full amount while it is completed OR refunded; a completed refund row
-// offsets by its absolute amount; voided and invoice-linked rows contribute nothing.
-function standaloneEffect(p: JobPaymentMoney): number {
-    if (p.invoice_id != null || p.voided_at != null) return 0;
+// A completed/refunded payment stays gross while a completed refund row offsets it.
+// Invoice references are receipt metadata only and never remove a native payment from
+// the Job pool.
+function transactionEffect(p: JobPaymentMoney): number {
+    if (p.voided_at != null) return 0;
     if (p.transaction_type === 'payment' && (p.status === 'completed' || p.status === 'refunded')) {
         return moneyNumber(p.amount);
     }
@@ -58,15 +58,35 @@ function effectiveSource(p: JobPaymentMoney, byId: Map<string, JobPaymentMoney>)
     return original?.external_source?.trim() || null;
 }
 
-export function completedStandalonePaid(payments: JobPaymentMoney[]): number {
-    return payments.reduce((sum, payment) => sum + standaloneEffect(payment), 0);
+export function completedJobPoolPaid(payments: JobPaymentMoney[]): number {
+    const byId = new Map(payments.map(payment => [String(payment.id), payment]));
+    return payments.reduce((sum, payment) => {
+        const source = effectiveSource(payment, byId);
+        // Zenbooker-linked money remains materialized on its invoice. Only its
+        // unlinked rows use the historical Job-paid fallback.
+        if (source === 'zenbooker' && payment.invoice_id != null) return sum;
+        return sum + transactionEffect(payment);
+    }, 0);
 }
 
-export function completedStandaloneDueOffset(payments: JobPaymentMoney[]): number {
+export function completedJobPoolDueOffset(payments: JobPaymentMoney[]): number {
     const byId = new Map(payments.map(payment => [String(payment.id), payment]));
-    return payments.reduce((sum, payment) => (
-        effectiveSource(payment, byId) !== 'zenbooker' ? sum + standaloneEffect(payment) : sum
-    ), 0);
+    return payments.reduce((sum, payment) => {
+        if (effectiveSource(payment, byId) === 'zenbooker') return sum;
+        let effect = transactionEffect(payment);
+        if (payment.transaction_type === 'payment' && effect > 0) {
+            effect = Math.max(effect - Math.max(moneyNumber(payment.metadata?.tip), 0), 0);
+        } else if (payment.transaction_type === 'refund' && effect < 0) {
+            const originalId = payment.metadata?.original_transaction_id;
+            const original = originalId != null ? byId.get(String(originalId)) : undefined;
+            const originalAmount = Math.abs(moneyNumber(original?.amount));
+            const originalTip = Math.max(moneyNumber(original?.metadata?.tip), 0);
+            if (originalAmount > 0) {
+                effect *= Math.max(originalAmount - originalTip, 0) / originalAmount;
+            }
+        }
+        return sum + effect;
+    }, 0);
 }
 
 const INACTIVE_INVOICE_STATUSES = new Set(['void', 'voided', 'refunded']);
@@ -81,15 +101,20 @@ export function calculateJobFinanceSummary(
     // together so the tiles stay internally consistent with the backend rollup.
     const activeInvoices = invoices.filter(invoice => !INACTIVE_INVOICE_STATUSES.has(String(invoice.status ?? '')));
     const invoiced = activeInvoices.reduce((sum, invoice) => sum + moneyNumber(invoice.total), 0);
-    const invoicePaid = activeInvoices.reduce((sum, invoice) => sum + moneyNumber(invoice.amount_paid), 0);
-    const paid = invoicePaid + completedStandalonePaid(jobPayments);
-    const standaloneDueOffset = completedStandaloneDueOffset(jobPayments);
+    const legacyInvoicePaid = activeInvoices.reduce((sum, invoice) => (
+        sum + Math.max(
+            moneyNumber(invoice.amount_paid) - moneyNumber(invoice.job_payment_allocated),
+            0
+        )
+    ), 0);
+    const paid = legacyInvoicePaid + completedJobPoolPaid(jobPayments);
+    const jobPoolDueOffset = completedJobPoolDueOffset(jobPayments);
 
     return {
         estimated,
         invoiced,
         paid,
-        due: invoiced - invoicePaid - standaloneDueOffset,
+        due: invoiced - legacyInvoicePaid - jobPoolDueOffset,
     };
 }
 

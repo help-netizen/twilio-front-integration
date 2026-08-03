@@ -17,16 +17,12 @@ const mockEstimates = {
     getJobContext: jest.fn(),
 };
 const mockLogFinancialActivity = jest.fn();
-const mockEmit = jest.fn();
 
 jest.mock('../backend/src/db/paymentsQueries', () => mockPayments);
 jest.mock('../backend/src/db/invoicesQueries', () => mockInvoices);
 jest.mock('../backend/src/db/estimatesQueries', () => mockEstimates);
 jest.mock('../backend/src/services/financialActivityService', () => ({
     logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
-}));
-jest.mock('../backend/src/services/eventBus', () => ({
-    emit: (...args) => mockEmit(...args),
 }));
 
 const paymentsService = require('../backend/src/services/paymentsService');
@@ -42,7 +38,6 @@ const HUMAN_ACTOR = {
 beforeEach(() => {
     jest.clearAllMocks();
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
-    mockEmit.mockResolvedValue({ id: 1 });
     mockEstimates.getContactContext.mockImplementation(
         async (companyId, id) => (
             companyId === COMPANY ? { id, company_id: companyId } : null
@@ -78,13 +73,12 @@ beforeEach(() => {
         invoice_id: 41,
         contact_id: 5,
         job_id: 7,
-        amount: '95',
         status: 'completed',
         currency: 'USD',
     });
 });
 
-test('recording an Invoice payment emits Payment and Invoice actions on the same client', async () => {
+test('an invoice-referenced Job payment emits activities without mutating invoice money', async () => {
     await paymentsService.createTransaction(
         COMPANY,
         CRM_USER,
@@ -107,20 +101,7 @@ test('recording an Invoice payment emits Payment and Invoice actions on the same
     expect(mockLogFinancialActivity.mock.calls.every(([, options]) => (
         options.client === CLIENT
     ))).toBe(true);
-    expect(mockEmit.mock.calls.map(([, eventType]) => eventType))
-        .toEqual(['payment.recorded', 'payment.succeeded']);
-    expect(mockEmit.mock.calls[0]).toEqual([
-        COMPANY,
-        'payment.recorded',
-        {
-            payment_id: 51,
-            job_id: 7,
-            invoice_id: 41,
-            amount: 95,
-            record_refs: [{ type: 'payment', id: 51 }],
-        },
-        expect.objectContaining({ client: CLIENT, aggregateType: 'payment' }),
-    ]);
+    expect(mockInvoices.recordPayment).not.toHaveBeenCalled();
 });
 
 test('a foreign related entity returns 404 before ledger or activity mutation', async () => {
@@ -142,6 +123,23 @@ test('a foreign related entity returns 404 before ledger or activity mutation', 
         CLIENT,
         HUMAN_ACTOR
     )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+
+    expect(mockPayments.createTransaction).not.toHaveBeenCalled();
+    expect(mockLogFinancialActivity).not.toHaveBeenCalled();
+});
+
+test('native payment creation rejects a parentless ledger write before mutation', async () => {
+    await expect(paymentsService.createTransaction(
+        COMPANY,
+        CRM_USER,
+        {
+            transaction_type: 'payment',
+            payment_method: 'cash',
+            amount: 25,
+        },
+        CLIENT,
+        HUMAN_ACTOR
+    )).rejects.toMatchObject({ code: 'JOB_REQUIRED', httpStatus: 400 });
 
     expect(mockPayments.createTransaction).not.toHaveBeenCalled();
     expect(mockLogFinancialActivity).not.toHaveBeenCalled();

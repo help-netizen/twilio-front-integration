@@ -25,6 +25,8 @@ interface EstimateInfo {
     discount_amount: number;
     tax_amount: number;
     total: number;
+    deposit_paid: number;
+    balance_due: number;
     items: EstimateLineItem[];
 }
 
@@ -92,6 +94,8 @@ export default function PublicEstimateViewPage() {
                     {info.discount_amount > 0 && <div style={{ ...row, color: '#6b5f4c', marginBottom: 6 }}><span>Discount</span><span>−{money(info.discount_amount, cur)}</span></div>}
                     {info.tax_amount > 0 && <div style={{ ...row, color: '#6b5f4c', marginBottom: 6 }}><span>Tax</span><span>{money(info.tax_amount, cur)}</span></div>}
                     <div style={{ ...row, fontWeight: 700, fontSize: 17, marginTop: 8 }}><span>Total</span><span>{money(info.total, cur)}</span></div>
+                    {info.deposit_paid > 0 && <div style={{ ...row, color: '#6b5f4c', marginTop: 6 }}><span>Total Paid</span><span>{money(info.deposit_paid, cur)}</span></div>}
+                    {info.deposit_paid > 0 && <div style={{ ...row, fontWeight: 700, marginTop: 6 }}><span>Total Due</span><span>{money(info.balance_due, cur)}</span></div>}
                 </div>
 
                 {info.notes && <p style={{ marginTop: 18, fontSize: 13, color: '#6b5f4c', whiteSpace: 'pre-wrap' }}>{info.notes}</p>}

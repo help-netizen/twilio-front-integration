@@ -178,6 +178,7 @@ async function getTransactionDetail(companyId, id) {
 }
 
 async function validateRelatedEntities(companyId, data, client = null) {
+    const related = {};
     if (data.contact_id != null) {
         const contact = await estimatesQueries.getContactContext(
             companyId,
@@ -185,6 +186,7 @@ async function validateRelatedEntities(companyId, data, client = null) {
             client
         );
         if (!contact) throw new PaymentsServiceError('NOT_FOUND', 'Contact not found', 404);
+        related.contact = contact;
     }
     if (data.estimate_id != null) {
         const estimate = await estimatesQueries.getEstimateById(
@@ -193,6 +195,7 @@ async function validateRelatedEntities(companyId, data, client = null) {
             client
         );
         if (!estimate) throw new PaymentsServiceError('NOT_FOUND', 'Estimate not found', 404);
+        related.estimate = estimate;
     }
     if (data.invoice_id != null) {
         const invoice = await invoicesQueries.getInvoiceById(
@@ -201,17 +204,21 @@ async function validateRelatedEntities(companyId, data, client = null) {
             client
         );
         if (!invoice) throw new PaymentsServiceError('NOT_FOUND', 'Invoice not found', 404);
+        related.invoice = invoice;
     }
     if (data.job_id != null) {
         const job = await estimatesQueries.getJobContext(companyId, data.job_id, client);
         if (!job) throw new PaymentsServiceError('NOT_FOUND', 'Job not found', 404);
+        related.job = job;
     }
+    return related;
 }
 
 /**
  * Create a payment transaction.
  * Validates amount, transaction_type, payment_method.
- * If invoice_id is provided, also records payment on the invoice.
+ * invoice_id is receipt/reference metadata only. Job-linked money is derived
+ * live from the Job ledger pool and never mutates invoice aggregates.
  */
 async function createTransaction(
     companyId,
@@ -236,27 +243,30 @@ async function createTransaction(
     if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
         throw new PaymentsServiceError('VALIDATION', `payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}`, 400);
     }
-    await validateRelatedEntities(companyId, data, client);
+    const related = await validateRelatedEntities(companyId, data, client);
+    const transactionData = related.invoice ? {
+        ...data,
+        job_id: related.invoice.job_id || data.job_id || null,
+        contact_id: related.invoice.contact_id || data.contact_id || null,
+    } : data;
+    if (
+        transaction_type === 'payment'
+        && transactionData.external_source !== 'zenbooker'
+        && transactionData.job_id == null
+    ) {
+        throw new PaymentsServiceError(
+            'JOB_REQUIRED',
+            'A native payment must belong to a job',
+            400
+        );
+    }
 
     const tx = await paymentsQueries.createTransaction(companyId, {
-        ...data,
+        ...transactionData,
         status: 'completed',
         processed_at: data.processed_at || new Date().toISOString(),
         recorded_by: userId,
     }, client);
-
-    // If linked to an invoice, update invoice amount_paid / balance_due
-    if (invoice_id) {
-        const updated = await invoicesQueries.recordPayment(
-            invoice_id,
-            companyId,
-            parseFloat(amount),
-            client
-        );
-        if (!updated) {
-            throw new PaymentsServiceError('NOT_FOUND', 'Invoice not found', 404);
-        }
-    }
     if (activityActor) {
         await logFinancialActivity({
             companyId,
@@ -353,7 +363,7 @@ async function recordManualPayment(
 /**
  * Refund a completed transaction.
  * Validates original exists, is completed, amount does not exceed original.
- * If linked to an invoice, reverses the amount_paid on the invoice.
+ * Document balances observe the refund live through the Job payment pool.
  */
 async function refundTransaction(
     companyId,
@@ -385,18 +395,6 @@ async function refundTransaction(
         client
     );
 
-    // If linked to an invoice, reverse the amount_paid
-    if (original.invoice_id) {
-        const updated = await invoicesQueries.recordPayment(
-            original.invoice_id,
-            companyId,
-            -refundAmount,
-            client
-        );
-        if (!updated) {
-            throw new PaymentsServiceError('NOT_FOUND', 'Invoice not found', 404);
-        }
-    }
     if (activityActor) {
         await logFinancialActivity({
             companyId,

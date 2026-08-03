@@ -328,6 +328,8 @@ function renderSection(s, descriptor, estimate, tokens) {
         const discount = Number(estimate.discount_amount || 0);
         const tax = Number(estimate.tax_amount || 0);
         const total = Number(estimate.total || 0);
+        const paid = Number(estimate.deposit_paid || 0);
+        const due = Number(estimate.balance_due ?? total);
         return e(P.View, { style: { ...padding, flexDirection: 'row', justifyContent: 'flex-end' } },
             e(P.View, { style: { width: 220 } },
                 e(P.View, { style: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 } },
@@ -354,6 +356,14 @@ function renderSection(s, descriptor, estimate, tokens) {
                 },
                     e(P.Text, { style: { fontSize: tokens.totalLabelSize, fontFamily: 'Helvetica-Bold' } }, 'Total'),
                     e(P.Text, { style: { fontSize: tokens.totalValueSize, color: accent, fontFamily: 'Helvetica-Bold' } }, money(total)),
+                ),
+                paid > 0 && e(P.View, { style: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 5 } },
+                    e(P.Text, { style: { fontSize: tokens.totalsLabelSize, color: muted } }, 'Total Paid'),
+                    e(P.Text, { style: { fontSize: tokens.totalsValueSize } }, money(paid)),
+                ),
+                paid > 0 && e(P.View, { style: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 3 } },
+                    e(P.Text, { style: { fontSize: tokens.totalsLabelSize, fontFamily: 'Helvetica-Bold' } }, 'Total Due'),
+                    e(P.Text, { style: { fontSize: tokens.totalsValueSize, fontFamily: 'Helvetica-Bold' } }, money(due)),
                 ),
             ),
         );

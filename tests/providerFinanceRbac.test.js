@@ -9,7 +9,7 @@
  * short-circuits → 403, so the service must NOT have been called.
  *
  * GOAL A: the provider role's finance perm set PASSES estimates/invoices
- *         list+create and an offline-collect route, is BLOCKED from refund
+ *         list+create, has no ledger/invoice collection route, is BLOCKED from refund
  *         (needs payments.refund), and — ROLE-PROVIDER-NO-PAYMENTS-001 — is
  *         refused the unfiltered payments ledger (needs payments.view).
  * GOAL B: a static assertion that 050 + the catalog grant lead_source.view to
@@ -27,14 +27,12 @@ jest.mock('../backend/src/services/estimatesService', () => mockEstimates);
 const mockInvoices = {
     listInvoices: jest.fn(async () => ({ items: [], total: 0 })),
     createInvoice: jest.fn(async () => ({ id: 'inv-1' })),
-    recordPayment: jest.fn(async () => ({ id: 'inv-1', paid: true })),
 };
 jest.mock('../backend/src/services/invoicesService', () => mockInvoices);
 
 // ── Mock payments service deps ──
 const mockPayments = {
     listTransactions: jest.fn(async () => ({ items: [], total: 0 })),
-    recordManualPayment: jest.fn(async () => ({ id: 'pay-1' })),
     refundTransaction: jest.fn(async () => ({ id: 'pay-1', refunded: true })),
 };
 jest.mock('../backend/src/services/paymentsService', () => mockPayments);
@@ -153,16 +151,14 @@ describe('PROVIDER-FINANCE-001 — provider finance perm set passes self-serve f
         expect(mockPayments.listTransactions).not.toHaveBeenCalled();
     });
 
-    test('POST /api/payments/manual (offline collect) is allowed (payments.collect_offline)', async () => {
+    test('POST /api/payments/manual does not exist; collection belongs to a Job', async () => {
         const res = await request(appAs(paymentsRouter, PROVIDER_FINANCE)).post('/manual').send({ amount: 100 });
-        expect(res.status).toBe(201);
-        expect(mockPayments.recordManualPayment).toHaveBeenCalled();
+        expect(res.status).toBe(404);
     });
 
-    test('POST /api/invoices/:id/record-payment (offline collect) is allowed', async () => {
+    test('POST /api/invoices/:id/record-payment does not exist; invoice is read-only for payment collection', async () => {
         const res = await request(appAs(invoicesRouter, PROVIDER_FINANCE)).post('/inv-1/record-payment').send({ amount: 100 });
-        expect(res.status).toBe(200);
-        expect(mockInvoices.recordPayment).toHaveBeenCalled();
+        expect(res.status).toBe(404);
     });
 });
 

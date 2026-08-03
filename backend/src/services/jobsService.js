@@ -1117,9 +1117,8 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
         }
     }
 
-    // Fetch actual paid + signed outstanding amounts from invoices and completed
-    // standalone job payments. Invoice-linked ledger rows are excluded because
-    // their money is already reflected in invoices.amount_paid/balance_due.
+    // Fetch actual paid + signed outstanding amounts from invoices and the live
+    // Job payment pool. An invoice_id on a ledger row is receipt metadata only.
     const paymentsMap = {};
     if (jobIds.length > 0 && companyId) {
         const paidRows = await jobFinanceQueries.listJobPaymentRollups(companyId, jobIds);
@@ -1132,7 +1131,7 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
         const job = rowToJob(r);
         job.tags = tagsMap[r.id] || [];
         const pay = paymentsMap[r.id];
-        // No local invoice or standalone payment → retain the Zenbooker fallback.
+        // No local invoice or Job-pool money → retain the Zenbooker fallback.
         job.amount_paid = pay ? pay.total_paid : null;
         job.balance_due = pay ? pay.total_due : null;
         return job;

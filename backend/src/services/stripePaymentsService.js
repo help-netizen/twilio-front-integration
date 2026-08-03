@@ -1531,9 +1531,8 @@ async function applyStripeRefund(
             client
         );
         if (original.invoice_id) {
-            // Only the invoice-balance portion of the original payment was applied to
-            // the invoice (the tip never touched it). Reverse that proportion of the
-            // refund so amount_paid can't go negative on a tipped payment.
+            // Keep the invoice event/receipt reference, but never mutate invoice
+            // aggregates. The canonical read allocator applies this refund live.
             const refundAmt = Math.abs(Number(amount));
             const origTotal = Math.abs(Number(original.amount)) || refundAmt;
             const origTip = Math.max(0, Number(original.metadata?.tip || 0) || 0);
@@ -1541,26 +1540,6 @@ async function applyStripeRefund(
             const invoiceReversal = origTip > 0 && origTotal > 0
                 ? Number((refundAmt * (origBalancePortion / origTotal)).toFixed(2))
                 : refundAmt;
-            await invoicesQueries.recordPayment(
-                original.invoice_id,
-                companyId,
-                -invoiceReversal,
-                client
-            );
-            const inv = await invoicesService.getInvoice(
-                companyId,
-                original.invoice_id,
-                client
-            );
-            if (Number(inv.balance_due) > 0) {
-                await invoicesQueries.updateInvoiceStatus(
-                    original.invoice_id,
-                    companyId,
-                    Number(inv.amount_paid) > 0 ? 'partial' : 'sent',
-                    null,
-                    client
-                );
-            }
             await invoicesQueries.createEvent(
                 companyId,
                 original.invoice_id,
@@ -1751,6 +1730,13 @@ async function createPublicPayIntent(
 ) {
     const invoice = await invoicesQueries.getInvoiceByPublicToken(token, client);
     if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+    if (invoice.job_id == null) {
+        throw new StripePaymentsError(
+            'JOB_REQUIRED',
+            'This invoice must be linked to a job before it can accept payment',
+            400
+        );
+    }
     const companyId = invoice.company_id;
     const account = await assertCollectable(companyId);
     if (['void', 'refunded', 'paid'].includes(invoice.status)) {
@@ -1822,12 +1808,25 @@ async function applyStripePayment(
         invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
         if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
     }
-    if (contactId) {
-        const contact = await estimatesQueries.getContactContext(companyId, contactId, client);
+    const resolvedContactId = invoice?.contact_id || contactId || null;
+    const resolvedJobId = invoice?.job_id || jobId || null;
+    if (resolvedJobId == null) {
+        throw new StripePaymentsError(
+            'JOB_REQUIRED',
+            'A native payment must belong to a job',
+            400
+        );
+    }
+    if (resolvedContactId) {
+        const contact = await estimatesQueries.getContactContext(
+            companyId,
+            resolvedContactId,
+            client
+        );
         if (!contact) throw new StripePaymentsError('NOT_FOUND', 'Contact not found', 404);
     }
-    if (jobId) {
-        const job = await estimatesQueries.getJobContext(companyId, jobId, client);
+    if (resolvedJobId) {
+        const job = await estimatesQueries.getJobContext(companyId, resolvedJobId, client);
         if (!job) throw new StripePaymentsError('NOT_FOUND', 'Job not found', 404);
     }
 
@@ -1848,8 +1847,8 @@ async function applyStripePayment(
             amount,
             currency: (currency || 'USD').toUpperCase(),
             invoice_id: invoiceId || null,
-            contact_id: contactId || null,
-            job_id: jobId || null,
+            contact_id: resolvedContactId,
+            job_id: resolvedJobId,
             external_id: externalId,
             external_source: 'stripe',
             metadata: { ...(metadata || {}), tip },
@@ -1870,25 +1869,7 @@ async function applyStripePayment(
     }
 
     if (invoiceId) {
-        await invoicesQueries.recordPayment(invoiceId, companyId, balancePortion, client);
         invoice = await invoicesService.getInvoice(companyId, invoiceId, client);
-        if (Number(invoice.balance_due) <= 0) {
-            await invoicesQueries.updateInvoiceStatus(
-                invoiceId,
-                companyId,
-                'paid',
-                'paid_at',
-                client
-            );
-        } else if (Number(invoice.amount_paid) > 0) {
-            await invoicesQueries.updateInvoiceStatus(
-                invoiceId,
-                companyId,
-                'partial',
-                null,
-                client
-            );
-        }
         await invoicesQueries.createEvent(
             companyId,
             invoiceId,

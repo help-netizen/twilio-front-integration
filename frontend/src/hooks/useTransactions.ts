@@ -9,7 +9,6 @@ import type {
     PaymentTransaction,
     TransactionsListParams,
     TransactionsListResult,
-    CreateTransactionData,
     RefundData,
     SendReceiptData,
     PaymentSummary,
@@ -111,22 +110,6 @@ export function useTransactions() {
     }, []);
 
     // -- Actions --------------------------------------------------------------
-    const handleCreateTransaction = useCallback(async (data: CreateTransactionData) => {
-        const txn = await paymentsApi.createTransaction(data);
-        toast.success('Transaction created');
-        await loadTransactions();
-        await loadSummary();
-        return txn;
-    }, [loadTransactions, loadSummary]);
-
-    const handleRecordManual = useCallback(async (data: CreateTransactionData) => {
-        const txn = await paymentsApi.recordManualPayment(data);
-        toast.success('Payment recorded');
-        await loadTransactions();
-        await loadSummary();
-        return txn;
-    }, [loadTransactions, loadSummary]);
-
     const handleRefund = useCallback(async (id: number, data: RefundData) => {
         // Stripe payments must be refunded THROUGH Stripe (the generic path only writes
         // a ledger row); other sources use the canonical refund.
@@ -205,8 +188,6 @@ export function useTransactions() {
         loadSummary,
         selectTransaction,
         closeDetail,
-        handleCreateTransaction,
-        handleRecordManual,
         handleRefund,
         handleVoid,
         handleSendReceipt,

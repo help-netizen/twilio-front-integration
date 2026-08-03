@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     Ban,
     Check,
     ChevronDown,
-    CreditCard,
     Eye,
     Loader2,
     MoreHorizontal,
@@ -24,9 +23,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { EstimateItemDialog, type ItemDraft } from '../estimates/EstimateItemDialog';
-import ManualCardDialog from './ManualCardDialog';
 import { EstimateSummaryDialog } from '../estimates/EstimateSummaryDialog';
 import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
 import { expandGroup } from '../../services/priceBookApi';
@@ -39,7 +36,6 @@ import type {
     Invoice,
     InvoiceEvent,
     InvoiceItem,
-    RecordPaymentData,
 } from '../../services/invoicesApi';
 import {
     addInvoiceItem,
@@ -51,12 +47,10 @@ import {
     updateInvoiceItem,
     voidInvoicePayment,
 } from '../../services/invoicesApi';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
 import { openAuthedPdf } from '../../lib/openAuthedPdf';
 import { toast } from 'sonner';
-import type { ManualCardSessionResult } from '../../services/stripePaymentsApi';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 import { PaymentStatusChip } from '../payments/paymentStatus';
@@ -100,8 +94,6 @@ function toDateInput(value: string | null | undefined): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-const INVOICE_REVALIDATION_DELAYS_MS = [0, 1000, 2000, 4000, 8000] as const;
-
 // ── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -113,7 +105,6 @@ interface Props {
     onEdit?: () => void;
     onSend: () => void;
     onVoid: () => void;
-    onRecordPayment: (data: RecordPaymentData) => Promise<any> | void;
     /** @deprecated Sync-from-estimate was removed; prop kept temporarily for caller compatibility. */
     onSyncEstimate?: () => void;
     onDelete: () => void;
@@ -130,7 +121,6 @@ export function InvoiceDetailPanel({
     onClose: _onClose,
     onSend,
     onVoid,
-    onRecordPayment,
     onDelete,
     onChanged,
 }: Props) {
@@ -189,72 +179,7 @@ export function InvoiceDetailPanel({
         fetchInvoicePayments(invoice.id).then(setPayments).catch(() => {});
     }, [invoice?.id]);
 
-    // Payment form (shown inside a popover triggered by the "Record payment" button)
-    const [paymentOpen, setPaymentOpen] = useState(false);
-    const [paymentAmount, setPaymentAmount] = useState<string>('');
-    const [paymentMethod, setPaymentMethod] = useState<string>('card');
-    const [recording, setRecording] = useState(false);
-    const [collecting, setCollecting] = useState(false);
-    const [manualCardOpen, setManualCardOpen] = useState(false);
-    const [manualCardAmount, setManualCardAmount] = useState<number | undefined>();
-    const cardPollGenerationRef = useRef(0);
-    const cardPollWaitersRef = useRef(new Map<number, () => void>());
-
-    const cancelCardRevalidation = useCallback(() => {
-        cardPollGenerationRef.current += 1;
-        for (const cancel of cardPollWaitersRef.current.values()) cancel();
-        cardPollWaitersRef.current.clear();
-    }, []);
-
-    const waitForCardPoll = useCallback((milliseconds: number) => new Promise<void>(resolve => {
-        const id = window.setTimeout(() => {
-            cardPollWaitersRef.current.delete(id);
-            resolve();
-        }, milliseconds);
-        cardPollWaitersRef.current.set(id, () => {
-            window.clearTimeout(id);
-            resolve();
-        });
-    }), []);
-
-    useEffect(() => () => cancelCardRevalidation(), [invoice.id, cancelCardRevalidation]);
-
-    const revalidateAfterCardPayment = useCallback(async (payment: ManualCardSessionResult): Promise<boolean> => {
-        if (payment.status !== 'succeeded') return false;
-        cancelCardRevalidation();
-        const generation = cardPollGenerationRef.current;
-        const expectedPaidCents = Math.round((Number(invoice.amount_paid || 0) + payment.amount) * 100);
-
-        for (const delay of INVOICE_REVALIDATION_DELAYS_MS) {
-            if (delay > 0) await waitForCardPoll(delay);
-            if (generation !== cardPollGenerationRef.current) return false;
-            try {
-                const [fresh, freshPayments] = await Promise.all([
-                    fetchInvoice(invoice.id),
-                    fetchInvoicePayments(invoice.id),
-                ]);
-                if (generation !== cardPollGenerationRef.current) return false;
-                setInvoice(fresh);
-                setPayments(freshPayments);
-                onChanged?.(fresh);
-                if (Math.round(Number(fresh.amount_paid || 0) * 100) >= expectedPaidCents) return true;
-            } catch {
-                // The webhook-backed ledger may lag or one poll may fail; continue within the bound.
-            }
-        }
-        return false;
-    }, [invoice.id, invoice.amount_paid, onChanged, cancelCardRevalidation, waitForCardPoll]);
-
-    // Pre-fill the amount with the remaining balance whenever the popover opens
-    // (or when the underlying balance changes while it's open).
-    useEffect(() => {
-        if (paymentOpen) {
-            const balance = Number(invoice.balance_due) || 0;
-            setPaymentAmount(balance > 0 ? balance.toFixed(2) : '');
-        }
-    }, [paymentOpen, invoice.balance_due]);
-
-    const { hasPermission, hasAnyPermission } = useAuthz();
+    const { hasPermission } = useAuthz();
     const isVoid = invoice.status === 'void' || invoice.status === 'refunded';
     const readOnly = isVoid;
     // Send is always available for non-void invoices (re-sends are a normal workflow).
@@ -262,31 +187,7 @@ export function InvoiceDetailPanel({
     const canSend = hasPermission('invoices.send') && (!invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded'));
     const canManagePriceBook = hasPermission('price_book.manage');
     const canVoid = !isVoid;
-    // Permission-gated: only roles that can collect a payment (online or offline) see the buttons.
-    const canCollectPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
-    const canRecordPayment = canCollectPayment && !isVoid && Number(invoice.balance_due) > 0;
-
-    // F018: Stripe "Collect payment" — create a payment link and copy/send it.
-    // Readiness is enforced by the backend (returns NOT_READY if Stripe isn't set up).
-    const collectPayment = async (mode: 'copy' | 'send') => {
-        setCollecting(true);
-        try {
-            const { invoiceStripeApi } = await import('../../services/stripePaymentsApi');
-            if (mode === 'send') {
-                await invoiceStripeApi.sendLink(invoice.id, { channel: 'email' });
-                toast.success('Payment link sent');
-            } else {
-                const link = await invoiceStripeApi.createLink(invoice.id);
-                await navigator.clipboard.writeText(link.url).catch(() => {});
-                toast.success('Payment link copied');
-            }
-        } catch (e: any) {
-            const msg = String(e?.message || '');
-            toast.error(/not ready|NOT_READY/i.test(msg) ? 'Connect Stripe in Integrations to collect online payments' : msg || 'Could not create payment link');
-        } finally {
-            setCollecting(false);
-        }
-    };
+    const canVoidPayment = hasPermission('payments.collect_offline');
 
     // ── Item-edit handlers ───────────────────────────────────────────────────
 
@@ -436,68 +337,6 @@ export function InvoiceDetailPanel({
 
     // ── Inline payment recording ─────────────────────────────────────────────
 
-    const handleInlineRecord = async () => {
-        const amt = Number(paymentAmount);
-        if (!amt || amt <= 0) {
-            toast.error('Enter a payment amount greater than 0');
-            return;
-        }
-        setRecording(true);
-        try {
-            await onRecordPayment({ amount: String(amt), payment_method: paymentMethod });
-            // refresh
-            const fresh = await fetchInvoice(invoice.id);
-            setInvoice(fresh);
-            onChanged?.(fresh);
-            const ps = await fetchInvoicePayments(invoice.id);
-            setPayments(ps);
-            setPaymentAmount('');
-            setPaymentOpen(false);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Payment failed');
-        } finally {
-            setRecording(false);
-        }
-    };
-
-    /** Reusable payment-recording form body. */
-    const paymentFormBody = (
-        <div className="space-y-2">
-            <MoneyInput
-                placeholder="0.00"
-                value={paymentAmount}
-                onValueChange={setPaymentAmount}
-                className="flex h-8 w-full min-w-0 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 py-1 text-right text-base tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] md:text-sm"
-                autoFocus
-            />
-            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Method" />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="card">Card</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="check">Check</SelectItem>
-                    <SelectItem value="ach">ACH / Bank</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-            </Select>
-            <Button
-                type="button"
-                size="sm"
-                className="w-full"
-                onClick={handleInlineRecord}
-                disabled={recording || !paymentAmount}
-            >
-                {recording ? (
-                    <><Loader2 className="mr-1 size-3.5 animate-spin" />Recording…</>
-                ) : (
-                    <><CreditCard className="mr-1 size-3.5" />Record payment</>
-                )}
-            </Button>
-        </div>
-    );
-
     if (loading) {
         return (
             <div className="flex h-full items-center justify-center">
@@ -524,9 +363,8 @@ export function InvoiceDetailPanel({
     };
     const previewPdf = () => openAuthedPdf(`/api/invoices/${invoice.id}/pdf`, `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`)
         .catch(() => toast.error('Could not open the PDF'));
-    const primaryKey: 'send' | 'collect' | 'preview' =
+    const primaryKey: 'send' | 'preview' =
         !isVoid && invoice.status === 'draft' && canSend ? 'send'
-        : !isVoid && canRecordPayment ? 'collect'
         : 'preview';
 
     return (
@@ -794,7 +632,7 @@ export function InvoiceDetailPanel({
                                                 <span className={`font-mono ${voided ? 'text-[var(--blanc-ink-3)] line-through' : 'text-emerald-700'}`}>
                                                     {money(tx.amount ?? tx.metadata?.amount)}
                                                 </span>
-                                                {!voided && manual && canCollectPayment && !readOnly && (
+                                                {!voided && manual && canVoidPayment && !readOnly && (
                                                     <Button
                                                         type="button" variant="ghost" size="sm"
                                                         className="size-6 p-0 text-[var(--blanc-ink-3)] hover:text-red-600"
@@ -880,33 +718,13 @@ export function InvoiceDetailPanel({
                             <Check className="mr-1.5 size-4" />Save
                         </Button>
                     )}
-                    {primaryKey === 'collect' ? (
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button disabled={collecting}><CreditCard className="mr-1.5 size-4" />Collect payment</Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-56">
-                                <DropdownMenuItem onSelect={() => collectPayment('send')}><Send className="size-4" />Send payment link</DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => collectPayment('copy')}><CreditCard className="size-4" />Copy payment link</DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => { setManualCardAmount(Number(invoice.balance_due) || undefined); setManualCardOpen(true); }}><CreditCard className="size-4" />Enter card manually</DropdownMenuItem>
-                                <DropdownMenuItem onSelect={() => setPaymentOpen(true)}><CreditCard className="size-4" />Record offline payment</DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                    ) : primaryKey === 'send' ? (
+                    {primaryKey === 'send' ? (
                         <Button onClick={onSend}><Send className="mr-1.5 size-4" />Send</Button>
                     ) : (
                         <Button onClick={previewPdf}><Eye className="mr-1.5 size-4" />Preview PDF</Button>
                     )}
                 </div>
             </div>
-
-            {/* Offline payment — converted from a footer popover to a small dialog. */}
-            <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
-                <DialogContent variant="dialog" size="sm">
-                    <DialogHeader><DialogTitle>Record offline payment</DialogTitle></DialogHeader>
-                    {paymentFormBody}
-                </DialogContent>
-            </Dialog>
 
             <EstimateSummaryDialog
                 open={notesDialogOpen}
@@ -920,17 +738,6 @@ export function InvoiceDetailPanel({
                 isEdit={itemEditingId != null}
                 initial={itemDraft}
                 onSave={saveItemDraft}
-            />
-            <ManualCardDialog
-                open={manualCardOpen}
-                onOpenChange={setManualCardOpen}
-                invoiceId={invoice.id}
-                amount={manualCardAmount}
-                balanceBefore={manualCardAmount || 0}
-                contactEmail={invoice.contact_email}
-                hasContact={invoice.contact_id != null}
-                onPaymentConfirmed={revalidateAfterCardPayment}
-                onCopyLinkFallback={() => collectPayment('copy')}
             />
         </div>
     );
