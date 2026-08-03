@@ -260,6 +260,7 @@ export function InvoiceDetailPanel({
     // Send is always available for non-void invoices (re-sends are a normal workflow).
     // Permission-gated: only roles with invoices.send may dispatch.
     const canSend = hasPermission('invoices.send') && (!invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded'));
+    const canManagePriceBook = hasPermission('price_book.manage');
     const canVoid = !isVoid;
     // Permission-gated: only roles that can collect a payment (online or offline) see the buttons.
     const canCollectPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
@@ -374,7 +375,9 @@ export function InvoiceDetailPanel({
             };
             if (itemEditingId == null) {
                 await addInvoiceItem(invoice.id, payload as any);
-                if (savePresetOnNextItem) {
+                // Catalog write needs price_book.manage; others just add to the
+                // invoice with no scary 403 toast (mirrors EstimateDetailPanel).
+                if (savePresetOnNextItem && canManagePriceBook) {
                     try {
                         const preset = await createEstimateItemPreset({
                             name: payload.name,
@@ -385,11 +388,13 @@ export function InvoiceDetailPanel({
                         });
                         recordEstimateItemPresetUsage(preset.id).catch(() => {});
                         toast.success(`Created "${preset.name}" and added to invoice`);
-                    } catch (err) {
-                        toast.error(`Item added, but failed to save preset: ${err instanceof Error ? err.message : String(err)}`);
+                    } catch {
+                        toast.warning('Item added — could not save it to the Price Book');
                     } finally {
                         setSavePresetOnNextItem(false);
                     }
+                } else {
+                    setSavePresetOnNextItem(false);
                 }
             } else {
                 await updateInvoiceItem(invoice.id, itemEditingId, payload as any);
@@ -509,6 +514,14 @@ export function InvoiceDetailPanel({
 
     // INVOICE footer (mirror of ESTIMATE-FOOTER-001): exactly ONE primary CTA per
     // state + a "More" kebab for everything else.
+    // Owner amendment 2026-08-03: explicit Save beside the primary CTA — edits
+    // already persist inline; Save flushes any in-progress field and confirms.
+    const handleExplicitSave = async () => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        await new Promise(resolve => setTimeout(resolve, 150)); // let on-blur saves land
+        await refreshAfterItemChange().catch(() => {});
+        toast.success('All changes saved');
+    };
     const previewPdf = () => openAuthedPdf(`/api/invoices/${invoice.id}/pdf`, `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`)
         .catch(() => toast.error('Could not open the PDF'));
     const primaryKey: 'send' | 'collect' | 'preview' =
@@ -862,6 +875,11 @@ export function InvoiceDetailPanel({
                         </DropdownMenuContent>
                     </DropdownMenu>
 
+                    {!isVoid && (
+                        <Button variant="secondary" onClick={handleExplicitSave}>
+                            <Check className="mr-1.5 size-4" />Save
+                        </Button>
+                    )}
                     {primaryKey === 'collect' ? (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>

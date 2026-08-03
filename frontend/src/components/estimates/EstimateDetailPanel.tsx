@@ -74,6 +74,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     const navigate = useNavigate();
     const { hasPermission } = useAuthz();
     const canSend = hasPermission('estimates.send');
+    const canManagePriceBook = hasPermission('price_book.manage');
     // Local copy so we can apply optimistic updates while saving.
     const [estimate, setEstimate] = useState<Estimate>(initialEstimate);
     const [hydrating, setHydrating] = useState(!initialEstimate.items);
@@ -211,8 +212,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
             if (itemEditingId == null) {
                 await addEstimateItem(estimate.id, payload as any);
                 // Combobox "Create new" path — also persist to the company catalog
-                // so the item is searchable on future estimates.
-                if (savePresetOnNextItem) {
+                // so the item is searchable on future estimates. Only users with
+                // price_book.manage may write the catalog; for everyone else the
+                // item simply lands on this document (no scary 403 toast).
+                if (savePresetOnNextItem && canManagePriceBook) {
                     try {
                         const preset = await createEstimateItemPreset({
                             name: payload.name,
@@ -223,11 +226,13 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         });
                         recordEstimateItemPresetUsage(preset.id).catch(() => {});
                         toast.success(`Created "${preset.name}" and added to estimate`);
-                    } catch (err) {
-                        toast.error(`Item added, but failed to save preset: ${err instanceof Error ? err.message : String(err)}`);
+                    } catch {
+                        toast.warning('Item added — could not save it to the Price Book');
                     } finally {
                         setSavePresetOnNextItem(false);
                     }
+                } else {
+                    setSavePresetOnNextItem(false);
                 }
             } else {
                 await updateEstimateItem(estimate.id, itemEditingId, payload as any);
@@ -309,8 +314,17 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     };
 
     // ESTIMATE-FOOTER-001: exactly ONE primary CTA per state; everything else → "More".
+    // Owner amendment 2026-08-03: an explicit Save sits beside it — edits already
+    // persist inline, so Save flushes any in-progress field and confirms, letting
+    // the user keep the document without sending it.
     const previewPdf = () => openAuthedPdf(`/api/estimates/${estimate.id}/pdf`, `${estimate.estimate_number || `Estimate-${estimate.id}`}.pdf`)
         .catch(() => toast.error('Could not open the PDF'));
+    const handleExplicitSave = async () => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        await new Promise(resolve => setTimeout(resolve, 150)); // let on-blur saves land
+        await refreshAfterItemChange().catch(() => {});
+        toast.success('All changes saved');
+    };
     const doSend = () => { if (requireItems()) setSendOpen(true); };
     const doApprove = () => { if (requireItems()) onApprove(); };
     const openLinkedInvoice = () => navigate(`/invoices?openId=${estimate.invoice_id}`);
@@ -650,6 +664,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             )}
                         </DropdownMenuContent>
                     </DropdownMenu>
+                    {!archived && (
+                        <Button variant="secondary" onClick={handleExplicitSave}>
+                            <Check className="mr-1.5 size-4" />Save
+                        </Button>
+                    )}
                     {primaryAction && (
                         <Button onClick={primaryAction.onClick} disabled={primaryAction.disabled}>
                             {primaryAction.icon}{primaryAction.label}
