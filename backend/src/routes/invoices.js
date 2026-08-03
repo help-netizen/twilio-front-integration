@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const invoicesService = require('../services/invoicesService');
+const aiGenerationLogService = require('../services/aiGenerationLogService');
 const { actorFromRequest } = require('../services/documentSendNoteService');
 const { userActor } = require('../services/financialActivityService');
 const { withTransaction } = require('../services/transactionService');
@@ -106,6 +107,18 @@ router.post('/', requirePermission('invoices.create'), async (req, res) => {
             client,
             userActor(userId)
         ));
+        // AI-GEN-LOG-002: if this invoice was born from an AI draft, attach the
+        // saved outcome to the generation row (fire-and-forget, tenant-scoped).
+        if (data?.ai_generation_id) {
+            void aiGenerationLogService.linkFinal({
+                companyId,
+                generationId: data.ai_generation_id,
+                invoiceId: result?.id,
+                finalLineItems: Array.isArray(data?.items)
+                    ? data.items.map(i => ({ name: i.name, quantity: i.quantity, unit_price: i.unit_price }))
+                    : [],
+            });
+        }
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST / error:', err.message);

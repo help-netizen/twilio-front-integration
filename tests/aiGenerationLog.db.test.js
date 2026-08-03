@@ -11,6 +11,7 @@ const logService = require('../backend/src/services/aiGenerationLogService');
 
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const migrationSql = fs.readFileSync(path.join(MIGRATIONS, '230_ai_generation_log.sql'), 'utf8');
+const migration231Sql = fs.readFileSync(path.join(MIGRATIONS, '231_ai_generation_log_final.sql'), 'utf8');
 
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
@@ -18,6 +19,7 @@ const TAG = `AIGENLOG-${Date.now()}`;
 
 beforeAll(async () => {
     await db.query(migrationSql); // idempotent
+    await db.query(migration231Sql); // idempotent
     for (const [company, name] of [[COMPANY_A, 'A'], [COMPANY_B, 'B']]) {
         await db.query(
             `INSERT INTO companies (id, name, slug) VALUES ($1, $2, $3)
@@ -67,7 +69,49 @@ test('record() is fire-safe: missing company writes nothing and does not throw',
         companyId: null,
         reportText: 'no tenant',
         result: { summary: 's', line_items: [], order_list: [] },
-    })).resolves.toBeUndefined();
+    })).resolves.toBeNull();
+});
+
+test('record() returns the generation id; linkFinal attaches the saved doc once, tenant-scoped', async () => {
+    const { rows } = await db.query(
+        'SELECT id FROM ai_generation_log WHERE company_id = $1', [COMPANY_A]
+    );
+    const genId = rows[0].id;
+    expect(Number(genId)).toBeGreaterThan(0);
+
+    // T-blast: a foreign tenant cannot finalize this generation.
+    await logService.linkFinal({
+        companyId: COMPANY_B,
+        generationId: genId,
+        estimateId: 999,
+        finalLineItems: [{ name: 'FOREIGN', quantity: '1', unit_price: '1' }],
+    });
+    let row = (await db.query('SELECT finalized_at FROM ai_generation_log WHERE id = $1', [genId])).rows[0];
+    expect(row.finalized_at).toBeNull();
+
+    // Own tenant: first save wins.
+    await logService.linkFinal({
+        companyId: COMPANY_A,
+        generationId: genId,
+        estimateId: 501,
+        finalLineItems: [{ name: 'Range hood repair', quantity: '1', unit_price: '220' }],
+    });
+    row = (await db.query('SELECT estimate_id, final_line_items, finalized_at FROM ai_generation_log WHERE id = $1', [genId])).rows[0];
+    expect(row.estimate_id).toBe('501');
+    expect(row.final_line_items).toHaveLength(1);
+    expect(row.finalized_at).not.toBeNull();
+
+    // Second save is a no-op (first save wins).
+    await logService.linkFinal({
+        companyId: COMPANY_A,
+        generationId: genId,
+        invoiceId: 777,
+        finalLineItems: [{ name: 'LATER EDIT', quantity: '2', unit_price: '5' }],
+    });
+    row = (await db.query('SELECT estimate_id, invoice_id, final_line_items FROM ai_generation_log WHERE id = $1', [genId])).rows[0];
+    expect(row.estimate_id).toBe('501');
+    expect(row.invoice_id).toBeNull();
+    expect(row.final_line_items[0].name).toBe('Range hood repair');
 });
 
 test('renderMarkdown shows the entry and is tenant-scoped (T-blast)', async () => {
@@ -81,6 +125,9 @@ test('renderMarkdown shows the entry and is tenant-scoped (T-blast)', async () =
     expect(mdA).toContain('CBB61-2UF');
     expect(mdA).toContain('job #775546');
     expect(mdA).toContain('8.4s');
+    // AI-GEN-LOG-002: the saved outcome appears next to the AI proposal.
+    expect(mdA).toContain('Saved as estimate #501');
+    expect(mdA).toContain('Range hood repair');
 
     // T-blast: company B sees NOTHING of A's log.
     const mdB = await logService.renderMarkdown(COMPANY_B);

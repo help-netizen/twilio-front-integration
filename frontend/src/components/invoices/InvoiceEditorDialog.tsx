@@ -108,6 +108,8 @@ export function InvoiceEditorDialog({
 
     const [saving, setSaving] = useState(false);
     const [aiReport, setAiReport] = useState('');
+    // AI-GEN-LOG-002: remember the generation this editor content came from.
+    const [aiGenerationId, setAiGenerationId] = useState<number | null>(null);
     const [aiGenerating, setAiGenerating] = useState(false);
     const [orderList, setOrderList] = useState<OrderRow[]>([]);
 
@@ -137,6 +139,7 @@ export function InvoiceEditorDialog({
         })));
         setOrderList((invoice?.order_list || []).map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))));
         setAiReport('');
+        setAiGenerationId(null);
     }, [open, invoice]);
 
     // ── Totals ───────────────────────────────────────────────────────────────
@@ -175,6 +178,7 @@ export function InvoiceEditorDialog({
         setReportToEstimateOff(false);
         try {
             const draft = await aiDraftEstimate(text, defaultJobId);
+            if (draft.generation_id) setAiGenerationId(draft.generation_id);
             if (draft.summary) { setSummary(draft.summary); setSummaryOpen(true); }
             if (draft.line_items?.length) {
                 setItems(prev => [
@@ -272,6 +276,8 @@ export function InvoiceEditorDialog({
         try {
             const data: InvoiceCreateData = {
                 contact_id: invoice?.contact_id ?? defaultContactId ?? null,
+                // AI-GEN-LOG-002: only meaningful on create (first save of an AI draft).
+                ai_generation_id: !isEdit ? aiGenerationId : null,
                 lead_id: invoice?.lead_id ?? defaultLeadId ?? null,
                 job_id: invoice?.job_id ?? defaultJobId ?? null,
                 estimate_id: invoice?.estimate_id ?? defaultEstimateId ?? null,

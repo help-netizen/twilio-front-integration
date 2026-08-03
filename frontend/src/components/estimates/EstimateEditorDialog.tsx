@@ -83,6 +83,9 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     const [saving, setSaving] = useState(false);
     const [aiReport, setAiReport] = useState('');
     const [aiGenerating, setAiGenerating] = useState(false);
+    // AI-GEN-LOG-002: remember the generation this editor content came from so
+    // the save links the final document to the generation log entry.
+    const [aiGenerationId, setAiGenerationId] = useState<number | null>(null);
     const [orderList, setOrderList] = useState<OrderRow[]>([]);
 
     useEffect(() => {
@@ -103,6 +106,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         })));
         setOrderList((estimate?.order_list || []).map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))));
         setAiReport('');
+        setAiGenerationId(null);
     }, [open, estimate]);
 
     const subtotal = useMemo(() => items.reduce((sum, item) => sum + amount(item), 0), [items]);
@@ -187,6 +191,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         setReportToEstimateOff(false);
         try {
             const draft = await aiDraftEstimate(text, defaultJobId);
+            if (draft.generation_id) setAiGenerationId(draft.generation_id);
             if (draft.summary) { setSummary(draft.summary); setSummaryOpen(true); }
             if (draft.line_items?.length) {
                 setItems(prev => [
@@ -287,6 +292,8 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             const data: EstimateCreateData = {
                 lead_id: estimate?.lead_id ?? defaultLeadId ?? null,
                 job_id: estimate?.job_id ?? defaultJobId ?? null,
+                // AI-GEN-LOG-002: only meaningful on create (first save of an AI draft).
+                ai_generation_id: !isEdit ? aiGenerationId : null,
                 summary: summary.trim() || null,
                 tax_rate: taxRate || '0',
                 discount_type: discountType,

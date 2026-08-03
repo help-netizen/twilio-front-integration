@@ -122,6 +122,8 @@ export interface EstimateCreateData {
     contact_id?: number | null;
     lead_id?: number | null;
     job_id?: number | null;
+    /** AI-GEN-LOG-002: set when this document was born from an AI draft. */
+    ai_generation_id?: number | null;
     title?: string;
     summary?: string | null;
     notes?: string;
@@ -197,6 +199,8 @@ export interface AiDraftResult {
     summary: string;
     line_items: AiDraftLineItem[];
     order_list?: OrderListApiPart[];
+    /** AI-GEN-LOG-002: pass back on save so the log links the saved document. */
+    generation_id?: number;
 }
 
 /**

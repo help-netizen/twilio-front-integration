@@ -82,6 +82,18 @@ router.post('/', requirePermission('estimates.create'), async (req, res) => {
             client,
             userActor(userId)
         ));
+        // AI-GEN-LOG-002: if this estimate was born from an AI draft, attach the
+        // saved outcome to the generation row (fire-and-forget, tenant-scoped).
+        if (data?.ai_generation_id) {
+            void aiGenerationLogService.linkFinal({
+                companyId,
+                generationId: data.ai_generation_id,
+                estimateId: result?.id,
+                finalLineItems: Array.isArray(data?.items)
+                    ? data.items.map(i => ({ name: i.name, quantity: i.quantity, unit_price: i.unit_price }))
+                    : [],
+            });
+        }
         res.status(201).json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST / error:', err.message);
@@ -110,8 +122,10 @@ router.post('/ai-draft', requirePermission('estimates.create'), async (req, res)
             jobId: req.body?.job_id,
             canManagePriceBook: !!req.user?._devMode || permissions.includes('price_book.manage'),
         });
-        // AI-GEN-LOG-001: fire-and-forget — logging must never delay or break the draft.
-        void aiGenerationLogService.record({
+        // AI-GEN-LOG-001: awaited single INSERT (~1ms) so the editor gets
+        // generation_id back and can link the eventually-saved document
+        // (AI-GEN-LOG-002); a logging failure still never breaks the draft.
+        const generationId = await aiGenerationLogService.record({
             companyId,
             crmUserId: req.user?.crmUser?.id || null,
             jobId: req.body?.job_id,
@@ -120,7 +134,7 @@ router.post('/ai-draft', requirePermission('estimates.create'), async (req, res)
             model: process.env.AI_ESTIMATE_GEMINI_MODEL || 'gemini-2.5-flash',
             durationMs: Date.now() - startedAt,
         });
-        res.json(result);
+        res.json(generationId ? { ...result, generation_id: generationId } : result);
     } catch (err) {
         console.error('[Estimates] POST /ai-draft error:', err.message);
         const status = err.httpStatus || 500;

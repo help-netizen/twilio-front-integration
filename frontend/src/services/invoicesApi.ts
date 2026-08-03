@@ -104,6 +104,8 @@ export interface InvoiceCreateData {
     lead_id?: number | null;
     job_id?: number | null;
     estimate_id?: number | null;
+    /** AI-GEN-LOG-002: set when this document was born from an AI draft. */
+    ai_generation_id?: number | null;
     title?: string;
     notes?: string;
     internal_note?: string;

@@ -31,12 +31,13 @@ async function record({
     durationMs = null,
 }) {
     try {
-        if (!companyId) return; // never guess a tenant
-        await db.query(
+        if (!companyId) return null; // never guess a tenant
+        const { rows } = await db.query(
             `INSERT INTO ai_generation_log
                 (company_id, crm_user_id, job_id, report_text, summary,
                  line_items, order_list, model, duration_ms)
-             VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)`,
+             VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9)
+             RETURNING id`,
             [
                 companyId,
                 crmUserId,
@@ -49,8 +50,45 @@ async function record({
                 Number.isFinite(Number(durationMs)) ? Math.round(Number(durationMs)) : null,
             ]
         );
+        return rows[0]?.id ?? null;
     } catch (err) {
         console.warn('[AiGenLog] record failed (non-blocking):', err.message);
+        return null;
+    }
+}
+
+/**
+ * AI-GEN-LOG-002 — attach what the user actually SAVED to the generation row.
+ * First save wins (finalized_at guard); tenant-scoped so a forged id from
+ * another company matches nothing. Fire-and-forget like record().
+ */
+async function linkFinal({
+    companyId,
+    generationId,
+    estimateId = null,
+    invoiceId = null,
+    finalLineItems = [],
+}) {
+    try {
+        const id = Number(generationId);
+        if (!companyId || !Number.isFinite(id)) return;
+        await db.query(
+            `UPDATE ai_generation_log
+                SET estimate_id = COALESCE($3, estimate_id),
+                    invoice_id = COALESCE($4, invoice_id),
+                    final_line_items = $5::jsonb,
+                    finalized_at = NOW()
+              WHERE id = $1 AND company_id = $2 AND finalized_at IS NULL`,
+            [
+                id,
+                companyId,
+                estimateId != null ? Number(estimateId) : null,
+                invoiceId != null ? Number(invoiceId) : null,
+                JSON.stringify(Array.isArray(finalLineItems) ? finalLineItems : []),
+            ]
+        );
+    } catch (err) {
+        console.warn('[AiGenLog] linkFinal failed (non-blocking):', err.message);
     }
 }
 
@@ -97,6 +135,28 @@ function renderEntry(row) {
         out.push(`**Order list:** ${mdEscape(parts)}`);
         out.push('');
     }
+    // AI-GEN-LOG-002: what the user actually saved (the correction signal).
+    const finalLines = Array.isArray(row.final_line_items) ? row.final_line_items : null;
+    if (row.finalized_at && finalLines) {
+        const doc = row.estimate_id
+            ? `estimate #${row.estimate_id}`
+            : (row.invoice_id ? `invoice #${row.invoice_id}` : 'document');
+        out.push(`**Saved as ${doc}:**`);
+        out.push('');
+        if (finalLines.length) {
+            out.push('| # | Item | Qty | Price |');
+            out.push('|---|---|---|---|');
+            finalLines.forEach((line, i) => {
+                out.push(`| ${i + 1} | ${mdEscape(line.name || '')} | ${mdEscape(line.quantity ?? 1)} | ${mdEscape(line.unit_price ?? '')} |`);
+            });
+        } else {
+            out.push('_Saved with no line items._');
+        }
+        out.push('');
+    } else {
+        out.push('_No saved document linked (draft discarded or still open)._');
+        out.push('');
+    }
     const meta = [];
     if (row.model) meta.push(row.model);
     if (row.duration_ms != null) meta.push(`${(row.duration_ms / 1000).toFixed(1)}s`);
@@ -129,4 +189,4 @@ async function renderMarkdown(companyId) {
     return header + rows.map(renderEntry).join('\n');
 }
 
-module.exports = { record, renderMarkdown, MAX_REPORT_LOG_CHARS };
+module.exports = { record, linkFinal, renderMarkdown, MAX_REPORT_LOG_CHARS };
