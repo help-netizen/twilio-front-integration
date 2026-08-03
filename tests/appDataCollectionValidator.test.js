@@ -56,6 +56,7 @@ describe('APP-DATA-001 Phase D declaration contract', () => {
             source: 'export async function run(ctx) { return ctx.input; }',
             description: 'Uses installation memory.',
             data_collections: PURCHASES,
+            actions: [],
         }));
         expect(artifact.data_collections).toEqual(PURCHASES);
         const rendered = renderDataCollectionsContract();
@@ -66,6 +67,7 @@ describe('APP-DATA-001 Phase D declaration contract', () => {
             source: artifact.source,
             description: artifact.description,
             data_collections: [{ ...PURCHASES[0], name: 'invalid-name' }],
+            actions: [],
         }))).toThrow(/invalid data collections/i);
     });
 

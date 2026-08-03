@@ -6,6 +6,7 @@ const {
     validateDataCollectionEvolution,
     validateDataCollections,
 } = require('./appDataCollectionValidator');
+const { validateActions } = require('./appActionValidator');
 
 const ALLOWED_TRANSITIONS = Object.freeze({
     draft: Object.freeze(['submitted']),
@@ -73,6 +74,7 @@ function versionResponse(version) {
         scanner_report: version.scanner_report,
         suggested_schedule: version.suggested_schedule || null,
         data_collections: version.data_collections || [],
+        actions: version.actions || version.scanner_report?.actions || [],
         status: version.status,
         created_at: version.created_at,
         updated_at: version.updated_at,
@@ -120,6 +122,7 @@ function createAppVersionTransitionService({
                     to_jsonb(version)->'suggested_schedule' AS suggested_schedule,
                     COALESCE(to_jsonb(version)->'data_collections', '[]'::jsonb)
                         AS data_collections,
+                    COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions,
                     version.created_by, version.created_at,
                     version.updated_at,
                     (to_jsonb(version)->>'submitted_at')::timestamptz AS submitted_at,
@@ -176,6 +179,7 @@ function createAppVersionTransitionService({
 
     async function validateSubmissionDataCollections(client, version) {
         const normalized = validateDataCollections(version.data_collections || []);
+        validateActions(version.actions || []);
         const previous = await client.query(
             `SELECT prior.data_collections
              FROM app_versions prior

@@ -97,6 +97,44 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             .toThrow(expect.objectContaining({ code: 'RUNNER_AUTH_FAILED' }));
     });
 
+    test('Phase E sends a validated action as ctx.input.action for an author dry run', async () => {
+        const action = { id: 'mark_ordered', row_key: 'purchase-41' };
+        const fetchImpl = jest.fn().mockResolvedValue({
+            status: 200,
+            text: async () => JSON.stringify({
+                ok: true,
+                result: action,
+                validation: { entry_point: 'run', tools: [], returned_type: 'object' },
+                usage: {
+                    wall_ms: 1,
+                    gateway_calls: 0,
+                    data_calls: 0,
+                    result_bytes: Buffer.byteLength(JSON.stringify(action), 'utf8'),
+                    error_code: null,
+                },
+                fixtures_summary: {},
+                data_ops: {
+                    list: { calls: 0, rows: 0 },
+                    upsert: { calls: 0, rows: 0 },
+                    delete: { calls: 0, rows: 0 },
+                },
+            }),
+        });
+        await dryRunner.validateAndDryRun({
+            source: SOURCE,
+            expectedSourceSha256: SOURCE_SHA256,
+            action,
+        }, { fetchImpl });
+        expect(JSON.parse(fetchImpl.mock.calls[0][1].body).input.action).toEqual(action);
+
+        await expect(dryRunner.validateAndDryRun({
+            source: SOURCE,
+            expectedSourceSha256: SOURCE_SHA256,
+            action: { id: 'not-declared!', row_key: 'purchase-41' },
+        }, { fetchImpl })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
     test('missing runner URL fails closed before an HTTP request', async () => {
         delete process.env.APP_RUNNER_BASE_URL;
         const fetchImpl = jest.fn();

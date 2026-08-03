@@ -8,6 +8,7 @@ const {
     validateDataCollectionEvolution,
     validateDataCollections,
 } = require('./appDataCollectionValidator');
+const { validateActions } = require('./appActionValidator');
 
 class AppBuilderRepositoryError extends Error {
     constructor(code, message, httpStatus) {
@@ -116,6 +117,7 @@ async function listVersions(companyId, appId) {
         `SELECT version.id, version.version_number, version.source_sha256,
                 version.scanner_report, version.suggested_schedule,
                 version.data_collections,
+                COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions,
                 version.status, version.created_at,
                 COALESCE(
                     ARRAY_AGG(tool.tool_name ORDER BY tool.tool_name)
@@ -169,10 +171,12 @@ async function getGenerationContext(companyId, chatId) {
     const chat = await db.query(
         `SELECT chat.id, chat.app_id, chat.title,
                 latest.source_code AS current_source,
-                latest.data_collections AS current_data_collections
+                latest.data_collections AS current_data_collections,
+                latest.actions AS current_actions
          FROM app_build_chats chat
          LEFT JOIN LATERAL (
-             SELECT version.source_code, version.data_collections
+             SELECT version.source_code, version.data_collections,
+                    COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions
              FROM app_versions version
              JOIN app_studio_apps owned
                ON owned.app_id = version.app_id
@@ -324,6 +328,7 @@ async function persistSuccess({
     scannerReport,
     suggestedSchedule = null,
     dataCollections = [],
+    actions = [],
     tools,
     description,
     model,
@@ -347,6 +352,7 @@ async function persistSuccess({
         ? validateCadence(suggestedSchedule)
         : null;
     let normalizedDataCollections = validateDataCollections(dataCollections);
+    const normalizedActions = validateActions(actions);
     return withTransaction(async client => {
         const chatResult = await client.query(
             `SELECT id, app_id, title
@@ -453,7 +459,7 @@ async function persistSuccess({
                 versionNumber,
                 source,
                 sourceSha256,
-                JSON.stringify(scannerReport),
+                JSON.stringify({ ...scannerReport, actions: normalizedActions }),
                 normalizedSuggestedSchedule
                     ? JSON.stringify(normalizedSuggestedSchedule)
                     : null,
@@ -514,7 +520,11 @@ async function persistSuccess({
         );
         return {
             app_id: appId,
-            version: { ...version.rows[0], tools },
+            version: {
+                ...version.rows[0],
+                actions: normalizedActions,
+                tools,
+            },
             message: message.rows[0],
         };
     });

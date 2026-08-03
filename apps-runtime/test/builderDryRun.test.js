@@ -147,4 +147,23 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
             data_collections: [{ ...declaration[0], key_fields: ['missing'] }],
         })).rejects.toMatchObject({ code: 'DATA_COLLECTIONS_INVALID' });
     });
+
+    test('Phase E exposes a validated action as ctx.input.action in the isolate', async () => {
+        const source = 'export async function run(ctx) { return ctx.input.action; }';
+        const action = { id: 'mark_ordered', row_key: 'purchase-41' };
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            input: { today: '2026-08-02', action },
+        })).resolves.toMatchObject({ result: action });
+
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            input: {
+                today: '2026-08-02',
+                action: { id: 'mark-ordered', row_key: 'purchase-41' },
+            },
+        })).rejects.toMatchObject({ code: 'DRY_RUN_INPUT_INVALID' });
+    });
 });

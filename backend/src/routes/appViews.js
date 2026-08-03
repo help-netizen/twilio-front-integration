@@ -101,17 +101,31 @@ router.post('/installations/:id/runs', async (req, res) => {
         if (Object.keys(req.query || {}).length > 0
             || !req.body
             || typeof req.body !== 'object'
-            || Array.isArray(req.body)
-            || Object.keys(req.body).length > 0) {
+            || Array.isArray(req.body)) {
             throw new AppRuntimeError(
                 'INVALID_REQUEST',
-                'Run request must use an empty JSON object.',
+                'Run request body is invalid.',
                 400
             );
         }
+        const keys = Object.keys(req.body);
+        const action = req.body.action;
+        if (keys.length > 1
+            || (keys.length === 1 && keys[0] !== 'action')
+            || (action !== undefined && (
+                !action
+                || typeof action !== 'object'
+                || Array.isArray(action)
+                || Object.keys(action).length !== 2
+                || !Object.prototype.hasOwnProperty.call(action, 'id')
+                || !Object.prototype.hasOwnProperty.call(action, 'row_key')
+            ))) {
+            throw new AppRuntimeError('INVALID_REQUEST', 'Run request body is invalid.', 400);
+        }
         const run = await appExecutionService.run({
             ...routeInput(req),
-            trigger: 'manual',
+            trigger: action ? 'action' : 'manual',
+            ...(action ? { action } : {}),
         });
         return res.status(run.status === 'running' ? 202 : 200).json({
             ok: true,

@@ -60,4 +60,22 @@ describe('APP-GAP-FIX-001 persistence attestation boundary', () => {
         });
         expect(mockGetClient).not.toHaveBeenCalled();
     });
+
+    test.each([
+        ['more than eight actions', Array.from({ length: 9 }, (_, index) => ({
+            id: `action_${index}`,
+            label: `Action ${index}`,
+        }))],
+        ['an invalid action id', [{ id: 'Mark-ordered', label: 'Mark ordered' }]],
+    ])('Phase E rejects %s before a version transaction starts', async (_label, actions) => {
+        await expect(repository.persistSuccess({
+            ...BASE,
+            scannerReport: { dry_run: { ok: true } },
+            actions,
+        })).rejects.toMatchObject({
+            code: 'APP_ACTIONS_INVALID',
+            httpStatus: 422,
+        });
+        expect(mockGetClient).not.toHaveBeenCalled();
+    });
 });

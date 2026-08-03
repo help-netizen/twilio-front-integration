@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { renderPromptToolDocumentation } = require('./appRuntimeToolDocumentation');
 const { renderViewDocumentContract } = require('./appViewDocumentValidator');
 const { renderDataCollectionsContract } = require('./appDataCollectionValidator');
+const { renderActionContract } = require('./appActionValidator');
 const defaultRepository = require('./appBuilderRepository');
 const defaultProvider = require('./appBuilderProviderService');
 const defaultDryRunner = require('./appBuilderDryRunService');
@@ -71,7 +72,7 @@ function buildPrompt(context) {
 
     return [
         `You generate one dependency-free Albusto App Studio JavaScript module.
-Return exactly one JSON object: {"source":"...","description":"...","suggested_schedule":null,"data_collections":[]}.
+Return exactly one JSON object: {"source":"...","description":"...","suggested_schedule":null,"data_collections":[],"actions":[]}.
 suggested_schedule may be null or exactly one of: {"kind":"every_minutes","n":15},
 {"kind":"hourly","minute":5}, {"kind":"daily","at":"07:00"},
 {"kind":"weekly","dow":1,"at":"07:00"}, or {"kind":"monthly","dom":1,"at":"07:00"}.
@@ -90,6 +91,8 @@ secrets in source or description. Keep description under 2,000 characters.`,
         '',
         renderDataCollectionsContract(),
         '',
+        renderActionContract(),
+        '',
         'TRUSTED READ-ONLY TOOL DOCUMENTATION:',
         toolDocumentation,
         '',
@@ -107,6 +110,11 @@ secrets in source or description. Keep description under 2,000 characters.`,
         '<BEGIN_CURRENT_DATA_COLLECTIONS>',
         JSON.stringify(context.current_data_collections || []),
         '<END_CURRENT_DATA_COLLECTIONS>',
+        '',
+        'CURRENT VERSION ACTION DECLARATIONS:',
+        '<BEGIN_CURRENT_ACTIONS>',
+        JSON.stringify(context.current_actions || []),
+        '<END_CURRENT_ACTIONS>',
         '',
         'Return only the required JSON object.',
     ].join('\n');
@@ -219,6 +227,7 @@ function createAppBuilderService({
                 },
                 suggestedSchedule: generated.suggested_schedule || null,
                 dataCollections: generated.data_collections,
+                actions: generated.actions,
                 tools: report.tools,
                 description,
                 model: generated.model,

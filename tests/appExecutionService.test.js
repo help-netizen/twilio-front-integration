@@ -32,6 +32,7 @@ function installation(overrides = {}) {
         source_code: SOURCE,
         source_sha256: 'a'.repeat(64),
         allowed_tools: ['svc.list_jobs'],
+        declared_actions: [{ id: 'mark_ordered', label: 'Mark ordered' }],
         ...overrides,
     };
 }
@@ -195,6 +196,54 @@ describe('APP-VIEW-001 execution core', () => {
         );
     });
 
+    test('a declared action reaches ctx.input.action and an undeclared id is refused before the runner', async () => {
+        const client = clientFor();
+        const tokens = {
+            mintRunToken: jest.fn().mockResolvedValue({
+                token: 'action-token',
+                runId: RUN_ID,
+            }),
+        };
+        const fetchImpl = jest.fn().mockResolvedValue(runnerResponse({
+            view_version: 1,
+            title: 'Updated',
+            blocks: [],
+        }));
+        const service = createAppExecutionService({
+            database: databaseFor(client),
+            tokens,
+            authorization: authorizationFor(),
+            fetchImpl,
+        });
+        const action = { id: 'mark_ordered', row_key: 'estimate-41:part-P-41' };
+        await expect(service.run({
+            companyId: COMPANY_ID,
+            installationId: '91',
+            trigger: 'action',
+            actorId: ACTOR_ID,
+            action,
+        })).resolves.toMatchObject({ status: 'completed' });
+        expect(JSON.parse(fetchImpl.mock.calls[0][1].body).input.action).toEqual(action);
+
+        const deniedFetch = jest.fn();
+        const deniedTokens = { mintRunToken: jest.fn() };
+        const deniedService = createAppExecutionService({
+            database: databaseFor(clientFor()),
+            tokens: deniedTokens,
+            authorization: authorizationFor(),
+            fetchImpl: deniedFetch,
+        });
+        await expect(deniedService.run({
+            companyId: COMPANY_ID,
+            installationId: '91',
+            trigger: 'action',
+            actorId: ACTOR_ID,
+            action: { id: 'delete_everything', row_key: 'P-41' },
+        })).rejects.toMatchObject({ code: 'ACTION_NOT_DECLARED', httpStatus: 422 });
+        expect(deniedTokens.mintRunToken).not.toHaveBeenCalled();
+        expect(deniedFetch).not.toHaveBeenCalled();
+    });
+
     test('a second request during the first run returns that in-flight run and never mints a rival', async () => {
         let activeRun = null;
         let releaseRunner;
@@ -249,16 +298,20 @@ describe('APP-VIEW-001 execution core', () => {
             authorization: authorizationFor(),
             fetchImpl,
         });
-        const input = {
+        const scheduleInput = {
             companyId: COMPANY_ID,
             installationId: '91',
-            trigger: 'manual',
+            trigger: 'schedule',
             actorId: ACTOR_ID,
         };
 
-        const first = service.run(input);
+        const first = service.run(scheduleInput);
         await runnerStartedPromise;
-        await expect(service.run(input)).resolves.toMatchObject({
+        await expect(service.run({
+            ...scheduleInput,
+            trigger: 'action',
+            action: { id: 'mark_ordered', row_key: 'P-41' },
+        })).resolves.toMatchObject({
             run_id: RUN_ID,
             status: 'running',
         });
@@ -300,5 +353,25 @@ describe('APP-VIEW-001 execution core', () => {
             ACTOR_ID,
             client
         )).resolves.toMatchObject({ role_key: 'tenant_admin' });
+    });
+
+    test('an action run fails the live viewer gate before minting or runner access', async () => {
+        const tokens = { mintRunToken: jest.fn() };
+        const fetchImpl = jest.fn();
+        const service = createAppExecutionService({
+            database: databaseFor(clientFor()),
+            tokens,
+            authorization: authorizationFor({ role_key: 'provider', permissions: [] }),
+            fetchImpl,
+        });
+        await expect(service.run({
+            companyId: COMPANY_ID,
+            installationId: '91',
+            trigger: 'action',
+            actorId: ACTOR_ID,
+            action: { id: 'mark_ordered', row_key: 'P-41' },
+        })).rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+        expect(tokens.mintRunToken).not.toHaveBeenCalled();
+        expect(fetchImpl).not.toHaveBeenCalled();
     });
 });

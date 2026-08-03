@@ -121,6 +121,21 @@ describe('APP-VIEW-001 company-scoped API', () => {
         ])).not.toMatch(/source_code|nonce|principal_id|artifact_sha256/i);
     });
 
+    test('Phase E action runs pass the clicking actor and exact action input to the execution core', async () => {
+        const action = { id: 'mark_ordered', row_key: 'estimate-41:part-P-41' };
+        const response = await request(buildApp())
+            .post('/api/apps/installations/91/runs')
+            .send({ action });
+        expect(response.status).toBe(200);
+        expect(mockService.run).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            installationId: '91',
+            actorId: ACTOR_ID,
+            trigger: 'action',
+            action,
+        });
+    });
+
     test('T-foreign and every live permission denial stay 404/403 and never return stored data', async () => {
         mockService.getLatestResult
             .mockRejectedValueOnce(new AppRuntimeError(

@@ -15,7 +15,11 @@ const {
 // The sandbox is anchored to the real current day, so the dry-run input must be
 // too: a frozen 'today' made every date-aware app test against a day the
 // fixtures no longer contain and report zero while the code was correct.
-const dryRunInput = () => Object.freeze({ today: new Date().toISOString().slice(0, 10) });
+const ACTION_ID_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+const dryRunInput = action => Object.freeze({
+    today: new Date().toISOString().slice(0, 10),
+    ...(action ? { action: Object.freeze({ ...action }) } : {}),
+});
 const DRY_RUN_TOKEN = 'app-builder-dry-run-host-token-0000000000000000';
 const DRY_RUN_GATEWAY = 'https://app-builder-fixtures.albusto.invalid';
 const defaultFixtureGraph = () => generateSandboxFixtures(DEFAULT_SANDBOX_SEED);
@@ -30,6 +34,26 @@ const TOOL_FIXTURES = Object.freeze({
         estimate_id: defaultFixtureGraph().estimates[0].id,
     }),
 });
+
+function validDryRunInput(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+    const keys = Object.keys(input);
+    if (keys.some(key => key !== 'today' && key !== 'action')) return false;
+    if (typeof input.today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.today)) return false;
+    if (input.action === undefined) return true;
+    const action = input.action;
+    return Boolean(action)
+        && typeof action === 'object'
+        && !Array.isArray(action)
+        && Object.keys(action).length === 2
+        && typeof action.id === 'string'
+        && ACTION_ID_PATTERN.test(action.id)
+        && typeof action.row_key === 'string'
+        && action.row_key.trim().length > 0
+        && Array.from(action.row_key).length <= 256
+        && Object.prototype.hasOwnProperty.call(action, 'id')
+        && Object.prototype.hasOwnProperty.call(action, 'row_key');
+}
 
 function isFixtureGraph(fixtures) {
     return fixtures && Array.isArray(fixtures.jobs) && Array.isArray(fixtures.tasks);
@@ -71,6 +95,11 @@ async function validateAndDryRun({
     data_collections = [],
     signal,
 }) {
+    if (!validDryRunInput(input)) {
+        const error = new Error('Dry-run input is invalid.');
+        error.code = 'DRY_RUN_INPUT_INVALID';
+        throw error;
+    }
     if (typeof expectedSourceSha256 !== 'string'
         || !/^[0-9a-f]{64}$/.test(expectedSourceSha256)) {
         throw new AppRunnerError(
@@ -150,5 +179,6 @@ async function validateAndDryRun({
 module.exports = {
     dryRunInput,
     TOOL_FIXTURES,
+    validDryRunInput,
     validateAndDryRun,
 };

@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const http = require('node:http');
-const { validateAndDryRun } = require('./builderDryRun');
+const { validateAndDryRun, validDryRunInput } = require('./builderDryRun');
 const { runApplication } = require('./runner');
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -89,7 +89,8 @@ function validEnvelope(body, endpoint) {
         return fixturesValid
             && seedValid
             && Array.isArray(body.data_collections)
-            && Object.prototype.hasOwnProperty.call(body, 'input');
+            && Object.prototype.hasOwnProperty.call(body, 'input')
+            && validDryRunInput(body.input);
     }
     return typeof body.runToken === 'string' && body.runToken.length > 0
         && Object.prototype.hasOwnProperty.call(body, 'input');

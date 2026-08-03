@@ -2,6 +2,7 @@
 
 const { validateCadence } = require('./appScheduleCadence');
 const { validateDataCollections } = require('./appDataCollectionValidator');
+const { MAX_ACTIONS, MAX_ACTION_LABEL_LENGTH, validateActions } = require('./appActionValidator');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -62,8 +63,18 @@ function parseGeneratedArtifact(raw) {
     }
     if (!parsed || typeof parsed.source !== 'string' || !parsed.source.trim()
         || typeof parsed.description !== 'string' || !parsed.description.trim()
-        || !Object.prototype.hasOwnProperty.call(parsed, 'data_collections')) {
+        || !Object.prototype.hasOwnProperty.call(parsed, 'data_collections')
+        || !Object.prototype.hasOwnProperty.call(parsed, 'actions')) {
         throw new AppBuilderProviderError('Builder model returned an invalid artifact envelope');
+    }
+    let actions;
+    try {
+        actions = validateActions(parsed.actions);
+    } catch (error) {
+        throw new AppBuilderProviderError(
+            `Builder model returned invalid actions: ${error.message}`,
+            error
+        );
     }
     let dataCollections;
     try {
@@ -86,6 +97,7 @@ function parseGeneratedArtifact(raw) {
         source: parsed.source,
         description: parsed.description.trim().slice(0, 2000),
         data_collections: dataCollections,
+        actions,
     };
     if (suggestedSchedule) artifact.suggested_schedule = suggestedSchedule;
     return artifact;
@@ -169,8 +181,23 @@ async function generate(prompt) {
                                         required: ['name', 'key_fields', 'columns'],
                                     },
                                 },
+                                actions: {
+                                    type: 'ARRAY',
+                                    maxItems: MAX_ACTIONS,
+                                    items: {
+                                        type: 'OBJECT',
+                                        properties: {
+                                            id: { type: 'STRING' },
+                                            label: {
+                                                type: 'STRING',
+                                                maxLength: MAX_ACTION_LABEL_LENGTH,
+                                            },
+                                        },
+                                        required: ['id', 'label'],
+                                    },
+                                },
                             },
-                            required: ['source', 'description', 'data_collections'],
+                            required: ['source', 'description', 'data_collections', 'actions'],
                         },
                     },
                 }),

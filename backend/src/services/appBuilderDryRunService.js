@@ -7,6 +7,7 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 // fixtures no longer contain and report zero while the code was correct.
 const dryRunInput = () => Object.freeze({ today: new Date().toISOString().slice(0, 10) });
 const SANDBOX_SEED = 'app-studio-builder-v1';
+const ACTION_ID_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 
 class AppBuilderDryRunError extends Error {
     constructor(code, message, stage = 'dry_run') {
@@ -166,9 +167,24 @@ function parseResult(payload, status = 200) {
 }
 
 async function validateAndDryRun(
-    { source, expectedSourceSha256, dataCollections = [] },
+    { source, expectedSourceSha256, dataCollections = [], action = null },
     { fetchImpl = globalThis.fetch } = {}
 ) {
+    if (action !== null && (
+        !action
+        || typeof action !== 'object'
+        || Array.isArray(action)
+        || Object.keys(action).length !== 2
+        || typeof action.id !== 'string'
+        || !ACTION_ID_PATTERN.test(action.id)
+        || typeof action.row_key !== 'string'
+        || action.row_key.trim().length === 0
+        || Array.from(action.row_key).length > 256
+        || !Object.prototype.hasOwnProperty.call(action, 'id')
+        || !Object.prototype.hasOwnProperty.call(action, 'row_key')
+    )) {
+        throw new AppBuilderDryRunError('INVALID_REQUEST', 'Dry-run action is invalid.');
+    }
     const baseUrl = runnerBaseUrl();
     const serviceToken = runnerServiceToken();
     if (typeof fetchImpl !== 'function') {
@@ -190,7 +206,10 @@ async function validateAndDryRun(
             body: JSON.stringify({
                 source,
                 expectedSourceSha256,
-                input: dryRunInput(),
+                input: {
+                    ...dryRunInput(),
+                    ...(action ? { action } : {}),
+                },
                 seed: SANDBOX_SEED,
                 data_collections: dataCollections,
             }),

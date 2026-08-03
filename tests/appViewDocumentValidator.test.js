@@ -158,6 +158,55 @@ describe('APP-VIEW-001 view_version 1 CRM validator', () => {
         expect(contract).toContain('"type":"table"');
         expect(contract).toContain(String(MAX_TABLE_ROWS));
         expect(contract).toContain(String(MAX_BLOCKS));
+        expect(contract).toContain('row_actions');
+    });
+
+    test('Phase E table actions require a key, a declared id, a supported tone, and unique non-empty row keys', () => {
+        const table = {
+            type: 'table',
+            columns: [
+                { key: 'part', label: 'Part', type: 'text', align: 'left' },
+                { key: 'status', label: 'Status', type: 'badge', align: 'left' },
+            ],
+            rows: [{ part: 'P-41', status: 'Needed' }],
+            row_actions: [{ id: 'mark_ordered', label: 'Mark ordered', tone: 'success' }],
+        };
+        const document = { view_version: 1, title: 'Purchases', blocks: [table] };
+        expect(() => validateViewDocument(document, {
+            allowedActionIds: ['mark_ordered'],
+        })).toThrow(/requires a table key/i);
+        expect(() => validateViewDocument({
+            ...document,
+            blocks: [{ ...table, key: 'part' }],
+        }, { allowedActionIds: [] })).toThrow(/not declared/i);
+        expect(() => validateViewDocument({
+            ...document,
+            blocks: [{
+                ...table,
+                key: 'part',
+                row_actions: [{ id: 'mark_ordered', tone: 'sparkly' }],
+            }],
+        }, { allowedActionIds: ['mark_ordered'] })).toThrow(/tone.*not supported/i);
+        expect(() => validateViewDocument({
+            ...document,
+            blocks: [{ ...table, key: 'part' }],
+        }, { allowedActionIds: ['mark_ordered'] })).not.toThrow();
+
+        const duplicate = {
+            ...document,
+            blocks: [{ ...table, key: 'part', rows: [{ part: 'P-41' }, { part: 'P-41' }] }],
+        };
+        expect(() => validateViewDocument(duplicate, {
+            allowedActionIds: ['mark_ordered'],
+        })).toThrow(/unique in the view document/i);
+
+        const empty = {
+            ...document,
+            blocks: [{ ...table, key: 'part', rows: [{ part: '   ' }] }],
+        };
+        expect(() => validateViewDocument(empty, {
+            allowedActionIds: ['mark_ordered'],
+        })).toThrow(/must not be empty/i);
     });
 
     test('every block example shown to the generator survives this validator', () => {
@@ -189,7 +238,7 @@ describe('APP-VIEW-001 view_version 1 CRM validator', () => {
                 view_version: 1,
                 title: 'Contract check',
                 blocks: [block],
-            })).not.toThrow();
+            }, { allowedActionIds: ['mark_ordered'] })).not.toThrow();
         }
     });
 });

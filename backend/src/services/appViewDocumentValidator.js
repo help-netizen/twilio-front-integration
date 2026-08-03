@@ -20,6 +20,7 @@ const FORBIDDEN_KEY = /(^|_)(?:url|uri|href|html|markup|style|script|image|src|s
 const URL_VALUE = /(?:\b(?:https?|ftp):\/\/|\b(?:javascript|data|file|mailto|tel):|(?:^|[\s("'])\/\/[a-z0-9]|(?:^|[\s("'])www\.)/i;
 const MARKUP_VALUE = /<\/?(?:[a-z][a-z0-9-]*|!doctype)(?:\s[^>]*)?>/i;
 const SCRIPT_VALUE = /(?:\bon[a-z]+\s*=|\bdocument\.(?:cookie|location)|\bwindow\.(?:location|open)|\b(?:eval|Function)\s*\()/i;
+const { ACTION_ID_PATTERN, MAX_ACTIONS } = require('./appActionValidator');
 
 class AppViewDocumentValidationError extends Error {
     constructor(message) {
@@ -210,8 +211,13 @@ function validateChart(block, path) {
     return normalized;
 }
 
-function validateTable(block, path) {
-    requireExactKeys(block, ['type', 'title', 'columns', 'rows'], ['type', 'columns', 'rows'], path);
+function validateTable(block, path, context) {
+    requireExactKeys(
+        block,
+        ['type', 'title', 'columns', 'rows', 'key', 'row_actions'],
+        ['type', 'columns', 'rows'],
+        path
+    );
     if (!Array.isArray(block.columns)
         || block.columns.length < 1
         || block.columns.length > MAX_TABLE_COLUMNS) {
@@ -240,6 +246,43 @@ function validateTable(block, path) {
         };
     });
     const byKey = new Map(columns.map(column => [column.key, column]));
+    if (block.key !== undefined) {
+        if (typeof block.key !== 'string' || !byKey.has(block.key)) {
+            fail(`${path}.key`, 'must name a declared column.');
+        }
+    }
+    if (block.row_actions !== undefined && block.key === undefined) {
+        fail(`${path}.row_actions`, 'requires a table key.');
+    }
+    let rowActions;
+    if (block.row_actions !== undefined) {
+        if (!Array.isArray(block.row_actions) || block.row_actions.length > context.maxActions) {
+            fail(`${path}.row_actions`, `must contain no more than ${context.maxActions} actions.`);
+        }
+        const ids = new Set();
+        rowActions = block.row_actions.map((action, index) => {
+            const actionPath = `${path}.row_actions[${index}]`;
+            requireObject(action, actionPath);
+            requireExactKeys(action, ['id', 'label', 'tone'], ['id'], actionPath);
+            if (typeof action.id !== 'string' || !ACTION_ID_PATTERN.test(action.id)) {
+                fail(`${actionPath}.id`, 'must be a valid action id.');
+            }
+            if (!context.allowedActionIds.has(action.id)) {
+                fail(`${actionPath}.id`, 'is not declared by this app version.');
+            }
+            if (ids.has(action.id)) fail(`${actionPath}.id`, 'must be unique.');
+            ids.add(action.id);
+            const normalized = { id: action.id };
+            if (action.label !== undefined) {
+                normalized.label = boundedString(action.label, `${actionPath}.label`);
+            }
+            if (action.tone !== undefined) {
+                if (!TONES.has(action.tone)) fail(`${actionPath}.tone`, 'is not supported.');
+                normalized.tone = action.tone;
+            }
+            return normalized;
+        });
+    }
     const rows = block.rows.map((row, index) => {
         const rowPath = `${path}.rows[${index}]`;
         requireObject(row, rowPath);
@@ -249,9 +292,29 @@ function validateTable(block, path) {
             if (!column) fail(`${rowPath}.${key}`, 'does not have a matching column.');
             normalized[key] = typedValue(column.type, value, `${rowPath}.${key}`);
         }
+        if (block.key !== undefined) {
+            if (!Object.prototype.hasOwnProperty.call(normalized, block.key)) {
+                fail(`${rowPath}.${block.key}`, 'is required as the row key.');
+            }
+            const value = normalized[block.key];
+            const serialized = typeof value === 'string'
+                ? value
+                : JSON.stringify(value);
+            if (serialized.trim().length === 0) {
+                fail(`${rowPath}.${block.key}`, 'must not be empty.');
+            }
+            if (context.rowKeys.has(serialized)) {
+                fail(`${rowPath}.${block.key}`, 'must be unique in the view document.');
+            }
+            context.rowKeys.add(serialized);
+        }
         return normalized;
     });
-    return { type: 'table', columns, rows };
+    const normalized = { type: 'table', columns, rows };
+    if (block.title !== undefined) normalized.title = boundedString(block.title, `${path}.title`);
+    if (block.key !== undefined) normalized.key = block.key;
+    if (rowActions !== undefined) normalized.row_actions = rowActions;
+    return normalized;
 }
 
 function validateList(block, path) {
@@ -281,18 +344,18 @@ function validateTextBlock(block, path) {
     return { type: block.type, text: boundedString(block.text, `${path}.text`) };
 }
 
-function validateBlock(block, index) {
+function validateBlock(block, index, context) {
     const path = `View document.blocks[${index}]`;
     requireObject(block, path);
     if (!BLOCK_TYPES.has(block.type)) fail(`${path}.type`, 'is not supported.');
     if (block.type === 'stat_row') return validateStatRow(block, path);
     if (block.type === 'chart') return validateChart(block, path);
-    if (block.type === 'table') return validateTable(block, path);
+    if (block.type === 'table') return validateTable(block, path, context);
     if (block.type === 'list') return validateList(block, path);
     return validateTextBlock(block, path);
 }
 
-function validateViewDocument(document) {
+function validateViewDocument(document, options = {}) {
     rejectForbiddenContent(document);
     // An app that answers in one sentence is the most common app there is, and
     // making it assemble a document for a single line would be ceremony. A plain
@@ -303,7 +366,7 @@ function validateViewDocument(document) {
             view_version: 1,
             title: 'Result',
             blocks: [{ type: 'text', text: document }],
-        });
+        }, options);
     }
     requireObject(document, 'View document');
     requireExactKeys(
@@ -327,7 +390,9 @@ function validateViewDocument(document) {
             { allowEmpty: true }
         );
     }
-    normalized.blocks = document.blocks.map(validateBlock);
+    const allowedActionIds = new Set(options.allowedActionIds || []);
+    const context = { allowedActionIds, maxActions: MAX_ACTIONS, rowKeys: new Set() };
+    normalized.blocks = document.blocks.map((block, index) => validateBlock(block, index, context));
     let bytes;
     try {
         bytes = Buffer.byteLength(JSON.stringify(normalized), 'utf8');
@@ -352,12 +417,16 @@ function renderViewDocumentContract() {
         '  {"type":"stat_row","items":[{"label":"Outstanding","value":"$4,180","tone":"danger","trend":"+$620 this week"}]}',
         '  {"type":"chart","chart_type":"bar","series":[{"label":"Miles","value":1640}],"format":"currency"}',
         '  {"type":"table","title":"Jobs","columns":[',
+        '     {"key":"purchase_id","label":"Purchase","type":"text","align":"left"},',
         '     {"key":"job","label":"Job","type":"entity","align":"left"},',
         '     {"key":"amount","label":"Balance","type":"currency","align":"right"}],',
-        '   "rows":[{"job":{"entity":"job","id":1219,"label":"NAC-1219"},"amount":192}]}',
+        '   "rows":[{"purchase_id":"purchase-41","job":{"entity":"job","id":1219,"label":"NAC-1219"},"amount":192}],',
+        '   "key":"purchase_id","row_actions":[{"id":"mark_ordered","label":"Mark ordered","tone":"success"}]}',
         '  {"type":"list","title":"Follow up","items":[{"title":"Second visit needed","subtitle":"Cambridge","badge":{"label":"14 days","tone":"danger"}}]}',
         '  {"type":"text","text":"..."}   {"type":"empty","text":"Nothing outstanding"}',
         'Every table column declares key, label, type and align — all four are required.',
+        'For row actions, set key to a declared column whose row values are non-empty and unique in the document,',
+        'then set row_actions to declared version action ids with optional label and tone. row_actions requires key.',
         'A cell must match its column type: currency and number take a plain number (192, not "$192.00"),',
         'date takes "YYYY-MM-DD", badge takes {"label":"...","tone":"..."}, entity takes {"entity":"job","id":1219}.',
         `tone is one of ${[...TONES].join(', ')}.`,

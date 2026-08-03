@@ -9,6 +9,7 @@ const {
     AppViewDocumentValidationError,
     validateViewDocument,
 } = require('./appViewDocumentValidator');
+const { ACTION_ID_PATTERN, validateActions } = require('./appActionValidator');
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const MAX_RUNNER_RESPONSE_BYTES = 384 * 1024;
@@ -68,7 +69,7 @@ function validUuid(value) {
         && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function requireRunInput({ companyId, installationId, trigger, actorId }) {
+function requireRunInput({ companyId, installationId, trigger, actorId, action }) {
     if (!companyId || !actorId) {
         throw appRuntimeError(
             'TENANT_CONTEXT_REQUIRED',
@@ -79,12 +80,28 @@ function requireRunInput({ companyId, installationId, trigger, actorId }) {
     if (!validInstallationId(String(installationId || ''))) {
         throw appRuntimeError('NOT_FOUND', 'App installation was not found.', 404);
     }
-    if (!['manual', 'schedule'].includes(trigger)) {
+    if (!['manual', 'schedule', 'action'].includes(trigger)) {
         throw appRuntimeError(
             'INVALID_TRIGGER',
             'App run trigger is invalid.',
             422
         );
+    }
+    if ((trigger === 'action') !== Boolean(action)) {
+        throw appRuntimeError('INVALID_REQUEST', 'Action run input is invalid.', 422);
+    }
+    if (action) {
+        if (!action || typeof action !== 'object' || Array.isArray(action)
+            || Object.keys(action).length !== 2
+            || !Object.prototype.hasOwnProperty.call(action, 'id')
+            || !Object.prototype.hasOwnProperty.call(action, 'row_key')
+            || typeof action.id !== 'string'
+            || !ACTION_ID_PATTERN.test(action.id)
+            || typeof action.row_key !== 'string'
+            || action.row_key.trim().length === 0
+            || Array.from(action.row_key).length > 256) {
+            throw appRuntimeError('INVALID_REQUEST', 'Action run input is invalid.', 422);
+        }
     }
 }
 
@@ -169,7 +186,7 @@ function normalizedUsage(value) {
     };
 }
 
-async function executeOnRunner({ sourceCode, sourceSha256, runToken }, fetchImpl) {
+async function executeOnRunner({ sourceCode, sourceSha256, runToken, action = null }, fetchImpl) {
     if (typeof fetchImpl !== 'function') {
         throw appRuntimeError(
             'APP_RUNNER_UNAVAILABLE',
@@ -190,7 +207,10 @@ async function executeOnRunner({ sourceCode, sourceSha256, runToken }, fetchImpl
                 source: sourceCode,
                 expectedSourceSha256: sourceSha256,
                 runToken,
-                input: { today: new Date().toISOString().slice(0, 10) },
+                input: {
+                    today: new Date().toISOString().slice(0, 10),
+                    ...(action ? { action } : {}),
+                },
             }),
             signal: controller.signal,
         });
@@ -291,6 +311,7 @@ function createAppExecutionService({
                     version.id AS version_id,
                     version.source_code,
                     version.source_sha256,
+                    COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS declared_actions,
                     ARRAY(
                         SELECT tool.tool_name
                         FROM app_version_tools tool
@@ -365,7 +386,7 @@ function createAppExecutionService({
         return authz;
     }
 
-    async function claimRun({ companyId, installationId, actorId }) {
+    async function claimRun({ companyId, installationId, actorId, action = null }) {
         return withTransaction(async client => {
             const installation = await loadInstallation(
                 client,
@@ -374,6 +395,14 @@ function createAppExecutionService({
                 { forUpdate: true }
             );
             await requireViewerAccess(installation, actorId, client);
+            const declaredActions = validateActions(installation.declared_actions || []);
+            if (action && !declaredActions.some(declaration => declaration.id === action.id)) {
+                throw appRuntimeError(
+                    'ACTION_NOT_DECLARED',
+                    'Action is not declared by the accepted app version.',
+                    422
+                );
+            }
             await client.query(
                 `UPDATE app_runs
                  SET status = 'failed',
@@ -532,9 +561,9 @@ function createAppExecutionService({
         });
     }
 
-    async function run({ companyId, installationId, trigger, actorId }) {
-        requireRunInput({ companyId, installationId, trigger, actorId });
-        const claimed = await claimRun({ companyId, installationId, actorId });
+    async function run({ companyId, installationId, trigger, actorId, action = null }) {
+        requireRunInput({ companyId, installationId, trigger, actorId, action });
+        const claimed = await claimRun({ companyId, installationId, actorId, action });
         if (claimed.inFlight) return { ...claimed.run, status: 'running' };
 
         const { installation, minted } = claimed;
@@ -543,8 +572,11 @@ function createAppExecutionService({
                 sourceCode: installation.source_code,
                 sourceSha256: installation.source_sha256,
                 runToken: minted.token,
+                action,
             }, fetchImpl);
-            const validated = validateViewDocument(execution.result);
+            const validated = validateViewDocument(execution.result, {
+                allowedActionIds: (installation.declared_actions || []).map(item => item.id),
+            });
             return await persistSuccessfulResult({
                 companyId,
                 installationId: String(installationId),
