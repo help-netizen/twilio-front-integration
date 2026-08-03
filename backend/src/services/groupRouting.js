@@ -8,6 +8,7 @@ const db = require('../db/connection');
 const { getPresenceSnapshot } = require('./agentPresence');
 const { getBusyClientIdentities, verifyAndFixStaleCalls } = require('./callAvailability');
 const { buildSoftphoneIdentity } = require('./softphoneIdentity');
+const { getActiveNativeUserIds } = require('./nativeVoiceRegistration');
 
 const CANONICAL_WEEKDAYS = Object.freeze(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
 const WEEKDAY_ALIASES = Object.freeze({
@@ -210,6 +211,18 @@ async function availableAgentsForGroup(groupId, companyId, traceId = 'group-rout
     if (candidateIds.length === 0) return [];
 
     const presence = await getPresenceSnapshot(candidateIds, companyId);
+    let nativeUserIds = new Set();
+    try {
+        nativeUserIds = await getActiveNativeUserIds(candidateIds, companyId);
+    } catch (err) {
+        // Rolling-deploy safety: registry failure must not break existing browser routing.
+        console.warn(`[${traceId}] Failed to load native Voice registrations:`, err.message);
+    }
+    const isAvailable = (userId) => {
+        // The active native row is the server-side signal for the app's connect
+        // toggle. Existing busy-identity checks below remain authoritative.
+        return presence.get(userId) === 'available' || nativeUserIds.has(userId);
+    };
     let busyIdentities = new Set();
     let callSids = [];
     try {
@@ -224,10 +237,9 @@ async function availableAgentsForGroup(groupId, companyId, traceId = 'group-rout
         .filter(row => candidateIds.includes(String(row.user_id)))
         .filter(row => {
             const userId = String(row.user_id);
-            const status = presence.get(userId);
             const identity = buildSoftphoneIdentity(companyId, userId);
             if (busyIdentities.has(identity)) return false;
-            return status === 'available';
+            return isAvailable(userId);
         })
         .map(row => ({
             user_id: String(row.user_id),
@@ -242,7 +254,7 @@ async function availableAgentsForGroup(groupId, companyId, traceId = 'group-rout
             .filter(row => candidateIds.includes(String(row.user_id)))
             .filter(row => {
                 const userId = String(row.user_id);
-                return presence.get(userId) === 'available' && !fresh.busyIdentities.has(buildSoftphoneIdentity(companyId, userId));
+                return isAvailable(userId) && !fresh.busyIdentities.has(buildSoftphoneIdentity(companyId, userId));
             })
             .map(row => ({
                 user_id: String(row.user_id),

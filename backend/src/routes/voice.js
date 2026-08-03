@@ -8,12 +8,13 @@
  */
 
 const express = require('express');
-const { generateToken, generateTokenForCompany } = require('../services/voiceService');
+const { generateToken, generateTokenForCompany, generateNativeTokenForCompany } = require('../services/voiceService');
 const { toE164 } = require('../utils/phoneUtils');
 const { STALE_FILTER_SQL, FINAL_STATUSES } = require('../services/callAvailability');
 const { getClientForCompany } = require('../services/telephonyTenantService');
 const { groupsForUser } = require('../services/groupRouting');
 const agentPresence = require('../services/agentPresence');
+const nativeVoiceRegistration = require('../services/nativeVoiceRegistration');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
 const walletService = require('../services/walletService');
 const { requirePermission } = require('../middleware/authorization');
@@ -182,6 +183,85 @@ tokenRouter.get('/token', requirePermission('phone_calls.use'), async (req, res)
             return res.status(err.httpStatus).json({ error: err.message, code: err.code });
         }
         res.status(500).json({ error: 'Failed to generate voice token' });
+    }
+});
+
+/**
+ * GET /api/voice/token/native
+ * Native-only token variant with the account-local iOS Push Credential grant.
+ * The browser /token handler above intentionally remains unchanged.
+ */
+tokenRouter.get('/token/native', requirePermission('phone_calls.use'), async (req, res) => {
+    try {
+        const userId = req.user?.crmUser?.id || null;
+        const companyId = getCompanyId(req);
+        if (!userId || !companyId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const db = require('../db/connection');
+        let allowed = req.user?._devMode === true;
+        if (!allowed) {
+            const permResult = await db.query(
+                `SELECT COALESCE(p.phone_calls_allowed, false) as allowed
+                 FROM company_memberships m
+                 LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+                 WHERE m.user_id = $1 AND m.company_id = $2`,
+                [userId, companyId]
+            );
+            allowed = permResult.rows[0]?.allowed === true;
+        }
+        const myGroups = await getMyGroups(req);
+        allowed = allowed && myGroups.length > 0;
+        if (!allowed) return res.json({ allowed: false });
+
+        const identity = buildSoftphoneIdentity(companyId, userId);
+        const result = await generateNativeTokenForCompany(companyId, identity);
+        return res.json({ ...result, allowed: true });
+    } catch (err) {
+        console.error('[Voice] Native token generation error:', err.message);
+        if (err && err.httpStatus) {
+            return res.status(err.httpStatus).json({ error: err.message, code: err.code });
+        }
+        return res.status(500).json({ error: 'Failed to generate native voice token' });
+    }
+});
+
+/**
+ * POST/DELETE /api/voice/native-registration
+ * The row itself is the server-side native connect-toggle signal. Identity comes
+ * only from authenticated CRM user + selected company; request body is ignored.
+ */
+tokenRouter.post('/native-registration', requirePermission('phone_calls.use'), async (req, res) => {
+    try {
+        const userId = req.user?.crmUser?.id || null;
+        const companyId = getCompanyId(req);
+        if (!userId || !companyId) {
+            return res.status(401).json({ ok: false, error: 'User not authenticated' });
+        }
+        const registration = await nativeVoiceRegistration.upsertNativeRegistration(userId, companyId);
+        return res.status(registration.inserted ? 201 : 200).json({
+            ok: true,
+            data: { registered: true, expires_at: registration.expiresAt },
+        });
+    } catch (err) {
+        console.error('[Voice] Native registration error:', err.message);
+        return res.status(err.httpStatus || 500).json({ ok: false, error: err.message, code: err.code });
+    }
+});
+
+tokenRouter.delete('/native-registration', requirePermission('phone_calls.use'), async (req, res) => {
+    try {
+        const userId = req.user?.crmUser?.id || null;
+        const companyId = getCompanyId(req);
+        if (!userId || !companyId) {
+            return res.status(401).json({ ok: false, error: 'User not authenticated' });
+        }
+        const removed = await nativeVoiceRegistration.deleteNativeRegistration(userId, companyId);
+        return res.json({ ok: true, data: { removed } });
+    } catch (err) {
+        console.error('[Voice] Native deregistration error:', err.message);
+        return res.status(err.httpStatus || 500).json({ ok: false, error: err.message, code: err.code });
     }
 });
 

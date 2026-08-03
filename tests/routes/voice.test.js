@@ -12,9 +12,11 @@ jest.mock('../../backend/src/webhooks/twilioWebhooks', () => ({
 }));
 
 const mockGenerateTokenForCompany = jest.fn();
+const mockGenerateNativeTokenForCompany = jest.fn();
 jest.mock('../../backend/src/services/voiceService', () => ({
     generateToken: jest.fn(() => ({ token: 'token', identity: 'user_test' })),
     generateTokenForCompany: (...args) => mockGenerateTokenForCompany(...args),
+    generateNativeTokenForCompany: (...args) => mockGenerateNativeTokenForCompany(...args),
 }));
 
 jest.mock('../../backend/src/services/callAvailability', () => ({
@@ -35,6 +37,13 @@ jest.mock('../../backend/src/services/groupRouting', () => ({
 const mockSetAgentStatus = jest.fn();
 jest.mock('../../backend/src/services/agentPresence', () => ({
     setAgentStatus: (...args) => mockSetAgentStatus(...args),
+}));
+
+const mockUpsertNativeRegistration = jest.fn();
+const mockDeleteNativeRegistration = jest.fn();
+jest.mock('../../backend/src/services/nativeVoiceRegistration', () => ({
+    upsertNativeRegistration: (...args) => mockUpsertNativeRegistration(...args),
+    deleteNativeRegistration: (...args) => mockDeleteNativeRegistration(...args),
 }));
 
 jest.mock('../../backend/src/services/walletService', () => ({
@@ -178,12 +187,18 @@ describe('RBAC-WAVE1-001 authenticated voice gates', () => {
         jest.clearAllMocks();
         mockGroupsForUser.mockResolvedValue([{ id: 'group-1', name: 'Dispatch' }]);
         mockGenerateTokenForCompany.mockResolvedValue({ token: 'voice-token', identity: 'identity-1' });
+        mockGenerateNativeTokenForCompany.mockResolvedValue({ token: 'native-token', identity: 'identity-1' });
         mockSetAgentStatus.mockResolvedValue({ status: 'available', companyId: 'company-1' });
+        mockUpsertNativeRegistration.mockResolvedValue({ inserted: true, expiresAt: '2026-09-02T12:00:00.000Z' });
+        mockDeleteNativeRegistration.mockResolvedValue(true);
         mockTwilioCallFetch.mockResolvedValue({ status: 'in-progress', endTime: null });
     });
 
     test.each([
         ['GET /token', 'get', '/api/voice/token'],
+        ['GET /token/native', 'get', '/api/voice/token/native'],
+        ['POST /native-registration', 'post', '/api/voice/native-registration'],
+        ['DELETE /native-registration', 'delete', '/api/voice/native-registration'],
         ['GET /phone-access', 'get', '/api/voice/phone-access'],
         ['POST /presence', 'post', '/api/voice/presence'],
         ['GET /check-busy', 'get', '/api/voice/check-busy?phone=%2B15085140320'],
@@ -195,8 +210,43 @@ describe('RBAC-WAVE1-001 authenticated voice gates', () => {
         expect(res.status).toBe(403);
         expect(mockQuery).not.toHaveBeenCalled();
         expect(mockGenerateTokenForCompany).not.toHaveBeenCalled();
+        expect(mockGenerateNativeTokenForCompany).not.toHaveBeenCalled();
+        expect(mockUpsertNativeRegistration).not.toHaveBeenCalled();
+        expect(mockDeleteNativeRegistration).not.toHaveBeenCalled();
         expect(mockSetAgentStatus).not.toHaveBeenCalled();
         expect(mockTwilioCallFetch).not.toHaveBeenCalled();
+    });
+
+    test('GET /token/native keeps the tenant-stable identity and uses the native minter', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ allowed: true }] });
+
+        const res = await request(makeTokenApp(['phone_calls.use'])).get('/api/voice/token/native');
+
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ allowed: true, token: 'native-token' });
+        expect(mockGenerateNativeTokenForCompany).toHaveBeenCalledWith(
+            'company-1',
+            buildSoftphoneIdentity('company-1', 'crm-user-1')
+        );
+        expect(mockGenerateTokenForCompany).not.toHaveBeenCalled();
+    });
+
+    test('native registration POST/DELETE ignore body identities and scope to auth company + CRM user', async () => {
+        const app = makeTokenApp(['phone_calls.use']);
+        const post = await request(app)
+            .post('/api/voice/native-registration')
+            .send({ company_id: 'foreign-company', user_id: 'foreign-user' });
+        const del = await request(app).delete('/api/voice/native-registration');
+
+        expect(post.status).toBe(201);
+        expect(post.body).toEqual({
+            ok: true,
+            data: { registered: true, expires_at: '2026-09-02T12:00:00.000Z' },
+        });
+        expect(del.status).toBe(200);
+        expect(del.body).toEqual({ ok: true, data: { removed: true } });
+        expect(mockUpsertNativeRegistration).toHaveBeenCalledWith('crm-user-1', 'company-1');
+        expect(mockDeleteNativeRegistration).toHaveBeenCalledWith('crm-user-1', 'company-1');
     });
 
     test('GET /token allows phone_calls.use and scopes membership lookup + mint to the selected company', async () => {

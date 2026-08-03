@@ -472,6 +472,43 @@ async function getSoftphoneCreds(companyId) {
     };
 }
 
+/**
+ * Account-local iOS Voice Push Credential SID. The environment fallback is
+ * master-only: a master credential cannot be used in a tenant subaccount grant.
+ */
+async function getIosPushCredentialSid(companyId) {
+    if (!companyId) return null;
+    const params = [companyId];
+    const statusClause = companyId === DEFAULT_COMPANY_ID ? '' : "AND status = 'connected'";
+    const { rows } = await db.query(
+        `SELECT ios_push_credential_sid
+         FROM company_telephony
+         WHERE company_id = $1 ${statusClause}`,
+        params
+    );
+    if (rows[0]?.ios_push_credential_sid) return rows[0].ios_push_credential_sid;
+    return companyId === DEFAULT_COMPANY_ID
+        ? (process.env.TWILIO_IOS_PUSH_CREDENTIAL_SID || null)
+        : null;
+}
+
+async function setIosPushCredentialSid(companyId, credentialSid) {
+    if (!companyId) throw new Error('companyId is required for iOS Push Credential storage');
+    if (!/^CR[A-Za-z0-9]{32}$/.test(String(credentialSid || ''))) {
+        throw new Error('Twilio iOS Push Credential SID is invalid');
+    }
+    const { rows } = await db.query(
+        `INSERT INTO company_telephony (company_id, ios_push_credential_sid)
+         VALUES ($1, $2)
+         ON CONFLICT (company_id) DO UPDATE SET
+            ios_push_credential_sid = EXCLUDED.ios_push_credential_sid,
+            updated_at = NOW()
+         RETURNING ios_push_credential_sid`,
+        [companyId, credentialSid]
+    );
+    return rows[0].ios_push_credential_sid;
+}
+
 // ── Usage (this month) per tenant subaccount ─────────────────────────────────
 
 async function getUsageSummary(companyId) {
@@ -508,6 +545,8 @@ module.exports = {
     setSubaccountStatus,
     ensureSoftphoneSetup,
     getSoftphoneCreds,
+    getIosPushCredentialSid,
+    setIosPushCredentialSid,
     getUsageSummary,
     DEFAULT_COMPANY_ID,
     _encryptToken: encryptToken,

@@ -89,4 +89,85 @@ async function generateTokenForCompany(companyId, identity) {
     };
 }
 
-module.exports = { generateToken, generateTokenForCompany };
+function missingPushCredentialError() {
+    return Object.assign(
+        new Error('iOS Voice Push Credential is not provisioned for this company.'),
+        { httpStatus: 409, code: 'IOS_PUSH_CREDENTIAL_NOT_PROVISIONED' }
+    );
+}
+
+/** Native-only master-account token. The browser generateToken path is unchanged. */
+async function generateNativeToken(identity) {
+    const telephonyTenantService = require('./telephonyTenantService');
+    const pushCredentialSid = await telephonyTenantService.getIosPushCredentialSid(
+        telephonyTenantService.DEFAULT_COMPANY_ID
+    );
+    if (!pushCredentialSid) throw missingPushCredentialError();
+    if (!ACCOUNT_SID() || !API_KEY() || !API_SECRET() || !TWIML_APP_SID()) {
+        throw new Error('Missing Twilio SoftPhone env vars: TWILIO_ACCOUNT_SID, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID');
+    }
+
+    const voiceGrant = new VoiceGrant({
+        outgoingApplicationSid: TWIML_APP_SID(),
+        incomingAllow: true,
+        pushCredentialSid,
+    });
+    const token = new AccessToken(
+        ACCOUNT_SID(),
+        API_KEY(),
+        API_SECRET(),
+        { identity, ttl: TOKEN_TTL }
+    );
+    token.addGrant(voiceGrant);
+    return {
+        token: token.toJwt(),
+        identity,
+        expiresAt: new Date(Date.now() + TOKEN_TTL * 1000).toISOString(),
+    };
+}
+
+/**
+ * Native-only tenant token. Push credentials are account-scoped, so a tenant
+ * subaccount must have its own stored SID; the global env fallback is master-only.
+ */
+async function generateNativeTokenForCompany(companyId, identity) {
+    const telephonyTenantService = require('./telephonyTenantService');
+    if (companyId === telephonyTenantService.DEFAULT_COMPANY_ID) {
+        return generateNativeToken(identity);
+    }
+
+    const creds = await telephonyTenantService.getSoftphoneCreds(companyId);
+    if (!creds) {
+        throw Object.assign(
+            new Error('SoftPhone is not provisioned for this company — connect telephony and run softphone setup.'),
+            { httpStatus: 409, code: 'SOFTPHONE_NOT_PROVISIONED' }
+        );
+    }
+    const pushCredentialSid = await telephonyTenantService.getIosPushCredentialSid(companyId);
+    if (!pushCredentialSid) throw missingPushCredentialError();
+
+    const voiceGrant = new VoiceGrant({
+        outgoingApplicationSid: creds.twimlAppSid,
+        incomingAllow: true,
+        pushCredentialSid,
+    });
+    const token = new AccessToken(
+        creds.accountSid,
+        creds.apiKeySid,
+        creds.apiKeySecret,
+        { identity, ttl: TOKEN_TTL }
+    );
+    token.addGrant(voiceGrant);
+    return {
+        token: token.toJwt(),
+        identity,
+        expiresAt: new Date(Date.now() + TOKEN_TTL * 1000).toISOString(),
+    };
+}
+
+module.exports = {
+    generateToken,
+    generateTokenForCompany,
+    generateNativeToken,
+    generateNativeTokenForCompany,
+};

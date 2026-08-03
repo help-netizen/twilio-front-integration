@@ -13,6 +13,11 @@ jest.mock('../../backend/src/services/callAvailability', () => ({
     verifyAndFixStaleCalls: (...args) => mockVerifyAndFixStaleCalls(...args),
 }));
 
+const mockGetActiveNativeUserIds = jest.fn();
+jest.mock('../../backend/src/services/nativeVoiceRegistration', () => ({
+    getActiveNativeUserIds: (...args) => mockGetActiveNativeUserIds(...args),
+}));
+
 const {
     availableAgentsForGroup,
     isBusinessHours,
@@ -39,6 +44,7 @@ describe('F017 groupRouting.availableAgentsForGroup', () => {
             ['u-offline', 'offline'],
             ['u-busy-db', 'available'],
         ]));
+        mockGetActiveNativeUserIds.mockResolvedValue(new Set());
         mockGetBusyClientIdentities.mockResolvedValue({
             busyIdentities: new Set([buildSoftphoneIdentity('company-1', 'u-busy-db')]),
             callSids: [],
@@ -53,7 +59,38 @@ describe('F017 groupRouting.availableAgentsForGroup', () => {
         ]);
         expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining('WHERE ugm.group_id = $1'), ['ug-1', 'company-1']);
         expect(mockGetPresenceSnapshot).toHaveBeenCalledWith(['u-available', 'u-on-call', 'u-offline', 'u-busy-db'], 'company-1');
+        expect(mockGetActiveNativeUserIds).toHaveBeenCalledWith(['u-available', 'u-on-call', 'u-offline', 'u-busy-db'], 'company-1');
         expect(mockGetBusyClientIdentities).toHaveBeenCalledWith('company-1', 'test');
+    });
+
+    it('ORs in an active native registration without bypassing phone entitlement', async () => {
+        mockGetActiveNativeUserIds.mockResolvedValue(new Set([
+            'u-offline',
+            'u-on-call',
+            'u-no-phone',
+        ]));
+
+        const agents = await availableAgentsForGroup('ug-1', 'company-1', 'native-route');
+
+        expect(agents.map(agent => agent.user_id)).toEqual(['u-available', 'u-on-call', 'u-offline']);
+        expect(agents).not.toContainEqual(expect.objectContaining({ user_id: 'u-no-phone' }));
+    });
+
+    it('keeps browser routing available when the native registry lookup fails', async () => {
+        mockGetActiveNativeUserIds.mockRejectedValue(new Error('registry unavailable'));
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await expect(availableAgentsForGroup('ug-1', 'company-1', 'native-fallback'))
+                .resolves.toEqual([
+                    { user_id: 'u-available', identity: buildSoftphoneIdentity('company-1', 'u-available'), name: 'Available Agent' },
+                ]);
+            expect(warn).toHaveBeenCalledWith(
+                '[native-fallback] Failed to load native Voice registrations:',
+                'registry unavailable'
+            );
+        } finally {
+            warn.mockRestore();
+        }
     });
 
     it('reconciles and re-reads busy calls only in the routed company', async () => {

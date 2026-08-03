@@ -131,6 +131,38 @@ describe('getSoftphoneCreds', () => {
     });
 });
 
+describe('iOS Voice Push Credential storage', () => {
+    const PUSH_SID = `CR${'a'.repeat(32)}`;
+    const previousEnv = process.env.TWILIO_IOS_PUSH_CREDENTIAL_SID;
+
+    afterEach(() => {
+        if (previousEnv === undefined) delete process.env.TWILIO_IOS_PUSH_CREDENTIAL_SID;
+        else process.env.TWILIO_IOS_PUSH_CREDENTIAL_SID = previousEnv;
+    });
+
+    it('uses the env fallback only for the master/default company', async () => {
+        process.env.TWILIO_IOS_PUSH_CREDENTIAL_SID = PUSH_SID;
+        db.query.mockResolvedValue({ rows: [] });
+
+        await expect(svc.getIosPushCredentialSid(svc.DEFAULT_COMPANY_ID)).resolves.toBe(PUSH_SID);
+        await expect(svc.getIosPushCredentialSid(COMPANY)).resolves.toBeNull();
+        expect(db.query.mock.calls[1][0]).toContain("status = 'connected'");
+    });
+
+    it('prefers the tenant-scoped stored SID and upserts only that company row', async () => {
+        db.query
+            .mockResolvedValueOnce({ rows: [{ ios_push_credential_sid: PUSH_SID }] })
+            .mockResolvedValueOnce({ rows: [{ ios_push_credential_sid: PUSH_SID }] });
+
+        await expect(svc.getIosPushCredentialSid(COMPANY)).resolves.toBe(PUSH_SID);
+        await expect(svc.setIosPushCredentialSid(COMPANY, PUSH_SID)).resolves.toBe(PUSH_SID);
+
+        expect(db.query.mock.calls[0][1]).toEqual([COMPANY]);
+        expect(db.query.mock.calls[1][0]).toMatch(/ON CONFLICT \(company_id\)/);
+        expect(db.query.mock.calls[1][1]).toEqual([COMPANY, PUSH_SID]);
+    });
+});
+
 describe('a2pService.validateBusinessInfo', () => {
     const a2p = require('../backend/src/services/a2pService');
     const valid = {

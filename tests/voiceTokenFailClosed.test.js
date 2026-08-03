@@ -21,6 +21,7 @@ const ENV_ACCOUNT_SID = 'ACmasterenv0000000000000000000000000';
 const ENV_API_KEY = 'SKenvkey0000000000000000000000000000';
 const ENV_API_SECRET = 'env_api_secret_00000000000000000000';
 const ENV_TWIML_APP_SID = 'APenvapp0000000000000000000000000000';
+const MASTER_PUSH_CREDENTIAL_SID = 'CRmaster00000000000000000000000000';
 
 process.env.TWILIO_ACCOUNT_SID = ENV_ACCOUNT_SID;
 process.env.TWILIO_API_KEY = ENV_API_KEY;
@@ -33,6 +34,7 @@ const COMPANY_A = '11111111-1111-1111-1111-111111111111';
 const SUB_ACCOUNT_SID = 'ACsub1110000000000000000000000000000';
 const SUB_API_KEY = 'SKsubkey1110000000000000000000000000';
 const SUB_TWIML_APP_SID = 'APsubapp1110000000000000000000000000';
+const SUB_PUSH_CREDENTIAL_SID = 'CRsub111000000000000000000000000000';
 
 const EXACT_409_MESSAGE =
     'SoftPhone is not provisioned for this company — connect telephony and run softphone setup.';
@@ -42,8 +44,10 @@ const EXACT_409_MESSAGE =
 // ---------------------------------------------------------------------------
 
 const mockGetSoftphoneCreds = jest.fn();
+const mockGetIosPushCredentialSid = jest.fn();
 jest.mock('../backend/src/services/telephonyTenantService', () => ({
     getSoftphoneCreds: (...args) => mockGetSoftphoneCreds(...args),
+    getIosPushCredentialSid: (...args) => mockGetIosPushCredentialSid(...args),
     DEFAULT_COMPANY_ID: '00000000-0000-0000-0000-000000000001',
 }));
 
@@ -66,6 +70,11 @@ jest.mock('../backend/src/services/callAvailability', () => ({
 jest.mock('../backend/src/services/twilioClient', () => ({ getTwilioClient: jest.fn() }));
 jest.mock('../backend/src/services/agentPresence', () => ({ setAgentStatus: jest.fn() }));
 jest.mock('../backend/src/services/walletService', () => ({ isServiceBlocked: jest.fn() }));
+jest.mock('../backend/src/webhooks/twilioWebhooks', () => ({
+    validateTwilioSignature: jest.fn(async () => true),
+    resolveWebhookCompanyId: jest.fn(),
+    ingestToInbox: jest.fn(),
+}));
 
 // NOTE: 'twilio' is intentionally NOT mocked — real AccessToken minting is the
 // point (we assert which account/key signed the JWT).
@@ -76,7 +85,7 @@ jest.mock('../backend/src/services/walletService', () => ({ isServiceBlocked: je
 
 const express = require('express');
 const request = require('supertest');
-const { generateTokenForCompany } = require('../backend/src/services/voiceService');
+const { generateNativeTokenForCompany, generateTokenForCompany } = require('../backend/src/services/voiceService');
 const { tokenRouter } = require('../backend/src/routes/voice');
 
 // ---------------------------------------------------------------------------
@@ -119,6 +128,7 @@ beforeEach(() => {
     process.env.TWILIO_TWIML_APP_SID = ENV_TWIML_APP_SID;
 
     mockGetSoftphoneCreds.mockResolvedValue(null);
+    mockGetIosPushCredentialSid.mockResolvedValue(null);
     mockDbQuery.mockResolvedValue({ rows: [{ allowed: true }] }); // phone_calls_allowed
     mockGroupsForUser.mockResolvedValue([{ id: 'g1', name: 'Sales' }]);
 });
@@ -143,6 +153,7 @@ describe('voiceService.generateTokenForCompany — C5 fail-closed', () => {
         expect(payload.iss).toBe(ENV_API_KEY);       // master API key
         expect(payload.grants.identity).toBe('ident-default-1');
         expect(JSON.stringify(payload.grants)).toContain(ENV_TWIML_APP_SID);
+        expect(payload.grants.voice.push_credential_sid).toBeUndefined();
     });
 
     test('TC-C-21: non-default company, creds null → throws 409 SOFTPHONE_NOT_PROVISIONED with the exact message; NO silent env fallback (no token ever minted)', async () => {
@@ -192,6 +203,58 @@ describe('voiceService.generateTokenForCompany — C5 fail-closed', () => {
             expect(mockGetSoftphoneCreds).toHaveBeenCalledWith(companyId);
         }
     );
+});
+
+describe('voiceService.generateNativeTokenForCompany — native push grant', () => {
+    test('master native token keeps identity/outgoing grant and adds only the configured push SID', async () => {
+        mockGetIosPushCredentialSid.mockResolvedValue(MASTER_PUSH_CREDENTIAL_SID);
+
+        const result = await generateNativeTokenForCompany(DEFAULT_COMPANY_ID, 'ident-native-master');
+        const payload = decodeJwtPayload(result.token);
+
+        expect(result.identity).toBe('ident-native-master');
+        expect(payload.sub).toBe(ENV_ACCOUNT_SID);
+        expect(payload.iss).toBe(ENV_API_KEY);
+        expect(payload.grants.identity).toBe('ident-native-master');
+        expect(payload.grants.voice.incoming).toEqual({ allow: true });
+        expect(payload.grants.voice.outgoing.application_sid).toBe(ENV_TWIML_APP_SID);
+        expect(payload.grants.voice.push_credential_sid).toBe(MASTER_PUSH_CREDENTIAL_SID);
+    });
+
+    test('tenant native token uses the subaccount push SID and never the master SID', async () => {
+        mockGetSoftphoneCreds.mockResolvedValue({
+            accountSid: SUB_ACCOUNT_SID,
+            apiKeySid: SUB_API_KEY,
+            apiKeySecret: 'sub_api_secret_111111111111111111',
+            twimlAppSid: SUB_TWIML_APP_SID,
+        });
+        mockGetIosPushCredentialSid.mockResolvedValue(SUB_PUSH_CREDENTIAL_SID);
+
+        const result = await generateNativeTokenForCompany(COMPANY_A, 'ident-native-sub');
+        const payload = decodeJwtPayload(result.token);
+
+        expect(payload.sub).toBe(SUB_ACCOUNT_SID);
+        expect(payload.iss).toBe(SUB_API_KEY);
+        expect(payload.grants.voice.outgoing.application_sid).toBe(SUB_TWIML_APP_SID);
+        expect(payload.grants.voice.push_credential_sid).toBe(SUB_PUSH_CREDENTIAL_SID);
+        expect(JSON.stringify(payload.grants)).not.toContain(MASTER_PUSH_CREDENTIAL_SID);
+    });
+
+    test('native token fails closed when the correct account has no Push Credential SID', async () => {
+        mockGetSoftphoneCreds.mockResolvedValue({
+            accountSid: SUB_ACCOUNT_SID,
+            apiKeySid: SUB_API_KEY,
+            apiKeySecret: 'sub_api_secret_111111111111111111',
+            twimlAppSid: SUB_TWIML_APP_SID,
+        });
+        mockGetIosPushCredentialSid.mockResolvedValue(null);
+
+        await expect(generateNativeTokenForCompany(COMPANY_A, 'ident-no-push'))
+            .rejects.toMatchObject({
+                httpStatus: 409,
+                code: 'IOS_PUSH_CREDENTIAL_NOT_PROVISIONED',
+            });
+    });
 });
 
 // ---------------------------------------------------------------------------
