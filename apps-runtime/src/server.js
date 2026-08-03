@@ -213,6 +213,7 @@ function createRequestHandler({
                 usage: execution.usage || usageFor(null, startedAt),
                 fixtures_summary: execution.fixturesSummary,
                 data_ops: execution.dataOps,
+                created_tasks: execution.createdTasks,
             });
         } catch (error) {
             writeJson(res, responseStatus(error), {

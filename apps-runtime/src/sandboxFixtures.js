@@ -595,6 +595,7 @@ module.exports = {
     resolveAnchorDate,
     shiftDays,
     SandboxFixtureError,
+    companyDateFilterBounds,
     generateSandboxFixtures,
     normalizeSeed,
     projectGetEstimate,

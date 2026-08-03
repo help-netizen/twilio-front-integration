@@ -44,6 +44,7 @@ describe('APP-TOOLS-001 generated tool documentation gates', () => {
             'svc.list_jobs',
             'svc.get_job',
             'svc.list_tasks',
+            'svc.create_task',
             'svc.list_estimates',
             'svc.get_estimate',
         ]);
@@ -64,6 +65,14 @@ describe('APP-TOOLS-001 generated tool documentation gates', () => {
             }
         }
         expect(() => assertToolDocumentation(tools)).not.toThrow();
+        const createTask = tools.find(tool => tool.name === 'svc.create_task');
+        expect(createTask).toMatchObject({
+            kind: 'write',
+            businessPermission: 'tasks.create',
+            description: expect.stringMatching(/visible to people/i),
+        });
+        expect(createTask.description).toMatch(/deduplicated/i);
+        expect(createTask.description).toMatch(/at most 3 write calls/i);
     });
 
     test('2: APP-TOOLS-001.md is the exact deterministic catalog rendering', () => {
@@ -78,6 +87,7 @@ describe('APP-TOOLS-001 generated tool documentation gates', () => {
         expect(prompt.match(new RegExp(PROMPT_CATALOG_BEGIN, 'g'))).toHaveLength(1);
         expect(prompt.match(new RegExp(PROMPT_CATALOG_END, 'g'))).toHaveLength(1);
         expect(prompt).toContain('"output_schema"');
+        expect(prompt).toContain('"kind": "write"');
         expect(prompt).toContain('Task rows are under `tasks`, not `results`.');
         expect(prompt).not.toContain('every list tool answers');
         expect(prompt).not.toContain('Date filters take a plain');

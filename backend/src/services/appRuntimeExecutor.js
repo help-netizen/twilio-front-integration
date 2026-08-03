@@ -2,6 +2,7 @@
 
 const authorizationService = require('./authorizationService');
 const readService = require('./chatgptMcpReadService');
+const taskService = require('./appRuntimeTaskService');
 const catalog = require('./appRuntimeToolCatalog');
 const tokenService = require('./appRuntimeTokenService');
 const requestValidator = require('./appRuntimeRequestValidator');
@@ -99,6 +100,9 @@ async function execute(context, authz, toolName, args) {
     requireToolConsent(context, toolName);
     requestValidator.validateArguments(tool, args);
     requireBusinessPermission(authz, tool.businessPermission);
+    if (tool.kind === 'write' && tool.handler === 'createTask') {
+        return taskService.createTask(context, args);
+    }
     return readService.execute(tool.handler, buildReadContext(context, authz), args);
 }
 

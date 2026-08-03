@@ -7,14 +7,17 @@ const EXPECTED_HANDLERS = Object.freeze({
     'svc.list_jobs': 'listJobs',
     'svc.get_job': 'getJob',
     'svc.list_tasks': 'listTasks',
+    'svc.create_task': 'createTask',
     'svc.list_estimates': 'listEstimates',
     'svc.get_estimate': 'getEstimate',
 });
 const TOOL_NAMES = Object.freeze(Object.keys(EXPECTED_HANDLERS));
+const WRITE_TOOLS = Object.freeze(['svc.create_task']);
 const BUSINESS_PERMISSIONS = Object.freeze({
     'svc.list_jobs': 'jobs.view',
     'svc.get_job': 'jobs.view',
     'svc.list_tasks': 'tasks.view',
+    'svc.create_task': 'tasks.create',
     'svc.list_estimates': 'estimates.view',
     'svc.get_estimate': 'estimates.view',
 });
@@ -31,9 +34,10 @@ function schemaHasUrlField(schema) {
 
 function projectDescriptor(name) {
     const descriptor = registry.getTool(name);
+    const expectedKind = WRITE_TOOLS.includes(name) ? 'write' : 'read';
     if (!descriptor
         || descriptor.name !== name
-        || descriptor.kind !== 'read'
+        || descriptor.kind !== expectedKind
         || descriptor.handler !== EXPECTED_HANDLERS[name]
         || descriptor.inputSchema?.type !== 'object'
         || descriptor.inputSchema?.additionalProperties !== false
@@ -86,8 +90,10 @@ function requireTool(name) {
 
 module.exports = {
     TOOL_NAMES,
+    WRITE_TOOLS,
     EXPECTED_HANDLERS,
     BUSINESS_PERMISSIONS,
+    projectDescriptor,
     listTools,
     getTool,
     requireTool,

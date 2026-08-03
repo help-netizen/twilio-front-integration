@@ -65,6 +65,7 @@ const DISPATCHER_TOOL_TITLES = Object.freeze({
     'svc.list_schedule': 'View the schedule',
     'svc.get_schedule_item': 'Open a schedule item',
     'svc.list_tasks': 'List tasks',
+    'svc.create_task': 'Create a task',
     'svc.list_entity_tasks': 'List tasks on a job or lead',
     'svc.list_task_assignees': 'List who can be assigned tasks',
     'svc.list_estimates': 'List estimates',
@@ -131,6 +132,7 @@ const TOOL_PERMISSION_MAP = Object.freeze({
     'svc.reschedule_appointment': ['jobs.edit'],
     'svc.cancel_appointment': ['jobs.close'],
     'svc.book_on_lead': ['leads.edit', 'leads.create'],
+    'svc.create_task': ['tasks.create'],
     ...Object.fromEntries(Object.entries(CHATGPT_READ_TOOL_PERMISSIONS).map(([name, permissions]) => [
         name,
         [...permissions, `mcp.tool.${name}`],
@@ -688,6 +690,51 @@ function itemUpdateSchema(properties) {
 }
 
 const DISPATCHER_WRITE_TOOLS = [
+    dispatcherWrite(
+        'svc.create_task',
+        'createTask',
+        'Create an unassigned open Task that is visible to people in Albusto. Repeated open Tasks are deduplicated by installation, parent, and description. App runs may make at most 3 write calls.',
+        strictObjectSchema({
+            parent_type: documentedSchema(
+                enumSchema(['job', 'lead', 'estimate', 'invoice', 'contact']),
+                'Parent entity kind for the new Task: `job`, `lead`, `estimate`, `invoice`, or `contact`.'
+            ),
+            parent_id: documentedSchema(
+                integerSchema(1),
+                'Positive Albusto parent entity ID. The parent must belong to the installation company.'
+            ),
+            description: documentedSchema(
+                { ...stringSchema(500), minLength: 1 },
+                'Task text shown to people in Albusto. It must be non-empty and contain at most 500 characters after trimming.'
+            ),
+            due_at: documentedSchema(
+                dateOrDateTimeSchema(),
+                'Optional due date or timestamp. A `YYYY-MM-DD` date means midnight at the start of that company-local calendar date. A timestamp must be ISO 8601 with `Z` or an explicit offset.'
+            ),
+        }, ['parent_type', 'parent_id', 'description']),
+        {
+            outputSchema: createTaskOutputSchema(),
+            documentation: {
+                responseNotes: [
+                    'The created Task is open, visible to people in Albusto, unassigned, and authored by the installation agent principal.',
+                    'If this installation already has an open Task with the same parent and description, no Task is created and `deduplicated` is true.',
+                    'Each invocation consumes one of the run\'s 3 write calls, including a deduplicated invocation.',
+                ],
+                errors: appRuntimeCreateTaskErrors(),
+                examples: [{
+                    title: 'Create an attention Task for an Estimate',
+                    source: `export async function run(ctx) {
+    return ctx.callTool('svc.create_task', {
+        parent_type: 'estimate',
+        parent_id: 41,
+        description: 'Review the approved estimate parts before ordering.',
+        due_at: ctx.input.today,
+    });
+}`,
+                }],
+            },
+        }
+    ),
     dispatcherWrite('svc.create_lead', 'createLead', 'Create a company Lead and canonically link or create its Contact.', strictObjectSchema({
         ...LEAD_EDIT_PROPERTIES,
         note: stringSchema(),
@@ -825,6 +872,10 @@ function dateSchema() {
     return { type: 'string', format: 'date' };
 }
 
+function dateOrDateTimeSchema() {
+    return { type: 'string', format: 'date-or-date-time' };
+}
+
 function arraySchema(items, maxItems) {
     return { type: 'array', items, maxItems };
 }
@@ -858,7 +909,7 @@ function dispatcherRead(name, handler, description, inputSchema, metadata = {}) 
     };
 }
 
-function dispatcherWrite(name, handler, description, inputSchema) {
+function dispatcherWrite(name, handler, description, inputSchema, metadata = {}) {
     return {
         name,
         handler,
@@ -868,6 +919,7 @@ function dispatcherWrite(name, handler, description, inputSchema) {
         destructiveHint: false,
         description,
         inputSchema,
+        ...metadata,
     };
 }
 
@@ -913,6 +965,20 @@ function appRuntimeErrors(includeNotFound = false, notFoundEntity = 'Job') {
                     : `The ${notFoundEntity} does not exist or is outside the live company scope.`,
             }]
             : []),
+    ];
+}
+
+function appRuntimeCreateTaskErrors() {
+    return [
+        ...appRuntimeErrors(true, 'Task parent'),
+        {
+            code: 'WRITE_CALL_LIMIT',
+            description: 'The run used its 3 allowed write calls.',
+        },
+        {
+            code: 'TASK_DAILY_LIMIT',
+            description: 'The installation created its daily maximum of 100 Tasks.',
+        },
     ];
 }
 
@@ -1076,6 +1142,17 @@ function listTasksOutputSchema() {
                 }),
             }),
             pagination: paginationOutputSchema(),
+        },
+    });
+}
+
+function createTaskOutputSchema() {
+    return outputField('object', 'The open Task identity and whether an existing Task was reused.', {
+        additionalProperties: false,
+        properties: {
+            task_id: outputField(['integer', 'string'], 'Albusto Task ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+            status: outputField('string', 'Task status.', { enum: ['open'] }),
+            deduplicated: outputField('boolean', 'True only when an existing matching open Task was returned instead of creating another row.'),
         },
     });
 }

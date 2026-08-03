@@ -5,6 +5,7 @@ const tokenService = require('./appRuntimeTokenService');
 const rateLimit = require('./appRuntimeRateLimit');
 const auditService = require('./appRuntimeAuditService');
 const dataService = require('./appDataService');
+const catalog = require('./appRuntimeToolCatalog');
 const maskingService = require('./pulseMaskingService');
 const { AppRuntimeError, appRuntimeError } = require('./appRuntimeErrors');
 
@@ -99,6 +100,9 @@ async function execute(req, toolName, args) {
         }
 
         callOrdinal = await tokenService.consumeRunCall(context);
+        if (catalog.getTool(toolName)?.kind === 'write') {
+            await tokenService.consumeRunWriteCall(context);
+        }
         result = await executor.execute(context, authz, toolName, args);
         const maskViewer = await maskingService.getMaskViewer(req);
         result = maskingService.redactPulsePayload(result, maskViewer);

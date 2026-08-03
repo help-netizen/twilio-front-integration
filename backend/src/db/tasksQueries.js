@@ -527,6 +527,54 @@ async function getTaskById(companyId, taskId, client = null) {
     return rows[0] || null;
 }
 
+/** Find this installation's matching open app-authored Task. */
+async function findOpenAppTask(companyId, {
+    installationId,
+    parentType,
+    parentId,
+    description,
+}, client = null) {
+    requireCompanyId(companyId);
+    const parent = PARENTS[parentType];
+    if (!parent) return null;
+    const query = queryFor(client, db);
+    const { rows } = await query(
+        `${SELECT_TASK}
+         WHERE t.company_id = $1
+           AND t.${parent.col} = $2
+           AND t.title = $3
+           AND t.status = 'open'
+           AND t.created_by = 'agent'
+           AND t.kind = 'agent'
+           AND t.agent_type = 'app'
+           AND t.agent_input->>'source' = 'app'
+           AND t.agent_input->>'installation_id' = $4
+         ORDER BY t.id
+         LIMIT 1`,
+        [companyId, parentId, description, String(installationId)]
+    );
+    return rows[0] || null;
+}
+
+/** Count Tasks this installation actually created during the current UTC day. */
+async function countAppTasksCreatedToday(companyId, installationId, client = null) {
+    requireCompanyId(companyId);
+    const query = queryFor(client, db);
+    const { rows } = await query(
+        `SELECT COUNT(*)::integer AS count
+         FROM tasks t
+         WHERE t.company_id = $1
+           AND t.created_by = 'agent'
+           AND t.kind = 'agent'
+           AND t.agent_type = 'app'
+           AND t.agent_input->>'source' = 'app'
+           AND t.agent_input->>'installation_id' = $2
+           AND t.created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+        [companyId, String(installationId)]
+    );
+    return Number(rows[0]?.count || 0);
+}
+
 /**
  * Create a task on exactly one parent. payload:
  *   { parentType, parentId, description, owner_user_id, author_user_id, due_at, kind?, actions? }
@@ -682,6 +730,7 @@ module.exports = {
     PARENT_TYPES,
     isValidParentType,
     resolveParentId,
+    resolveNumericParentId,
     parentExists,
     jobParentVisible,
     listEntityTasks,
@@ -690,6 +739,8 @@ module.exports = {
     listTasksPage,
     countTasks,
     getTaskById,
+    findOpenAppTask,
+    countAppTasksCreatedToday,
     createTask,
     updateTask,
     clearTimelineActionRequiredIfNoOpenTasks,

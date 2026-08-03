@@ -7,6 +7,7 @@ const { createDryRunDataStore } = require('./dataCollections');
 const {
     DEFAULT_SANDBOX_SEED,
     SandboxFixtureError,
+    companyDateFilterBounds,
     generateSandboxFixtures,
     projectSandboxTool,
     summarizeSandboxFixtures,
@@ -39,11 +40,148 @@ const TOOL_FIXTURES = Object.freeze({
         job_id: defaultFixtureGraph().jobs[0].id,
     }),
     'svc.list_tasks': projectSandboxTool(defaultFixtureGraph(), 'svc.list_tasks'),
+    'svc.create_task': { task_id: 1, status: 'open' },
     'svc.list_estimates': projectSandboxTool(defaultFixtureGraph(), 'svc.list_estimates'),
     'svc.get_estimate': projectSandboxTool(defaultFixtureGraph(), 'svc.get_estimate', {
         estimate_id: defaultFixtureGraph().estimates[0].id,
     }),
 });
+
+const CREATE_TASK_PARENT_COLLECTIONS = Object.freeze({
+    job: 'jobs',
+    lead: 'leads',
+    estimate: 'estimates',
+    invoice: 'invoices',
+    contact: 'contacts',
+});
+const DRY_RUN_WRITE_CALL_LIMIT = 3;
+
+function validIsoDate(value) {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function validIsoDateTime(value) {
+    return typeof value === 'string'
+        && /[tT]/.test(value)
+        && /(Z|[+-]\d{2}:\d{2})$/.test(value)
+        && Number.isFinite(Date.parse(value));
+}
+
+function createDryRunTaskStore(fixtures) {
+    const created = [];
+    let writeCalls = 0;
+    const fixtureIds = isFixtureGraph(fixtures)
+        ? fixtures.tasks.map(task => Number(task.id)).filter(Number.isFinite)
+        : [];
+    const firstTaskId = (fixtureIds.length ? Math.max(...fixtureIds) : 0) + 1;
+
+    function validateArgs(args) {
+        if (!args || typeof args !== 'object' || Array.isArray(args)
+            || Object.keys(args).some(key => ![
+                'parent_type', 'parent_id', 'description', 'due_at',
+            ].includes(key))
+            || !Object.prototype.hasOwnProperty.call(CREATE_TASK_PARENT_COLLECTIONS, args.parent_type)
+            || !Number.isSafeInteger(args.parent_id)
+            || args.parent_id < 1
+            || typeof args.description !== 'string'
+            || !args.description.trim()
+            || args.description.trim().length > 500
+            || (args.due_at !== undefined
+                && !validIsoDate(args.due_at)
+                && !validIsoDateTime(args.due_at))) {
+            throw new SandboxFixtureError(
+                'INVALID_ARGUMENTS',
+                'Tool arguments are invalid.',
+                422
+            );
+        }
+    }
+
+    function create(args) {
+        writeCalls += 1;
+        if (writeCalls > DRY_RUN_WRITE_CALL_LIMIT) {
+            throw new SandboxFixtureError(
+                'WRITE_CALL_LIMIT',
+                'Write call limit of 3 reached.',
+                429
+            );
+        }
+        validateArgs(args);
+        const collection = fixtures?.[CREATE_TASK_PARENT_COLLECTIONS[args.parent_type]];
+        if (!Array.isArray(collection)
+            || !collection.some(parent => Number(parent.id) === args.parent_id)) {
+            throw new SandboxFixtureError('NOT_FOUND', 'Resource not found.', 404);
+        }
+        const description = args.description.trim();
+        const existing = created.find(task => (
+            task.parent_type === args.parent_type
+            && task.parent_id === args.parent_id
+            && task.description === description
+        ));
+        if (existing) {
+            return { task_id: existing.task_id, status: 'open', deduplicated: true };
+        }
+        const dueAt = args.due_at === undefined
+            ? null
+            : validIsoDate(args.due_at)
+                ? companyDateFilterBounds(
+                    args.due_at,
+                    null,
+                    fixtures.company?.timezone
+                ).fromInclusive
+                : new Date(args.due_at).toISOString();
+        const task = {
+            task_id: firstTaskId + created.length,
+            status: 'open',
+            parent_type: args.parent_type,
+            parent_id: args.parent_id,
+            description,
+            due_at: dueAt,
+        };
+        created.push(task);
+        return { task_id: task.task_id, status: 'open' };
+    }
+
+    function fixturesWithCreatedTasks() {
+        if (!isFixtureGraph(fixtures) || created.length === 0) return fixtures;
+        return {
+            ...fixtures,
+            tasks: [
+                ...fixtures.tasks,
+                ...created.map(task => ({
+                    id: task.task_id,
+                    company_id: fixtures.company?.id,
+                    description: task.description,
+                    status: task.status,
+                    due_at: task.due_at,
+                    completed_at: null,
+                    created_at: new Date().toISOString(),
+                    owner_user_id: null,
+                    author_user_id: null,
+                    thread_id: null,
+                    kind: 'agent',
+                    agent_type: 'app',
+                    agent_output: null,
+                    actions: [],
+                    assignee_name: null,
+                    assignee_email: null,
+                    author_name: 'App',
+                    parent_type: task.parent_type,
+                    parent_id: task.parent_id,
+                    parent_label: `Sandbox ${task.parent_type} #${task.parent_id}`,
+                })),
+            ],
+        };
+    }
+
+    return {
+        create,
+        fixturesWithCreatedTasks,
+        report: () => created.map(task => ({ ...task })),
+    };
+}
 
 function validDryRunInput(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
@@ -92,10 +230,12 @@ function isFixtureGraph(fixtures) {
     return fixtures && Array.isArray(fixtures.jobs) && Array.isArray(fixtures.tasks);
 }
 
-function fixtureResponse(toolName, args, fixtures) {
+function fixtureResponse(toolName, args, fixtures, taskStore) {
     try {
-        const data = isFixtureGraph(fixtures)
-            ? projectSandboxTool(fixtures, toolName, args)
+        const data = toolName === 'svc.create_task'
+            ? taskStore.create(args)
+            : isFixtureGraph(fixtures)
+                ? projectSandboxTool(taskStore.fixturesWithCreatedTasks(), toolName, args)
             : fixtures[toolName];
         if (!data) throw new SandboxFixtureError('TOOL_NOT_FOUND', 'Tool not found.', 404);
         const payload = { ok: true, data, request_id: 'app-builder-dry-run' };
@@ -164,6 +304,7 @@ async function validateAndDryRun({
         error.code = 'DRY_RUN_FIXTURES_INVALID';
         throw error;
     }
+    const taskStore = createDryRunTaskStore(activeFixtures);
     let usage = null;
     let result;
     try {
@@ -184,7 +325,8 @@ async function validateAndDryRun({
                 return fixtureResponse(
                     decodeURIComponent(url.pathname.split('/').pop()),
                     args,
-                    activeFixtures
+                    activeFixtures,
+                    taskStore
                 );
             },
             onUsage: value => { usage = value; },
@@ -206,6 +348,7 @@ async function validateAndDryRun({
         usage,
         fixturesSummary: summarizeSandboxFixtures(activeFixtures),
         dataOps: dataStore.report(),
+        createdTasks: taskStore.report(),
     };
 }
 
@@ -215,5 +358,6 @@ module.exports = {
     dryRunInput,
     TOOL_FIXTURES,
     validDryRunInput,
+    createDryRunTaskStore,
     validateAndDryRun,
 };

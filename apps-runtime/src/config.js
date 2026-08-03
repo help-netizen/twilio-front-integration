@@ -19,6 +19,7 @@ const GATEWAY_TOOLS = Object.freeze([
     'svc.list_jobs',
     'svc.get_job',
     'svc.list_tasks',
+    'svc.create_task',
     'svc.list_estimates',
     'svc.get_estimate',
 ]);

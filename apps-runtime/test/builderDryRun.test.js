@@ -3,6 +3,7 @@
 const { validateApplicationSource } = require('../src/builderValidator');
 const { validateAndDryRun } = require('../src/builderDryRun');
 const { sourceSha256 } = require('../src/runner');
+const { generateSandboxFixtures } = require('../src/sandboxFixtures');
 
 function dryRun(source) {
     return validateAndDryRun({ source, expectedSourceSha256: sourceSha256(source) });
@@ -195,5 +196,87 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
                 },
             },
         })).rejects.toMatchObject({ code: 'DRY_RUN_INPUT_INVALID' });
+    });
+
+    test('Phase G keeps created Tasks in memory, deduplicates them, and reports created_tasks', async () => {
+        const source = `
+            export async function run(ctx) {
+                const jobs = await ctx.callTool('svc.list_jobs', { limit: 1, offset: 0 });
+                const args = {
+                    parent_type: 'job',
+                    parent_id: Number(jobs.results[0].id),
+                    description: 'Review the dry-run finding.',
+                    due_at: ctx.input.today,
+                };
+                const first = await ctx.callTool('svc.create_task', args);
+                const second = await ctx.callTool('svc.create_task', args);
+                const tasks = await ctx.callTool('svc.list_tasks', {
+                    search: 'Review the dry-run finding.',
+                    limit: 10,
+                    offset: 0,
+                });
+                return { first, second, visible: tasks.tasks.length };
+            }
+        `;
+        const fixtures = generateSandboxFixtures('phase-g-dry-run', '2026-08-03');
+        const persistedTaskCount = fixtures.tasks.length;
+        const execution = await validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            input: { today: '2026-08-03' },
+            fixtures,
+        });
+        expect(execution.result).toEqual({
+            first: { task_id: expect.any(Number), status: 'open' },
+            second: {
+                task_id: execution.result.first.task_id,
+                status: 'open',
+                deduplicated: true,
+            },
+            visible: 1,
+        });
+        expect(execution.createdTasks).toEqual([{
+            task_id: execution.result.first.task_id,
+            status: 'open',
+            parent_type: 'job',
+            parent_id: expect.any(Number),
+            description: 'Review the dry-run finding.',
+            due_at: '2026-08-03T04:00:00.000Z',
+        }]);
+        expect(execution.usage).toMatchObject({ gateway_calls: 4, error_code: null });
+        expect(fixtures.tasks).toHaveLength(persistedTaskCount);
+    });
+
+    test('Phase G dry-run refuses the fourth write invocation with the live English reason', async () => {
+        const source = `
+            export async function run(ctx) {
+                const jobs = await ctx.callTool('svc.list_jobs', { limit: 1, offset: 0 });
+                let failure = null;
+                for (let index = 0; index < 4; index += 1) {
+                    try {
+                        await ctx.callTool('svc.create_task', {
+                            parent_type: 'job',
+                            parent_id: Number(jobs.results[0].id),
+                            description: 'Dry-run write ' + index,
+                        });
+                    } catch (error) {
+                        failure = { code: error.code, message: error.message };
+                    }
+                }
+                return { continued: true, failure };
+            }
+        `;
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+        })).resolves.toMatchObject({
+            result: {
+                continued: true,
+                failure: {
+                    code: 'WRITE_CALL_LIMIT',
+                    message: 'Write call limit of 3 reached.',
+                },
+            },
+        });
     });
 });

@@ -9,6 +9,7 @@ const db = require('../backend/src/db/connection');
 const identityService = require('../backend/src/services/appRuntimeIdentityService');
 const tokenService = require('../backend/src/services/appRuntimeTokenService');
 const gatewayService = require('../backend/src/services/appRuntimeGatewayService');
+const appRuntimeTaskService = require('../backend/src/services/appRuntimeTaskService');
 const rateLimit = require('../backend/src/services/appRuntimeRateLimit');
 const callMaskingService = require('../backend/src/services/callMaskingService');
 const appVersionTransitionModule = require('../backend/src/services/appVersionTransitionService');
@@ -31,11 +32,20 @@ const EXECUTION_ROLLBACK = fs.readFileSync(
     'utf8'
 );
 const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '230_app_data_phase_d.sql'), 'utf8');
+const WRITE_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '233_app_create_task_write_tool.sql'),
+    'utf8'
+);
+const WRITE_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_233_app_create_task_write_tool.sql'),
+    'utf8'
+);
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
 const TOOLS = [
     'svc.list_jobs',
     'svc.get_job',
     'svc.list_tasks',
+    'svc.create_task',
     'svc.list_estimates',
     'svc.get_estimate',
 ];
@@ -195,6 +205,7 @@ async function setupFixture(client) {
     await client.query(GAP_SCHEMA);
     await client.query(EXECUTION_SCHEMA);
     await client.query(DATA_SCHEMA);
+    await client.query(WRITE_SCHEMA);
     const companyA = await insertCompany(client, 'A');
     const companyB = await insertCompany(client, 'B');
     const humanA = await insertHuman(client, companyA, 'owner-a', 'manager');
@@ -434,6 +445,49 @@ async function snapshotCompanyB(client, fixture) {
 }
 
 describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
+    databaseTest('migration 233 applies twice and rollback/forward restores write metering', async () => {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(SCHEMA);
+            await client.query(WRITE_SCHEMA);
+            await client.query(WRITE_SCHEMA);
+            const applied = await client.query(
+                `SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'app_runs'
+                      AND column_name = 'write_calls_made'
+                ) AS write_meter`
+            );
+            expect(applied.rows[0].write_meter).toBe(true);
+
+            await client.query(WRITE_ROLLBACK);
+            await client.query(WRITE_ROLLBACK);
+            const rolledBack = await client.query(
+                `SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'app_runs'
+                      AND column_name = 'write_calls_made'
+                ) AS write_meter`
+            );
+            expect(rolledBack.rows[0].write_meter).toBe(false);
+
+            await client.query(WRITE_SCHEMA);
+            const restored = await client.query(
+                `SELECT column_default
+                 FROM information_schema.columns
+                 WHERE table_name = 'app_runs'
+                   AND column_name = 'write_calls_made'`
+            );
+            expect(restored.rows[0].column_default).toBe('0');
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
     databaseTest('migration 224 applies twice and rollback/forward preserves the execution-admission schema', async () => {
         const client = await db.pool.connect();
         try {
@@ -968,6 +1022,150 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
             dbSpy?.mockRestore();
             await client.query('ROLLBACK').catch(() => {});
             client.release();
+        }
+    });
+
+    databaseTest('APP-DATA-001 Phase G creates, tenant-isolates, deduplicates, attributes, and budgets Tasks', async () => {
+        const client = await db.pool.connect();
+        let dbSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
+            const context = await createRunContext(client, fixture);
+            const beforeB = await snapshotCompanyB(client, fixture);
+            const args = {
+                parent_type: 'job',
+                parent_id: Number(fixture.ownedJobA),
+                description: 'Review the app finding before dispatch.',
+                due_at: '2026-08-03',
+            };
+
+            const first = await appRuntimeTaskService.createTaskInTransaction(
+                context,
+                args,
+                client
+            );
+            const second = await appRuntimeTaskService.createTaskInTransaction(
+                context,
+                args,
+                client
+            );
+            expect(first.deduplicated).toBe(false);
+            expect(second).toMatchObject({
+                deduplicated: true,
+                task: { id: first.task.id, status: 'open' },
+            });
+
+            const stored = await client.query(
+                `SELECT id, company_id, job_id, title, status, owner_user_id,
+                        author_user_id, created_by, kind, agent_type, agent_input,
+                        agent_status, due_at
+                 FROM tasks
+                 WHERE company_id = $1 AND id = $2`,
+                [fixture.companyA, first.task.id]
+            );
+            expect(stored.rows).toHaveLength(1);
+            expect(stored.rows[0]).toMatchObject({
+                company_id: fixture.companyA,
+                job_id: fixture.ownedJobA,
+                title: args.description,
+                status: 'open',
+                owner_user_id: null,
+                author_user_id: fixture.principalA.agent.id,
+                created_by: 'agent',
+                kind: 'agent',
+                agent_type: 'app',
+                agent_input: {
+                    source: 'app',
+                    installation_id: String(fixture.installationA),
+                },
+                agent_status: 'succeeded',
+            });
+            expect(stored.rows[0].due_at.toISOString()).toBe('2026-08-03T04:00:00.000Z');
+
+            await client.query(
+                `UPDATE tasks
+                 SET status = 'done', completed_at = NOW()
+                 WHERE company_id = $1 AND id = $2`,
+                [fixture.companyA, first.task.id]
+            );
+            const afterCompletion = await appRuntimeTaskService.createTaskInTransaction(
+                context,
+                args,
+                client
+            );
+            expect(afterCompletion).toMatchObject({ deduplicated: false });
+            expect(afterCompletion.task.id).not.toBe(first.task.id);
+
+            await expect(appRuntimeTaskService.createTaskInTransaction(context, {
+                ...args,
+                parent_id: Number(fixture.foreignJobB),
+                description: 'Must not cross the tenant boundary.',
+            }, client)).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+            const afterB = await snapshotCompanyB(client, fixture);
+            expect(afterB).toEqual(beforeB);
+
+            const metered = await createRunContext(client, fixture);
+            await expect(tokenService.consumeRunWriteCall(metered)).resolves.toBe(1);
+            await expect(tokenService.consumeRunWriteCall(metered)).resolves.toBe(2);
+            await expect(tokenService.consumeRunWriteCall(metered)).resolves.toBe(3);
+            await expect(tokenService.consumeRunWriteCall(metered)).rejects.toMatchObject({
+                code: 'WRITE_CALL_LIMIT',
+                message: 'Write call limit of 3 reached.',
+                httpStatus: 429,
+            });
+            const writeMeter = await client.query(
+                `SELECT write_calls_made
+                 FROM app_runs
+                 WHERE id = $1 AND company_id = $2`,
+                [metered.run_id, fixture.companyA]
+            );
+            expect(writeMeter.rows[0].write_calls_made).toBe(3);
+
+            await client.query(
+                `INSERT INTO tasks
+                    (company_id, thread_id, job_id, title, description, status,
+                     owner_user_id, author_user_id, created_by, kind, agent_type,
+                     agent_input, agent_status)
+                 SELECT $1, NULL, $2, 'phase-g-daily-' || ordinal,
+                        'phase-g-daily-' || ordinal, 'open', NULL, $3,
+                        'agent', 'agent', 'app',
+                        jsonb_build_object(
+                            'source', 'app',
+                            'installation_id', $4::text
+                        ),
+                        'succeeded'
+                 FROM generate_series(1, 98) AS ordinal`,
+                [
+                    fixture.companyA,
+                    fixture.ownedJobA,
+                    fixture.principalA.agent.id,
+                    String(fixture.installationA),
+                ]
+            );
+            await expect(appRuntimeTaskService.createTaskInTransaction(context, {
+                ...args,
+                description: 'The one-hundred-and-first Task must be refused.',
+            }, client)).rejects.toMatchObject({
+                code: 'TASK_DAILY_LIMIT',
+                message: 'Daily task creation limit of 100 reached.',
+                httpStatus: 429,
+            });
+            const createdToday = await client.query(
+                `SELECT COUNT(*)::integer AS count
+                 FROM tasks
+                 WHERE company_id = $1
+                   AND agent_type = 'app'
+                   AND agent_input->>'installation_id' = $2`,
+                [fixture.companyA, String(fixture.installationA)]
+            );
+            expect(createdToday.rows[0].count).toBe(100);
+        } finally {
+            dbSpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+            rateLimit.resetForTests();
         }
     });
 

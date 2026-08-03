@@ -57,6 +57,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 upsert: { calls: 0, rows: 0 },
                 delete: { calls: 0, rows: 0 },
             },
+            created_tasks: [],
             fixtures_summary: {
                 companies: 1,
                 contacts: dataset.customers.length,
@@ -275,6 +276,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 upsert: { calls: 0, rows: 0 },
                 delete: { calls: 0, rows: 0 },
             },
+            createdTasks: [],
         });
         const runApplicationImpl = jest.fn();
         const baseUrl = await startServer({ dryRunImpl, runApplicationImpl });

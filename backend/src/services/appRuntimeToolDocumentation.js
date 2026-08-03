@@ -76,6 +76,7 @@ function assertToolDocumentation(tools = appRuntimeCatalog.listTools()) {
 function promptProjection(tool) {
     return {
         name: tool.name,
+        kind: tool.kind,
         description: tool.description,
         business_permission: tool.businessPermission,
         input_schema: tool.inputSchema,
@@ -193,6 +194,8 @@ function renderToolMarkdown(tool) {
         '',
         tool.description,
         '',
+        `Tool kind: \`${tool.kind}\`.`,
+        '',
         `Required live permission: \`${tool.businessPermission}\`.`,
         '',
         '### Parameters',
@@ -217,12 +220,16 @@ function renderToolMarkdown(tool) {
 function renderAppToolsMarkdown({ tools = appRuntimeCatalog.listTools() } = {}) {
     const documentedTools = assertToolDocumentation(tools);
     const toolNames = documentedTools.map(tool => `\`${tool.name}\``).join(', ');
+    const writeToolNames = documentedTools
+        .filter(tool => tool.kind === 'write')
+        .map(tool => `\`${tool.name}\``)
+        .join(', ');
     return [
         '<!-- GENERATED FILE — run `npm run gen:app-tools-doc` after changing the runtime catalog. -->',
         '',
         '# APP-TOOLS-001 — App Studio tools (MCP + gateway API)',
         '',
-        `This reference is generated from the same ${documentedTools.length} read-only descriptors used by Albusto App Studio and the service CRM MCP registry.`,
+        `This reference is generated from the same ${documentedTools.length} descriptors used by Albusto App Studio and the service CRM MCP registry.`,
         '',
         `Exactly ${documentedTools.length} tools are available: ${toolNames}.`,
         '',
@@ -231,7 +238,7 @@ function renderAppToolsMarkdown({ tools = appRuntimeCatalog.listTools() } = {}) 
         '- App code calls `await ctx.callTool(name, args)`. It has no `fetch`, general HTTP API, network access, filesystem, dependencies, or arbitrary egress from the isolate.',
         '- The internal gateway transport returns `{"ok":true,"data":<tool output>,"request_id":"..."}`. `ctx.callTool` unwraps it and returns only `<tool output>`.',
         '- MCP `tools/list` exposes the same input and output schemas; a successful MCP call places the documented tool output in `structuredContent`.',
-        '- No write, send, message-delivery, trigger, scheduler, Contact, Call, payment, invoice, or external-egress tool is available to App Studio.',
+        `- The only CRM write tool is ${writeToolNames}; no note, send, message-delivery, trigger, scheduler, payment, invoice mutation, or external-egress tool is available to App Studio.`,
         '- Live company, role, provider, Task-content, consent, masking, audit, rate, and run-call controls can narrow every call.',
         '',
         'Arguments are JSON objects. Unknown parameters are rejected. Dates use the exact `YYYY-MM-DD` calendar form described by each parameter; timestamps in responses use ISO 8601.',

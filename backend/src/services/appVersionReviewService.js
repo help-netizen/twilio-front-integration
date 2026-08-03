@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../db/connection');
+const appRuntimeToolCatalog = require('./appRuntimeToolCatalog');
 const { AppVersionTransitionError } = require('./appVersionTransitionService');
 
 const STATUS_FILTERS = Object.freeze({
@@ -230,7 +231,10 @@ async function getReview(versionId, {
                 reviewed_at: version.reviewed_at,
                 published_at: version.published_at,
                 rejection_reason: version.rejection_reason,
-                tools: tools.rows.map(row => row.tool_name),
+                tools: tools.rows.map(row => ({
+                    name: row.tool_name,
+                    kind: appRuntimeToolCatalog.requireTool(row.tool_name).kind,
+                })),
                 ...(includeCode ? { source_code: version.source_code } : {}),
             },
             app: {

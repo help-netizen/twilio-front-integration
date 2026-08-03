@@ -88,6 +88,7 @@ function harness(overrides = {}) {
                 upsert: { calls: 0, rows: 0 },
                 delete: { calls: 0, rows: 0 },
             },
+            created_tasks: [],
         }),
         ...overrides.dryRunner,
     };
@@ -139,6 +140,7 @@ describe('APP-BUILD-001 generation pipeline', () => {
                     data_ops: expect.objectContaining({
                         upsert: { calls: 0, rows: 0 },
                     }),
+                    created_tasks: [],
                 }),
             }),
             dataCollections: [],

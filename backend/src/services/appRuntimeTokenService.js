@@ -11,6 +11,7 @@ const DEFAULT_TTL_SECONDS = 300;
 const MAX_TTL_SECONDS = 300;
 const RUN_CALL_LIMIT = 5;
 const DATA_CALL_LIMIT = 10;
+const WRITE_CALL_LIMIT = 3;
 const CLAIM_KEYS = Object.freeze([
     'exp',
     'installation_id',
@@ -320,6 +321,7 @@ async function resolveRunContext(claims) {
                 run.gateway_calls_used,
                 run.gateway_call_limit,
                 run.data_calls_made,
+                run.write_calls_made,
                 run.execution_authorized_at,
                 installation.status AS installation_status,
                 installation.installed_by,
@@ -889,6 +891,73 @@ async function consumeRunDataCall(context) {
     );
 }
 
+async function consumeRunWriteCall(context) {
+    const { rows } = await db.query(
+        `UPDATE app_runs run
+         SET write_calls_made = run.write_calls_made + 1,
+             updated_at = NOW()
+         WHERE run.id = $1
+           AND run.company_id = $2
+           AND run.app_id = $3
+           AND run.installation_id = $4
+           AND run.version_id = $5
+           AND run.nonce_sha256 = $6
+           AND run.status IN ('issued', 'exhausted')
+           AND run.revoked_at IS NULL
+           AND run.expires_at > NOW()
+           AND run.execution_authorized_at IS NOT NULL
+           AND run.completed_at IS NULL
+           AND run.write_calls_made < $7
+         RETURNING run.write_calls_made AS call_ordinal`,
+        [
+            context.run_id,
+            context.company_id,
+            context.app_id,
+            context.installation_id,
+            context.version_id,
+            context.nonce_sha256,
+            WRITE_CALL_LIMIT,
+        ]
+    );
+    if (rows[0]) return Number(rows[0].call_ordinal);
+    const current = await db.query(
+        `SELECT run.write_calls_made
+         FROM app_runs run
+         WHERE run.id = $1
+           AND run.company_id = $2
+           AND run.app_id = $3
+           AND run.installation_id = $4
+           AND run.version_id = $5
+           AND run.nonce_sha256 = $6
+           AND run.status IN ('issued', 'exhausted')
+           AND run.revoked_at IS NULL
+           AND run.expires_at > NOW()
+           AND run.execution_authorized_at IS NOT NULL
+           AND run.completed_at IS NULL`,
+        [
+            context.run_id,
+            context.company_id,
+            context.app_id,
+            context.installation_id,
+            context.version_id,
+            context.nonce_sha256,
+        ]
+    );
+    if (Number(current.rows[0]?.write_calls_made) >= WRITE_CALL_LIMIT) {
+        throw appRuntimeError(
+            'WRITE_CALL_LIMIT',
+            'Write call limit of 3 reached.',
+            429,
+            { callOrdinal: Number(current.rows[0].write_calls_made) + 1 }
+        );
+    }
+    throw appRuntimeError(
+        'APP_RUNTIME_INACTIVE',
+        'App runtime authorization is not active.',
+        403
+    );
+}
+
 function validateRunMetrics(metrics) {
     const keys = Object.keys(metrics || {}).sort();
     const expectedKeys = ['data_calls', 'error_code', 'gateway_calls', 'result_bytes', 'wall_ms'];
@@ -1050,6 +1119,7 @@ module.exports = {
     MAX_TTL_SECONDS,
     RUN_CALL_LIMIT,
     DATA_CALL_LIMIT,
+    WRITE_CALL_LIMIT,
     CLAIM_KEYS,
     configuredSecret,
     normalizedTtl,
@@ -1063,6 +1133,7 @@ module.exports = {
     authorizeRunExecution,
     consumeRunCall,
     consumeRunDataCall,
+    consumeRunWriteCall,
     validateRunMetrics,
     recordRunCompletion,
 };

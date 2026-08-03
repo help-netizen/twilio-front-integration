@@ -43,6 +43,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     upsert: { calls: 0, rows: 0 },
                     delete: { calls: 0, rows: 0 },
                 },
+                created_tasks: [],
             }),
         });
         await expect(dryRunner.validateAndDryRun({
@@ -69,6 +70,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 upsert: { calls: 0, rows: 0 },
                 delete: { calls: 0, rows: 0 },
             },
+            created_tasks: [],
             result: { today: '2026-07-31' },
         });
 
@@ -118,6 +120,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     upsert: { calls: 0, rows: 0 },
                     delete: { calls: 0, rows: 0 },
                 },
+                created_tasks: [],
             }),
         });
         await dryRunner.validateAndDryRun({
@@ -156,6 +159,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     upsert: { calls: 0, rows: 0 },
                     delete: { calls: 0, rows: 0 },
                 },
+                created_tasks: [],
             }),
         });
         await dryRunner.validateAndDryRun({

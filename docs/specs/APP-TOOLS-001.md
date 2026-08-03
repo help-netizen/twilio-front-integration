@@ -2,16 +2,16 @@
 
 # APP-TOOLS-001 — App Studio tools (MCP + gateway API)
 
-This reference is generated from the same 5 read-only descriptors used by Albusto App Studio and the service CRM MCP registry.
+This reference is generated from the same 6 descriptors used by Albusto App Studio and the service CRM MCP registry.
 
-Exactly 5 tools are available: `svc.list_jobs`, `svc.get_job`, `svc.list_tasks`, `svc.list_estimates`, `svc.get_estimate`.
+Exactly 6 tools are available: `svc.list_jobs`, `svc.get_job`, `svc.list_tasks`, `svc.create_task`, `svc.list_estimates`, `svc.get_estimate`.
 
 ## Availability and transport
 
 - App code calls `await ctx.callTool(name, args)`. It has no `fetch`, general HTTP API, network access, filesystem, dependencies, or arbitrary egress from the isolate.
 - The internal gateway transport returns `{"ok":true,"data":<tool output>,"request_id":"..."}`. `ctx.callTool` unwraps it and returns only `<tool output>`.
 - MCP `tools/list` exposes the same input and output schemas; a successful MCP call places the documented tool output in `structuredContent`.
-- No write, send, message-delivery, trigger, scheduler, Contact, Call, payment, invoice, or external-egress tool is available to App Studio.
+- The only CRM write tool is `svc.create_task`; no note, send, message-delivery, trigger, scheduler, payment, invoice mutation, or external-egress tool is available to App Studio.
 - Live company, role, provider, Task-content, consent, masking, audit, rate, and run-call controls can narrow every call.
 
 Arguments are JSON objects. Unknown parameters are rejected. Dates use the exact `YYYY-MM-DD` calendar form described by each parameter; timestamps in responses use ISO 8601.
@@ -19,6 +19,8 @@ Arguments are JSON objects. Unknown parameters are rejected. Dates use the exact
 ## `svc.list_jobs`
 
 List visible company Jobs with exact status, text, and inclusive start-date filters. Results are ordered by most recently updated first.
+
+Tool kind: `read`.
 
 Required live permission: `jobs.view`.
 
@@ -137,6 +139,8 @@ export async function run(ctx) {
 
 Get one visible company-owned Job by its Albusto numeric ID.
 
+Tool kind: `read`.
+
 Required live permission: `jobs.view`.
 
 ### Parameters
@@ -225,6 +229,8 @@ export async function run(ctx) {
 ## `svc.list_tasks`
 
 List visible company Tasks with status, parent, due-date, overdue, and text filters. Results are ordered by due date ascending, with undated Tasks last.
+
+Tool kind: `read`.
 
 Required live permission: `tasks.view`.
 
@@ -318,9 +324,73 @@ export async function run(ctx) {
 }
 ```
 
+## `svc.create_task`
+
+Create an unassigned open Task that is visible to people in Albusto. Repeated open Tasks are deduplicated by installation, parent, and description. App runs may make at most 3 write calls.
+
+Tool kind: `write`.
+
+Required live permission: `tasks.create`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `parent_type` | yes | string ("job", "lead", "estimate", "invoice", "contact") | none | Parent entity kind for the new Task: `job`, `lead`, `estimate`, `invoice`, or `contact`. |
+| `parent_id` | yes | integer | none | Positive Albusto parent entity ID. The parent must belong to the installation company. |
+| `description` | yes | string | none | Task text shown to people in Albusto. It must be non-empty and contain at most 500 characters after trimming. |
+| `due_at` | no | string, date-or-date-time | omitted | Optional due date or timestamp. A `YYYY-MM-DD` date means midnight at the start of that company-local calendar date. A timestamp must be ISO 8601 with `Z` or an explicit offset. |
+
+### Response
+
+The open Task identity and whether an existing Task was reused.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `task_id` | integer \| string | Albusto Task ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers. |
+| `status` | string ("open") | Task status. |
+| `deduplicated` | boolean | True only when an existing matching open Task was returned instead of creating another row. |
+
+- The created Task is open, visible to people in Albusto, unassigned, and authored by the installation agent principal.
+
+- If this installation already has an open Task with the same parent and description, no Task is created and `deduplicated` is true.
+
+- Each invocation consumes one of the run's 3 write calls, including a deduplicated invocation.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+| `NOT_FOUND` | The Task parent does not exist or is outside the live company scope. |
+| `WRITE_CALL_LIMIT` | The run used its 3 allowed write calls. |
+| `TASK_DAILY_LIMIT` | The installation created its daily maximum of 100 Tasks. |
+
+### Example
+
+**Create an attention Task for an Estimate**
+
+```js
+export async function run(ctx) {
+    return ctx.callTool('svc.create_task', {
+        parent_type: 'estimate',
+        parent_id: 41,
+        description: 'Review the approved estimate parts before ordering.',
+        due_at: ctx.input.today,
+    });
+}
+```
+
 ## `svc.list_estimates`
 
 List company-owned Estimates with exact status, accepted-date, and text filters. Results are ordered by newest creation time first.
+
+Tool kind: `read`.
 
 Required live permission: `estimates.view`.
 
@@ -401,6 +471,8 @@ export async function run(ctx) {
 ## `svc.get_estimate`
 
 Get one company-owned Estimate with its customer-facing line items and internal parts-to-order list.
+
+Tool kind: `read`.
 
 Required live permission: `estimates.view`.
 

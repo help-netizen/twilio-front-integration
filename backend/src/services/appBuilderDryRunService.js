@@ -152,7 +152,8 @@ function parseResult(payload, status = 200) {
         || Array.isArray(payload.fixtures_summary)
         || !payload.data_ops
         || typeof payload.data_ops !== 'object'
-        || Array.isArray(payload.data_ops)) {
+        || Array.isArray(payload.data_ops)
+        || !Array.isArray(payload.created_tasks)) {
         throw new AppBuilderDryRunError(
             'RUNNER_PROTOCOL_ERROR',
             'App runner returned an invalid dry-run result.',
@@ -164,6 +165,7 @@ function parseResult(payload, status = 200) {
         usage: payload.usage,
         fixtures_summary: payload.fixtures_summary,
         data_ops: payload.data_ops,
+        created_tasks: payload.created_tasks,
         result: payload.result,
     };
 }

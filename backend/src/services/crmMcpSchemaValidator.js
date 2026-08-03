@@ -72,6 +72,14 @@ function validateValue(key, value, schema) {
         throw mcpError('invalid_request', `${key} must be a string`, { field: key });
     }
     if (schema.type === 'string'
+        && schema.minLength !== undefined
+        && value.length < schema.minLength) {
+        throw mcpError('invalid_request', `${key} must contain at least ${schema.minLength} character`, {
+            field: key,
+            min_length: schema.minLength,
+        });
+    }
+    if (schema.type === 'string'
         && schema.maxLength !== undefined
         && value.length > schema.maxLength) {
         throw mcpError('invalid_request', `${key} must contain at most ${schema.maxLength} characters`, {
@@ -89,6 +97,15 @@ function validateValue(key, value, schema) {
         throw mcpError('invalid_request', `${key} must be a valid ISO 8601 timestamp`, {
             field: key,
             format: 'date-time',
+        });
+    }
+    if (schema.type === 'string'
+        && schema.format === 'date-or-date-time'
+        && !isIsoDate(value)
+        && !isIsoDateTime(value)) {
+        throw mcpError('invalid_request', `${key} must be a valid ISO 8601 date or timestamp`, {
+            field: key,
+            format: 'date-or-date-time',
         });
     }
     if (schema.type === 'boolean' && typeof value !== 'boolean') {

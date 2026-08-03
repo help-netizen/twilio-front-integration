@@ -13,6 +13,7 @@ const ALL_TOOLS = [
     'svc.list_jobs',
     'svc.get_job',
     'svc.list_tasks',
+    'svc.create_task',
     'svc.list_estimates',
     'svc.get_estimate',
 ];
@@ -23,6 +24,7 @@ const mockTokenService = {
     authorizeRunExecution: jest.fn(),
     consumeRunCall: jest.fn(),
     consumeRunDataCall: jest.fn(),
+    consumeRunWriteCall: jest.fn(),
     validateRunMetrics: jest.fn(),
     recordRunCompletion: jest.fn(),
 };
@@ -35,6 +37,7 @@ const mockConsumeInstallation = jest.fn();
 const mockDataList = jest.fn();
 const mockDataUpsert = jest.fn();
 const mockDataRemove = jest.fn();
+const mockCreateTask = jest.fn();
 
 jest.mock('../backend/src/services/appRuntimeTokenService', () => ({
     verifyRunToken: mockTokenService.verifyRunToken,
@@ -42,6 +45,7 @@ jest.mock('../backend/src/services/appRuntimeTokenService', () => ({
     authorizeRunExecution: mockTokenService.authorizeRunExecution,
     consumeRunCall: mockTokenService.consumeRunCall,
     consumeRunDataCall: mockTokenService.consumeRunDataCall,
+    consumeRunWriteCall: mockTokenService.consumeRunWriteCall,
     validateRunMetrics: mockTokenService.validateRunMetrics,
     recordRunCompletion: mockTokenService.recordRunCompletion,
     parseConsent: (metadata) => {
@@ -58,6 +62,9 @@ jest.mock('../backend/src/services/appDataService', () => ({
 }));
 jest.mock('../backend/src/services/chatgptMcpReadService', () => ({
     execute: mockReadExecute,
+}));
+jest.mock('../backend/src/services/appRuntimeTaskService', () => ({
+    createTask: mockCreateTask,
 }));
 jest.mock('../backend/src/services/authorizationService', () => ({
     resolveCompanyUserAuthz: mockResolveCompanyUserAuthz,
@@ -79,6 +86,7 @@ jest.mock('../backend/src/services/pulseMaskingService', () => {
 });
 
 const catalog = require('../backend/src/services/appRuntimeToolCatalog');
+const registry = require('../backend/src/services/agentSkillsMcpRegistry');
 const { AppRuntimeError } = require('../backend/src/services/appRuntimeErrors');
 const gatewayRouter = require('../backend/src/routes/appRuntimeGateway');
 const actualTokenService = jest.requireActual('../backend/src/services/appRuntimeTokenService');
@@ -100,6 +108,7 @@ function context(overrides = {}) {
         company_timezone: 'America/New_York',
         gateway_calls_used: 0,
         data_calls_made: 0,
+        write_calls_made: 0,
         allowed_tools: [...ALL_TOOLS],
         installation_metadata: {
             app_runtime: {
@@ -133,6 +142,7 @@ beforeEach(() => {
     mockTokenService.resolveRunContext.mockResolvedValue(context());
     mockTokenService.consumeRunCall.mockResolvedValue(1);
     mockTokenService.consumeRunDataCall.mockResolvedValue(1);
+    mockTokenService.consumeRunWriteCall.mockResolvedValue(1);
     mockTokenService.authorizeRunExecution.mockResolvedValue({
         execution_authorized_at: new Date().toISOString(), runs_started: 1, wall_ms_used: 0,
     });
@@ -141,7 +151,7 @@ beforeEach(() => {
     mockResolveCompanyUserAuthz.mockResolvedValue({
         role_key: 'manager',
         membership: { id: 'member-a', role_key: 'manager', status: 'active' },
-        permissions: ['jobs.view', 'tasks.view', 'estimates.view'],
+        permissions: ['jobs.view', 'tasks.view', 'tasks.create', 'estimates.view'],
         scopes: { job_visibility: 'all' },
     });
     mockConsumeInstallation.mockReturnValue({ allowed: true, retryAfterSeconds: 1 });
@@ -161,28 +171,93 @@ beforeEach(() => {
     mockDataList.mockResolvedValue({ rows: [], pagination: { limit: 100, offset: 0, total: 0 } });
     mockDataUpsert.mockResolvedValue({ upserted: 1 });
     mockDataRemove.mockResolvedValue({ deleted: 1 });
+    mockCreateTask.mockResolvedValue({ task_id: 41, status: 'open' });
 });
 
 describe('APP-GW-001 catalog, validation, authorization, masking, and audit', () => {
-    test('SAB exact five read tools only: catalog equality, permissions, and strict descriptor shape', () => {
+    test('SAB exact catalog: the sole write is explicitly allowlisted and every descriptor is strict', () => {
         const tools = catalog.listTools();
         expect(tools.map((tool) => tool.name)).toEqual(ALL_TOOLS);
         expect(tools.map((tool) => tool.handler)).toEqual([
             'listJobs',
             'getJob',
             'listTasks',
+            'createTask',
             'listEstimates',
             'getEstimate',
         ]);
         expect(catalog.BUSINESS_PERMISSIONS).toMatchObject({
+            'svc.create_task': 'tasks.create',
             'svc.list_estimates': 'estimates.view',
             'svc.get_estimate': 'estimates.view',
         });
         for (const tool of tools) {
-            expect(tool.kind).toBe('read');
+            expect(tool.kind).toBe(catalog.WRITE_TOOLS.includes(tool.name) ? 'write' : 'read');
             expect(tool.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
             expect(JSON.stringify(tool.inputSchema)).not.toMatch(/url|uri|href/i);
         }
+    });
+
+    test('a write descriptor outside WRITE_TOOLS fails closed as APP_RUNTIME_CATALOG_DRIFT', () => {
+        const originalGetTool = registry.getTool;
+        const original = originalGetTool('svc.list_jobs');
+        registry.getTool = name => name === 'svc.list_jobs'
+            ? { ...original, kind: 'write' }
+            : originalGetTool(name);
+        try {
+            expect(() => catalog.projectDescriptor('svc.list_jobs'))
+                .toThrow('APP_RUNTIME_CATALOG_DRIFT: svc.list_jobs');
+        } finally {
+            registry.getTool = originalGetTool;
+        }
+    });
+
+    test('svc.create_task uses the shared call path, separate write meter, consent, and tasks.create RBAC', async () => {
+        const body = {
+            parent_type: 'job',
+            parent_id: 11,
+            description: 'Review the app finding.',
+            due_at: '2026-08-03',
+        };
+        const response = await call(buildApp(), 'svc.create_task', body);
+        expect(response.status).toBe(200);
+        expect(response.body.data).toEqual({ task_id: 41, status: 'open' });
+        expect(mockTokenService.consumeRunCall).toHaveBeenCalledTimes(1);
+        expect(mockTokenService.consumeRunWriteCall).toHaveBeenCalledTimes(1);
+        expect(mockCreateTask).toHaveBeenCalledWith(context(), body);
+
+        mockTokenService.resolveRunContext.mockResolvedValue(context({
+            installation_metadata: {
+                app_runtime: { version_id: VERSION_ID, consented_tools: ['svc.list_jobs'] },
+            },
+        }));
+        expect((await call(buildApp(), 'svc.create_task', body)).body.code)
+            .toBe('TOOL_NOT_CONSENTED');
+
+        mockTokenService.resolveRunContext.mockResolvedValue(context());
+        mockResolveCompanyUserAuthz.mockResolvedValue({
+            role_key: 'custom',
+            membership: { id: 'member-a' },
+            permissions: ['tasks.view'],
+            scopes: {},
+        });
+        expect((await call(buildApp(), 'svc.create_task', body)).body.code)
+            .toBe('ACCESS_DENIED');
+    });
+
+    test('the fourth write call is refused with its precise English reason and does not dispatch', async () => {
+        mockTokenService.consumeRunWriteCall.mockRejectedValueOnce(
+            new AppRuntimeError('WRITE_CALL_LIMIT', 'Write call limit of 3 reached.', 429)
+        );
+        const response = await call(buildApp(), 'svc.create_task', {
+            parent_type: 'job', parent_id: 11, description: 'Review this.',
+        });
+        expect(response.status).toBe(429);
+        expect(response.body).toMatchObject({
+            code: 'WRITE_CALL_LIMIT',
+            message: 'Write call limit of 3 reached.',
+        });
+        expect(mockCreateTask).not.toHaveBeenCalled();
     });
 
     test.each([
@@ -288,7 +363,7 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(mockTokenService.consumeRunCall).not.toHaveBeenCalled();
     });
 
-    test('SAB exact five read tools only: registered and URL-like out-of-scope names never dispatch', async () => {
+    test('registered non-runtime writes and URL-like names never dispatch', async () => {
         const app = buildApp();
         for (const name of ['svc.list_calls', 'svc.create_job', 'svc.fetch_url']) {
             const response = await call(app, name, {});
@@ -309,6 +384,8 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
             ['svc.list_estimates', { status: 'accepted' }],
             ['svc.list_estimates', { accepted_from: '2026-02-30' }],
             ['svc.get_estimate', { estimate_id: '31' }],
+            ['svc.create_task', { parent_type: 'job', parent_id: 11, description: '' }],
+            ['svc.create_task', { parent_type: 'job', parent_id: 11, description: 'x', due_at: '2026-02-30' }],
             ['svc.list_jobs', { callback_url: 'https://evil.test' }],
         ];
         for (const [name, body] of cases) {

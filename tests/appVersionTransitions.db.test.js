@@ -362,6 +362,11 @@ describe('APP-MOD-001 migration and transition matrix', () => {
             });
 
             const rejected = await insertDraft(client, appA, actorA);
+            await client.query(
+                `INSERT INTO app_version_tools (version_id, tool_name)
+                 VALUES ($1, 'svc.create_task')`,
+                [rejected.id]
+            );
             await advanceTo(service, rejected, 'rejected', contextA);
             const fork = await service.forkRejectedVersion({
                 ...contextA,
@@ -374,7 +379,10 @@ describe('APP-MOD-001 migration and transition matrix', () => {
                 `SELECT tool_name FROM app_version_tools WHERE version_id = $1 ORDER BY tool_name`,
                 [fork.id]
             );
-            expect(forkTools.rows.map(row => row.tool_name)).toEqual(['svc.list_jobs']);
+            expect(forkTools.rows.map(row => row.tool_name)).toEqual([
+                'svc.create_task',
+                'svc.list_jobs',
+            ]);
 
             const statuses = ['draft', 'submitted', 'in_review', 'approved', 'rejected', 'published', 'revoked'];
             const allowedSet = new Set(allowed.map(edge => edge.join('->')));
@@ -547,6 +555,10 @@ describe('APP-MOD-001 migration and transition matrix', () => {
             });
             expect(rejectedReview.version.source_code).toBe(rejected.source);
             expect(rejectedReview.version.sandbox_run).toMatchObject({ ok: true });
+            expect(rejectedReview.version.tools).toEqual([
+                { name: 'svc.create_task', kind: 'write' },
+                { name: 'svc.list_jobs', kind: 'read' },
+            ]);
             expect(rejectedReview.chats.flatMap(chat => chat.messages).some(message => (
                 message.text.includes('The artifact needs a safer implementation.')
             ))).toBe(true);
