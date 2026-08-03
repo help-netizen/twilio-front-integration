@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const estimatesService = require('../services/estimatesService');
 const aiEstimateService = require('../services/aiEstimateService');
+const aiGenerationLogService = require('../services/aiGenerationLogService');
 const reportPolishService = require('../services/reportPolishService');
 const marketplaceService = require('../services/marketplaceService');
 const { requirePermission } = require('../middleware/authorization');
@@ -101,12 +102,23 @@ router.post('/ai-draft', requirePermission('estimates.create'), async (req, res)
             });
         }
         const permissions = req.authz?.permissions || [];
+        const startedAt = Date.now();
         const result = await aiEstimateService.generateDraft({
             companyId,
             actorId: req.user?.crmUser?.id || null,
             reportText: req.body?.report_text,
             jobId: req.body?.job_id,
             canManagePriceBook: !!req.user?._devMode || permissions.includes('price_book.manage'),
+        });
+        // AI-GEN-LOG-001: fire-and-forget — logging must never delay or break the draft.
+        void aiGenerationLogService.record({
+            companyId,
+            crmUserId: req.user?.crmUser?.id || null,
+            jobId: req.body?.job_id,
+            reportText: req.body?.report_text,
+            result,
+            model: process.env.AI_ESTIMATE_GEMINI_MODEL || 'gemini-2.5-flash',
+            durationMs: Date.now() - startedAt,
         });
         res.json(result);
     } catch (err) {
@@ -170,6 +182,27 @@ router.post('/polish-report', async (req, res) => {
 });
 
 // GET /api/estimates/:id — Get estimate by ID
+// AI-GEN-LOG-001: the accumulated generation log as one Markdown document.
+// Literal route — must stay above /:id.
+router.get('/ai-generation-log.md', requirePermission('estimates.view'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: { code: 'FORBIDDEN', message: 'Company context is required' },
+            });
+        }
+        const markdown = await aiGenerationLogService.renderMarkdown(companyId);
+        res.set('Content-Type', 'text/markdown; charset=utf-8');
+        res.set('Content-Disposition', 'inline; filename="ai-generation-log.md"');
+        res.send(markdown);
+    } catch (err) {
+        console.error('[Estimates] GET /ai-generation-log.md error:', err.message);
+        res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to render the log' } });
+    }
+});
+
 router.get('/:id', requirePermission('estimates.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
