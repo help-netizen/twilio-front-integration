@@ -93,14 +93,18 @@ async function listEstimates(companyId, filters = {}) {
 
     const { rows } = await db.query(
         `SELECT e.*,
-                c.full_name AS contact_name,
+                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS contact_name,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
+                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone,
                 j.job_number AS job_number,
                 inv.id AS invoice_id,
                 inv.invoice_number AS invoice_number,
                 COUNT(*) OVER() AS _total
          FROM estimates e
-         LEFT JOIN contacts c ON c.id = e.contact_id AND c.company_id = e.company_id
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
+         LEFT JOIN contacts c
+           ON c.id = COALESCE(j.contact_id, e.contact_id)
+          AND c.company_id = e.company_id
          LEFT JOIN LATERAL (
             SELECT id, invoice_number
             FROM invoices
@@ -124,9 +128,9 @@ async function getEstimateById(companyId, id, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
         `SELECT e.*,
-                c.full_name AS contact_name,
-                c.email AS contact_email,
-                c.phone_e164 AS contact_phone,
+                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS contact_name,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
+                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone,
                 j.job_number AS job_number,
                 j.address AS service_address,
                 COALESCE(
@@ -146,10 +150,10 @@ async function getEstimateById(companyId, id, client = null) {
                 inv.id AS invoice_id,
                 inv.invoice_number AS invoice_number
          FROM estimates e
-         LEFT JOIN contacts c
-           ON c.id = e.contact_id
-          AND c.company_id = e.company_id
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
+         LEFT JOIN contacts c
+           ON c.id = COALESCE(j.contact_id, e.contact_id)
+          AND c.company_id = e.company_id
          LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
          LEFT JOIN LATERAL (
             SELECT street_line1, street_line2, city, state, postal_code, country
@@ -656,15 +660,17 @@ async function getEstimateByPublicToken(publicToken, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
         `SELECT e.*,
-                c.full_name AS contact_name,
-                c.email AS contact_email,
-                c.phone_e164 AS contact_phone,
+                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS contact_name,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
+                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone,
                 j.job_number AS job_number,
                 l.serial_id AS lead_serial_id,
                 co.name AS company_name
          FROM estimates e
-         LEFT JOIN contacts c ON c.id = e.contact_id
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
+         LEFT JOIN contacts c
+           ON c.id = COALESCE(j.contact_id, e.contact_id)
+          AND c.company_id = e.company_id
          LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
          LEFT JOIN companies co ON co.id = e.company_id
          WHERE e.public_token = $1

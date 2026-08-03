@@ -212,7 +212,7 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
                 stripe_session.stripe_charge_id,
                 COALESCE(stripe_session.stripe_account_id, stripe_account.stripe_account_id)
                     AS stripe_account_id,
-                COALESCE(t.contact_id, stripe_session.contact_id, i.contact_id, j.contact_id)
+                COALESCE(j.contact_id, t.contact_id, stripe_session.contact_id, i.contact_id)
                     AS receipt_contact_id,
                 c.email AS receipt_contact_email,
                 COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, ''))
@@ -263,7 +263,7 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
              LIMIT 1
          ) job_invoice ON TRUE
          LEFT JOIN contacts c
-           ON c.id = COALESCE(t.contact_id, stripe_session.contact_id, i.contact_id, j.contact_id)
+           ON c.id = COALESCE(j.contact_id, t.contact_id, stripe_session.contact_id, i.contact_id)
           AND c.company_id = t.company_id
          JOIN companies company
            ON company.id = t.company_id

@@ -584,8 +584,8 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                     open={showInvoiceSend}
                     onOpenChange={setShowInvoiceSend}
                     invoiceId={selectedInvoice.id}
-                    contactEmail={selectedInvoice.contact_email || ''}
-                    contactPhone={selectedInvoice.contact_phone || ''}
+                    contactEmail={selectedInvoice.contact_email || contactEmail || ''}
+                    contactPhone={selectedInvoice.contact_phone || contactPhone || ''}
                     contactName={selectedInvoice.contact_name || ''}
                     invoiceNumber={selectedInvoice.invoice_number}
                     balanceDue={selectedInvoice.balance_due}
@@ -623,6 +623,7 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                 onOpenChange={setShowRecord}
                 jobId={jobId}
                 outstanding={totalDue}
+                contactEmail={contactEmail}
                 onSuccess={() => refresh()}
             />
 

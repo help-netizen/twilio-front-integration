@@ -40,6 +40,10 @@ test('authenticated invoice detail ignores a stale stored balance and remains co
     expect(invoice.balance_due).toBe('70.00');
     const [sql, params] = db.query.mock.calls[0];
     expect(sql).toContain('WHERE i.id = $1 AND i.company_id = $2');
+    expect(sql).toContain("COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email");
+    expect(sql).toContain("COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone");
+    expect(sql).toContain('ON c.id = COALESCE(j.contact_id, i.contact_id)');
+    expect(sql).toContain('AND c.company_id = i.company_id');
     expect(params).toEqual([1528, COMPANY_A]);
 });
 
@@ -64,6 +68,7 @@ test('invoice list surfaces normalize every row without changing the tenant filt
     const [sql, params] = db.query.mock.calls[0];
     expect(sql).toContain('i.company_id = $1');
     expect(params[0]).toBe(COMPANY_A);
+    expect(sql).toContain('ON c.id = COALESCE(j.contact_id, i.contact_id)');
     expect(sql).toContain('c.company_id = i.company_id');
 });
 

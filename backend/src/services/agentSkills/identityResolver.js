@@ -207,7 +207,10 @@ async function contactsFromJobsByPhone(companyId, last10) {
          JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
          WHERE j.company_id = $2
            AND j.contact_id IS NOT NULL
-           AND RIGHT(REGEXP_REPLACE(COALESCE(j.customer_phone, ''), '[^0-9]', '', 'g'), 10) = $1`,
+           AND RIGHT(REGEXP_REPLACE(
+               COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, ''), ''),
+               '[^0-9]', '', 'g'
+           ), 10) = $1`,
         [last10, companyId],
     );
     return rows.map((r) => ({

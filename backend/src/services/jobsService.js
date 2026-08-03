@@ -751,7 +751,9 @@ async function getJobById(id, companyId = null, providerScope = null) {
     }
     const { rows } = await db.query(
         `SELECT j.*, l.serial_id AS lead_serial_id,
-                COALESCE(c.full_name, j.customer_name) AS customer_name
+                COALESCE(c.full_name, j.customer_name) AS customer_name,
+                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email
          FROM jobs j
          LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
          LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
@@ -768,7 +770,12 @@ async function getJobById(id, companyId = null, providerScope = null) {
 
 async function getJobByZbId(zbJobId, companyId) {
     const { rows } = await db.query(
-        'SELECT * FROM jobs WHERE zenbooker_job_id = $1 AND company_id = $2',
+        `SELECT j.*,
+                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email
+         FROM jobs j
+         LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
+         WHERE j.zenbooker_job_id = $1 AND j.company_id = $2`,
         [zbJobId, companyId]
     );
     if (rows.length === 0) return null;
@@ -778,8 +785,8 @@ async function getJobByZbId(zbJobId, companyId) {
 const JOB_LIST_SORTS = Object.freeze({
     job_number: { expression: `LOWER(COALESCE(j.job_number, '')) COLLATE "C"`, type: 'text' },
     customer_name: { expression: `LOWER(COALESCE(c.full_name, j.customer_name, '')) COLLATE "C"`, type: 'text' },
-    customer_phone: { expression: `LOWER(COALESCE(j.customer_phone, '')) COLLATE "C"`, type: 'text' },
-    customer_email: { expression: `LOWER(COALESCE(j.customer_email, '')) COLLATE "C"`, type: 'text' },
+    customer_phone: { expression: `LOWER(COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, ''), '')) COLLATE "C"`, type: 'text' },
+    customer_email: { expression: `LOWER(COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, ''), '')) COLLATE "C"`, type: 'text' },
     service_name: { expression: `LOWER(COALESCE(j.service_name, '')) COLLATE "C"`, type: 'text' },
     start_date: { expression: 'j.start_date', type: 'timestamp', nullable: true },
     end_date: { expression: 'j.end_date', type: 'timestamp', nullable: true },
@@ -928,7 +935,8 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
             `j.job_number ILIKE $${idx}`,
             `j.service_name ILIKE $${idx}`,
             `COALESCE(c.full_name, j.customer_name) ILIKE $${idx}`,
-            `j.customer_phone ILIKE $${idx}`,
+            `COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) ILIKE $${idx}`,
+            `COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) ILIKE $${idx}`,
             `j.address ILIKE $${idx}`,
             `EXISTS (
                 SELECT 1 FROM job_tag_assignments jta2
@@ -1079,6 +1087,8 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
 
     const { rows: probedRows } = await db.query(`
         SELECT j.*, COALESCE(c.full_name, j.customer_name) AS customer_name,
+               COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
+               COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email,
                ${cursorProjections.join(', ')}
         FROM jobs j
         LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id

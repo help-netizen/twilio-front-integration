@@ -39,7 +39,11 @@ describe('jobsService.getJobById', () => {
 
         const job = await jobsService.getJobById(705, 'company-uuid-001');
 
-        expect(db.query.mock.calls[0][0]).toContain('WHERE j.id = $1 AND j.company_id = $2');
+        const sql = db.query.mock.calls[0][0];
+        expect(sql).toContain('WHERE j.id = $1 AND j.company_id = $2');
+        expect(sql).toContain("COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone");
+        expect(sql).toContain("COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email");
+        expect(sql).toContain('LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id');
         expect(job).toMatchObject({ id: 705, lead_serial_id: 53, job_number: '971346' });
     });
 });

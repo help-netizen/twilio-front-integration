@@ -155,6 +155,19 @@ describe('Jobs fail-closed tenant and route contract', () => {
 });
 
 describe('Jobs complete predicates, security, and facets', () => {
+    test.each([
+        ['customer_email', "LOWER(COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, ''), ''))"],
+        ['customer_phone', "LOWER(COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, ''), ''))"],
+    ])('list projection and %s sort use the live contact with the job snapshot fallback', async (sortBy, sortExpression) => {
+        await jobsService.listJobs({ companyId: COMPANY, sortBy });
+
+        const dataSql = db.query.mock.calls[1][0];
+        expect(dataSql).toContain("COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone");
+        expect(dataSql).toContain("COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email");
+        expect(dataSql).toContain(sortExpression);
+        expect(dataSql).toContain('LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id');
+    });
+
     test('SAB-JOBS-CUSTOM-FIELD-TENANT: search uses one correlated, company-scoped custom-field predicate', async () => {
         await jobsService.listJobs({ companyId: COMPANY, search: 'secret-value' });
 

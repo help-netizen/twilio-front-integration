@@ -19,6 +19,7 @@ interface Props {
     onOpenChange: (open: boolean) => void;
     jobId: number | string;
     outstanding: number;
+    contactEmail?: string | null;
     onSuccess?: () => void;
 }
 
@@ -32,7 +33,7 @@ function todayLocal(): string {
     return `${year}-${month}-${day}`;
 }
 
-export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding, onSuccess }: Props) {
+export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding, contactEmail, onSuccess }: Props) {
     const [amount, setAmount] = useState('');
     const [paymentMethod, setPaymentMethod] = useState<OfflinePaymentMethod>('cash');
     const [referenceNumber, setReferenceNumber] = useState('');
@@ -59,9 +60,9 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
         setMemo('');
         setSubmitting(false);
         setRecorded(null);
-        setReceiptEmail('');
+        setReceiptEmail((contactEmail || '').trim());
         setReceiptPhase('idle');
-    }, [open, outstanding]);
+    }, [open, outstanding, contactEmail]);
 
     // RECORD-PAY-RECEIPT-001: success screen with Send receipt, mirroring the
     // card-payment success view — cash/check payers get a receipt too.

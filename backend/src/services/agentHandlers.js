@@ -119,9 +119,14 @@ const HANDLERS = {
         const jobId = input.job_id;
         if (!jobId) throw new Error('zb_job_sync requires input.job_id');
         const { rows } = await db.query(
-            `SELECT id, zenbooker_job_id, service_name, address,
-                    customer_name, customer_phone, customer_email, start_date, end_date
-             FROM jobs WHERE id = $1 AND company_id = $2`,
+            `SELECT j.id, j.zenbooker_job_id, j.service_name, j.address,
+                    j.customer_name,
+                    COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
+                    COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email,
+                    j.start_date, j.end_date
+             FROM jobs j
+             LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
+             WHERE j.id = $1 AND j.company_id = $2`,
             [jobId, task.company_id]
         );
         const job = rows[0];

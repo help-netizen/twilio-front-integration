@@ -43,6 +43,8 @@ const SYNC_CHANGED_AT = 'GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated
 const JOB_SELECT = `
     SELECT j.*, l.serial_id AS lead_serial_id,
            COALESCE(c.full_name, j.customer_name) AS customer_name,
+           COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
+           COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email,
            ${SYNC_CHANGED_AT} AS sync_changed_at
     FROM jobs j
     LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
