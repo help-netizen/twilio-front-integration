@@ -48,11 +48,14 @@ async function call(path: string, init?: RequestInit): Promise<{ run?: AppRun; r
     return payload as { run?: AppRun; runs?: AppRun[] };
 }
 
-export async function runApp(installationId: number): Promise<AppRun> {
+export async function runApp(
+    installationId: number,
+    action?: { id: string; row_key: string }
+): Promise<AppRun> {
     const payload = await call(`/installations/${installationId}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify(action ? { action } : {}),
     });
     return payload.run as AppRun;
 }

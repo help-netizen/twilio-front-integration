@@ -33,6 +33,7 @@ export interface AppViewPanelProps {
     history: AppRunSummary[];
     onRun: () => void;
     onSelectRun: (runId: string) => void;
+    onAction?: (actionId: string, rowKey: string) => void;
     /** Phase B: the schedule editor, and the banner offering a newer approved version. */
     schedule?: React.ReactNode;
     updateBanner?: React.ReactNode;
@@ -97,7 +98,7 @@ type PanelView = 'result' | 'history' | 'schedule';
 
 export function AppViewPanel({
     open, onOpenChange, appName, tools, document, lastRunAt, lastWallMs,
-    running, error, history, onRun, onSelectRun, schedule, updateBanner,
+    running, error, history, onRun, onSelectRun, onAction, schedule, updateBanner,
 }: AppViewPanelProps) {
     const [view, setView] = useState<PanelView>('result');
     const showHistory = view === 'history';
@@ -143,7 +144,7 @@ export function AppViewPanel({
                                     </div>
                                 )
                                 : document
-                                    ? <AppViewDocument document={document} />
+                                    ? <AppViewDocument document={document} onAction={onAction} actionBusy={running} />
                                     : (
                                         <p className="py-10 text-center text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
                                             Run this app to see its result.

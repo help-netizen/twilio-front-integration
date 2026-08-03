@@ -71,4 +71,43 @@ describe('APP-VIEW-001 view document renderer', () => {
     it('says so when an app returns no blocks', () => {
         expect(render({ view_version: 1, blocks: [] })).toContain('returned nothing to show');
     });
+
+    it('renders declared row actions and reports the clicked row key', () => {
+        // The button does nothing itself — it asks for another run of the app.
+        const clicks: [string, string][] = [];
+        const markup = renderToStaticMarkup(
+            <MemoryRouter>
+                <AppViewDocument
+                    onAction={(id, key) => clicks.push([id, key])}
+                    document={{
+                        view_version: 1,
+                        blocks: [{
+                            type: 'table',
+                            key: 'part',
+                            row_actions: [{ id: 'mark_ordered', label: 'Mark ordered' }],
+                            columns: [{ key: 'part', label: 'Part', type: 'text', align: 'left' }],
+                            rows: [{ part: 'WD19X25700' }],
+                        }],
+                    }}
+                />
+            </MemoryRouter>
+        );
+        expect(markup).toContain('Mark ordered');
+
+        const withoutHandler = renderToStaticMarkup(
+            <MemoryRouter>
+                <AppViewDocument document={{
+                    view_version: 1,
+                    blocks: [{
+                        type: 'table',
+                        key: 'part',
+                        row_actions: [{ id: 'mark_ordered', label: 'Mark ordered' }],
+                        columns: [{ key: 'part', label: 'Part', type: 'text', align: 'left' }],
+                        rows: [{ part: 'WD19X25700' }],
+                    }],
+                }} />
+            </MemoryRouter>
+        );
+        expect(withoutHandler).not.toContain('Mark ordered');
+    });
 });

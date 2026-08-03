@@ -91,7 +91,7 @@ export function AppViewContainer({ installationId, appName, tools = [], open, on
     });
 
     const run = useMutation({
-        mutationFn: () => runApp(installationId),
+        mutationFn: (action?: { id: string; row_key: string }) => runApp(installationId, action),
         onMutate: () => setError(null),
         onSuccess: () => {
             setSelectedRunId(null);
@@ -131,7 +131,8 @@ export function AppViewContainer({ installationId, appName, tools = [], open, on
                 ...entry,
                 headline: shown && entry.id === shown.run_id ? headline(shown) : null,
             }))}
-            onRun={() => run.mutate()}
+            onRun={() => run.mutate(undefined)}
+            onAction={(actionId, rowKey) => run.mutate({ id: actionId, row_key: rowKey })}
             onSelectRun={setSelectedRunId}
             schedule={schedule.data && (
                 <AppScheduleEditor

@@ -12,6 +12,10 @@ import { useNavigate } from 'react-router-dom';
 
 export type EntityRef = { entity: 'job' | 'lead' | 'contact' | 'invoice' | 'estimate'; id: number | string; label?: string };
 export type BadgeValue = { label: string; tone?: Tone };
+/** A declared click (APP-DATA-001 phase E): pressing it runs the app again
+ *  with input.action = {id, row_key} — the renderer never mutates anything. */
+export type RowAction = { id: string; label?: string; tone?: Tone };
+export type ActionHandler = (actionId: string, rowKey: string) => void;
 
 /** A cell is read according to its column's declared type, so the shapes stay flat. */
 export type ViewValue = string | number | null | BadgeValue | EntityRef;
@@ -25,7 +29,7 @@ export type Tone =
 export type ViewBlock =
     | { type: 'stat_row'; items: { label: string; value: string; tone?: Tone; trend?: string }[] }
     | { type: 'chart'; chart_type: 'bar' | 'line'; series: { label: string; value: number }[]; format?: 'number' | 'currency' }
-    | { type: 'table'; title?: string; columns: { key: string; label: string; type: ValueType; align: 'left' | 'right' }[]; rows: Record<string, ViewValue>[] }
+    | { type: 'table'; title?: string; columns: { key: string; label: string; type: ValueType; align: 'left' | 'right' }[]; rows: Record<string, ViewValue>[]; key?: string; row_actions?: RowAction[] }
     | { type: 'list'; title?: string; items: { title: string; subtitle?: string; badge?: BadgeValue | string; ref?: EntityRef }[] }
     | { type: 'text'; text: string }
     | { type: 'empty'; text: string };
@@ -157,8 +161,13 @@ function Chart({ block }: { block: Extract<ViewBlock, { type: 'chart' }> }) {
     );
 }
 
-function Table({ block }: { block: Extract<ViewBlock, { type: 'table' }> }) {
+function Table({ block, onAction, actionBusy }: {
+    block: Extract<ViewBlock, { type: 'table' }>;
+    onAction?: ActionHandler;
+    actionBusy?: boolean;
+}) {
     const columns = block.columns.slice(0, 20);
+    const rowActions = (onAction && block.key && block.row_actions?.length) ? block.row_actions : null;
     return (
         <div className="overflow-x-auto">
             <table className="w-full border-collapse text-[13.5px]">
@@ -172,6 +181,7 @@ function Table({ block }: { block: Extract<ViewBlock, { type: 'table' }> }) {
                                 {column.label}
                             </th>
                         ))}
+                        {rowActions && <th aria-label="Actions" />}
                     </tr>
                 </thead>
                 <tbody>
@@ -186,6 +196,31 @@ function Table({ block }: { block: Extract<ViewBlock, { type: 'table' }> }) {
                                     <Cell value={row[column.key]} type={column.type} />
                                 </td>
                             ))}
+                            {rowActions && (
+                                <td
+                                    className="py-2 pl-2 text-right align-top"
+                                    style={rowIndex > 0 ? { borderTop: '1px solid var(--blanc-line)' } : undefined}
+                                >
+                                    {(() => {
+                                        const rowKey = row[block.key as string];
+                                        if (typeof rowKey !== 'string' && typeof rowKey !== 'number') return null;
+                                        return rowActions.map(action => (
+                                            <button
+                                                key={action.id}
+                                                type="button"
+                                                disabled={actionBusy}
+                                                onClick={() => onAction?.(action.id, String(rowKey))}
+                                                className="ml-1.5 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold disabled:opacity-50"
+                                                style={action.tone === 'danger' || action.tone === 'critical' || action.tone === 'negative'
+                                                    ? { background: 'rgba(240, 80, 63, 0.12)', color: 'var(--blanc-danger)' }
+                                                    : { background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
+                                            >
+                                                {action.label || action.id.replace(/_/g, ' ')}
+                                            </button>
+                                        ));
+                                    })()}
+                                </td>
+                            )}
                         </tr>
                     ))}
                 </tbody>
@@ -225,12 +260,12 @@ function List({ block }: { block: Extract<ViewBlock, { type: 'list' }> }) {
     );
 }
 
-function Block({ block }: { block: ViewBlock }) {
+function Block({ block, onAction, actionBusy }: { block: ViewBlock; onAction?: ActionHandler; actionBusy?: boolean }) {
     const title = 'title' in block && block.title ? block.title : null;
     let body: React.ReactNode = null;
     if (block.type === 'stat_row') body = <StatRow block={block} />;
     else if (block.type === 'chart') body = <Chart block={block} />;
-    else if (block.type === 'table') body = <Table block={block} />;
+    else if (block.type === 'table') body = <Table block={block} onAction={onAction} actionBusy={actionBusy} />;
     else if (block.type === 'list') body = <List block={block} />;
     else if (block.type === 'text') {
         body = <p className="text-sm leading-6" style={{ color: 'var(--blanc-ink-2)' }}>{block.text}</p>;
@@ -253,7 +288,11 @@ function Block({ block }: { block: ViewBlock }) {
     );
 }
 
-export function AppViewDocument({ document }: { document: ViewDocument }) {
+export function AppViewDocument({ document, onAction, actionBusy }: {
+    document: ViewDocument;
+    onAction?: ActionHandler;
+    actionBusy?: boolean;
+}) {
     if (!document?.blocks?.length) {
         return (
             <div className="rounded-2xl px-4 py-6 text-center text-sm" style={{ background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-2)' }}>
@@ -263,7 +302,7 @@ export function AppViewDocument({ document }: { document: ViewDocument }) {
     }
     return (
         <div className="space-y-6">
-            {document.blocks.slice(0, 64).map((block, index) => <Block key={index} block={block} />)}
+            {document.blocks.slice(0, 64).map((block, index) => <Block key={index} block={block} onAction={onAction} actionBusy={actionBusy} />)}
         </div>
     );
 }
