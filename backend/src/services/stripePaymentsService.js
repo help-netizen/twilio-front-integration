@@ -1399,7 +1399,22 @@ async function sendManualCardReceipt(
 
 async function getConnectionToken(companyId) {
     const account = await assertCollectable(companyId);
-    const locations = await q.listTerminalLocations(companyId);
+    let locations = await q.listTerminalLocations(companyId);
+    // TAP2PAY-001: connecting the on-device reader REQUIRES a Terminal Location.
+    // First use auto-provisions one on the connected account so the mobile
+    // client never has to orchestrate location setup itself.
+    if (locations.length === 0) {
+        const created = await provider.createTerminalLocation(account.stripe_account_id, {
+            displayName: 'Primary location',
+        });
+        await q.insertTerminalLocation(companyId, {
+            stripeAccountId: account.stripe_account_id,
+            stripeLocationId: created.id,
+            displayName: created.display_name || 'Primary location',
+            address: created.address || {},
+        });
+        locations = await q.listTerminalLocations(companyId);
+    }
     const token = await provider.createConnectionToken(account.stripe_account_id, { locationId: locations[0]?.stripe_location_id });
     return { secret: token.secret, location_id: locations[0]?.stripe_location_id || null };
 }
