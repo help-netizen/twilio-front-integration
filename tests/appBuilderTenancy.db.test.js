@@ -38,11 +38,11 @@ const VIEW_SCHEMA = fs.readFileSync(
     'utf8'
 );
 const SCHEDULE_SCHEMA = fs.readFileSync(
-    path.join(MIGRATIONS, '229_app_view_phase_b.sql'),
+    path.join(MIGRATIONS, '234_app_view_phase_b.sql'),
     'utf8'
 );
 const DATA_SCHEMA = fs.readFileSync(
-    path.join(MIGRATIONS, '230_app_data_phase_d.sql'),
+    path.join(MIGRATIONS, '235_app_data_phase_d.sql'),
     'utf8'
 );
 

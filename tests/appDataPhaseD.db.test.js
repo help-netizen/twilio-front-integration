@@ -9,9 +9,9 @@ const db = require('../backend/src/db/connection');
 const { createAppDataService } = require('../backend/src/services/appDataService');
 
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
-const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '230_app_data_phase_d.sql'), 'utf8');
+const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '235_app_data_phase_d.sql'), 'utf8');
 const DATA_ROLLBACK = fs.readFileSync(
-    path.join(MIGRATIONS, 'rollback_230_app_data_phase_d.sql'),
+    path.join(MIGRATIONS, 'rollback_235_app_data_phase_d.sql'),
     'utf8'
 );
 

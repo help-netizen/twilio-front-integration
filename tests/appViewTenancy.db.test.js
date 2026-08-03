@@ -21,7 +21,7 @@ const VIEW_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_228_app_view_phase_a.sql'),
     'utf8'
 );
-const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '230_app_data_phase_d.sql'), 'utf8');
+const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '235_app_data_phase_d.sql'), 'utf8');
 
 jest.setTimeout(90000);
 

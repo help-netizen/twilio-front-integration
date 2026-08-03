@@ -18,9 +18,9 @@ const EXECUTION_SCHEMA = fs.readFileSync(
     'utf8'
 );
 const VIEW_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '228_app_view_phase_a.sql'), 'utf8');
-const SCHEDULE_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '229_app_view_phase_b.sql'), 'utf8');
+const SCHEDULE_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '234_app_view_phase_b.sql'), 'utf8');
 const SCHEDULE_ROLLBACK = fs.readFileSync(
-    path.join(MIGRATIONS, 'rollback_229_app_view_phase_b.sql'),
+    path.join(MIGRATIONS, 'rollback_234_app_view_phase_b.sql'),
     'utf8'
 );
 

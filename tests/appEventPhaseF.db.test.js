@@ -10,9 +10,9 @@ const { createAppEventSubscriber } = require('../backend/src/services/appEventSu
 const { createAppEventWorker } = require('../backend/src/services/appEventWorker');
 
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
-const EVENT_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '232_app_event_deliveries.sql'), 'utf8');
+const EVENT_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '236_app_event_deliveries.sql'), 'utf8');
 const EVENT_ROLLBACK = fs.readFileSync(
-    path.join(MIGRATIONS, 'rollback_232_app_event_deliveries.sql'),
+    path.join(MIGRATIONS, 'rollback_236_app_event_deliveries.sql'),
     'utf8'
 );
 

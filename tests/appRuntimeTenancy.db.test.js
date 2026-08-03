@@ -31,13 +31,13 @@ const EXECUTION_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_224_app_runtime_execution_authorization.sql'),
     'utf8'
 );
-const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '230_app_data_phase_d.sql'), 'utf8');
+const DATA_SCHEMA = fs.readFileSync(path.join(MIGRATIONS, '235_app_data_phase_d.sql'), 'utf8');
 const WRITE_SCHEMA = fs.readFileSync(
-    path.join(MIGRATIONS, '233_app_create_task_write_tool.sql'),
+    path.join(MIGRATIONS, '237_app_create_task_write_tool.sql'),
     'utf8'
 );
 const WRITE_ROLLBACK = fs.readFileSync(
-    path.join(MIGRATIONS, 'rollback_233_app_create_task_write_tool.sql'),
+    path.join(MIGRATIONS, 'rollback_237_app_create_task_write_tool.sql'),
     'utf8'
 );
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
