@@ -98,6 +98,37 @@ describe('APP-SVC-001 runner HTTP service', () => {
         });
     });
 
+    test('Phase F dry-run envelope accepts a synthetic catalog event and rejects unknown types', async () => {
+        const source = 'export async function run(ctx) { return ctx.input.event; }';
+        const event = { type: 'invoice.sent', payload: { invoice_id: 91, total: 240 } };
+        const baseUrl = await startServer();
+        const accepted = await post(baseUrl, '/v1/dry-run', {
+            body: {
+                ...DRY_RUN_BODY,
+                source,
+                expectedSourceSha256: sourceSha256(source),
+                input: { today: '2026-08-02', event },
+            },
+        });
+        expect(accepted.status).toBe(200);
+        await expect(accepted.json()).resolves.toMatchObject({ ok: true, result: event });
+
+        const rejected = await post(baseUrl, '/v1/dry-run', {
+            body: {
+                ...DRY_RUN_BODY,
+                input: {
+                    today: '2026-08-02',
+                    event: { type: 'unknown.event', payload: {} },
+                },
+            },
+        });
+        expect(rejected.status).toBe(400);
+        await expect(rejected.json()).resolves.toMatchObject({
+            ok: false,
+            error: { code: 'INVALID_REQUEST' },
+        });
+    });
+
     test.each([
         ['missing', null],
         ['wrong', 'wrong-runner-service-token'],

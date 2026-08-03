@@ -1245,10 +1245,18 @@ function fireRobotCallLeaveHook(jobId, companyId, newStatus) {
 }
 
 function emitJobDomainEvent(companyId, eventType, jobId, payload, activityActor = null) {
+    const statusPayload = eventType === 'job.status_changed'
+        ? {
+            job_number: payload.job_number || null,
+            old_status: payload.old_status ?? payload.from ?? null,
+            new_status: payload.new_status ?? payload.to ?? null,
+        }
+        : {};
     return eventBus.emit(companyId, eventType, {
         job_id: jobId,
         record_refs: [{ type: 'job', id: jobId }],
         ...payload,
+        ...statusPayload,
     }, {
         actorType: activityActor?.type || 'system',
         actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
@@ -1315,6 +1323,7 @@ async function updateBlancStatus(jobId, newStatus, companyId, activityActor = nu
     );
 
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        job_number: job.job_number,
         from: job.blanc_status,
         to: newStatus,
     }, activityActor);
@@ -1782,6 +1791,7 @@ async function cancelJob(jobId, companyId, activityActor = null) {
         )
     );
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        job_number: job.job_number,
         from: job.blanc_status,
         to: 'Canceled',
     }, activityActor);
@@ -1831,6 +1841,7 @@ async function markEnroute(jobId, companyId, activityActor = null) {
         )
     );
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        job_number: job.job_number,
         from: job.zb_status,
         to: 'en-route',
     }, activityActor);
@@ -1874,6 +1885,7 @@ async function markInProgress(jobId, companyId, activityActor = null) {
         )
     );
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        job_number: job.job_number,
         from: job.zb_status,
         to: 'in-progress',
     }, activityActor);
@@ -1918,6 +1930,7 @@ async function markComplete(jobId, companyId, activityActor = null) {
         )
     );
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
+        job_number: job.job_number,
         from: job.blanc_status,
         to: 'Visit completed',
     }, activityActor);

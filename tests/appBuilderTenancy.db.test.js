@@ -468,6 +468,7 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
                 source: generatedSource,
                 sourceSha256: generatedSha,
                 scannerReport: { parsed: true, tools: ['svc.list_tasks'], dry_run: { ok: true } },
+                subscribes: ['estimate.approved'],
                 tools: ['svc.list_tasks'],
                 description: 'Shared generated description',
                 model: 'test-model',
@@ -481,7 +482,15 @@ describe('APP-BUILD-001 migration and tenant isolation', () => {
             });
             expect(created).toMatchObject({
                 app_id: appA,
-                version: { source_sha256: generatedSha, status: 'draft', tools: ['svc.list_tasks'] },
+                version: {
+                    source_sha256: generatedSha,
+                    status: 'draft',
+                    tools: ['svc.list_tasks'],
+                    subscribes: ['estimate.approved'],
+                    scanner_report: expect.objectContaining({
+                        subscribes: ['estimate.approved'],
+                    }),
+                },
                 message: { version_id: created.version.id },
             });
             const audit = await client.query(

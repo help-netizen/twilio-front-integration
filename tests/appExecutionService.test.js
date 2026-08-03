@@ -244,6 +244,55 @@ describe('APP-VIEW-001 execution core', () => {
         expect(deniedFetch).not.toHaveBeenCalled();
     });
 
+    test('an event run reaches ctx.input.event unchanged and rejects a type outside the catalog', async () => {
+        const client = clientFor();
+        const tokens = {
+            mintRunToken: jest.fn().mockResolvedValue({ token: 'event-token', runId: RUN_ID }),
+        };
+        const fetchImpl = jest.fn().mockResolvedValue(runnerResponse({
+            view_version: 1,
+            title: 'Event handled',
+            blocks: [],
+        }));
+        const service = createAppExecutionService({
+            database: databaseFor(client),
+            tokens,
+            authorization: authorizationFor(),
+            fetchImpl,
+        });
+        const event = {
+            type: 'estimate.approved',
+            payload: { estimate_id: 41, order_list_count: 2 },
+        };
+
+        await expect(service.run({
+            companyId: COMPANY_ID,
+            installationId: '91',
+            trigger: 'event',
+            actorId: ACTOR_ID,
+            event,
+        })).resolves.toMatchObject({ status: 'completed' });
+        expect(JSON.parse(fetchImpl.mock.calls[0][1].body).input.event).toEqual(event);
+
+        const deniedTokens = { mintRunToken: jest.fn() };
+        const deniedFetch = jest.fn();
+        const deniedService = createAppExecutionService({
+            database: databaseFor(clientFor()),
+            tokens: deniedTokens,
+            authorization: authorizationFor(),
+            fetchImpl: deniedFetch,
+        });
+        await expect(deniedService.run({
+            companyId: COMPANY_ID,
+            installationId: '91',
+            trigger: 'event',
+            actorId: ACTOR_ID,
+            event: { type: 'unknown.event', payload: {} },
+        })).rejects.toMatchObject({ code: 'APP_EVENT_INPUT_INVALID', httpStatus: 422 });
+        expect(deniedTokens.mintRunToken).not.toHaveBeenCalled();
+        expect(deniedFetch).not.toHaveBeenCalled();
+    });
+
     test('a second request during the first run returns that in-flight run and never mints a rival', async () => {
         let activeRun = null;
         let releaseRunner;

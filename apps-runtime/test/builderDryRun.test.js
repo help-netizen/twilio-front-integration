@@ -166,4 +166,34 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
             },
         })).rejects.toMatchObject({ code: 'DRY_RUN_INPUT_INVALID' });
     });
+
+    test('Phase F exposes a catalog event as ctx.input.event and enforces type and 8 KiB', async () => {
+        const source = 'export async function run(ctx) { return ctx.input.event; }';
+        const event = {
+            type: 'estimate.approved',
+            payload: { estimate_id: 41, order_list_count: 3 },
+        };
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            input: { today: '2026-08-02', event },
+        })).resolves.toMatchObject({ result: event });
+
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            input: { today: '2026-08-02', event: { type: 'unknown.event', payload: {} } },
+        })).rejects.toMatchObject({ code: 'DRY_RUN_INPUT_INVALID' });
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            input: {
+                today: '2026-08-02',
+                event: {
+                    type: 'estimate.approved',
+                    payload: { value: 'x'.repeat(8 * 1024) },
+                },
+            },
+        })).rejects.toMatchObject({ code: 'DRY_RUN_INPUT_INVALID' });
+    });
 });

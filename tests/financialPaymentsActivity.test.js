@@ -17,12 +17,16 @@ const mockEstimates = {
     getJobContext: jest.fn(),
 };
 const mockLogFinancialActivity = jest.fn();
+const mockEmit = jest.fn();
 
 jest.mock('../backend/src/db/paymentsQueries', () => mockPayments);
 jest.mock('../backend/src/db/invoicesQueries', () => mockInvoices);
 jest.mock('../backend/src/db/estimatesQueries', () => mockEstimates);
 jest.mock('../backend/src/services/financialActivityService', () => ({
     logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
+jest.mock('../backend/src/services/eventBus', () => ({
+    emit: (...args) => mockEmit(...args),
 }));
 
 const paymentsService = require('../backend/src/services/paymentsService');
@@ -38,6 +42,7 @@ const HUMAN_ACTOR = {
 beforeEach(() => {
     jest.clearAllMocks();
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    mockEmit.mockResolvedValue({ id: 1 });
     mockEstimates.getContactContext.mockImplementation(
         async (companyId, id) => (
             companyId === COMPANY ? { id, company_id: companyId } : null
@@ -73,6 +78,7 @@ beforeEach(() => {
         invoice_id: 41,
         contact_id: 5,
         job_id: 7,
+        amount: '95',
         status: 'completed',
         currency: 'USD',
     });
@@ -101,6 +107,20 @@ test('recording an Invoice payment emits Payment and Invoice actions on the same
     expect(mockLogFinancialActivity.mock.calls.every(([, options]) => (
         options.client === CLIENT
     ))).toBe(true);
+    expect(mockEmit.mock.calls.map(([, eventType]) => eventType))
+        .toEqual(['payment.recorded', 'payment.succeeded']);
+    expect(mockEmit.mock.calls[0]).toEqual([
+        COMPANY,
+        'payment.recorded',
+        {
+            payment_id: 51,
+            job_id: 7,
+            invoice_id: 41,
+            amount: 95,
+            record_refs: [{ type: 'payment', id: 51 }],
+        },
+        expect.objectContaining({ client: CLIENT, aggregateType: 'payment' }),
+    ]);
 });
 
 test('a foreign related entity returns 404 before ledger or activity mutation', async () => {

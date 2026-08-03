@@ -51,4 +51,26 @@ describe('updateBlancStatus query shape', () => {
         await jobsService.updateBlancStatus(5, 'Job is Done', COMPANY);
         expect(updateCall()[1]).toEqual(['Job is Done', false, 5, COMPANY]);
     });
+
+    it('projects old/new status and job number into the domain event payload', async () => {
+        db.query.mockResolvedValue({
+            rows: [{
+                id: 5,
+                blanc_status: 'Submitted',
+                job_number: 'J-5',
+                company_id: COMPANY,
+            }],
+        });
+        await jobsService.updateBlancStatus(5, 'Canceled', COMPANY);
+        const eventCall = db.query.mock.calls.find(([sql]) => /INSERT INTO domain_events/.test(sql));
+        expect(eventCall).toBeTruthy();
+        expect(JSON.parse(eventCall[1][4])).toMatchObject({
+            job_id: 5,
+            job_number: 'J-5',
+            old_status: 'Submitted',
+            new_status: 'Canceled',
+            from: 'Submitted',
+            to: 'Canceled',
+        });
+    });
 });

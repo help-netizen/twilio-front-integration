@@ -78,4 +78,27 @@ describe('APP-GAP-FIX-001 persistence attestation boundary', () => {
         });
         expect(mockGetClient).not.toHaveBeenCalled();
     });
+
+    test.each([
+        ['an unknown event', ['estimate.approved', 'unknown.event']],
+        ['more than five events', [
+            'estimate.approved',
+            'job.status_changed',
+            'lead.created',
+            'payment.recorded',
+            'invoice.sent',
+            'estimate.approved',
+        ]],
+        ['a duplicate event', ['lead.created', 'lead.created']],
+    ])('Phase F rejects %s before a version transaction starts', async (_label, subscribes) => {
+        await expect(repository.persistSuccess({
+            ...BASE,
+            scannerReport: { dry_run: { ok: true } },
+            subscribes,
+        })).rejects.toMatchObject({
+            code: 'APP_EVENT_SUBSCRIPTIONS_INVALID',
+            httpStatus: 422,
+        });
+        expect(mockGetClient).not.toHaveBeenCalled();
+    });
 });

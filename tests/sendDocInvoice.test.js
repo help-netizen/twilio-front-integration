@@ -89,6 +89,7 @@ jest.mock('../backend/src/services/documentTemplates', () => ({
 
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
 const mockLogFinancialActivity = jest.fn();
+const mockEmit = jest.fn();
 jest.mock('../backend/src/services/transactionService', () => ({
     withTransaction: jest.fn(work => work(null)),
 }));
@@ -97,6 +98,9 @@ jest.mock('../backend/src/services/financialActivityService', () => ({
     userActor: jest.fn(id => ({
         id: id || null, type: 'user', label: null, source: 'crm',
     })),
+}));
+jest.mock('../backend/src/services/eventBus', () => ({
+    emit: (...args) => mockEmit(...args),
 }));
 
 const mockAddNote = jest.fn();
@@ -132,6 +136,7 @@ function invoiceRow(overrides = {}) {
         status: 'draft',
         contact_id: 7,
         job_id: JOB_ID,
+        total: '100.00',
         public_token: 'tok_invABCDE', // pre-seeded → ensurePublicLink never re-mints
         order_list: [{
             part_number: 'EMAIL-INVOICE-SECRET',
@@ -152,6 +157,7 @@ beforeEach(() => {
     mockUpdateInvoiceStatus.mockResolvedValue(invoiceRow({ status: 'sent' }));
     mockCreateEvent.mockResolvedValue(undefined);
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    mockEmit.mockResolvedValue({ id: 1 });
     mockGetMailboxStatus.mockResolvedValue(CONNECTED);
     mockSendEmail.mockResolvedValue({ provider_message_id: 'gmail-1' });
     mockResolveProxy.mockResolvedValue('+15550001111');
@@ -197,6 +203,17 @@ describe('sendInvoice — email happy path', () => {
         expect(mockUpdateInvoiceStatus).toHaveBeenCalledWith(INV_ID_S, COMPANY_A, 'sent', 'sent_at');
         expect(mockCreateEvent).toHaveBeenCalledWith(
             COMPANY_A, INV_ID_S, 'sent', 'user', CRM_USER_ID, expect.objectContaining({ channel: 'email', recipient: 'c@x.com' }),
+        );
+        expect(mockEmit).toHaveBeenCalledWith(
+            COMPANY_A,
+            'invoice.sent',
+            expect.objectContaining({
+                invoice_id: INV_ID,
+                invoice_number: 'INVOICE L-519-1',
+                job_id: JOB_ID,
+                total: 100,
+            }),
+            expect.objectContaining({ aggregateType: 'invoice', aggregateId: INV_ID })
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,

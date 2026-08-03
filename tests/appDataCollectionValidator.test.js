@@ -57,6 +57,7 @@ describe('APP-DATA-001 Phase D declaration contract', () => {
             description: 'Uses installation memory.',
             data_collections: PURCHASES,
             actions: [],
+            subscribes: [],
         }));
         expect(artifact.data_collections).toEqual(PURCHASES);
         const rendered = renderDataCollectionsContract();
@@ -68,6 +69,7 @@ describe('APP-DATA-001 Phase D declaration contract', () => {
             description: artifact.description,
             data_collections: [{ ...PURCHASES[0], name: 'invalid-name' }],
             actions: [],
+            subscribes: [],
         }))).toThrow(/invalid data collections/i);
     });
 

@@ -3,6 +3,11 @@
 const { validateCadence } = require('./appScheduleCadence');
 const { validateDataCollections } = require('./appDataCollectionValidator');
 const { MAX_ACTIONS, MAX_ACTION_LABEL_LENGTH, validateActions } = require('./appActionValidator');
+const {
+    APP_EVENT_TYPES,
+    MAX_SUBSCRIPTIONS,
+    validateSubscriptions,
+} = require('./appEventCatalog');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -64,7 +69,8 @@ function parseGeneratedArtifact(raw) {
     if (!parsed || typeof parsed.source !== 'string' || !parsed.source.trim()
         || typeof parsed.description !== 'string' || !parsed.description.trim()
         || !Object.prototype.hasOwnProperty.call(parsed, 'data_collections')
-        || !Object.prototype.hasOwnProperty.call(parsed, 'actions')) {
+        || !Object.prototype.hasOwnProperty.call(parsed, 'actions')
+        || !Object.prototype.hasOwnProperty.call(parsed, 'subscribes')) {
         throw new AppBuilderProviderError('Builder model returned an invalid artifact envelope');
     }
     let actions;
@@ -85,6 +91,15 @@ function parseGeneratedArtifact(raw) {
             error
         );
     }
+    let subscribes;
+    try {
+        subscribes = validateSubscriptions(parsed.subscribes);
+    } catch (error) {
+        throw new AppBuilderProviderError(
+            `Builder model returned invalid subscriptions: ${error.message}`,
+            error
+        );
+    }
     let suggestedSchedule = null;
     if (parsed.suggested_schedule !== undefined && parsed.suggested_schedule !== null) {
         try {
@@ -98,6 +113,7 @@ function parseGeneratedArtifact(raw) {
         description: parsed.description.trim().slice(0, 2000),
         data_collections: dataCollections,
         actions,
+        subscribes,
     };
     if (suggestedSchedule) artifact.suggested_schedule = suggestedSchedule;
     return artifact;
@@ -196,8 +212,18 @@ async function generate(prompt) {
                                         required: ['id', 'label'],
                                     },
                                 },
+                                subscribes: {
+                                    type: 'ARRAY',
+                                    maxItems: MAX_SUBSCRIPTIONS,
+                                    items: {
+                                        type: 'STRING',
+                                        enum: [...APP_EVENT_TYPES],
+                                    },
+                                },
                             },
-                            required: ['source', 'description', 'data_collections', 'actions'],
+                            required: [
+                                'source', 'description', 'data_collections', 'actions', 'subscribes',
+                            ],
                         },
                     },
                 }),

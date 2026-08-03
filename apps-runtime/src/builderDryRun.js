@@ -16,9 +16,19 @@ const {
 // too: a frozen 'today' made every date-aware app test against a day the
 // fixtures no longer contain and report zero while the code was correct.
 const ACTION_ID_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
-const dryRunInput = action => Object.freeze({
+const DRY_RUN_EVENT_TYPES = Object.freeze([
+    'estimate.approved',
+    'job.status_changed',
+    'lead.created',
+    'payment.recorded',
+    'invoice.sent',
+]);
+const DRY_RUN_EVENT_TYPE_SET = new Set(DRY_RUN_EVENT_TYPES);
+const MAX_EVENT_PAYLOAD_BYTES = 8 * 1024;
+const dryRunInput = (action, event) => Object.freeze({
     today: new Date().toISOString().slice(0, 10),
     ...(action ? { action: Object.freeze({ ...action }) } : {}),
+    ...(event ? { event: Object.freeze({ ...event }) } : {}),
 });
 const DRY_RUN_TOKEN = 'app-builder-dry-run-host-token-0000000000000000';
 const DRY_RUN_GATEWAY = 'https://app-builder-fixtures.albusto.invalid';
@@ -38,21 +48,44 @@ const TOOL_FIXTURES = Object.freeze({
 function validDryRunInput(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
     const keys = Object.keys(input);
-    if (keys.some(key => key !== 'today' && key !== 'action')) return false;
+    if (keys.some(key => key !== 'today' && key !== 'action' && key !== 'event')) return false;
     if (typeof input.today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.today)) return false;
-    if (input.action === undefined) return true;
-    const action = input.action;
-    return Boolean(action)
-        && typeof action === 'object'
-        && !Array.isArray(action)
-        && Object.keys(action).length === 2
-        && typeof action.id === 'string'
-        && ACTION_ID_PATTERN.test(action.id)
-        && typeof action.row_key === 'string'
-        && action.row_key.trim().length > 0
-        && Array.from(action.row_key).length <= 256
-        && Object.prototype.hasOwnProperty.call(action, 'id')
-        && Object.prototype.hasOwnProperty.call(action, 'row_key');
+    if (input.action !== undefined) {
+        const action = input.action;
+        if (!(Boolean(action)
+            && typeof action === 'object'
+            && !Array.isArray(action)
+            && Object.keys(action).length === 2
+            && typeof action.id === 'string'
+            && ACTION_ID_PATTERN.test(action.id)
+            && typeof action.row_key === 'string'
+            && action.row_key.trim().length > 0
+            && Array.from(action.row_key).length <= 256
+            && Object.prototype.hasOwnProperty.call(action, 'id')
+            && Object.prototype.hasOwnProperty.call(action, 'row_key'))) return false;
+    }
+    if (input.event !== undefined) {
+        const event = input.event;
+        if (!event || typeof event !== 'object' || Array.isArray(event)
+            || Object.keys(event).length !== 2
+            || !Object.prototype.hasOwnProperty.call(event, 'type')
+            || !Object.prototype.hasOwnProperty.call(event, 'payload')
+            || typeof event.type !== 'string'
+            || !DRY_RUN_EVENT_TYPE_SET.has(event.type)
+            || !event.payload
+            || typeof event.payload !== 'object'
+            || Array.isArray(event.payload)) return false;
+        let encoded;
+        try {
+            encoded = JSON.stringify(event.payload);
+        } catch (_error) {
+            return false;
+        }
+        if (encoded === undefined || Buffer.byteLength(encoded, 'utf8') > MAX_EVENT_PAYLOAD_BYTES) {
+            return false;
+        }
+    }
+    return true;
 }
 
 function isFixtureGraph(fixtures) {
@@ -177,6 +210,8 @@ async function validateAndDryRun({
 }
 
 module.exports = {
+    DRY_RUN_EVENT_TYPES,
+    MAX_EVENT_PAYLOAD_BYTES,
     dryRunInput,
     TOOL_FIXTURES,
     validDryRunInput,

@@ -20,6 +20,9 @@ const eventBus = require('./eventBus');
 function emitPaymentEvent(companyId, eventType, payment, activityActor, client = null, idempotencyKey = null) {
     return eventBus.emit(companyId, eventType, {
         payment_id: payment.id,
+        job_id: payment.job_id || null,
+        invoice_id: payment.invoice_id || null,
+        amount: Number(payment.amount),
         record_refs: [{ type: 'payment', id: payment.id }],
     }, {
         actorType: activityActor?.type || 'system',
@@ -285,6 +288,14 @@ async function createTransaction(
     }
 
     if (transaction_type === 'payment') {
+        await emitPaymentEvent(
+            companyId,
+            'payment.recorded',
+            tx,
+            activityActor,
+            client,
+            `payment.recorded:${tx.id}`
+        );
         await emitPaymentEvent(
             companyId,
             'payment.succeeded',

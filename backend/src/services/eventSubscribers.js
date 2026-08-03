@@ -22,6 +22,12 @@ function registerSubscribers() {
     // record-scoped recipients before either push transport is invoked.
     notificationDispatcher.register(eventBus);
 
+    // APP-DATA-001 Phase F: after the producer transaction commits, project
+    // closed-catalog events into the durable per-installation outbox. There is
+    // still a documented best-effort gap between commit and this in-process
+    // subscriber; once inserted, retries are durable.
+    require('./appEventSubscriber').register(eventBus);
+
     // Billing usage metering: count billable events per company.
     eventBus.subscribe('billing-meter', [
         'call.completed', 'sms.outbound', 'agent_task.succeeded',

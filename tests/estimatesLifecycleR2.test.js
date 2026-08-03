@@ -13,6 +13,7 @@ const HUMAN_ACTOR = {
     source: 'crm',
 };
 const mockLogFinancialActivity = jest.fn();
+const mockEmit = jest.fn();
 
 const mockQueries = {
     listEstimates: jest.fn(),
@@ -46,6 +47,9 @@ jest.mock('../backend/src/db/connection', () => ({
 }));
 jest.mock('../backend/src/services/financialActivityService', () => ({
     logFinancialActivity: (...args) => mockLogFinancialActivity(...args),
+}));
+jest.mock('../backend/src/services/eventBus', () => ({
+    emit: (...args) => mockEmit(...args),
 }));
 
 const service = require('../backend/src/services/estimatesService');
@@ -90,6 +94,7 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         mockQueries.updateEstimateItem.mockResolvedValue(item());
         mockQueries.deleteEstimateItem.mockResolvedValue(true);
         mockLogFinancialActivity.mockResolvedValue({ ok: true });
+        mockEmit.mockResolvedValue({ id: 1 });
     });
 
     it('creates a job estimate with ESTIMATE L-{leadNumber}-1 and default item rules', async () => {
@@ -153,6 +158,22 @@ describe('estimatesService PF002-R2 lifecycle', () => {
             status: 'approved',
             approved_snapshot: expect.objectContaining({ items: expect.any(Array) }),
         }), null);
+        expect(mockEmit).toHaveBeenCalledWith(
+            COMPANY_ID,
+            'estimate.approved',
+            expect.objectContaining({
+                estimate_id: EST_ID,
+                estimate_number: 'ESTIMATE L-18-1',
+                job_id: null,
+                contact_id: null,
+                order_list_count: 0,
+            }),
+            expect.objectContaining({
+                aggregateType: 'estimate',
+                aggregateId: EST_ID,
+                client: null,
+            })
+        );
     });
 
     it('editing an approved estimate preserves approved version and resets to draft', async () => {

@@ -59,6 +59,7 @@ function harness(overrides = {}) {
             description: 'Counts open tasks.',
             data_collections: [],
             actions: [],
+            subscribes: [],
             model: 'builder-test-model',
             token_usage: { input_tokens: 20, output_tokens: 30, total_tokens: 50 },
         }),
@@ -142,6 +143,7 @@ describe('APP-BUILD-001 generation pipeline', () => {
             }),
             dataCollections: [],
             actions: [],
+            subscribes: [],
         }));
         expect(dryRunner.validateAndDryRun.mock.invocationCallOrder[0])
             .toBeLessThan(repository.persistSuccess.mock.invocationCallOrder[0]);

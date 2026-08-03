@@ -624,6 +624,8 @@ async function createLead(fields, companyId, {
         {
             id: insertedLeadId,
             lead_id: insertedLeadId,
+            serial_id: result.SerialId || null,
+            source: columns.job_source || null,
             status: columns.status || 'Submitted',
             record_refs: [{ type: 'lead', id: insertedLeadId }],
         },

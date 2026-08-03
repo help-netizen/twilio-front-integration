@@ -769,6 +769,19 @@ async function sendInvoice(
             summary: { channel: normalizedChannel, status: 'sent' },
         }, { client });
     }
+    await eventBus.emit(companyId, 'invoice.sent', {
+        invoice_id: updated.id,
+        invoice_number: updated.invoice_number || null,
+        job_id: updated.job_id || null,
+        total: Number(updated.total),
+        record_refs: [{ type: 'invoice', id: updated.id }],
+    }, {
+        actorType: activityActor?.type || 'system',
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+        aggregateType: 'invoice',
+        aggregateId: updated.id,
+        client,
+    });
 
     await recordDocumentSendNote({
         companyId,

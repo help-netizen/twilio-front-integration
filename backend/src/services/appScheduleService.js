@@ -10,6 +10,7 @@ const {
     validateCadence,
 } = require('./appScheduleCadence');
 const { normalizeCompanyTimezone } = require('../utils/companyTime');
+const { validateSubscriptions } = require('./appEventCatalog');
 
 function validInstallationId(value) {
     return typeof value === 'string' && /^[1-9]\d*$/.test(value);
@@ -42,12 +43,14 @@ function versionSummary(context) {
             version_id: context.version_id,
             version_number: context.version_number,
             consented_tools: context.consented_tools || [],
+            subscribes: context.subscribes || [],
         },
         update_available: Boolean(available),
         available: available ? {
             version_id: context.available_version_id,
             version_number: context.available_version_number,
             tools: context.available_tools || [],
+            subscribes: context.available_subscribes || [],
             suggested_schedule: context.available_suggested_schedule || null,
             suggested_cost_forecast: context.available_suggested_schedule
                 ? forecastFor(context.available_suggested_schedule, context)
@@ -114,6 +117,8 @@ function createAppScheduleService({
                         installation.metadata->'app_runtime'->'consented_tools',
                         '[]'::jsonb
                     ) AS consented_tools,
+                    COALESCE(version.scanner_report->'subscribes', '[]'::jsonb)
+                        AS subscribes,
                     ARRAY(
                         SELECT tool.tool_name
                         FROM app_version_tools tool
@@ -127,6 +132,7 @@ function createAppScheduleService({
                     available.id AS available_version_id,
                     available.version_number AS available_version_number,
                     available.suggested_schedule AS available_suggested_schedule,
+                    COALESCE(available.subscribes, '[]'::jsonb) AS available_subscribes,
                     COALESCE(available.tools, ARRAY[]::text[]) AS available_tools
              FROM marketplace_installations installation
              JOIN companies company
@@ -146,6 +152,8 @@ function createAppScheduleService({
              LEFT JOIN LATERAL (
                  SELECT candidate.id, candidate.version_number,
                         candidate.suggested_schedule,
+                        COALESCE(candidate.scanner_report->'subscribes', '[]'::jsonb)
+                            AS subscribes,
                         ARRAY(
                             SELECT candidate_tool.tool_name
                             FROM app_version_tools candidate_tool
@@ -304,7 +312,9 @@ function createAppScheduleService({
                             FROM app_version_tools tool
                             WHERE tool.version_id = version.id
                             ORDER BY tool.tool_name
-                        ) AS allowed_tools
+                        ) AS allowed_tools,
+                        COALESCE(version.scanner_report->'subscribes', '[]'::jsonb)
+                            AS subscribes
                  FROM marketplace_installations installation
                  JOIN app_versions version
                    ON version.app_id = installation.app_id
@@ -329,6 +339,7 @@ function createAppScheduleService({
                 version_id: candidateResult.rows[0].id,
                 version_number: candidateResult.rows[0].version_number,
                 allowed_tools: candidateResult.rows[0].allowed_tools || [],
+                subscribes: validateSubscriptions(candidateResult.rows[0].subscribes || []),
             };
             await execution.requireViewerAccess(candidate, input.actorId, client);
             if (String(context.installed_by || '') !== String(input.actorId)) {
@@ -378,7 +389,8 @@ function createAppScheduleService({
                         jsonb_build_object(
                             'previous_version_id', $3::text,
                             'version_id', $6::text,
-                            'consented_tools', to_jsonb($7::text[])
+                            'consented_tools', to_jsonb($7::text[]),
+                            'subscribes', $8::jsonb
                         )
                  FROM marketplace_installations installation
                  WHERE installation.company_id = $1
@@ -391,6 +403,7 @@ function createAppScheduleService({
                     input.requestId || null,
                     candidate.version_id,
                     candidate.allowed_tools,
+                    JSON.stringify(candidate.subscribes),
                 ]
             );
             return {
@@ -398,6 +411,7 @@ function createAppScheduleService({
                     version_id: candidate.version_id,
                     version_number: candidate.version_number,
                     consented_tools: candidate.allowed_tools,
+                    subscribes: candidate.subscribes,
                 },
             };
         });

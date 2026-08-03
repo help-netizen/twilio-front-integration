@@ -103,6 +103,8 @@ describe('TC-OLC-011: lead.created emit contract in createLead', () => {
         expect(payload).toEqual({
             id: 555,
             lead_id: 555,
+            serial_id: 9,
+            source: 'Pro Referral',
             status: 'Submitted',
             record_refs: [{ type: 'lead', id: 555 }],
         });

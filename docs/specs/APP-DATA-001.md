@@ -174,6 +174,13 @@ The dispatcher claims work `FOR UPDATE SKIP LOCKED` (the schedule worker's
 pattern), runs the app with `input.event`, retries twice with backoff, then
 marks failed — and failures surface in the app's run history.
 
+The current `eventBus` invokes subscribers in-process after the producer
+transaction commits. Delivery is durable once `app_event_deliveries` is
+inserted, but a process crash in the narrow commit-to-subscriber window can
+still lose the app projection; removing that final gap requires a future
+transactional domain-event relay rather than pretending this subscriber is
+inside the producer transaction.
+
 **Coalescing is the herd defence.** While a delivery for an installation is
 pending or running, further events of the same type collapse into it
 (`coalesced_count` increments, payload keeps the newest event and the count).

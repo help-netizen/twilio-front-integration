@@ -797,6 +797,20 @@ async function approveEstimate(
             summary: { status: 'approved' },
         }, { client });
     }
+    await eventBus.emit(companyId, 'estimate.approved', {
+        estimate_id: updated.id,
+        estimate_number: updated.estimate_number || null,
+        job_id: updated.job_id || null,
+        contact_id: updated.contact_id || null,
+        order_list_count: Array.isArray(updated.order_list) ? updated.order_list.length : 0,
+        record_refs: [{ type: 'estimate', id: updated.id }],
+    }, {
+        actorType: activityActor?.type || actorType || 'system',
+        actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+        aggregateType: 'estimate',
+        aggregateId: updated.id,
+        client,
+    });
     if (actorType === 'client') {
         await emitEstimateEvent(
             companyId,

@@ -1,5 +1,7 @@
 'use strict';
 
+const { validateSyntheticEvent } = require('./appEventCatalog');
+
 const DEFAULT_TIMEOUT_MS = 12000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 // The sandbox is anchored to the real current day, so the dry-run input must be
@@ -167,7 +169,7 @@ function parseResult(payload, status = 200) {
 }
 
 async function validateAndDryRun(
-    { source, expectedSourceSha256, dataCollections = [], action = null },
+    { source, expectedSourceSha256, dataCollections = [], action = null, event = null },
     { fetchImpl = globalThis.fetch } = {}
 ) {
     if (action !== null && (
@@ -184,6 +186,13 @@ async function validateAndDryRun(
         || !Object.prototype.hasOwnProperty.call(action, 'row_key')
     )) {
         throw new AppBuilderDryRunError('INVALID_REQUEST', 'Dry-run action is invalid.');
+    }
+    if (event !== null) {
+        try {
+            validateSyntheticEvent(event);
+        } catch (_error) {
+            throw new AppBuilderDryRunError('INVALID_REQUEST', 'Dry-run event is invalid.');
+        }
     }
     const baseUrl = runnerBaseUrl();
     const serviceToken = runnerServiceToken();
@@ -209,6 +218,7 @@ async function validateAndDryRun(
                 input: {
                     ...dryRunInput(),
                     ...(action ? { action } : {}),
+                    ...(event ? { event } : {}),
                 },
                 seed: SANDBOX_SEED,
                 data_collections: dataCollections,
