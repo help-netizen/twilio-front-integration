@@ -177,7 +177,12 @@ export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail,
         if (!canSubmit) return;
         setSending(true);
         try {
-            await onSend({ channel, recipient: recipient.trim(), message: message.trim() });
+            await onSend({
+                channel,
+                recipient: recipient.trim(),
+                message: message.trim(),
+                includePaymentLink,
+            });
             onOpenChange(false);
         } catch {
             // error toast handled upstream

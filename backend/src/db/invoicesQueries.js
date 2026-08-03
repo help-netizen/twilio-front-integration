@@ -161,6 +161,7 @@ async function getInvoiceById(companyId, id, client = null) {
                 c.phone_e164 AS contact_phone,
                 j.job_number AS job_number,
                 j.address AS service_address,
+                j.start_date AS service_date,
                 l.serial_id AS lead_serial_id
          FROM invoices i
          LEFT JOIN contacts c

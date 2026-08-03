@@ -122,6 +122,7 @@ export interface InvoiceSendData {
     channel: 'email' | 'sms';
     recipient: string;
     message?: string;
+    includePaymentLink?: boolean;
 }
 
 export interface RecordPaymentData {

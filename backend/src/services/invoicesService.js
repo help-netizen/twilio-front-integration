@@ -14,7 +14,7 @@ const { shortDocNumber } = require('../utils/docNumber');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
 const eventBus = require('./eventBus');
-const { buildEmailBody } = require('./documentEmailBody');
+const { buildInvoiceEmailBody } = require('./documentEmailBody');
 const {
     normalizeOrderList,
     stripInternalOrderList,
@@ -631,7 +631,8 @@ async function sendInvoice(
         const { token } = await ensurePublicLink(companyId, id, client, activityActor);
         const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
         const payPath = `/pay/${token}`;
-        const link = includePaymentLink === false ? '' : (base ? `${base}${payPath}` : payPath);
+        const payUrl = base ? `${base}${payPath}` : payPath;
+        const link = includePaymentLink === false ? '' : payUrl;
 
         if (normalizedChannel === 'email') {
         // Pre-check: a mailbox that is missing / disconnected / reconnect_required
@@ -644,19 +645,19 @@ async function sendInvoice(
 
         let companyName = '';
         let senderName = '';
+        let companyTimeZone = '';
         try {
             const companyQueries = require('../db/companyQueries');
             const company = await companyQueries.getCompanyById(companyId);
             companyName = asText(company?.name);
+            companyTimeZone = asText(company?.timezone);
             // Preferred outbound display name (stored in the settings bag); falls back
             // to the company name below.
             senderName = asText(company?.settings?.email_sender_name);
         } catch { /* subject falls back to no company suffix */ }
-        const subject = companyName
-            ? `Invoice ${shortNumber} from ${companyName}`
-            : `Invoice ${shortNumber}`;
+        const subject = companyName ? `Your invoice from ${companyName}` : 'Your invoice';
 
-        const { buffer } = await generatePdf(companyId, id, client);
+        const { invoice: documentInvoice, buffer } = await generatePdf(companyId, id, client);
         const safeFile = String(shortNumber).replace(/[^a-z0-9_-]+/gi, '_');
 
         const emailService = require('./emailService');
@@ -664,7 +665,14 @@ async function sendInvoice(
             await emailService.sendEmail(companyId, {
                 to,
                 subject,
-                body: buildEmailBody(message, link),
+                body: buildInvoiceEmailBody({
+                    message,
+                    paymentLink: payUrl,
+                    includePaymentLink: includePaymentLink !== false,
+                    invoice: documentInvoice,
+                    companyName,
+                    timeZone: companyTimeZone,
+                }),
                 files: [{
                     mimetype: 'application/pdf',
                     originalname: `Invoice-${safeFile}.pdf`,

@@ -157,7 +157,7 @@ beforeEach(() => {
     mockResolveProxy.mockResolvedValue('+15550001111');
     mockGetOrCreateConversation.mockResolvedValue({ id: 7 });
     mockSendMessage.mockResolvedValue(undefined);
-    mockGetCompanyById.mockResolvedValue({ name: 'Boston Masters' });
+    mockGetCompanyById.mockResolvedValue({ name: 'Boston Masters', timezone: 'America/New_York' });
     mockRender.mockResolvedValue(Buffer.from('%PDF-1.4 invoice'));
     mockAddNote.mockResolvedValue({ notes: [] });
 });
@@ -187,7 +187,7 @@ describe('sendInvoice — email happy path', () => {
         expect(mockSendEmail).toHaveBeenCalledTimes(1);
         const [coId, payload] = mockSendEmail.mock.calls[0];
         expect(coId).toBe(COMPANY_A);
-        expect(payload.subject).toBe('Invoice L-519-1 from Boston Masters');
+        expect(payload.subject).toBe('Your invoice from Boston Masters');
         // PAY page link, NOT the /i/<token> PDF short link
         expect(payload.body).toContain('https://app.albusto.com/pay/tok_invABCDE');
         expect(payload.body).not.toContain('/i/tok_invABCDE');
@@ -218,7 +218,12 @@ describe('sendInvoice — email happy path', () => {
     it('TC-SD-015: includePaymentLink:false → no pay-link anchor in the body, still flips', async () => {
         const res = await request(appWith())
             .post(`/${INV_ID}/send`)
-            .send({ channel: 'email', recipient: 'c@x.com', message: 'Hi', includePaymentLink: false });
+            .send({
+                channel: 'email',
+                recipient: 'c@x.com',
+                message: 'Hi https://app.albusto.com/pay/tok_invABCDE',
+                includePaymentLink: false,
+            });
         expect(res.status).toBe(200);
         const payload = mockSendEmail.mock.calls[0][1];
         expect(payload.body).not.toContain('/pay/');
