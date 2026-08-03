@@ -143,3 +143,44 @@ data route → red.
 Phase E: undeclared action id refused by the validator; action run passes the
 live viewer gate; single-flight holds when a schedule tick and an action click
 collide; sabotage: skip the action-id ⊆ declared check → red.
+
+## 6. Phase F — event subscriptions (OB-52, owner-approved 2026-08-02)
+
+A schedule polls; a subscription answers. A version declares
+`subscribes: [...]` from a **closed catalog** of app events; when one fires,
+the app runs with `input.event` — through the same execution core as every
+other trigger, so admission, the single flight, viewer-independence (the
+actor is the installation's agent principal, as with schedules) and all
+limits hold unchanged.
+
+**The event catalog is ours, not the bus's.** `domain_events` is the shared
+internal bus (activity-log warning stands: read, never reshape). App events
+are a projection with stable names and documented, PII-lean payloads:
+
+| App event | Fed by |
+|---|---|
+| `estimate.approved` | estimatesService status transition |
+| `job.status_changed` | job FSM transition (old/new status in payload) |
+| `lead.created` | leadsService |
+| `payment.recorded` | paymentsService |
+| `invoice.sent` | invoicesService |
+
+**Delivery is an outbox, not a hope.** eventBus subscribers are in-process
+and best-effort; a restart between emit and run must not lose an approval.
+`app_event_deliveries` (migration next-free): company_id, installation_id,
+event row (type, aggregate, payload), status
+pending → running → delivered / failed / coalesced, attempts, next_attempt_at.
+The dispatcher claims work `FOR UPDATE SKIP LOCKED` (the schedule worker's
+pattern), runs the app with `input.event`, retries twice with backoff, then
+marks failed — and failures surface in the app's run history.
+
+**Coalescing is the herd defence.** While a delivery for an installation is
+pending or running, further events of the same type collapse into it
+(`coalesced_count` increments, payload keeps the newest event and the count).
+A burst of ten approvals is one run that reads the last state, not ten queued
+runs. Per-installation daily run caps already apply.
+
+**Consent pins to the version, as everywhere.** `subscribes` lives in the
+version manifest beside actions; moderation sees it; accepting a new version
+re-pins it. Sandbox: the builder can dry-run with a synthetic `input.event`;
+the prompt documents the catalog from the same source that validates it.
