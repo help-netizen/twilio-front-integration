@@ -16,6 +16,11 @@ const ALL_TOOLS = [
     'svc.create_task',
     'svc.list_estimates',
     'svc.get_estimate',
+    'svc.add_note',
+    'svc.list_leads',
+    'svc.get_lead',
+    'svc.list_invoices',
+    'svc.list_payments',
 ];
 
 const mockTokenService = {
@@ -38,6 +43,7 @@ const mockDataList = jest.fn();
 const mockDataUpsert = jest.fn();
 const mockDataRemove = jest.fn();
 const mockCreateTask = jest.fn();
+const mockAddNote = jest.fn();
 
 jest.mock('../backend/src/services/appRuntimeTokenService', () => ({
     verifyRunToken: mockTokenService.verifyRunToken,
@@ -65,6 +71,9 @@ jest.mock('../backend/src/services/chatgptMcpReadService', () => ({
 }));
 jest.mock('../backend/src/services/appRuntimeTaskService', () => ({
     createTask: mockCreateTask,
+}));
+jest.mock('../backend/src/services/appRuntimeNoteService', () => ({
+    addNote: mockAddNote,
 }));
 jest.mock('../backend/src/services/authorizationService', () => ({
     resolveCompanyUserAuthz: mockResolveCompanyUserAuthz,
@@ -151,7 +160,10 @@ beforeEach(() => {
     mockResolveCompanyUserAuthz.mockResolvedValue({
         role_key: 'manager',
         membership: { id: 'member-a', role_key: 'manager', status: 'active' },
-        permissions: ['jobs.view', 'tasks.view', 'tasks.create', 'estimates.view'],
+        permissions: [
+            'jobs.view', 'jobs.edit', 'tasks.view', 'tasks.create', 'estimates.view',
+            'leads.view', 'leads.edit', 'invoices.view', 'payments.view',
+        ],
         scopes: { job_visibility: 'all' },
     });
     mockConsumeInstallation.mockReturnValue({ allowed: true, retryAfterSeconds: 1 });
@@ -167,15 +179,20 @@ beforeEach(() => {
         listTasks: { tasks: [{ id: 21, description: 'Owned task' }] },
         listEstimates: { results: [{ id: 31, status: 'approved' }], pagination: {} },
         getEstimate: { id: 31, status: 'approved', items: [], order_list: [] },
+        listLeads: { results: [{ id: 51 }], pagination: {} },
+        getLead: { id: 51, phone: '+16175550103' },
+        listInvoices: { results: [{ id: 61 }], pagination: {} },
+        listPayments: { results: [{ id: 71 }], pagination: {} },
     })[handler]);
     mockDataList.mockResolvedValue({ rows: [], pagination: { limit: 100, offset: 0, total: 0 } });
     mockDataUpsert.mockResolvedValue({ upserted: 1 });
     mockDataRemove.mockResolvedValue({ deleted: 1 });
     mockCreateTask.mockResolvedValue({ task_id: 41, status: 'open' });
+    mockAddNote.mockResolvedValue({ note_id: 'note-41' });
 });
 
 describe('APP-GW-001 catalog, validation, authorization, masking, and audit', () => {
-    test('SAB exact catalog: the sole write is explicitly allowlisted and every descriptor is strict', () => {
+    test('SAB exact catalog: both writes are explicitly allowlisted and every descriptor is strict', () => {
         const tools = catalog.listTools();
         expect(tools.map((tool) => tool.name)).toEqual(ALL_TOOLS);
         expect(tools.map((tool) => tool.handler)).toEqual([
@@ -185,11 +202,21 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
             'createTask',
             'listEstimates',
             'getEstimate',
+            'addNote',
+            'listLeads',
+            'getLead',
+            'listInvoices',
+            'listPayments',
         ]);
         expect(catalog.BUSINESS_PERMISSIONS).toMatchObject({
             'svc.create_task': 'tasks.create',
             'svc.list_estimates': 'estimates.view',
             'svc.get_estimate': 'estimates.view',
+            'svc.add_note': 'jobs.edit or jobs.done_pending_approval or leads.edit',
+            'svc.list_leads': 'leads.view',
+            'svc.get_lead': 'leads.view',
+            'svc.list_invoices': 'invoices.view',
+            'svc.list_payments': 'payments.view or financial_data.view',
         });
         for (const tool of tools) {
             expect(tool.kind).toBe(catalog.WRITE_TOOLS.includes(tool.name) ? 'write' : 'read');
@@ -260,12 +287,70 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(mockCreateTask).not.toHaveBeenCalled();
     });
 
+    test('two Task writes and two Note writes share one three-call production meter', async () => {
+        mockTokenService.consumeRunWriteCall
+            .mockResolvedValueOnce(1)
+            .mockResolvedValueOnce(2)
+            .mockResolvedValueOnce(3)
+            .mockRejectedValueOnce(
+                new AppRuntimeError('WRITE_CALL_LIMIT', 'Write call limit of 3 reached.', 429)
+            );
+        const app = buildApp();
+        const responses = [
+            await call(app, 'svc.create_task', {
+                parent_type: 'job', parent_id: 11, description: 'First write.',
+            }),
+            await call(app, 'svc.create_task', {
+                parent_type: 'job', parent_id: 11, description: 'Second write.',
+            }),
+            await call(app, 'svc.add_note', {
+                parent_type: 'job', parent_id: 11, text: 'Third write.',
+            }),
+            await call(app, 'svc.add_note', {
+                parent_type: 'job', parent_id: 11, text: 'Fourth write.',
+            }),
+        ];
+
+        expect(responses.map(response => response.status)).toEqual([200, 200, 200, 429]);
+        expect(responses[3].body).toMatchObject({
+            code: 'WRITE_CALL_LIMIT',
+            message: 'Write call limit of 3 reached.',
+        });
+        expect(mockCreateTask).toHaveBeenCalledTimes(2);
+        expect(mockAddNote).toHaveBeenCalledTimes(1);
+    });
+
+    test('svc.add_note shares the write meter and applies the parent-specific existing Note permission', async () => {
+        const body = { parent_type: 'lead', parent_id: 51, text: 'Follow up tomorrow.' };
+        const response = await call(buildApp(), 'svc.add_note', body);
+        expect(response.status).toBe(200);
+        expect(response.body.data).toEqual({ note_id: 'note-41' });
+        expect(mockTokenService.consumeRunWriteCall).toHaveBeenCalledTimes(1);
+        expect(mockAddNote).toHaveBeenCalledWith(context(), body, {
+            ownerUserId: DELEGATOR_ID,
+            ownerScopes: { job_visibility: 'all' },
+        });
+
+        mockResolveCompanyUserAuthz.mockResolvedValue({
+            role_key: 'custom', membership: { id: 'member-a' },
+            permissions: ['jobs.edit'], scopes: {},
+        });
+        expect((await call(buildApp(), 'svc.add_note', body)).body.code).toBe('ACCESS_DENIED');
+        await expect(call(buildApp(), 'svc.add_note', {
+            parent_type: 'job', parent_id: 11, text: 'Job note.',
+        })).resolves.toMatchObject({ status: 200 });
+    });
+
     test.each([
         ['svc.list_jobs', {}, 'listJobs'],
         ['svc.get_job', { job_id: 11 }, 'getJob'],
         ['svc.list_tasks', {}, 'listTasks'],
         ['svc.list_estimates', { status: 'approved' }, 'listEstimates'],
         ['svc.get_estimate', { estimate_id: 31 }, 'getEstimate'],
+        ['svc.list_leads', { status: 'Contacted' }, 'listLeads'],
+        ['svc.get_lead', { lead_id: 51 }, 'getLead'],
+        ['svc.list_invoices', { status: 'sent' }, 'listInvoices'],
+        ['svc.list_payments', { job_id: 11 }, 'listPayments'],
     ])('dispatches the approved tool %s through its shared read handler', async (tool, body, handler) => {
         const response = await call(buildApp(), tool, body);
         expect(response.status).toBe(200);
@@ -386,6 +471,12 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
             ['svc.get_estimate', { estimate_id: '31' }],
             ['svc.create_task', { parent_type: 'job', parent_id: 11, description: '' }],
             ['svc.create_task', { parent_type: 'job', parent_id: 11, description: 'x', due_at: '2026-02-30' }],
+            ['svc.add_note', { parent_type: 'contact', parent_id: 11, text: 'x' }],
+            ['svc.add_note', { parent_type: 'lead', parent_id: 11, text: '' }],
+            ['svc.list_leads', { created_from: '2026-02-30' }],
+            ['svc.get_lead', { lead_id: '51' }],
+            ['svc.list_invoices', { limit: 101 }],
+            ['svc.list_payments', { paid_to: '2026-02-30' }],
             ['svc.list_jobs', { callback_url: 'https://evil.test' }],
         ];
         for (const [name, body] of cases) {

@@ -47,6 +47,11 @@ describe('APP-TOOLS-001 generated tool documentation gates', () => {
             'svc.create_task',
             'svc.list_estimates',
             'svc.get_estimate',
+            'svc.add_note',
+            'svc.list_leads',
+            'svc.get_lead',
+            'svc.list_invoices',
+            'svc.list_payments',
         ]);
         for (const tool of tools) {
             const parameters = collectProperties(tool.inputSchema);
@@ -73,6 +78,19 @@ describe('APP-TOOLS-001 generated tool documentation gates', () => {
         });
         expect(createTask.description).toMatch(/deduplicated/i);
         expect(createTask.description).toMatch(/at most 3 write calls/i);
+        const addNote = tools.find(tool => tool.name === 'svc.add_note');
+        expect(addNote).toMatchObject({
+            kind: 'write',
+            description: expect.stringMatching(/24 hours/i),
+        });
+        expect(addNote.documentation.responseNotes.join(' ')).toMatch(/shared write calls/i);
+        const listLeads = tools.find(tool => tool.name === 'svc.list_leads');
+        expect(listLeads.outputSchema.properties.results.items.properties)
+            .not.toHaveProperty('phone');
+        expect(listLeads.outputSchema.properties.results.items.properties)
+            .not.toHaveProperty('email');
+        expect(tools.find(tool => tool.name === 'svc.get_lead').outputSchema.properties)
+            .toEqual(expect.objectContaining({ phone: expect.any(Object), email: expect.any(Object) }));
     });
 
     test('2: APP-TOOLS-001.md is the exact deterministic catalog rendering', () => {

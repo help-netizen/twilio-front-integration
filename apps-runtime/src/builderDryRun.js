@@ -45,6 +45,13 @@ const TOOL_FIXTURES = Object.freeze({
     'svc.get_estimate': projectSandboxTool(defaultFixtureGraph(), 'svc.get_estimate', {
         estimate_id: defaultFixtureGraph().estimates[0].id,
     }),
+    'svc.add_note': { note_id: 'sandbox-app-note-1' },
+    'svc.list_leads': projectSandboxTool(defaultFixtureGraph(), 'svc.list_leads'),
+    'svc.get_lead': projectSandboxTool(defaultFixtureGraph(), 'svc.get_lead', {
+        lead_id: defaultFixtureGraph().leads[0].id,
+    }),
+    'svc.list_invoices': projectSandboxTool(defaultFixtureGraph(), 'svc.list_invoices'),
+    'svc.list_payments': projectSandboxTool(defaultFixtureGraph(), 'svc.list_payments'),
 });
 
 const CREATE_TASK_PARENT_COLLECTIONS = Object.freeze({
@@ -71,6 +78,7 @@ function validIsoDateTime(value) {
 
 function createDryRunTaskStore(fixtures) {
     const created = [];
+    const createdNotes = [];
     let writeCalls = 0;
     const fixtureIds = isFixtureGraph(fixtures)
         ? fixtures.tasks.map(task => Number(task.id)).filter(Number.isFinite)
@@ -144,6 +152,52 @@ function createDryRunTaskStore(fixtures) {
         return { task_id: task.task_id, status: 'open' };
     }
 
+    function addNote(args) {
+        writeCalls += 1;
+        if (writeCalls > DRY_RUN_WRITE_CALL_LIMIT) {
+            throw new SandboxFixtureError(
+                'WRITE_CALL_LIMIT',
+                'Write call limit of 3 reached.',
+                429
+            );
+        }
+        if (!args || typeof args !== 'object' || Array.isArray(args)
+            || Object.keys(args).some(key => !['parent_type', 'parent_id', 'text'].includes(key))
+            || !['job', 'lead'].includes(args.parent_type)
+            || !Number.isSafeInteger(args.parent_id)
+            || args.parent_id < 1
+            || typeof args.text !== 'string'
+            || !args.text.trim()
+            || args.text.trim().length > 1000) {
+            throw new SandboxFixtureError(
+                'INVALID_ARGUMENTS',
+                'Tool arguments are invalid.',
+                422
+            );
+        }
+        const collection = fixtures?.[args.parent_type === 'job' ? 'jobs' : 'leads'];
+        if (!Array.isArray(collection)
+            || !collection.some(parent => Number(parent.id) === args.parent_id)) {
+            throw new SandboxFixtureError('NOT_FOUND', 'Resource not found.', 404);
+        }
+        const text = args.text.trim();
+        const existing = createdNotes.find(note => (
+            note.parent_type === args.parent_type
+            && note.parent_id === args.parent_id
+            && note.text === text
+        ));
+        if (existing) return { note_id: existing.note_id, deduplicated: true };
+        const note = {
+            note_id: `sandbox-app-note-${createdNotes.length + 1}`,
+            parent_type: args.parent_type,
+            parent_id: args.parent_id,
+            text,
+            source: 'app',
+        };
+        createdNotes.push(note);
+        return { note_id: note.note_id };
+    }
+
     function fixturesWithCreatedTasks() {
         if (!isFixtureGraph(fixtures) || created.length === 0) return fixtures;
         return {
@@ -177,9 +231,11 @@ function createDryRunTaskStore(fixtures) {
     }
 
     return {
+        addNote,
         create,
         fixturesWithCreatedTasks,
         report: () => created.map(task => ({ ...task })),
+        reportNotes: () => createdNotes.map(note => ({ ...note })),
     };
 }
 
@@ -234,6 +290,8 @@ function fixtureResponse(toolName, args, fixtures, taskStore) {
     try {
         const data = toolName === 'svc.create_task'
             ? taskStore.create(args)
+            : toolName === 'svc.add_note'
+                ? taskStore.addNote(args)
             : isFixtureGraph(fixtures)
                 ? projectSandboxTool(taskStore.fixturesWithCreatedTasks(), toolName, args)
             : fixtures[toolName];
@@ -349,6 +407,7 @@ async function validateAndDryRun({
         fixturesSummary: summarizeSandboxFixtures(activeFixtures),
         dataOps: dataStore.report(),
         createdTasks: taskStore.report(),
+        createdNotes: taskStore.reportNotes(),
     };
 }
 

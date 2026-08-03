@@ -72,6 +72,7 @@ const DISPATCHER_TOOL_TITLES = Object.freeze({
     'svc.get_estimate': 'Open an estimate',
     'svc.list_invoices': 'List invoices',
     'svc.get_invoice': 'Open an invoice',
+    'svc.list_payments': 'List payments',
     'svc.list_calls': 'View recent calls',
     'svc.create_lead': 'Create a lead',
     'svc.update_lead': 'Edit a lead',
@@ -401,8 +402,14 @@ const DISPATCHER_READ_TOOLS = [
     dispatcherRead('svc.list_leads', 'listLeads', 'List company Leads with bounded filters.', strictObjectSchema({
         status: stringSchema(), source: stringSchema(), search: stringSchema(), only_open: booleanSchema(),
         limit: integerSchema(1, 100), offset: integerSchema(0),
-    })),
-    dispatcherRead('svc.get_lead', 'getLead', 'Get one company-owned Lead.', strictObjectSchema({ lead_uuid: stringSchema() }, ['lead_uuid'])),
+    }), { appRuntime: appRuntimeListLeadsDescriptor() }),
+    dispatcherRead(
+        'svc.get_lead',
+        'getLead',
+        'Get one company-owned Lead.',
+        strictObjectSchema({ lead_uuid: stringSchema() }, ['lead_uuid']),
+        { appRuntime: appRuntimeGetLeadDescriptor() }
+    ),
     dispatcherRead('svc.get_lead_transitions', 'getLeadTransitions', 'List actions from the company-published Lead workflow.', strictObjectSchema({ lead_uuid: stringSchema() }, ['lead_uuid'])),
     dispatcherRead('svc.search_contacts', 'searchContacts', 'Search company Contacts by name, phone, or email.', strictObjectSchema({
         search: stringSchema(), limit: integerSchema(1, 100), offset: integerSchema(0),
@@ -597,8 +604,15 @@ const DISPATCHER_READ_TOOLS = [
             },
         }
     ),
-    dispatcherRead('svc.list_invoices', 'listInvoices', 'List company Invoices with balance fields.', financeListSchema(false)),
+    dispatcherRead(
+        'svc.list_invoices',
+        'listInvoices',
+        'List company Invoices with balance fields.',
+        financeListSchema(false),
+        { appRuntime: appRuntimeListInvoicesDescriptor() }
+    ),
     dispatcherRead('svc.get_invoice', 'getInvoice', 'Get one company-owned Invoice, line items, and payment rollup.', strictObjectSchema({ invoice_id: integerSchema(1) }, ['invoice_id'])),
+    dispatcherAppRuntimeRead('svc.list_payments', 'listPayments', appRuntimeListPaymentsDescriptor()),
 ];
 
 // CHATGPT-CRM-MCP-001 S2a — dispatcher writes. Each call is executed by the
@@ -763,7 +777,7 @@ const DISPATCHER_WRITE_TOOLS = [
         parent_type: enumSchema(['job', 'lead', 'contact']),
         parent_id: stringSchema(),
         text: stringSchema(),
-    }, ['parent_type', 'parent_id', 'text'])),
+    }, ['parent_type', 'parent_id', 'text']), { appRuntime: appRuntimeAddNoteDescriptor() }),
     dispatcherWrite('svc.create_estimate', 'createEstimate', 'Create a draft company Estimate with server-calculated totals and bounded line items.', strictObjectSchema({
         ...ESTIMATE_EDIT_PROPERTIES,
         items: arraySchema(itemCreateSchema(ESTIMATE_ITEM_PROPERTIES), 50),
@@ -909,6 +923,13 @@ function dispatcherRead(name, handler, description, inputSchema, metadata = {}) 
     };
 }
 
+function dispatcherAppRuntimeRead(name, handler, descriptor) {
+    return dispatcherRead(name, handler, descriptor.description, descriptor.inputSchema, {
+        outputSchema: descriptor.outputSchema,
+        documentation: descriptor.documentation,
+    });
+}
+
 function dispatcherWrite(name, handler, description, inputSchema, metadata = {}) {
     return {
         name,
@@ -980,6 +1001,261 @@ function appRuntimeCreateTaskErrors() {
             description: 'The installation created its daily maximum of 100 Tasks.',
         },
     ];
+}
+
+function appRuntimeAddNoteErrors() {
+    return [
+        ...appRuntimeErrors(true, 'Note parent'),
+        {
+            code: 'WRITE_CALL_LIMIT',
+            description: 'The run used its 3 allowed write calls shared by every App Studio write tool.',
+        },
+        {
+            code: 'NOTE_DAILY_LIMIT',
+            description: 'The installation created its daily maximum of 100 Notes.',
+        },
+    ];
+}
+
+function appRuntimeListLeadsDescriptor() {
+    return {
+        description: 'List company-owned Leads with exact status, source, company-calendar creation-date, and text filters. Results are PII-lean and ordered by newest creation time first.',
+        inputSchema: strictObjectSchema({
+            status: documentedSchema(
+                stringSchema(),
+                'Exact Lead workflow status to include. Omit to include every status.'
+            ),
+            source: documentedSchema(
+                stringSchema(),
+                'Exact Lead acquisition source (`job_source`) to include. Omit to include every source.'
+            ),
+            created_from: documentedSchema(
+                dateSchema(),
+                'Inclusive lower bound on Lead `created_at`, formatted `YYYY-MM-DD`. The boundary is midnight at the start of that calendar date in the owning company timezone. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound.'
+            ),
+            created_to: documentedSchema(
+                dateSchema(),
+                'Inclusive upper calendar date for Lead `created_at`, formatted `YYYY-MM-DD`. The full company-local day is included by using the following calendar date\'s midnight as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound.'
+            ),
+            search: documentedSchema(
+                stringSchema(500),
+                'Case-insensitive text contained in the Lead UUID, serial ID, customer name, city, state, or source. Phone and email are not searched or returned by this list tool.'
+            ),
+            limit: documentedSchema(
+                integerSchema(1, 100),
+                'Maximum Lead rows to return, from 1 through 100. Defaults to 50.',
+                50
+            ),
+            offset: documentedSchema(
+                integerSchema(0),
+                'Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages.',
+                0
+            ),
+        }),
+        outputSchema: listLeadsOutputSchema(),
+        documentation: {
+            responseNotes: [
+                'List rows intentionally omit phone, email, street address, job type, and Lead notes. Use `svc.get_lead` for one selected Lead when those fields are needed.',
+                '`source` and `job_source` are equal aliases of the stored Lead acquisition source.',
+                '`created_from` and `created_to` are inclusive company-calendar dates; the upper bound includes the entire selected day.',
+                'Use offset pagination. Results are ordered by `created_at` descending, then Lead ID descending.',
+            ],
+            errors: appRuntimeErrors(),
+            examples: [{
+                title: 'List Leads created today without exposing phone or email',
+                source: `export async function run(ctx) {
+    return ctx.callTool('svc.list_leads', {
+        created_from: ctx.input.today,
+        created_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
+}`,
+            }],
+        },
+    };
+}
+
+function appRuntimeGetLeadDescriptor() {
+    return {
+        description: 'Get one company-owned Lead by numeric Albusto ID, including its direct contact fields and Lead notes.',
+        inputSchema: strictObjectSchema({
+            lead_id: documentedSchema(
+                integerSchema(1),
+                'Positive Albusto Lead ID, usually taken from `svc.list_leads().results[].id`.'
+            ),
+        }, ['lead_id']),
+        outputSchema: getLeadOutputSchema(),
+        documentation: {
+            responseNotes: [
+                'The value returned by `ctx.callTool` is the Lead object itself, not a `results` envelope.',
+                'Unlike `svc.list_leads`, this detail tool includes phone, email, street address, job type, and Lead notes.',
+                '`source` and `job_source` are equal aliases of the stored Lead acquisition source.',
+            ],
+            errors: appRuntimeErrors(true, 'Lead'),
+            examples: [{
+                title: 'Open the first matching Lead',
+                source: `export async function run(ctx) {
+    const page = await ctx.callTool('svc.list_leads', { offset: 0, limit: 1 });
+    if (page.results.length === 0) return null;
+    return ctx.callTool('svc.get_lead', {
+        lead_id: Number(page.results[0].id),
+    });
+}`,
+            }],
+        },
+    };
+}
+
+function appRuntimeListInvoicesDescriptor() {
+    return {
+        description: 'List company-owned Invoices with exact status, Job, and company-calendar creation-date filters. Results are ordered by newest creation time first.',
+        inputSchema: strictObjectSchema({
+            status: documentedSchema(
+                stringSchema(),
+                'Exact Invoice status to include. Omit to include every status.'
+            ),
+            job_id: documentedSchema(
+                integerSchema(1),
+                'Restrict results to one positive Albusto Job ID. Omit to include Invoices for every Job.'
+            ),
+            created_from: documentedSchema(
+                dateSchema(),
+                'Inclusive lower bound on Invoice `created_at`, formatted `YYYY-MM-DD`, at company-local midnight. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound.'
+            ),
+            created_to: documentedSchema(
+                dateSchema(),
+                'Inclusive upper calendar date for Invoice `created_at`, formatted `YYYY-MM-DD`. The following company-local midnight is used as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound.'
+            ),
+            limit: documentedSchema(
+                integerSchema(1, 100),
+                'Maximum Invoice rows to return, from 1 through 100. Defaults to 50.',
+                50
+            ),
+            offset: documentedSchema(
+                integerSchema(0),
+                'Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages.',
+                0
+            ),
+        }),
+        outputSchema: listInvoicesOutputSchema(),
+        documentation: {
+            responseNotes: [
+                '`balance_due` is calculated as `total - amount_paid` so stale materialized balances are not exposed.',
+                '`due_at` is the Invoice due timestamp stored by Albusto as `due_date`.',
+                '`created_from` and `created_to` are inclusive company-calendar dates.',
+                'Use offset pagination. Results are ordered by `created_at` descending, then Invoice ID descending.',
+            ],
+            errors: appRuntimeErrors(),
+            examples: [{
+                title: 'List open Invoices created today',
+                source: `export async function run(ctx) {
+    return ctx.callTool('svc.list_invoices', {
+        status: 'sent',
+        created_from: ctx.input.today,
+        created_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
+}`,
+            }],
+        },
+    };
+}
+
+function appRuntimeListPaymentsDescriptor() {
+    return {
+        description: 'List company-owned canonical payment-ledger rows with Job, Invoice, and company-calendar paid-date filters. Results are ordered by newest paid time first.',
+        inputSchema: strictObjectSchema({
+            job_id: documentedSchema(
+                integerSchema(1),
+                'Restrict results to one positive Albusto Job ID. Callers with only `financial_data.view` must provide an assigned Job ID.'
+            ),
+            invoice_id: documentedSchema(
+                integerSchema(1),
+                'Restrict results to one positive Albusto Invoice ID. Omit to include payments for every Invoice in the allowed Job scope.'
+            ),
+            paid_from: documentedSchema(
+                dateSchema(),
+                'Inclusive lower bound on payment time, formatted `YYYY-MM-DD`. Canonical `processed_at` is used when present, otherwise `created_at`; the boundary is company-local midnight. Missing or invalid company timezone configuration falls back to UTC.'
+            ),
+            paid_to: documentedSchema(
+                dateSchema(),
+                'Inclusive upper calendar date for payment time, formatted `YYYY-MM-DD`. The following company-local midnight is used as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC.'
+            ),
+            limit: documentedSchema(
+                integerSchema(1, 100),
+                'Maximum Payment rows to return, from 1 through 100. Defaults to 50.',
+                50
+            ),
+            offset: documentedSchema(
+                integerSchema(0),
+                'Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages.',
+                0
+            ),
+        }),
+        outputSchema: listPaymentsOutputSchema(),
+        documentation: {
+            responseNotes: [
+                'Rows come only from the canonical `payment_transactions` ledger. The legacy Zenbooker landing table never contributes a row.',
+                '`paid_at` is canonical `processed_at` when present and otherwise the ledger row creation time.',
+                '`method` is the canonical `payment_method` and can be null only in synthetic or legacy-compatible data.',
+                'Callers with `payments.view` may list the company ledger; callers with only `financial_data.view` must provide a Job assigned to them.',
+            ],
+            errors: appRuntimeErrors(),
+            examples: [{
+                title: 'List payments recorded today for one Job',
+                source: `export async function run(ctx) {
+    return ctx.callTool('svc.list_payments', {
+        job_id: Number(ctx.input.job_id),
+        paid_from: ctx.input.today,
+        paid_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
+}`,
+            }],
+        },
+    };
+}
+
+function appRuntimeAddNoteDescriptor() {
+    return {
+        description: 'Add an internal text Note to a company-owned Job or Lead. The same installation, parent, and text are deduplicated for 24 hours; App runs share a maximum of 3 write calls.',
+        inputSchema: strictObjectSchema({
+            parent_type: documentedSchema(
+                enumSchema(['job', 'lead']),
+                'Parent entity kind for the Note: `job` or `lead`.'
+            ),
+            parent_id: documentedSchema(
+                integerSchema(1),
+                'Positive Albusto Job or Lead numeric ID. The parent must belong to the installation company.'
+            ),
+            text: documentedSchema(
+                { ...stringSchema(1000), minLength: 1 },
+                'Internal Note text shown to people in Albusto. It must be non-empty and contain at most 1000 characters after trimming.'
+            ),
+        }, ['parent_type', 'parent_id', 'text']),
+        outputSchema: addNoteOutputSchema(),
+        documentation: {
+            responseNotes: [
+                'The Note is authored by the installation agent principal and marked with its App Studio source and installation ID.',
+                'If this installation added the same text to the same parent during the preceding 24 hours, no Note is created and `deduplicated` is true.',
+                'Each invocation consumes one of the run\'s 3 shared write calls, including a deduplicated invocation and calls to `svc.create_task`.',
+            ],
+            errors: appRuntimeAddNoteErrors(),
+            examples: [{
+                title: 'Add an internal Note to a Lead',
+                source: `export async function run(ctx) {
+    return ctx.callTool('svc.add_note', {
+        parent_type: 'lead',
+        parent_id: Number(ctx.input.lead_id),
+        text: 'Customer requested a follow-up before scheduling.',
+    });
+}`,
+            }],
+        },
+    };
 }
 
 function nullableOutput(type, description, extras = {}) {
@@ -1153,6 +1429,137 @@ function createTaskOutputSchema() {
             task_id: outputField(['integer', 'string'], 'Albusto Task ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
             status: outputField('string', 'Task status.', { enum: ['open'] }),
             deduplicated: outputField('boolean', 'True only when an existing matching open Task was returned instead of creating another row.'),
+        },
+    });
+}
+
+function appOffsetPaginationOutputSchema(entityName) {
+    return outputField('object', `Offset pagination metadata for the returned ${entityName} page.`, {
+        additionalProperties: false,
+        properties: {
+            mode: outputField('string', `Pagination mode. ${entityName} pages always use \`offset\`.`, {
+                enum: ['offset'],
+            }),
+            limit: outputField('integer', 'Applied page size.'),
+            returned: outputField('integer', `Number of ${entityName} rows in this page.`),
+            has_more: outputField('boolean', `Whether another ${entityName} page exists.`),
+            next_cursor: nullableOutput('string', `Always null because ${entityName} pages use offset pagination.`),
+            total: outputField('integer', `Total matching ${entityName} rows.`),
+        },
+    });
+}
+
+function leadSummaryOutputProperties() {
+    return {
+        id: outputField(['integer', 'string'], 'Albusto Lead ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        uuid: outputField('string', 'Stable Lead UUID used by existing Albusto interfaces.'),
+        serial_id: outputField(['integer', 'string'], 'Human-readable or numeric Lead serial ID.'),
+        status: outputField('string', 'Current Lead workflow status.'),
+        source: nullableOutput('string', 'Lead acquisition source, backed by `job_source`.'),
+        job_source: nullableOutput('string', 'Stored Lead acquisition source; equal to `source`.'),
+        first_name: nullableOutput('string', 'Customer first name.'),
+        last_name: nullableOutput('string', 'Customer last name.'),
+        city: nullableOutput('string', 'Service city.'),
+        state: nullableOutput('string', 'Service state or region.'),
+        created_at: outputField('string', 'Lead creation timestamp in ISO 8601 format.', { format: 'date-time' }),
+        converted_at: nullableOutput('string', 'Lead conversion timestamp in ISO 8601 format, when converted.', { format: 'date-time' }),
+        contact_id: nullableOutput(['integer', 'string'], 'Linked Contact ID, when one exists.'),
+        converted_to_job: outputField('boolean', 'Whether the Lead has been converted to a Job.'),
+    };
+}
+
+function listLeadsOutputSchema() {
+    return outputField('object', 'A PII-lean page of company-owned Leads and pagination metadata.', {
+        additionalProperties: false,
+        properties: {
+            results: outputField('array', 'Lead summary rows for this page; phone and email are intentionally absent.', {
+                items: outputField('object', 'One company-owned Lead summary.', {
+                    additionalProperties: false,
+                    properties: leadSummaryOutputProperties(),
+                }),
+            }),
+            pagination: appOffsetPaginationOutputSchema('Lead'),
+        },
+    });
+}
+
+function getLeadOutputSchema() {
+    return outputField('object', 'One company-owned Lead including its direct contact and request-detail fields.', {
+        additionalProperties: false,
+        properties: {
+            ...leadSummaryOutputProperties(),
+            phone: nullableOutput('string', 'Lead phone number.'),
+            email: nullableOutput('string', 'Lead email address.'),
+            address: nullableOutput('string', 'Lead service street address.'),
+            job_type: nullableOutput('string', 'Requested service or Job type.'),
+            lead_notes: nullableOutput('string', 'Lead request notes or problem description.'),
+        },
+    });
+}
+
+function invoiceSummaryOutputProperties() {
+    return {
+        id: outputField(['integer', 'string'], 'Albusto Invoice ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        invoice_number: outputField('string', 'Human-readable Invoice number.'),
+        status: outputField('string', 'Current Invoice status.'),
+        total: outputField(['string', 'number'], 'Invoice total.'),
+        amount_paid: outputField(['string', 'number'], 'Amount already paid against the Invoice.'),
+        balance_due: outputField(['string', 'number'], 'Outstanding amount calculated as total minus amount paid.'),
+        job_id: nullableOutput(['integer', 'string'], 'Linked Job ID, when one exists.'),
+        contact_id: nullableOutput(['integer', 'string'], 'Linked Contact ID, when one exists.'),
+        created_at: outputField('string', 'Invoice creation timestamp in ISO 8601 format.', { format: 'date-time' }),
+        due_at: nullableOutput('string', 'Invoice due timestamp in ISO 8601 format, when set.', { format: 'date-time' }),
+    };
+}
+
+function listInvoicesOutputSchema() {
+    return outputField('object', 'A page of company-owned Invoices and pagination metadata.', {
+        additionalProperties: false,
+        properties: {
+            results: outputField('array', 'Invoice summary rows for this page.', {
+                items: outputField('object', 'One company-owned Invoice summary.', {
+                    additionalProperties: false,
+                    properties: invoiceSummaryOutputProperties(),
+                }),
+            }),
+            pagination: appOffsetPaginationOutputSchema('Invoice'),
+        },
+    });
+}
+
+function paymentSummaryOutputProperties() {
+    return {
+        id: outputField(['integer', 'string'], 'Canonical Albusto payment ledger row ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        amount: outputField(['string', 'number'], 'Signed canonical ledger amount.'),
+        status: outputField('string', 'Canonical payment transaction status.'),
+        method: nullableOutput('string', 'Canonical payment method (`payment_method`), when present.'),
+        job_id: nullableOutput(['integer', 'string'], 'Linked Job ID, when one exists.'),
+        invoice_id: nullableOutput(['integer', 'string'], 'Linked Invoice ID, when one exists.'),
+        paid_at: outputField('string', 'Canonical processed time, or creation time when not separately processed, in ISO 8601 format.', { format: 'date-time' }),
+    };
+}
+
+function listPaymentsOutputSchema() {
+    return outputField('object', 'A page of company-owned canonical payment ledger rows and pagination metadata.', {
+        additionalProperties: false,
+        properties: {
+            results: outputField('array', 'Payment ledger rows for this page.', {
+                items: outputField('object', 'One canonical payment ledger row.', {
+                    additionalProperties: false,
+                    properties: paymentSummaryOutputProperties(),
+                }),
+            }),
+            pagination: appOffsetPaginationOutputSchema('Payment'),
+        },
+    });
+}
+
+function addNoteOutputSchema() {
+    return outputField('object', 'The internal Note identity and whether an existing recent Note was reused.', {
+        additionalProperties: false,
+        properties: {
+            note_id: outputField('string', 'Albusto Note UUID.'),
+            deduplicated: outputField('boolean', 'True only when the same installation already added the same text to the same parent during the preceding 24 hours.'),
         },
     });
 }

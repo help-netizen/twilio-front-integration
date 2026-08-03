@@ -196,6 +196,261 @@ function isoTimestamp(value) {
     return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+function offsetPagination(limit, offset, results, total) {
+    return {
+        mode: 'offset',
+        limit,
+        returned: results.length,
+        has_more: offset + results.length < total,
+        next_cursor: null,
+        total,
+    };
+}
+
+function projectLeadSummary(row) {
+    return {
+        id: row.id,
+        uuid: row.uuid,
+        serial_id: row.serial_id,
+        status: row.status,
+        source: row.job_source ?? null,
+        job_source: row.job_source ?? null,
+        first_name: row.first_name ?? null,
+        last_name: row.last_name ?? null,
+        city: row.city ?? null,
+        state: row.state ?? null,
+        created_at: isoTimestamp(row.created_at),
+        converted_at: isoTimestamp(row.converted_at),
+        contact_id: row.contact_id ?? null,
+        converted_to_job: row.converted_to_job === true,
+    };
+}
+
+async function listAppLeads(companyId, filters = {}) {
+    requireCompanyId(companyId);
+    const limit = bounded(filters.limit, 50, 100);
+    const offset = Number(filters.offset || 0);
+    if (!Number.isInteger(offset) || offset < 0) {
+        throw Object.assign(new Error('offset must be non-negative'), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+    const params = [companyId];
+    const conditions = ['l.company_id = $1'];
+    const add = (sql, value) => {
+        if (value === undefined || value === null || value === '') return;
+        params.push(value);
+        conditions.push(sql.replace('?', `$${params.length}`));
+    };
+    add('l.status = ?', filters.status);
+    add('l.job_source = ?', filters.source);
+    const dateBounds = companyDateFilterBounds(
+        filters.created_from,
+        filters.created_to,
+        filters.companyTimezone
+    );
+    add('l.created_at >= ?', dateBounds.fromInclusive);
+    add('l.created_at < ?', dateBounds.toExclusive);
+    if (filters.search) {
+        params.push(`%${String(filters.search).trim()}%`);
+        conditions.push(`(
+            l.uuid ILIKE $${params.length}
+            OR l.serial_id::text ILIKE $${params.length}
+            OR CONCAT_WS(' ', l.first_name, l.last_name) ILIKE $${params.length}
+            OR l.city ILIKE $${params.length}
+            OR l.state ILIKE $${params.length}
+            OR l.job_source ILIKE $${params.length}
+        )`);
+    }
+    params.push(limit, offset);
+    const { rows } = await db.query(
+        `SELECT l.id,
+                l.uuid,
+                l.serial_id,
+                l.status,
+                l.job_source,
+                l.first_name,
+                l.last_name,
+                l.city,
+                l.state,
+                l.created_at,
+                l.converted_at,
+                l.contact_id,
+                l.converted_to_job,
+                COUNT(*) OVER()::int AS _total
+         FROM leads l
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+    );
+    const total = Number(rows[0]?._total || 0);
+    const results = rows.map(projectLeadSummary);
+    return { results, pagination: offsetPagination(limit, offset, results, total) };
+}
+
+async function getAppLead(companyId, leadId) {
+    requireCompanyId(companyId);
+    const { rows } = await db.query(
+        `SELECT l.id,
+                l.uuid,
+                l.serial_id,
+                l.status,
+                l.job_source,
+                l.first_name,
+                l.last_name,
+                l.city,
+                l.state,
+                l.created_at,
+                l.converted_at,
+                l.contact_id,
+                l.converted_to_job,
+                l.phone,
+                l.email,
+                l.address,
+                l.job_type,
+                l.lead_notes
+         FROM leads l
+         WHERE l.id = $1 AND l.company_id = $2`,
+        [leadId, companyId]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+        ...projectLeadSummary(row),
+        phone: row.phone ?? null,
+        email: row.email ?? null,
+        address: row.address ?? null,
+        job_type: row.job_type ?? null,
+        lead_notes: row.lead_notes ?? null,
+    };
+}
+
+function projectInvoiceSummary(row) {
+    return {
+        id: row.id,
+        invoice_number: row.invoice_number,
+        status: row.status,
+        total: row.total,
+        amount_paid: row.amount_paid,
+        balance_due: row.balance_due,
+        job_id: row.job_id ?? null,
+        contact_id: row.contact_id ?? null,
+        created_at: isoTimestamp(row.created_at),
+        due_at: isoTimestamp(row.due_at),
+    };
+}
+
+async function listAppInvoices(companyId, filters = {}) {
+    requireCompanyId(companyId);
+    const limit = bounded(filters.limit, 50, 100);
+    const offset = Number(filters.offset || 0);
+    if (!Number.isInteger(offset) || offset < 0) {
+        throw Object.assign(new Error('offset must be non-negative'), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+    const params = [companyId];
+    const conditions = ['i.company_id = $1'];
+    const add = (sql, value) => {
+        if (value === undefined || value === null || value === '') return;
+        params.push(value);
+        conditions.push(sql.replace('?', `$${params.length}`));
+    };
+    add('i.status = ?', filters.status);
+    add('i.job_id = ?', filters.job_id);
+    const dateBounds = companyDateFilterBounds(
+        filters.created_from,
+        filters.created_to,
+        filters.companyTimezone
+    );
+    add('i.created_at >= ?', dateBounds.fromInclusive);
+    add('i.created_at < ?', dateBounds.toExclusive);
+    params.push(limit, offset);
+    const { rows } = await db.query(
+        `SELECT i.id,
+                i.invoice_number,
+                i.status,
+                i.total,
+                i.amount_paid,
+                (i.total - i.amount_paid) AS balance_due,
+                i.job_id,
+                i.contact_id,
+                i.created_at,
+                i.due_date AS due_at,
+                COUNT(*) OVER()::int AS _total
+         FROM invoices i
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY i.created_at DESC, i.id DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+    );
+    const total = Number(rows[0]?._total || 0);
+    const results = rows.map(projectInvoiceSummary);
+    return { results, pagination: offsetPagination(limit, offset, results, total) };
+}
+
+function projectPaymentSummary(row) {
+    return {
+        id: row.id,
+        amount: row.amount,
+        status: row.status,
+        method: row.method ?? null,
+        job_id: row.job_id ?? null,
+        invoice_id: row.invoice_id ?? null,
+        paid_at: isoTimestamp(row.paid_at),
+    };
+}
+
+async function listAppPayments(companyId, filters = {}) {
+    requireCompanyId(companyId);
+    const limit = bounded(filters.limit, 50, 100);
+    const offset = Number(filters.offset || 0);
+    if (!Number.isInteger(offset) || offset < 0) {
+        throw Object.assign(new Error('offset must be non-negative'), {
+            code: 'INVALID_QUERY',
+            httpStatus: 400,
+        });
+    }
+    const params = [companyId];
+    const conditions = ['t.company_id = $1'];
+    const add = (sql, value) => {
+        if (value === undefined || value === null || value === '') return;
+        params.push(value);
+        conditions.push(sql.replace('?', `$${params.length}`));
+    };
+    add('t.job_id = ?', filters.job_id);
+    add('t.invoice_id = ?', filters.invoice_id);
+    const dateBounds = companyDateFilterBounds(
+        filters.paid_from,
+        filters.paid_to,
+        filters.companyTimezone
+    );
+    add('COALESCE(t.processed_at, t.created_at) >= ?', dateBounds.fromInclusive);
+    add('COALESCE(t.processed_at, t.created_at) < ?', dateBounds.toExclusive);
+    params.push(limit, offset);
+    const { rows } = await db.query(
+        `SELECT t.id,
+                t.amount,
+                t.status,
+                t.payment_method AS method,
+                t.job_id,
+                t.invoice_id,
+                COALESCE(t.processed_at, t.created_at) AS paid_at,
+                COUNT(*) OVER()::int AS _total
+         FROM payment_transactions t
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY COALESCE(t.processed_at, t.created_at) DESC, t.id DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+    );
+    const total = Number(rows[0]?._total || 0);
+    const results = rows.map(projectPaymentSummary);
+    return { results, pagination: offsetPagination(limit, offset, results, total) };
+}
+
 function projectEstimateSummary(row) {
     return {
         id: row.id,
@@ -548,6 +803,10 @@ module.exports = {
     getLead,
     getContact,
     getContactHistory,
+    listAppLeads,
+    getAppLead,
+    listAppInvoices,
+    listAppPayments,
     listEstimates,
     getEstimate,
     listInvoices,

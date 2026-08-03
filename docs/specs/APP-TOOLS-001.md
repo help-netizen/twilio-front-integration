@@ -2,16 +2,16 @@
 
 # APP-TOOLS-001 — App Studio tools (MCP + gateway API)
 
-This reference is generated from the same 6 descriptors used by Albusto App Studio and the service CRM MCP registry.
+This reference is generated from the same 11 descriptors used by Albusto App Studio and the service CRM MCP registry.
 
-Exactly 6 tools are available: `svc.list_jobs`, `svc.get_job`, `svc.list_tasks`, `svc.create_task`, `svc.list_estimates`, `svc.get_estimate`.
+Exactly 11 tools are available: `svc.list_jobs`, `svc.get_job`, `svc.list_tasks`, `svc.create_task`, `svc.list_estimates`, `svc.get_estimate`, `svc.add_note`, `svc.list_leads`, `svc.get_lead`, `svc.list_invoices`, `svc.list_payments`.
 
 ## Availability and transport
 
 - App code calls `await ctx.callTool(name, args)`. It has no `fetch`, general HTTP API, network access, filesystem, dependencies, or arbitrary egress from the isolate.
 - The internal gateway transport returns `{"ok":true,"data":<tool output>,"request_id":"..."}`. `ctx.callTool` unwraps it and returns only `<tool output>`.
 - MCP `tools/list` exposes the same input and output schemas; a successful MCP call places the documented tool output in `structuredContent`.
-- The only CRM write tool is `svc.create_task`; no note, send, message-delivery, trigger, scheduler, payment, invoice mutation, or external-egress tool is available to App Studio.
+- The CRM write tools are `svc.create_task`, `svc.add_note`; no send, message-delivery, trigger, scheduler, payment mutation, invoice mutation, or external-egress tool is available to App Studio.
 - Live company, role, provider, Task-content, consent, masking, audit, rate, and run-call controls can narrow every call.
 
 Arguments are JSON objects. Unknown parameters are rejected. Dates use the exact `YYYY-MM-DD` calendar form described by each parameter; timestamps in responses use ISO 8601.
@@ -548,5 +548,374 @@ export async function run(ctx) {
         estimate_id: Number(page.results[0].id),
     });
     return estimate.order_list;
+}
+```
+
+## `svc.add_note`
+
+Add an internal text Note to a company-owned Job or Lead. The same installation, parent, and text are deduplicated for 24 hours; App runs share a maximum of 3 write calls.
+
+Tool kind: `write`.
+
+Required live permission: `jobs.edit or jobs.done_pending_approval or leads.edit`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `parent_type` | yes | string ("job", "lead") | none | Parent entity kind for the Note: `job` or `lead`. |
+| `parent_id` | yes | integer | none | Positive Albusto Job or Lead numeric ID. The parent must belong to the installation company. |
+| `text` | yes | string | none | Internal Note text shown to people in Albusto. It must be non-empty and contain at most 1000 characters after trimming. |
+
+### Response
+
+The internal Note identity and whether an existing recent Note was reused.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `note_id` | string | Albusto Note UUID. |
+| `deduplicated` | boolean | True only when the same installation already added the same text to the same parent during the preceding 24 hours. |
+
+- The Note is authored by the installation agent principal and marked with its App Studio source and installation ID.
+
+- If this installation added the same text to the same parent during the preceding 24 hours, no Note is created and `deduplicated` is true.
+
+- Each invocation consumes one of the run's 3 shared write calls, including a deduplicated invocation and calls to `svc.create_task`.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+| `NOT_FOUND` | The Note parent does not exist or is outside the live company scope. |
+| `WRITE_CALL_LIMIT` | The run used its 3 allowed write calls shared by every App Studio write tool. |
+| `NOTE_DAILY_LIMIT` | The installation created its daily maximum of 100 Notes. |
+
+### Example
+
+**Add an internal Note to a Lead**
+
+```js
+export async function run(ctx) {
+    return ctx.callTool('svc.add_note', {
+        parent_type: 'lead',
+        parent_id: Number(ctx.input.lead_id),
+        text: 'Customer requested a follow-up before scheduling.',
+    });
+}
+```
+
+## `svc.list_leads`
+
+List company-owned Leads with exact status, source, company-calendar creation-date, and text filters. Results are PII-lean and ordered by newest creation time first.
+
+Tool kind: `read`.
+
+Required live permission: `leads.view`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `status` | no | string | omitted | Exact Lead workflow status to include. Omit to include every status. |
+| `source` | no | string | omitted | Exact Lead acquisition source (`job_source`) to include. Omit to include every source. |
+| `created_from` | no | string, date | omitted | Inclusive lower bound on Lead `created_at`, formatted `YYYY-MM-DD`. The boundary is midnight at the start of that calendar date in the owning company timezone. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound. |
+| `created_to` | no | string, date | omitted | Inclusive upper calendar date for Lead `created_at`, formatted `YYYY-MM-DD`. The full company-local day is included by using the following calendar date's midnight as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound. |
+| `search` | no | string | omitted | Case-insensitive text contained in the Lead UUID, serial ID, customer name, city, state, or source. Phone and email are not searched or returned by this list tool. |
+| `limit` | no | integer | `50` | Maximum Lead rows to return, from 1 through 100. Defaults to 50. |
+| `offset` | no | integer | `0` | Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages. |
+
+### Response
+
+A PII-lean page of company-owned Leads and pagination metadata.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `results` | array<object> | Lead summary rows for this page; phone and email are intentionally absent. |
+| `results[].id` | integer \| string | Albusto Lead ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers. |
+| `results[].uuid` | string | Stable Lead UUID used by existing Albusto interfaces. |
+| `results[].serial_id` | integer \| string | Human-readable or numeric Lead serial ID. |
+| `results[].status` | string | Current Lead workflow status. |
+| `results[].source` | string \| null | Lead acquisition source, backed by `job_source`. |
+| `results[].job_source` | string \| null | Stored Lead acquisition source; equal to `source`. |
+| `results[].first_name` | string \| null | Customer first name. |
+| `results[].last_name` | string \| null | Customer last name. |
+| `results[].city` | string \| null | Service city. |
+| `results[].state` | string \| null | Service state or region. |
+| `results[].created_at` | string, date-time | Lead creation timestamp in ISO 8601 format. |
+| `results[].converted_at` | string \| null, date-time | Lead conversion timestamp in ISO 8601 format, when converted. |
+| `results[].contact_id` | integer \| string \| null | Linked Contact ID, when one exists. |
+| `results[].converted_to_job` | boolean | Whether the Lead has been converted to a Job. |
+| `pagination` | object | Offset pagination metadata for the returned Lead page. |
+| `pagination.mode` | string ("offset") | Pagination mode. Lead pages always use `offset`. |
+| `pagination.limit` | integer | Applied page size. |
+| `pagination.returned` | integer | Number of Lead rows in this page. |
+| `pagination.has_more` | boolean | Whether another Lead page exists. |
+| `pagination.next_cursor` | string \| null | Always null because Lead pages use offset pagination. |
+| `pagination.total` | integer | Total matching Lead rows. |
+
+- List rows intentionally omit phone, email, street address, job type, and Lead notes. Use `svc.get_lead` for one selected Lead when those fields are needed.
+
+- `source` and `job_source` are equal aliases of the stored Lead acquisition source.
+
+- `created_from` and `created_to` are inclusive company-calendar dates; the upper bound includes the entire selected day.
+
+- Use offset pagination. Results are ordered by `created_at` descending, then Lead ID descending.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+
+### Example
+
+**List Leads created today without exposing phone or email**
+
+```js
+export async function run(ctx) {
+    return ctx.callTool('svc.list_leads', {
+        created_from: ctx.input.today,
+        created_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
+}
+```
+
+## `svc.get_lead`
+
+Get one company-owned Lead by numeric Albusto ID, including its direct contact fields and Lead notes.
+
+Tool kind: `read`.
+
+Required live permission: `leads.view`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `lead_id` | yes | integer | none | Positive Albusto Lead ID, usually taken from `svc.list_leads().results[].id`. |
+
+### Response
+
+One company-owned Lead including its direct contact and request-detail fields.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `id` | integer \| string | Albusto Lead ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers. |
+| `uuid` | string | Stable Lead UUID used by existing Albusto interfaces. |
+| `serial_id` | integer \| string | Human-readable or numeric Lead serial ID. |
+| `status` | string | Current Lead workflow status. |
+| `source` | string \| null | Lead acquisition source, backed by `job_source`. |
+| `job_source` | string \| null | Stored Lead acquisition source; equal to `source`. |
+| `first_name` | string \| null | Customer first name. |
+| `last_name` | string \| null | Customer last name. |
+| `city` | string \| null | Service city. |
+| `state` | string \| null | Service state or region. |
+| `created_at` | string, date-time | Lead creation timestamp in ISO 8601 format. |
+| `converted_at` | string \| null, date-time | Lead conversion timestamp in ISO 8601 format, when converted. |
+| `contact_id` | integer \| string \| null | Linked Contact ID, when one exists. |
+| `converted_to_job` | boolean | Whether the Lead has been converted to a Job. |
+| `phone` | string \| null | Lead phone number. |
+| `email` | string \| null | Lead email address. |
+| `address` | string \| null | Lead service street address. |
+| `job_type` | string \| null | Requested service or Job type. |
+| `lead_notes` | string \| null | Lead request notes or problem description. |
+
+- The value returned by `ctx.callTool` is the Lead object itself, not a `results` envelope.
+
+- Unlike `svc.list_leads`, this detail tool includes phone, email, street address, job type, and Lead notes.
+
+- `source` and `job_source` are equal aliases of the stored Lead acquisition source.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+| `NOT_FOUND` | The Lead does not exist or is outside the live company scope. |
+
+### Example
+
+**Open the first matching Lead**
+
+```js
+export async function run(ctx) {
+    const page = await ctx.callTool('svc.list_leads', { offset: 0, limit: 1 });
+    if (page.results.length === 0) return null;
+    return ctx.callTool('svc.get_lead', {
+        lead_id: Number(page.results[0].id),
+    });
+}
+```
+
+## `svc.list_invoices`
+
+List company-owned Invoices with exact status, Job, and company-calendar creation-date filters. Results are ordered by newest creation time first.
+
+Tool kind: `read`.
+
+Required live permission: `invoices.view`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `status` | no | string | omitted | Exact Invoice status to include. Omit to include every status. |
+| `job_id` | no | integer | omitted | Restrict results to one positive Albusto Job ID. Omit to include Invoices for every Job. |
+| `created_from` | no | string, date | omitted | Inclusive lower bound on Invoice `created_at`, formatted `YYYY-MM-DD`, at company-local midnight. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound. |
+| `created_to` | no | string, date | omitted | Inclusive upper calendar date for Invoice `created_at`, formatted `YYYY-MM-DD`. The following company-local midnight is used as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound. |
+| `limit` | no | integer | `50` | Maximum Invoice rows to return, from 1 through 100. Defaults to 50. |
+| `offset` | no | integer | `0` | Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages. |
+
+### Response
+
+A page of company-owned Invoices and pagination metadata.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `results` | array<object> | Invoice summary rows for this page. |
+| `results[].id` | integer \| string | Albusto Invoice ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers. |
+| `results[].invoice_number` | string | Human-readable Invoice number. |
+| `results[].status` | string | Current Invoice status. |
+| `results[].total` | string \| number | Invoice total. |
+| `results[].amount_paid` | string \| number | Amount already paid against the Invoice. |
+| `results[].balance_due` | string \| number | Outstanding amount calculated as total minus amount paid. |
+| `results[].job_id` | integer \| string \| null | Linked Job ID, when one exists. |
+| `results[].contact_id` | integer \| string \| null | Linked Contact ID, when one exists. |
+| `results[].created_at` | string, date-time | Invoice creation timestamp in ISO 8601 format. |
+| `results[].due_at` | string \| null, date-time | Invoice due timestamp in ISO 8601 format, when set. |
+| `pagination` | object | Offset pagination metadata for the returned Invoice page. |
+| `pagination.mode` | string ("offset") | Pagination mode. Invoice pages always use `offset`. |
+| `pagination.limit` | integer | Applied page size. |
+| `pagination.returned` | integer | Number of Invoice rows in this page. |
+| `pagination.has_more` | boolean | Whether another Invoice page exists. |
+| `pagination.next_cursor` | string \| null | Always null because Invoice pages use offset pagination. |
+| `pagination.total` | integer | Total matching Invoice rows. |
+
+- `balance_due` is calculated as `total - amount_paid` so stale materialized balances are not exposed.
+
+- `due_at` is the Invoice due timestamp stored by Albusto as `due_date`.
+
+- `created_from` and `created_to` are inclusive company-calendar dates.
+
+- Use offset pagination. Results are ordered by `created_at` descending, then Invoice ID descending.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+
+### Example
+
+**List open Invoices created today**
+
+```js
+export async function run(ctx) {
+    return ctx.callTool('svc.list_invoices', {
+        status: 'sent',
+        created_from: ctx.input.today,
+        created_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
+}
+```
+
+## `svc.list_payments`
+
+List company-owned canonical payment-ledger rows with Job, Invoice, and company-calendar paid-date filters. Results are ordered by newest paid time first.
+
+Tool kind: `read`.
+
+Required live permission: `payments.view or financial_data.view`.
+
+### Parameters
+
+| Parameter | Required | Type / values | Default | Meaning |
+|---|:---:|---|---|---|
+| `job_id` | no | integer | omitted | Restrict results to one positive Albusto Job ID. Callers with only `financial_data.view` must provide an assigned Job ID. |
+| `invoice_id` | no | integer | omitted | Restrict results to one positive Albusto Invoice ID. Omit to include payments for every Invoice in the allowed Job scope. |
+| `paid_from` | no | string, date | omitted | Inclusive lower bound on payment time, formatted `YYYY-MM-DD`. Canonical `processed_at` is used when present, otherwise `created_at`; the boundary is company-local midnight. Missing or invalid company timezone configuration falls back to UTC. |
+| `paid_to` | no | string, date | omitted | Inclusive upper calendar date for payment time, formatted `YYYY-MM-DD`. The following company-local midnight is used as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. |
+| `limit` | no | integer | `50` | Maximum Payment rows to return, from 1 through 100. Defaults to 50. |
+| `offset` | no | integer | `0` | Zero-based row offset. Defaults to 0. Add `limit` while `pagination.has_more` is true to retrieve later pages. |
+
+### Response
+
+A page of company-owned canonical payment ledger rows and pagination metadata.
+
+| Field | Type / values | Meaning |
+|---|---|---|
+| `results` | array<object> | Payment ledger rows for this page. |
+| `results[].id` | integer \| string | Canonical Albusto payment ledger row ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers. |
+| `results[].amount` | string \| number | Signed canonical ledger amount. |
+| `results[].status` | string | Canonical payment transaction status. |
+| `results[].method` | string \| null | Canonical payment method (`payment_method`), when present. |
+| `results[].job_id` | integer \| string \| null | Linked Job ID, when one exists. |
+| `results[].invoice_id` | integer \| string \| null | Linked Invoice ID, when one exists. |
+| `results[].paid_at` | string, date-time | Canonical processed time, or creation time when not separately processed, in ISO 8601 format. |
+| `pagination` | object | Offset pagination metadata for the returned Payment page. |
+| `pagination.mode` | string ("offset") | Pagination mode. Payment pages always use `offset`. |
+| `pagination.limit` | integer | Applied page size. |
+| `pagination.returned` | integer | Number of Payment rows in this page. |
+| `pagination.has_more` | boolean | Whether another Payment page exists. |
+| `pagination.next_cursor` | string \| null | Always null because Payment pages use offset pagination. |
+| `pagination.total` | integer | Total matching Payment rows. |
+
+- Rows come only from the canonical `payment_transactions` ledger. The legacy Zenbooker landing table never contributes a row.
+
+- `paid_at` is canonical `processed_at` when present and otherwise the ledger row creation time.
+
+- `method` is the canonical `payment_method` and can be null only in synthetic or legacy-compatible data.
+
+- Callers with `payments.view` may list the company ledger; callers with only `financial_data.view` must provide a Job assigned to them.
+
+### Errors
+
+| Code | Meaning |
+|---|---|
+| `INVALID_ARGUMENTS` | The arguments do not match the documented input schema. |
+| `TOOL_NOT_CONSENTED` | The published app version or installation did not grant this tool. |
+| `ACCESS_DENIED` | The live delegating user lacks the required business permission. |
+| `RUN_CALL_LIMIT` | The run used its allowed gateway calls. |
+| `RATE_LIMITED` | The installation exceeded its gateway request budget. |
+| `AUDIT_UNAVAILABLE` | Albusto could not persist the required audit record, so no data was released. |
+
+### Example
+
+**List payments recorded today for one Job**
+
+```js
+export async function run(ctx) {
+    return ctx.callTool('svc.list_payments', {
+        job_id: Number(ctx.input.job_id),
+        paid_from: ctx.input.today,
+        paid_to: ctx.input.today,
+        offset: 0,
+        limit: 100,
+    });
 }
 ```

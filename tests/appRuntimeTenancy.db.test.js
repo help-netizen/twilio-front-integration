@@ -10,6 +10,7 @@ const identityService = require('../backend/src/services/appRuntimeIdentityServi
 const tokenService = require('../backend/src/services/appRuntimeTokenService');
 const gatewayService = require('../backend/src/services/appRuntimeGatewayService');
 const appRuntimeTaskService = require('../backend/src/services/appRuntimeTaskService');
+const appRuntimeNoteService = require('../backend/src/services/appRuntimeNoteService');
 const rateLimit = require('../backend/src/services/appRuntimeRateLimit');
 const callMaskingService = require('../backend/src/services/callMaskingService');
 const appVersionTransitionModule = require('../backend/src/services/appVersionTransitionService');
@@ -48,6 +49,11 @@ const TOOLS = [
     'svc.create_task',
     'svc.list_estimates',
     'svc.get_estimate',
+    'svc.add_note',
+    'svc.list_leads',
+    'svc.get_lead',
+    'svc.list_invoices',
+    'svc.list_payments',
 ];
 const SHARED_SEARCH = `blast-${randomUUID()}`;
 const SHARED_PHONE = '+16175550999';
@@ -346,6 +352,84 @@ async function setupFixture(client) {
         [ownedEstimateA, foreignEstimateB]
     );
 
+    const contactRows = await client.query(
+        `INSERT INTO contacts (company_id, full_name, phone_e164, email)
+         VALUES ($1, 'Phase H Owned A', $3, $4),
+                ($2, 'Phase H Foreign B', $3, $5)
+         RETURNING id, company_id`,
+        [
+            companyA,
+            companyB,
+            SHARED_PHONE,
+            `phase-h-a-${randomUUID()}@example.test`,
+            `phase-h-b-${randomUUID()}@example.test`,
+        ]
+    );
+    const ownedContactA = contactRows.rows.find((row) => row.company_id === companyA).id;
+    const foreignContactB = contactRows.rows.find((row) => row.company_id === companyB).id;
+    const leadRows = await client.query(
+        `INSERT INTO leads
+            (company_id, uuid, status, first_name, last_name, phone, email,
+             address, city, state, job_type, job_source, lead_notes, contact_id,
+             created_at, lead_date_time, lead_end_date_time)
+         VALUES
+            ($1, $3, 'Submitted', 'Phase H', 'Owned A', $5, $6,
+             '1 App Way', 'Boston', 'MA', 'Repair', $7, 'Owned Lead notes', $8,
+             '2026-08-04T03:30:00.000Z', NOW(), NOW() + INTERVAL '1 hour'),
+            ($2, $4, 'Submitted', 'Phase H', 'Foreign B', $5, $6,
+             '2 App Way', 'Chicago', 'IL', 'Repair', $7, 'Foreign Lead notes', $9,
+             '2026-08-04T03:30:00.000Z', NOW(), NOW() + INTERVAL '1 hour')
+         RETURNING id, company_id`,
+        [
+            companyA,
+            companyB,
+            `PHA${String(Date.now()).slice(-12)}`,
+            `PHB${String(Date.now()).slice(-12)}`,
+            SHARED_PHONE,
+            SHARED_EMAIL,
+            SHARED_SEARCH,
+            ownedContactA,
+            foreignContactB,
+        ]
+    );
+    const ownedLeadA = leadRows.rows.find((row) => row.company_id === companyA).id;
+    const foreignLeadB = leadRows.rows.find((row) => row.company_id === companyB).id;
+    const invoiceRows = await client.query(
+        `INSERT INTO invoices
+            (company_id, invoice_number, status, contact_id, job_id, title,
+             total, amount_paid, balance_due, created_at, due_date)
+         VALUES
+            ($1, $3::text, 'sent', $4, $6, $3::text, 307.06, 100.00, 207.06,
+             '2026-08-04T03:30:00.000Z', '2026-08-10T04:00:00.000Z'),
+            ($2, $3::text, 'sent', $5, $7, $3::text, 1061.44, 200.00, 861.44,
+             '2026-08-04T03:30:00.000Z', '2026-08-10T05:00:00.000Z')
+         RETURNING id, company_id`,
+        [companyA, companyB, SHARED_SEARCH, ownedContactA, foreignContactB, ownedJobA, foreignJobB]
+    );
+    const ownedInvoiceA = invoiceRows.rows.find((row) => row.company_id === companyA).id;
+    const foreignInvoiceB = invoiceRows.rows.find((row) => row.company_id === companyB).id;
+    const paymentRows = await client.query(
+        `INSERT INTO payment_transactions
+            (company_id, contact_id, invoice_id, job_id, transaction_type,
+             payment_method, status, amount, currency, processed_at)
+         VALUES
+            ($1, $3, $5, $7, 'payment', 'cash', 'completed', 100.00, 'USD',
+             '2026-08-04T03:30:00.000Z'),
+            ($2, $4, $6, $8, 'payment', 'cash', 'completed', 200.00, 'USD',
+             '2026-08-04T03:30:00.000Z')
+         RETURNING id, company_id`,
+        [
+            companyA,
+            companyB,
+            ownedContactA,
+            foreignContactB,
+            ownedInvoiceA,
+            foreignInvoiceB,
+            ownedJobA,
+            foreignJobB,
+        ]
+    );
+
     return {
         companyA,
         companyB,
@@ -367,6 +451,12 @@ async function setupFixture(client) {
         foreignTaskB: taskRows.rows.find((row) => row.company_id === companyB).id,
         ownedEstimateA,
         foreignEstimateB,
+        ownedLeadA,
+        foreignLeadB,
+        ownedInvoiceA,
+        foreignInvoiceB,
+        ownedPaymentA: paymentRows.rows.find((row) => row.company_id === companyA).id,
+        foreignPaymentB: paymentRows.rows.find((row) => row.company_id === companyB).id,
     };
 }
 
@@ -424,6 +514,12 @@ async function snapshotCompanyB(client, fixture) {
                       FROM tasks row_value WHERE row_value.company_id = $1),
             'estimates', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
                           FROM estimates row_value WHERE row_value.company_id = $1),
+            'leads', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
+                      FROM leads row_value WHERE row_value.company_id = $1),
+            'invoices', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
+                         FROM invoices row_value WHERE row_value.company_id = $1),
+            'payments', (SELECT COALESCE(jsonb_agg(to_jsonb(row_value) ORDER BY row_value.id), '[]'::jsonb)
+                         FROM payment_transactions row_value WHERE row_value.company_id = $1),
             'estimate_items', (SELECT COALESCE(jsonb_agg(to_jsonb(item_value) ORDER BY item_value.id), '[]'::jsonb)
                                FROM estimate_items item_value
                                JOIN estimates estimate_owner ON estimate_owner.id = item_value.estimate_id
@@ -798,6 +894,128 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
         }
     });
 
+    databaseTest('APP-DATA-001 Phase H reads enforce timezone, PII projection, T-own/T-foreign/T-blast, and route RBAC', async () => {
+        const client = await db.pool.connect();
+        let dbSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
+            const beforeB = await snapshotCompanyB(client, fixture);
+
+            const leads = await invoke(client, fixture, 'svc.list_leads', {
+                source: SHARED_SEARCH,
+                created_from: '2026-08-03',
+                created_to: '2026-08-03',
+                limit: 100,
+                offset: 0,
+            });
+            expect(leads.data.results.map((row) => row.id)).toEqual([fixture.ownedLeadA]);
+            expect(leads.data.results[0]).not.toHaveProperty('phone');
+            expect(leads.data.results[0]).not.toHaveProperty('email');
+
+            const lead = await invoke(client, fixture, 'svc.get_lead', {
+                lead_id: Number(fixture.ownedLeadA),
+            });
+            expect(lead.data).toEqual(expect.objectContaining({
+                id: fixture.ownedLeadA,
+                phone: SHARED_PHONE,
+                email: SHARED_EMAIL,
+                address: '1 App Way',
+                job_type: 'Repair',
+                lead_notes: 'Owned Lead notes',
+            }));
+            await expect(invoke(client, fixture, 'svc.get_lead', {
+                lead_id: Number(fixture.foreignLeadB),
+            })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+
+            const invoices = await invoke(client, fixture, 'svc.list_invoices', {
+                job_id: Number(fixture.ownedJobA),
+                created_from: '2026-08-03',
+                created_to: '2026-08-03',
+                limit: 100,
+                offset: 0,
+            });
+            expect(invoices.data.results).toEqual([
+                expect.objectContaining({
+                    id: fixture.ownedInvoiceA,
+                    job_id: fixture.ownedJobA,
+                    balance_due: '207.06',
+                }),
+            ]);
+
+            const payments = await invoke(client, fixture, 'svc.list_payments', {
+                job_id: Number(fixture.ownedJobA),
+                paid_from: '2026-08-03',
+                paid_to: '2026-08-03',
+                limit: 100,
+                offset: 0,
+            });
+            expect(payments.data.results).toEqual([
+                expect.objectContaining({
+                    id: fixture.ownedPaymentA,
+                    job_id: fixture.ownedJobA,
+                    invoice_id: fixture.ownedInvoiceA,
+                    method: 'cash',
+                    paid_at: '2026-08-04T03:30:00.000Z',
+                }),
+            ]);
+
+            for (const [toolName, args] of [
+                ['svc.list_leads', { created_from: '2026-08-04', created_to: '2026-08-04' }],
+                ['svc.list_invoices', { created_from: '2026-08-04', created_to: '2026-08-04' }],
+                ['svc.list_payments', { paid_from: '2026-08-04', paid_to: '2026-08-04' }],
+                ['svc.list_invoices', { job_id: Number(fixture.foreignJobB) }],
+                ['svc.list_payments', { job_id: Number(fixture.foreignJobB) }],
+            ]) {
+                const page = await invoke(client, fixture, toolName, args);
+                expect(page.data.results).toEqual([]);
+            }
+
+            for (const [permission, calls] of [
+                ['leads.view', [
+                    ['svc.list_leads', {}],
+                    ['svc.get_lead', { lead_id: Number(fixture.ownedLeadA) }],
+                ]],
+                ['invoices.view', [['svc.list_invoices', {}]]],
+            ]) {
+                await client.query(
+                    `INSERT INTO company_membership_permission_overrides
+                        (membership_id, permission_key, override_mode, created_by)
+                     VALUES ($1, $2, 'deny', $3)`,
+                    [fixture.humanA.membershipId, permission, fixture.humanA.id]
+                );
+                for (const [toolName, args] of calls) {
+                    await expect(invoke(client, fixture, toolName, args))
+                        .rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+                }
+                await client.query(
+                    `DELETE FROM company_membership_permission_overrides
+                     WHERE membership_id = $1 AND permission_key = $2`,
+                    [fixture.humanA.membershipId, permission]
+                );
+            }
+            for (const permission of ['payments.view', 'financial_data.view']) {
+                await client.query(
+                    `INSERT INTO company_membership_permission_overrides
+                        (membership_id, permission_key, override_mode, created_by)
+                     VALUES ($1, $2, 'deny', $3)`,
+                    [fixture.humanA.membershipId, permission, fixture.humanA.id]
+                );
+            }
+            await expect(invoke(client, fixture, 'svc.list_payments', {
+                job_id: Number(fixture.ownedJobA),
+            })).rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+
+            expect(await snapshotCompanyB(client, fixture)).toEqual(beforeB);
+        } finally {
+            dbSpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+            rateLimit.resetForTests();
+        }
+    });
+
     databaseTest('SAB APP-GAP-F5 consume-time revocation + run/daily ceilings + live kill states', async () => {
         const client = await db.pool.connect();
         let dbSpy;
@@ -1161,6 +1379,93 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 [fixture.companyA, String(fixture.installationA)]
             );
             expect(createdToday.rows[0].count).toBe(100);
+        } finally {
+            dbSpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+            rateLimit.resetForTests();
+        }
+    });
+
+    databaseTest('APP-DATA-001 Phase H creates, attributes, deduplicates, and tenant-isolates Notes', async () => {
+        const client = await db.pool.connect();
+        let dbSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            dbSpy = jest.spyOn(db, 'query').mockImplementation((text, params) => client.query(text, params));
+            const context = await createRunContext(client, fixture);
+            const authorization = {
+                ownerUserId: fixture.humanA.id,
+                ownerScopes: { job_visibility: 'all' },
+            };
+            const beforeB = await snapshotCompanyB(client, fixture);
+            const args = {
+                parent_type: 'lead',
+                parent_id: Number(fixture.ownedLeadA),
+                text: 'Confirm the diagnostic window before dispatch.',
+            };
+
+            const first = await appRuntimeNoteService.addNoteInTransaction(
+                context,
+                args,
+                client,
+                authorization
+            );
+            const second = await appRuntimeNoteService.addNoteInTransaction(
+                context,
+                args,
+                client,
+                authorization
+            );
+            expect(first.deduplicated).toBe(false);
+            expect(second).toEqual({ note: first.note, deduplicated: true });
+
+            const stored = await client.query(
+                `SELECT structured_notes
+                 FROM leads
+                 WHERE id = $1 AND company_id = $2`,
+                [fixture.ownedLeadA, fixture.companyA]
+            );
+            expect(stored.rows[0].structured_notes).toContainEqual(expect.objectContaining({
+                id: first.note.id,
+                text: args.text,
+                created_by: fixture.principalA.agent.id,
+                author: fixture.principalA.agent.full_name,
+                source: 'app',
+                installation_id: String(fixture.installationA),
+                agent_type: 'app',
+                agent_input: {
+                    source: 'app',
+                    installation_id: String(fixture.installationA),
+                },
+            }));
+            expect(stored.rows[0].structured_notes.filter(note => note.id === first.note.id))
+                .toHaveLength(1);
+
+            await expect(appRuntimeNoteService.addNoteInTransaction(context, {
+                ...args,
+                parent_id: Number(fixture.foreignLeadB),
+            }, client, authorization)).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+
+            const providerAuthorization = {
+                ownerUserId: fixture.humanA.id,
+                ownerScopes: { job_visibility: 'assigned_only' },
+            };
+            await expect(appRuntimeNoteService.addNoteInTransaction(context, {
+                parent_type: 'job',
+                parent_id: Number(fixture.ownedJobA),
+                text: 'Assigned provider-visible Job Note.',
+            }, client, providerAuthorization)).resolves.toMatchObject({ deduplicated: false });
+            await expect(appRuntimeNoteService.addNoteInTransaction(context, {
+                parent_type: 'job',
+                parent_id: Number(fixture.unassignedJobA),
+                text: 'Must remain hidden from the provider.',
+            }, client, providerAuthorization)).rejects.toMatchObject({
+                code: 'NOT_FOUND',
+                httpStatus: 404,
+            });
+            expect(await snapshotCompanyB(client, fixture)).toEqual(beforeB);
         } finally {
             dbSpy?.mockRestore();
             await client.query('ROLLBACK').catch(() => {});

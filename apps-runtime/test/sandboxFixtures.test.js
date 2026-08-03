@@ -123,6 +123,12 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         const estimate = projectSandboxTool(fixtures, 'svc.get_estimate', {
             estimate_id: fixtures.estimates[0].id,
         });
+        const leads = projectSandboxTool(fixtures, 'svc.list_leads', { limit: 100 });
+        const lead = projectSandboxTool(fixtures, 'svc.get_lead', {
+            lead_id: fixtures.leads[0].id,
+        });
+        const invoices = projectSandboxTool(fixtures, 'svc.list_invoices', { limit: 100 });
+        const payments = projectSandboxTool(fixtures, 'svc.list_payments', { limit: 100 });
 
         const scheduledThatDay = fixtures.jobs
             .filter(candidate => localDate(candidate.start_date, fixtures.company.timezone) === '2026-07-31');
@@ -139,6 +145,21 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
                 quantity: 1,
             }),
         ]));
+        expect(leads.results).toHaveLength(dataset.leads.length);
+        expect(leads.results.every(row => !('phone' in row) && !('email' in row))).toBe(true);
+        expect(lead).toEqual(expect.objectContaining({
+            phone: expect.stringMatching(/^\+161755501/),
+            email: expect.stringMatching(/@example\.com$/),
+        }));
+        expect(invoices.results).toHaveLength(fixtures.invoices.length);
+        expect(payments.results).toHaveLength(fixtures.payments.length);
+        expect(Object.keys(invoices.results[0]).sort()).toEqual([
+            'amount_paid', 'balance_due', 'contact_id', 'created_at', 'due_at',
+            'id', 'invoice_number', 'job_id', 'status', 'total',
+        ].sort());
+        expect(Object.keys(payments.results[0]).sort()).toEqual([
+            'amount', 'id', 'invoice_id', 'job_id', 'method', 'paid_at', 'status',
+        ].sort());
         expect(jobs.results[0]).toHaveProperty('amount_paid');
         expect(job).not.toHaveProperty('amount_paid');
         const billable = fixtures.jobs.filter(candidate => candidate.invoice_total !== null).length;

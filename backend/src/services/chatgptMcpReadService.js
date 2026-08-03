@@ -117,18 +117,25 @@ async function execute(handler, context, args = {}) {
             break;
         }
         case 'listLeads':
-            result = await leadsService.listLeads({
-                companyId,
-                ...listFilters(args),
-                status: args.status ? [args.status] : undefined,
-                source: args.source ? [args.source] : undefined,
-                only_open: args.only_open !== false,
-                sort_by: 'CreatedDate',
-                sort_order: 'desc',
-            });
+            result = context.appRuntime
+                ? await queries.listAppLeads(companyId, {
+                    ...args,
+                    companyTimezone: context.companyTimezone,
+                })
+                : await leadsService.listLeads({
+                    companyId,
+                    ...listFilters(args),
+                    status: args.status ? [args.status] : undefined,
+                    source: args.source ? [args.source] : undefined,
+                    only_open: args.only_open !== false,
+                    sort_by: 'CreatedDate',
+                    sort_order: 'desc',
+                });
             break;
         case 'getLead':
-            result = await queries.getLead(companyId, args.lead_uuid);
+            result = context.appRuntime
+                ? await queries.getAppLead(companyId, args.lead_id)
+                : await queries.getLead(companyId, args.lead_uuid);
             if (!result) notFound('Lead');
             break;
         case 'getLeadTransitions': {
@@ -259,8 +266,37 @@ async function execute(handler, context, args = {}) {
             if (!result) notFound('Estimate');
             break;
         case 'listInvoices':
-            result = await queries.listInvoices(companyId, args);
+            result = context.appRuntime
+                ? await queries.listAppInvoices(companyId, {
+                    ...args,
+                    companyTimezone: context.companyTimezone,
+                })
+                : await queries.listInvoices(companyId, args);
             break;
+        case 'listPayments': {
+            if (!ownerPermissions.has('payments.view')) {
+                if (!ownerPermissions.has('financial_data.view') || !args.job_id) {
+                    throw new ChatgptMcpReadError(
+                        'ACCESS_DENIED',
+                        'Payments require an assigned Job scope.',
+                        403
+                    );
+                }
+                const visibleJob = await jobsService.getJobById(
+                    args.job_id,
+                    companyId,
+                    providerScope
+                );
+                if (!visibleJob) {
+                    throw new ChatgptMcpReadError('ACCESS_DENIED', 'Access denied.', 403);
+                }
+            }
+            result = await queries.listAppPayments(companyId, {
+                ...args,
+                companyTimezone: context.companyTimezone,
+            });
+            break;
+        }
         case 'getInvoice':
             result = await queries.getInvoice(companyId, args.invoice_id);
             if (!result) notFound('Invoice');

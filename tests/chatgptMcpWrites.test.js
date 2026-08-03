@@ -278,7 +278,7 @@ describe('CHATGPT-CRM-MCP S2a write executor', () => {
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(31);
+        expect(response.result.tools).toHaveLength(32);
         const writes = response.result.tools.filter((tool) => tool.annotations.kind === 'write');
         expect(writes).toHaveLength(12);
         expect(writes.every((tool) => (

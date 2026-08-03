@@ -1,5 +1,7 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
+const db = require('../db/connection');
 const notesQueries = require('../db/crmNotesQueries');
 const accountsQueries = require('../db/crmAccountsQueries');
 const dealsQueries = require('../db/crmDealsQueries');
@@ -10,6 +12,49 @@ const { badRequest, notFound } = require('./crmErrors');
 
 const NOTE_SOURCES = new Set(['manual', 'meeting_follow_up', 'forecast_review', 'deal_strategy']);
 const ENTITY_TYPES = new Set(['account', 'deal', 'contact']);
+const APP_NOTE_ENTITIES = Object.freeze({
+    job: Object.freeze({ table: 'jobs', notesColumn: 'notes' }),
+    lead: Object.freeze({ table: 'leads', notesColumn: 'structured_notes' }),
+});
+
+async function createAppEntityNote(companyId, payload, context) {
+    const entity = APP_NOTE_ENTITIES[payload.entity_type];
+    const entityId = Number(payload.entity_id);
+    const text = String(payload.text || '').trim();
+    if (!entity || !Number.isSafeInteger(entityId) || entityId < 1) {
+        throw badRequest('Unsupported app note parent');
+    }
+    if (!text || text.length > 1000) throw badRequest('text must be between 1 and 1000 characters');
+    if (!context.installationId) throw badRequest('installationId is required');
+
+    const note = {
+        id: context.noteId || randomUUID(),
+        text,
+        created: context.createdAt || new Date().toISOString(),
+        created_by: context.actorId || null,
+        author: context.actorName || context.actorEmail || 'App',
+        source: 'app',
+        installation_id: String(context.installationId),
+        agent_type: 'app',
+        agent_input: {
+            source: 'app',
+            installation_id: String(context.installationId),
+        },
+    };
+    const query = context.client?.query
+        ? context.client.query.bind(context.client)
+        : db.query.bind(db);
+    const { rows } = await query(
+        `UPDATE ${entity.table}
+         SET ${entity.notesColumn} = COALESCE(${entity.notesColumn}, '[]'::jsonb) || $1::jsonb,
+             updated_at = NOW()
+         WHERE id = $2 AND company_id = $3
+         RETURNING id`,
+        [JSON.stringify([note]), entityId, companyId]
+    );
+    if (rows.length !== 1) throw notFound(`${payload.entity_type} not found`);
+    return { note, field: 'entity_note', before: null, after: note };
+}
 
 async function validateEntity(companyId, entityType, entityId) {
     if (!ENTITY_TYPES.has(entityType)) throw badRequest(`Unsupported note entity_type: ${entityType}`);
@@ -25,6 +70,9 @@ async function listNotes(companyId, filters = {}) {
 
 async function createNote(companyId, payload, context = {}) {
     if (!payload.text || !String(payload.text).trim()) throw badRequest('text is required');
+    if (payload.source === 'app') {
+        return createAppEntityNote(companyId, payload, context);
+    }
     if (!NOTE_SOURCES.has(payload.source)) throw badRequest(`Unsupported note source: ${payload.source}`);
     await validateEntity(companyId, payload.entity_type, payload.entity_id);
     const note = await notesQueries.createNote(companyId, {
@@ -65,6 +113,7 @@ async function createNote(companyId, payload, context = {}) {
 
 module.exports = {
     NOTE_SOURCES,
+    APP_NOTE_ENTITIES,
     listNotes,
     createNote,
 };

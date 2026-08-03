@@ -238,7 +238,7 @@ function renderAppToolsMarkdown({ tools = appRuntimeCatalog.listTools() } = {}) 
         '- App code calls `await ctx.callTool(name, args)`. It has no `fetch`, general HTTP API, network access, filesystem, dependencies, or arbitrary egress from the isolate.',
         '- The internal gateway transport returns `{"ok":true,"data":<tool output>,"request_id":"..."}`. `ctx.callTool` unwraps it and returns only `<tool output>`.',
         '- MCP `tools/list` exposes the same input and output schemas; a successful MCP call places the documented tool output in `structuredContent`.',
-        `- The only CRM write tool is ${writeToolNames}; no note, send, message-delivery, trigger, scheduler, payment, invoice mutation, or external-egress tool is available to App Studio.`,
+        `- The CRM write tools are ${writeToolNames}; no send, message-delivery, trigger, scheduler, payment mutation, invoice mutation, or external-egress tool is available to App Studio.`,
         '- Live company, role, provider, Task-content, consent, masking, audit, rate, and run-call controls can narrow every call.',
         '',
         'Arguments are JSON objects. Unknown parameters are rejected. Dates use the exact `YYYY-MM-DD` calendar form described by each parameter; timestamps in responses use ISO 8601.',

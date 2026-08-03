@@ -22,6 +22,11 @@ const GATEWAY_TOOLS = Object.freeze([
     'svc.create_task',
     'svc.list_estimates',
     'svc.get_estimate',
+    'svc.add_note',
+    'svc.list_leads',
+    'svc.get_lead',
+    'svc.list_invoices',
+    'svc.list_payments',
 ]);
 
 module.exports = {

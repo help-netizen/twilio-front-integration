@@ -77,8 +77,8 @@ describe('AVATARS-001 Phase B live owner authorization parity', () => {
         dispatcherOnly: true,
     });
 
-    test('parity inventory is exactly 33 tools × 4 canonical roles', () => {
-        expect(tools).toHaveLength(33);
+    test('parity inventory is exactly 34 tools × 4 canonical roles', () => {
+        expect(tools).toHaveLength(34);
         expect(Object.keys(ROLE_PERMISSIONS)).toEqual([
             'tenant_admin',
             'manager',
@@ -176,7 +176,7 @@ describe('AVATARS-001 Phase B live owner authorization parity', () => {
         });
         const visible = authorization.filterAvatarTools(tools, owner, ALL_SCOPES)
             .map((tool) => tool.name);
-        expect(visible).toHaveLength(19);
+        expect(visible).toHaveLength(20);
         expect(visible).not.toContain('svc.create_job');
         expect(visible).not.toContain('svc.send_invoice');
         expect(() => authorization.requireAvatarToolAccess(

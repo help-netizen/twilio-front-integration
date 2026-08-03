@@ -61,6 +61,7 @@ jest.mock('../backend/src/db/chatgptMcpQueries', () => ({
     })),
     getEstimate: jest.fn(async () => ({ id: 31, items: [], order_list: [] })),
     listInvoices: jest.fn(async () => ({ rows: [{ id: 41 }], total: 1 })),
+    listAppPayments: jest.fn(async () => ({ results: [{ id: 42 }], pagination: { total: 1 } })),
     getInvoice: jest.fn(async () => ({ id: 41, public_token: 'hidden', items: [] })),
 }));
 
@@ -80,7 +81,7 @@ const AUTHORITY = Object.freeze({
     companyTimezone: 'America/New_York',
     ownerUserId: OWNER,
     ownerRoleKey: 'manager',
-    ownerPermissions: ['tasks.view', 'tasks.manage'],
+    ownerPermissions: ['tasks.view', 'tasks.manage', 'payments.view'],
     ownerScopes: { job_visibility: 'all' },
 });
 
@@ -104,6 +105,7 @@ const CASES = [
     ['getEstimate', { estimate_id: 31 }, queries.getEstimate],
     ['listInvoices', {}, queries.listInvoices],
     ['getInvoice', { invoice_id: 41 }, queries.getInvoice],
+    ['listPayments', {}, queries.listAppPayments],
 ];
 
 beforeEach(() => jest.clearAllMocks());
@@ -203,6 +205,31 @@ describe('CHATGPT-CRM-MCP S1 read handlers', () => {
             'lead',
             'Submitted',
             ['manager']
+        );
+    });
+
+    test('financial_data.view payments remain constrained to one visible assigned Job', async () => {
+        const provider = {
+            ...AUTHORITY,
+            ownerPermissions: ['financial_data.view'],
+            ownerScopes: { job_visibility: 'assigned_only' },
+        };
+        await expect(readService.execute('listPayments', provider, {}))
+            .rejects.toMatchObject({ code: 'ACCESS_DENIED', httpStatus: 403 });
+
+        await expect(readService.execute('listPayments', provider, { job_id: 11 }))
+            .resolves.toEqual({ results: [{ id: 42 }], pagination: { total: 1 } });
+        expect(jobsService.getJobById).toHaveBeenCalledWith(
+            11,
+            COMPANY,
+            { assignedOnly: true, userId: OWNER }
+        );
+        expect(queries.listAppPayments).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                job_id: 11,
+                companyTimezone: 'America/New_York',
+            })
         );
     });
 

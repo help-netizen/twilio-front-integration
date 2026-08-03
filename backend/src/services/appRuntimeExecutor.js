@@ -3,6 +3,7 @@
 const authorizationService = require('./authorizationService');
 const readService = require('./chatgptMcpReadService');
 const taskService = require('./appRuntimeTaskService');
+const noteService = require('./appRuntimeNoteService');
 const catalog = require('./appRuntimeToolCatalog');
 const tokenService = require('./appRuntimeTokenService');
 const requestValidator = require('./appRuntimeRequestValidator');
@@ -44,9 +45,26 @@ function requireToolConsent(context, toolName) {
     }
 }
 
-function requireBusinessPermission(authz, permission) {
+function permissionRule(tool, args = null) {
+    const declared = tool?.businessPermissions;
+    if (declared?.byParent && args?.parent_type) {
+        return declared.byParent[args.parent_type] || null;
+    }
+    return declared || null;
+}
+
+function hasBusinessPermission(authz, tool, args = null) {
     const permissions = new Set(authz?.permissions || []);
-    if (!permissions.has(permission)) {
+    const rule = permissionRule(tool, args);
+    if (!rule) return false;
+    const every = Array.isArray(rule.every) ? rule.every : [];
+    const any = Array.isArray(rule.any) ? rule.any : [];
+    return every.every(permission => permissions.has(permission))
+        && (any.length === 0 || any.some(permission => permissions.has(permission)));
+}
+
+function requireBusinessPermission(authz, tool, args = null) {
+    if (!hasBusinessPermission(authz, tool, args)) {
         throw appRuntimeError('ACCESS_DENIED', 'Access denied.', 403);
     }
 }
@@ -66,9 +84,8 @@ function requireExecutionAuthorization(context, authz) {
             403
         );
     }
-    const permissions = new Set(authz?.permissions || []);
     const effectiveTools = consentedTools.filter(toolName => (
-        permissions.has(catalog.requireTool(toolName).businessPermission)
+        hasBusinessPermission(authz, catalog.requireTool(toolName))
     ));
     if (effectiveTools.length === 0) {
         throw appRuntimeError('ACCESS_DENIED', 'Access denied.', 403);
@@ -85,6 +102,7 @@ function buildReadContext(context, authz) {
         );
     }
     return {
+        appRuntime: true,
         companyId: context.company_id,
         companyTimezone: context.company_timezone,
         ownerUserId: context.delegated_by_user_id,
@@ -99,9 +117,15 @@ async function execute(context, authz, toolName, args) {
     const tool = catalog.requireTool(toolName);
     requireToolConsent(context, toolName);
     requestValidator.validateArguments(tool, args);
-    requireBusinessPermission(authz, tool.businessPermission);
+    requireBusinessPermission(authz, tool, args);
     if (tool.kind === 'write' && tool.handler === 'createTask') {
         return taskService.createTask(context, args);
+    }
+    if (tool.kind === 'write' && tool.handler === 'addNote') {
+        return noteService.addNote(context, args, {
+            ownerUserId: context.delegated_by_user_id,
+            ownerScopes: authz.scopes,
+        });
     }
     return readService.execute(tool.handler, buildReadContext(context, authz), args);
 }
@@ -109,6 +133,7 @@ async function execute(context, authz, toolName, args) {
 module.exports = {
     resolveLiveAuthorization,
     requireToolConsent,
+    hasBusinessPermission,
     requireBusinessPermission,
     requireExecutionAuthorization,
     buildReadContext,

@@ -211,6 +211,7 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
     const leads = dataset.leads.map((plan, index) => {
         const ordinal = index + 1;
         const contact = contacts[plan.customer_index];
+        const customer = dataset.customers[plan.customer_index];
         const job = plan.job_index === null ? null : jobs[plan.job_index];
         const lead = {
             id: idBase + 200 + ordinal,
@@ -221,9 +222,18 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
             status: plan.status,
             source: plan.source,
             job_source: plan.source,
-            notes: plan.note,
+            first_name: customer.first_name,
+            last_name: customer.last_name,
+            phone: customer.phone,
+            email: customer.email,
+            address: customer.address,
+            city: customer.city,
+            state: 'MA',
+            job_type: job?.job_type || dataset.services[index % dataset.services.length].type,
+            lead_notes: plan.note,
             created_at: iso(day(plan.day_offset), 8 + (index % 11)),
             converted_at: job ? iso(day(plan.day_offset + 1), 10 + (index % 6)) : null,
+            converted_to_job: Boolean(job),
             job_id: job ? job.id : null,
         };
         if (job) {
@@ -287,6 +297,7 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
             id: idBase + 500 + index + 1,
             company_id: companyId,
             job_id: job.id,
+            contact_id: job.contact_id,
             invoice_number: `INV-${String(7100 + index + 1)}`,
             status: job.invoice_status,
             total: money(total),
@@ -541,6 +552,160 @@ function projectGetEstimate(fixtures, args) {
     };
 }
 
+function projectLeadSummary(lead) {
+    return {
+        id: lead.id,
+        uuid: lead.uuid,
+        serial_id: lead.serial_id,
+        status: lead.status,
+        source: lead.job_source ?? lead.source ?? null,
+        job_source: lead.job_source ?? lead.source ?? null,
+        first_name: lead.first_name ?? null,
+        last_name: lead.last_name ?? null,
+        city: lead.city ?? null,
+        state: lead.state ?? null,
+        created_at: lead.created_at,
+        converted_at: lead.converted_at ?? null,
+        contact_id: lead.contact_id ?? null,
+        converted_to_job: lead.converted_to_job === true,
+    };
+}
+
+function offsetPage(rows, args, projector) {
+    const total = rows.length;
+    const offset = Number.isInteger(args.offset) ? args.offset : 0;
+    const limit = Number.isInteger(args.limit) ? args.limit : 50;
+    const results = rows.slice(offset, offset + limit).map(projector);
+    return {
+        results,
+        pagination: pagination(
+            'offset',
+            limit,
+            results.length,
+            offset + results.length < total,
+            total,
+            offset
+        ),
+    };
+}
+
+function projectListLeads(fixtures, args) {
+    const search = typeof args.search === 'string' ? args.search.trim().toLowerCase() : '';
+    const dateBounds = companyDateFilterBounds(
+        args.created_from,
+        args.created_to,
+        fixtures.company?.timezone
+    );
+    const rows = fixtures.leads.filter(lead => {
+        const source = lead.job_source ?? lead.source;
+        if (args.status && lead.status !== args.status) return false;
+        if (args.source && source !== args.source) return false;
+        if (dateBounds.fromInclusive
+            && Date.parse(lead.created_at) < Date.parse(dateBounds.fromInclusive)) return false;
+        if (dateBounds.toExclusive
+            && Date.parse(lead.created_at) >= Date.parse(dateBounds.toExclusive)) return false;
+        if (search && ![
+            lead.uuid,
+            lead.serial_id,
+            `${lead.first_name || ''} ${lead.last_name || ''}`,
+            lead.city,
+            lead.state,
+            source,
+        ].some(value => String(value || '').toLowerCase().includes(search))) return false;
+        return true;
+    }).sort((left, right) => (
+        right.created_at.localeCompare(left.created_at) || Number(right.id) - Number(left.id)
+    ));
+    return offsetPage(rows, args, projectLeadSummary);
+}
+
+function projectGetLead(fixtures, args) {
+    if (!Number.isSafeInteger(args.lead_id) || args.lead_id < 1) {
+        throw new SandboxFixtureError(
+            'INVALID_ARGUMENTS',
+            'lead_id must be a positive integer.',
+            422
+        );
+    }
+    const lead = fixtures.leads.find(candidate => candidate.id === args.lead_id);
+    if (!lead) throw new SandboxFixtureError('NOT_FOUND', 'Lead not found.', 404);
+    return {
+        ...projectLeadSummary(lead),
+        phone: lead.phone ?? null,
+        email: lead.email ?? null,
+        address: lead.address ?? null,
+        job_type: lead.job_type ?? null,
+        lead_notes: lead.lead_notes ?? null,
+    };
+}
+
+function projectInvoiceSummary(invoice) {
+    return {
+        id: invoice.id,
+        invoice_number: invoice.invoice_number,
+        status: invoice.status,
+        total: invoice.total,
+        amount_paid: invoice.amount_paid,
+        balance_due: invoice.balance_due,
+        job_id: invoice.job_id ?? null,
+        contact_id: invoice.contact_id ?? null,
+        created_at: invoice.created_at,
+        due_at: invoice.due_at ?? null,
+    };
+}
+
+function projectListInvoices(fixtures, args) {
+    const dateBounds = companyDateFilterBounds(
+        args.created_from,
+        args.created_to,
+        fixtures.company?.timezone
+    );
+    const rows = fixtures.invoices.filter(invoice => {
+        if (args.status && invoice.status !== args.status) return false;
+        if (args.job_id && invoice.job_id !== args.job_id) return false;
+        if (dateBounds.fromInclusive
+            && Date.parse(invoice.created_at) < Date.parse(dateBounds.fromInclusive)) return false;
+        if (dateBounds.toExclusive
+            && Date.parse(invoice.created_at) >= Date.parse(dateBounds.toExclusive)) return false;
+        return true;
+    }).sort((left, right) => (
+        right.created_at.localeCompare(left.created_at) || Number(right.id) - Number(left.id)
+    ));
+    return offsetPage(rows, args, projectInvoiceSummary);
+}
+
+function projectPaymentSummary(payment) {
+    return {
+        id: payment.id,
+        amount: payment.amount,
+        status: payment.status,
+        method: payment.method ?? null,
+        job_id: payment.job_id ?? null,
+        invoice_id: payment.invoice_id ?? null,
+        paid_at: payment.paid_at,
+    };
+}
+
+function projectListPayments(fixtures, args) {
+    const dateBounds = companyDateFilterBounds(
+        args.paid_from,
+        args.paid_to,
+        fixtures.company?.timezone
+    );
+    const rows = fixtures.payments.filter(payment => {
+        if (args.job_id && payment.job_id !== args.job_id) return false;
+        if (args.invoice_id && payment.invoice_id !== args.invoice_id) return false;
+        if (dateBounds.fromInclusive
+            && Date.parse(payment.paid_at) < Date.parse(dateBounds.fromInclusive)) return false;
+        if (dateBounds.toExclusive
+            && Date.parse(payment.paid_at) >= Date.parse(dateBounds.toExclusive)) return false;
+        return true;
+    }).sort((left, right) => (
+        right.paid_at.localeCompare(left.paid_at) || Number(right.id) - Number(left.id)
+    ));
+    return offsetPage(rows, args, projectPaymentSummary);
+}
+
 function projectSandboxTool(fixtures, toolName, args = {}) {
     if (!fixtures || typeof fixtures !== 'object' || Array.isArray(fixtures)
         || !args || typeof args !== 'object' || Array.isArray(args)) {
@@ -555,6 +720,10 @@ function projectSandboxTool(fixtures, toolName, args = {}) {
     if (toolName === 'svc.list_tasks') return projectListTasks(fixtures, args);
     if (toolName === 'svc.list_estimates') return projectListEstimates(fixtures, args);
     if (toolName === 'svc.get_estimate') return projectGetEstimate(fixtures, args);
+    if (toolName === 'svc.list_leads') return projectListLeads(fixtures, args);
+    if (toolName === 'svc.get_lead') return projectGetLead(fixtures, args);
+    if (toolName === 'svc.list_invoices') return projectListInvoices(fixtures, args);
+    if (toolName === 'svc.list_payments') return projectListPayments(fixtures, args);
     throw new SandboxFixtureError('TOOL_NOT_FOUND', 'Tool not found.', 404);
 }
 
@@ -575,7 +744,6 @@ function summarizeSandboxFixtures(fixtures) {
     return {
         companies: 0,
         contacts: 0,
-        leads: 0,
         jobs: Array.isArray(fixtures?.['svc.list_jobs']?.results)
             ? fixtures['svc.list_jobs'].results.length
             : 0,
@@ -585,8 +753,15 @@ function summarizeSandboxFixtures(fixtures) {
         estimates: Array.isArray(fixtures?.['svc.list_estimates']?.results)
             ? fixtures['svc.list_estimates'].results.length
             : 0,
-        invoices: 0,
-        payments: 0,
+        leads: Array.isArray(fixtures?.['svc.list_leads']?.results)
+            ? fixtures['svc.list_leads'].results.length
+            : 0,
+        invoices: Array.isArray(fixtures?.['svc.list_invoices']?.results)
+            ? fixtures['svc.list_invoices'].results.length
+            : 0,
+        payments: Array.isArray(fixtures?.['svc.list_payments']?.results)
+            ? fixtures['svc.list_payments'].results.length
+            : 0,
     };
 }
 
@@ -598,7 +773,11 @@ module.exports = {
     companyDateFilterBounds,
     generateSandboxFixtures,
     normalizeSeed,
+    projectGetLead,
     projectGetEstimate,
+    projectListInvoices,
+    projectListLeads,
+    projectListPayments,
     projectListEstimates,
     projectSandboxTool,
     summarizeSandboxFixtures,

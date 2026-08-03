@@ -279,4 +279,74 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
             },
         });
     });
+
+    test('Phase H dry-run deduplicates Notes and reports their App source projection', async () => {
+        const source = `
+            export async function run(ctx) {
+                const leads = await ctx.callTool('svc.list_leads', { limit: 1, offset: 0 });
+                const args = {
+                    parent_type: 'lead',
+                    parent_id: Number(leads.results[0].id),
+                    text: 'Follow up before scheduling.',
+                };
+                const first = await ctx.callTool('svc.add_note', args);
+                const second = await ctx.callTool('svc.add_note', args);
+                return { first, second };
+            }
+        `;
+        const execution = await validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            seed: 'phase-h-note-dedup',
+            anchor: '2026-08-03',
+        });
+        expect(execution.result).toEqual({
+            first: { note_id: 'sandbox-app-note-1' },
+            second: { note_id: 'sandbox-app-note-1', deduplicated: true },
+        });
+        expect(execution.createdNotes).toEqual([{
+            note_id: 'sandbox-app-note-1',
+            parent_type: 'lead',
+            parent_id: expect.any(Number),
+            text: 'Follow up before scheduling.',
+            source: 'app',
+        }]);
+    });
+
+    test('Phase H dry-run shares three write calls across two Tasks and two Notes', async () => {
+        const source = `
+            export async function run(ctx) {
+                const jobs = await ctx.callTool('svc.list_jobs', { limit: 1, offset: 0 });
+                const jobId = Number(jobs.results[0].id);
+                await ctx.callTool('svc.create_task', {
+                    parent_type: 'job', parent_id: jobId, description: 'First shared write.',
+                });
+                await ctx.callTool('svc.create_task', {
+                    parent_type: 'job', parent_id: jobId, description: 'Second shared write.',
+                });
+                await ctx.callTool('svc.add_note', {
+                    parent_type: 'job', parent_id: jobId, text: 'Third shared write.',
+                });
+                try {
+                    await ctx.callTool('svc.add_note', {
+                        parent_type: 'job', parent_id: jobId, text: 'Fourth shared write.',
+                    });
+                } catch (error) {
+                    return { code: error.code, message: error.message };
+                }
+                return null;
+            }
+        `;
+        await expect(validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+        })).resolves.toMatchObject({
+            result: {
+                code: 'WRITE_CALL_LIMIT',
+                message: 'Write call limit of 3 reached.',
+            },
+            createdTasks: [{}, {}],
+            createdNotes: [{}],
+        });
+    });
 });
