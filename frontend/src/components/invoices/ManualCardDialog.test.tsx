@@ -36,6 +36,7 @@ import {
     openManualCardAuthenticationPopup,
     openManualCardEntryPopup,
     reconcileManualCardSession,
+    resolveManualCardSameWindowResume,
     requestManualCardDismiss,
     runManualCardCharge,
     settleFinanceSync,
@@ -210,6 +211,40 @@ describe('manual card state machine', () => {
 });
 
 describe('manual-card popup integration', () => {
+    it('restores a same-window result only for the matching job and session', () => {
+        const session = {
+            session_id: 11,
+            client_secret: 'pi_secret',
+            payment_intent_id: 'pi_11',
+            account_id: 'acct_11',
+            amount: 95,
+            save_for_future: true,
+        };
+        const result = {
+            sessionId: 11,
+            completion: {
+                kind: 'cardframe:payment_method' as const,
+                pmId: 'pm_card_11',
+                brand: 'visa',
+                last4: '4242',
+            },
+            resumeContext: {
+                kind: 'manual-card',
+                stage: 'collect',
+                entityType: 'job',
+                entityId: '1617',
+                session,
+            },
+        };
+
+        expect(resolveManualCardSameWindowResume(result, 'job', '1617')).toEqual({
+            context: result.resumeContext,
+            completion: result.completion,
+        });
+        expect(resolveManualCardSameWindowResume(result, 'job', '999')).toBeNull();
+        expect(resolveManualCardSameWindowResume({ ...result, sessionId: 12 }, 'job', '1617')).toBeNull();
+    });
+
     it('opens collect mode and accepts the popup PaymentMethod mask without charging', async () => {
         const popup = {
             closed: false,
@@ -217,8 +252,17 @@ describe('manual-card popup integration', () => {
             close: vi.fn(),
         };
         const messageListeners: Array<(event: MessageEvent) => void> = [];
+        let ackTimeoutCallback: (() => void) | null = null;
+        const clearTimeout = vi.fn();
+        const assign = vi.fn();
         const hostWindow = {
-            location: { origin: 'https://app.albusto.test' },
+            location: {
+                origin: 'https://app.albusto.test',
+                pathname: '/jobs/1617',
+                search: '',
+                hash: '',
+                assign,
+            },
             open: vi.fn(() => popup),
             addEventListener: vi.fn((_type: string, listener: (event: MessageEvent) => void) => {
                 messageListeners.push(listener);
@@ -226,6 +270,11 @@ describe('manual-card popup integration', () => {
             removeEventListener: vi.fn(),
             setInterval: vi.fn(() => 17),
             clearInterval: vi.fn(),
+            setTimeout: vi.fn((callback: () => void) => {
+                ackTimeoutCallback = callback;
+                return 23;
+            }),
+            clearTimeout,
         } as unknown as Window;
         const session = {
             session_id: 11,
@@ -246,6 +295,7 @@ describe('manual-card popup integration', () => {
             'albusto-card',
             'width=460,height=640',
         );
+        expect(hostWindow.setTimeout).toHaveBeenCalledWith(expect.any(Function), 1500);
 
         messageListeners[0]?.({
             origin: 'https://evil.test',
@@ -265,6 +315,10 @@ describe('manual-card popup integration', () => {
             accountId: 'acct_11',
             amount: 95,
         }, 'https://cards.albusto.test');
+        expect(clearTimeout).toHaveBeenCalledWith(23);
+        ackTimeoutCallback!();
+        expect(assign).not.toHaveBeenCalled();
+        expect(popup.close).not.toHaveBeenCalled();
 
         messageListeners[0]?.({
             origin: 'https://cards.albusto.test',
@@ -283,6 +337,66 @@ describe('manual-card popup integration', () => {
             brand: 'visa',
             last4: '4242',
         });
+        expect(clearTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    it('reuses the existing manual-card session when popup acknowledgement times out', () => {
+        const popup = {
+            closed: false,
+            postMessage: vi.fn(),
+            close: vi.fn(),
+        };
+        let ackTimeoutCallback: (() => void) | null = null;
+        const setItem = vi.fn();
+        const assign = vi.fn();
+        const resumeContext = { kind: 'manual-card', stage: 'collect', entityId: '1617' };
+        const hostWindow = {
+            location: {
+                origin: 'https://app.albusto.test',
+                pathname: '/jobs/1617',
+                search: '',
+                hash: '',
+                assign,
+            },
+            navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 15)' },
+            matchMedia: vi.fn(() => ({ matches: false })),
+            open: vi.fn(() => popup),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            setInterval: vi.fn(() => 17),
+            clearInterval: vi.fn(),
+            setTimeout: vi.fn((callback: () => void) => {
+                ackTimeoutCallback = callback;
+                return 23;
+            }),
+            clearTimeout: vi.fn(),
+            sessionStorage: { setItem },
+            crypto: { randomUUID: () => 'manual-ack-timeout' },
+        } as unknown as Window;
+        const session = {
+            session_id: 11,
+            client_secret: 'pi_secret',
+            payment_intent_id: 'pi_11',
+            account_id: 'acct_11',
+            amount: 95,
+            save_for_future: true,
+        };
+
+        openManualCardEntryPopup(session, undefined, {
+            hostWindow,
+            ackTimeoutMs: 25,
+            sameWindowResumeContext: resumeContext,
+        });
+        ackTimeoutCallback!();
+
+        expect(popup.close).toHaveBeenCalledOnce();
+        expect(assign).toHaveBeenCalledOnce();
+        expect(setItem).toHaveBeenCalledOnce();
+        expect(JSON.parse(String(setItem.mock.calls[0]?.[1]))).toMatchObject({
+            sessionId: 11,
+            resumeContext,
+        });
+        expect(authedFetch).not.toHaveBeenCalled();
     });
 
     it('opens authenticate mode after server requires_action, then finalizes', async () => {
@@ -349,11 +463,22 @@ describe('manual-card popup integration', () => {
         expect(finalizeSession).not.toHaveBeenCalled();
     });
 
-    it('offers the existing Copy-link fallback when the popup is blocked', () => {
-        const fallback = vi.fn();
+    it('uses the same-window fallback when card entry popup is blocked', () => {
+        const assign = vi.fn();
         const hostWindow = {
-            location: { origin: 'https://app.albusto.test' },
+            location: {
+                origin: 'https://app.albusto.test',
+                pathname: '/jobs/1617',
+                search: '',
+                hash: '',
+                assign,
+            },
+            navigator: {},
             open: vi.fn(() => null),
+            sessionStorage: {
+                setItem: vi.fn(),
+            },
+            crypto: { randomUUID: () => 'blocked-collect' },
         } as unknown as Window;
 
         expect(openManualCardEntryPopup({
@@ -363,23 +488,27 @@ describe('manual-card popup integration', () => {
             account_id: 'acct_11',
             amount: 95,
             save_for_future: true,
-        }, fallback, { hostWindow })).toBeNull();
-
-        expect(toastError).toHaveBeenCalledWith(
-            'Pop-up blocked. Allow pop-ups to enter card details.',
-            expect.objectContaining({
-                action: expect.objectContaining({ label: 'Copy link instead' }),
-            }),
-        );
-        toastError.mock.calls[0]?.[1]?.action.onClick();
-        expect(fallback).toHaveBeenCalledOnce();
+        }, undefined, { hostWindow })).not.toBeNull();
+        expect(assign).toHaveBeenCalledWith(expect.stringContaining('/card-entry.html?handoff='));
+        expect(toastError).not.toHaveBeenCalled();
     });
 
-    it('offers the Copy-link fallback when the authentication popup is blocked', () => {
-        const fallback = vi.fn();
+    it('uses the same-window fallback when authentication popup is blocked', () => {
+        const assign = vi.fn();
         const hostWindow = {
-            location: { origin: 'https://app.albusto.test' },
+            location: {
+                origin: 'https://app.albusto.test',
+                pathname: '/jobs/1617',
+                search: '',
+                hash: '',
+                assign,
+            },
+            navigator: {},
             open: vi.fn(() => null),
+            sessionStorage: {
+                setItem: vi.fn(),
+            },
+            crypto: { randomUUID: () => 'blocked-auth' },
         } as unknown as Window;
 
         expect(openManualCardAuthenticationPopup({
@@ -389,14 +518,9 @@ describe('manual-card popup integration', () => {
             account_id: 'acct_11',
             amount: 95,
             save_for_future: true,
-        }, 'pi_action_secret', fallback, { hostWindow })).toBeNull();
-
-        expect(toastError).toHaveBeenCalledWith(
-            'Pop-up blocked. Allow pop-ups to verify the card.',
-            expect.objectContaining({
-                action: expect.objectContaining({ label: 'Copy link instead' }),
-            }),
-        );
+        }, 'pi_action_secret', undefined, { hostWindow })).not.toBeNull();
+        expect(assign).toHaveBeenCalledWith(expect.stringContaining('/card-entry.html?handoff='));
+        expect(toastError).not.toHaveBeenCalled();
     });
 });
 

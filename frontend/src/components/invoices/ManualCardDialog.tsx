@@ -26,10 +26,15 @@ import {
     type CardEntryPopupHandle,
     type CardEntryPopupLaunchOptions,
 } from '../../card-entry/opener';
-import type {
-    CardframePaymentMethodMessage,
-    CardframeResultMessage,
+import {
+    isCardframePaymentMethodMessage,
+    type CardframePaymentMethodMessage,
+    type CardframeResultMessage,
 } from '../../card-entry/protocol';
+import {
+    consumeCardEntrySameWindowResult,
+    type CardEntrySameWindowResult,
+} from '../../card-entry/handoff';
 import { formatSignedCurrency } from '../jobs/jobFinanceMath';
 
 export type ManualCardPhase =
@@ -412,7 +417,7 @@ export function openManualCardEntryPopup(
             mode: 'collect',
             accountId: session.account_id,
             amount: session.amount,
-        }, options);
+        }, { ...options, sessionId: session.session_id });
     } catch (error) {
         if (!(error instanceof CardEntryPopupBlockedError)) throw error;
         toast.error('Pop-up blocked. Allow pop-ups to enter card details.', {
@@ -439,7 +444,7 @@ export function openManualCardAuthenticationPopup(
             accountId: session.account_id,
             amount: session.amount,
             clientSecret,
-        }, options);
+        }, { ...options, sessionId: session.session_id });
     } catch (error) {
         if (!(error instanceof CardEntryPopupBlockedError)) throw error;
         toast.error('Pop-up blocked. Allow pop-ups to verify the card.', {
@@ -514,6 +519,71 @@ interface Props {
     onPaymentConfirmed?: (payment: ManualCardSessionResult) => boolean | void | Promise<boolean | void>;
     onDone?: () => void;
     onCopyLinkFallback?: () => void | Promise<void>;
+    sameWindowResumeEnabled?: boolean;
+}
+
+interface ManualCardSameWindowContext {
+    kind: 'manual-card';
+    stage: 'collect' | 'authenticate';
+    entityType: 'job' | 'invoice';
+    entityId: string;
+    session: ManualCardSession;
+    selectedCard?: CardframePaymentMethodMessage;
+}
+
+interface ManualCardSameWindowResume {
+    context: ManualCardSameWindowContext;
+    completion: CardEntrySameWindowResult['completion'];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function isManualCardSession(value: unknown): value is ManualCardSession {
+    return isRecord(value)
+        && typeof value.session_id === 'number'
+        && Number.isInteger(value.session_id)
+        && value.session_id > 0
+        && typeof value.client_secret === 'string'
+        && value.client_secret.length > 0
+        && typeof value.payment_intent_id === 'string'
+        && value.payment_intent_id.length > 0
+        && typeof value.account_id === 'string'
+        && value.account_id.length > 0
+        && typeof value.amount === 'number'
+        && Number.isFinite(value.amount)
+        && value.amount > 0
+        && typeof value.save_for_future === 'boolean';
+}
+
+export function resolveManualCardSameWindowResume(
+    result: CardEntrySameWindowResult,
+    entityType: 'job' | 'invoice',
+    entityId: string,
+): ManualCardSameWindowResume | null {
+    const context = result.resumeContext;
+    if (
+        !isRecord(context)
+        || context.kind !== 'manual-card'
+        || (context.stage !== 'collect' && context.stage !== 'authenticate')
+        || context.entityType !== entityType
+        || context.entityId !== entityId
+        || !isManualCardSession(context.session)
+        || context.session.session_id !== result.sessionId
+    ) {
+        return null;
+    }
+    if (
+        context.selectedCard !== undefined
+        && !isCardframePaymentMethodMessage(context.selectedCard)
+    ) {
+        return null;
+    }
+    return {
+        context: context as unknown as ManualCardSameWindowContext,
+        completion: result.completion,
+    };
 }
 
 /** Opens Stripe-hosted keyed card entry in a separate top-level browsing context. */
@@ -529,6 +599,7 @@ export default function ManualCardDialog({
     onPaymentConfirmed,
     onDone,
     onCopyLinkFallback,
+    sameWindowResumeEnabled = true,
 }: Props) {
     const isMobile = useIsMobile();
     const sessionRef = useRef<ManualCardSession | null>(null);
@@ -537,6 +608,8 @@ export default function ManualCardDialog({
     const receiptSendingRef = useRef(false);
     const reconcileRunningRef = useRef(false);
     const confirmedSessionRef = useRef<number | null>(null);
+    const resumeAttemptedRef = useRef(false);
+    const resumedResultRef = useRef<ManualCardSameWindowResume | null>(null);
     const initialBalanceRef = useRef<number | undefined>(balanceBefore);
     const sessionRequestRef = useRef({
         invoiceId,
@@ -562,6 +635,32 @@ export default function ManualCardDialog({
     );
     const [displayAmount, setDisplayAmount] = useState<number | null>(amount ?? null);
     const [selectedCard, setSelectedCard] = useState<CardframePaymentMethodMessage | null>(null);
+    const [authenticationResume, setAuthenticationResume] = useState<ManualCardSameWindowResume | null>(null);
+
+    useEffect(() => {
+        if (!sameWindowResumeEnabled || resumeAttemptedRef.current) return;
+        let innerFrame = 0;
+        const outerFrame = window.requestAnimationFrame(() => {
+            innerFrame = window.requestAnimationFrame(() => {
+                resumeAttemptedRef.current = true;
+                const result = consumeCardEntrySameWindowResult(window);
+                if (!result) return;
+                const entityType = jobId != null ? 'job' : 'invoice';
+                const entityId = String(jobId ?? invoiceId ?? '');
+                const resume = resolveManualCardSameWindowResume(result, entityType, entityId);
+                if (!resume) {
+                    toast.error('The card result could not be restored. Please start again.');
+                    return;
+                }
+                resumedResultRef.current = resume;
+                onOpenChange(true);
+            });
+        });
+        return () => {
+            window.cancelAnimationFrame(outerFrame);
+            if (innerFrame) window.cancelAnimationFrame(innerFrame);
+        };
+    }, [invoiceId, jobId, onOpenChange, sameWindowResumeEnabled]);
 
     const cancelWaits = useCallback(() => {
         for (const cancel of waitersRef.current.values()) cancel();
@@ -591,6 +690,7 @@ export default function ManualCardDialog({
             setDisplayAmount(request.amount ?? null);
             setSelectedCard(null);
             receiptSendingRef.current = false;
+            setAuthenticationResume(null);
             return;
         }
 
@@ -607,6 +707,52 @@ export default function ManualCardDialog({
         receiptSendingRef.current = false;
         reconcileRunningRef.current = false;
         confirmedSessionRef.current = null;
+
+        const resumed = resumedResultRef.current;
+        resumedResultRef.current = null;
+        if (resumed) {
+            const { completion, context } = resumed;
+            sessionRef.current = context.session;
+            setDisplayAmount(context.session.amount);
+            dispatch({ type: 'SESSION_READY' });
+            if (context.stage === 'collect') {
+                if (completion.kind === 'cardframe:payment_method') {
+                    setSelectedCard(completion);
+                    dispatch({ type: 'CARD_SELECTED' });
+                } else if (completion.status === 'canceled') {
+                    dispatch({ type: 'POPUP_CANCELED' });
+                } else {
+                    dispatch({
+                        type: 'INITIALIZATION_FAILED',
+                        message: completion.message || 'Could not collect the card. Try again.',
+                    });
+                }
+            } else {
+                setSelectedCard(context.selectedCard || null);
+                if (completion.kind !== 'cardframe:result') {
+                    setSelectedCard(null);
+                    dispatch({ type: 'DECLINED', message: 'Card verification returned an unexpected result.' });
+                } else if (completion.status === 'canceled') {
+                    dispatch({ type: 'POPUP_CANCELED' });
+                } else if (completion.status === 'succeeded') {
+                    dispatch({ type: 'AUTHENTICATE' });
+                    setAuthenticationResume(resumed);
+                } else {
+                    setSelectedCard(null);
+                    dispatch({ type: 'DECLINED', message: completion.message || null });
+                }
+            }
+            return () => {
+                flowIdRef.current += 1;
+                cancelWaits();
+                sessionRef.current = null;
+                setSelectedCard(null);
+                setAuthenticationResume(null);
+                submitLockRef.current = false;
+                receiptSendingRef.current = false;
+                reconcileRunningRef.current = false;
+            };
+        }
 
         (async () => {
             try {
@@ -699,6 +845,37 @@ export default function ManualCardDialog({
         reconcileRunningRef.current = false;
     }, [enterSuccess, selectedCard, wait]);
 
+    useEffect(() => {
+        if (!authenticationResume) return;
+        const resume = authenticationResume;
+        setAuthenticationResume(null);
+        const { session } = resume.context;
+        const card = resume.context.selectedCard;
+        const flowId = flowIdRef.current;
+        void stripePaymentsApi.finalizeManualCardSession(session.session_id).then(result => {
+            if (flowId !== flowIdRef.current) return;
+            if (result.status === 'succeeded') {
+                enterSuccess({
+                    status: 'succeeded',
+                    amount: session.amount,
+                    brand: card?.brand ?? null,
+                    last4: card?.last4 ?? null,
+                }, session.session_id);
+                return;
+            }
+            setSelectedCard(null);
+            submitLockRef.current = false;
+            dispatch({ type: 'DECLINED', message: 'Card verification is not complete.' });
+        }).catch(async error => {
+            if (flowId !== flowIdRef.current) return;
+            await reconcile({
+                kind: 'cardframe:result',
+                status: 'failed',
+                message: String(error?.message || 'The card could not be charged.'),
+            });
+        });
+    }, [authenticationResume, enterSuccess, reconcile]);
+
     const collectCard = useCallback(() => {
         const session = sessionRef.current;
         if (!session || submitLockRef.current) return;
@@ -706,7 +883,16 @@ export default function ManualCardDialog({
         submitLockRef.current = true;
         dispatch({ type: 'COLLECT' });
         try {
-            const handle = openManualCardEntryPopup(session, onCopyLinkFallback);
+            const entityType = jobId != null ? 'job' : 'invoice';
+            const handle = openManualCardEntryPopup(session, onCopyLinkFallback, {
+                sameWindowResumeContext: {
+                    kind: 'manual-card',
+                    stage: 'collect',
+                    entityType,
+                    entityId: String(jobId ?? invoiceId),
+                    session,
+                } satisfies ManualCardSameWindowContext,
+            });
             if (!handle) {
                 submitLockRef.current = false;
                 dispatch({
@@ -742,7 +928,7 @@ export default function ManualCardDialog({
                 message: String(error?.message || 'Could not open secure card entry'),
             });
         }
-    }, [onCopyLinkFallback]);
+    }, [invoiceId, jobId, onCopyLinkFallback]);
 
     const pay = useCallback(async () => {
         const session = sessionRef.current;
@@ -763,6 +949,16 @@ export default function ManualCardDialog({
                         session,
                         clientSecret,
                         onCopyLinkFallback,
+                        {
+                            sameWindowResumeContext: {
+                                kind: 'manual-card',
+                                stage: 'authenticate',
+                                entityType: jobId != null ? 'job' : 'invoice',
+                                entityId: String(jobId ?? invoiceId),
+                                session,
+                                selectedCard: card,
+                            } satisfies ManualCardSameWindowContext,
+                        },
                     );
                     popupHandleRef.current = handle;
                     return handle;
@@ -807,7 +1003,7 @@ export default function ManualCardDialog({
                 message: String(error?.message || 'The card could not be charged.'),
             });
         }
-    }, [enterSuccess, onCopyLinkFallback, reconcile, selectedCard]);
+    }, [enterSuccess, invoiceId, jobId, onCopyLinkFallback, reconcile, selectedCard]);
 
     const sendReceipt = useCallback(async () => {
         const sessionId = sessionRef.current?.session_id;

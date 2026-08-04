@@ -78,11 +78,12 @@ interface Props {
     contactEmail?: string | null;
     contactPhone?: string | null;
     hasContact?: boolean;
+    cardResumeEnabled?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPhone, hasContact }: Props) {
+export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPhone, hasContact, cardResumeEnabled }: Props) {
     const {
         estimates, invoices, jobPayments, loading,
         selectedEstimate, selectedInvoice,
@@ -608,6 +609,7 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                 hasContact={hasContact}
                 onSuccess={() => refresh()}
                 onPaymentConfirmed={revalidateAfterPayment}
+                sameWindowResumeEnabled={cardResumeEnabled}
             />
 
             <JobRecordPaymentDialog

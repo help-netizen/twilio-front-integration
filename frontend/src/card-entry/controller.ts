@@ -68,6 +68,8 @@ interface MountedCard {
 
 interface CardEntryControllerOptions {
     opener: Window | null;
+    initialMessage?: import('./protocol').CardframeInitMessage;
+    onComplete?: (message: CardframeCompletionMessage) => void;
     expectedAppOrigin: string;
     addMessageListener: (listener: (event: MessageEvent) => void) => void;
     removeMessageListener: (listener: (event: MessageEvent) => void) => void;
@@ -120,37 +122,29 @@ export function createCardEntryController(options: CardEntryControllerOptions): 
     const finish = (message: CardframeCompletionMessage) => {
         if (finished || disposed) return;
         finished = true;
-        postToOpener(message);
+        if (options.onComplete) options.onComplete(message);
+        else postToOpener(message);
         cleanup();
-        options.closeWindow();
+        if (!options.onComplete) options.closeWindow();
     };
 
-    const onMessage = (event: MessageEvent) => {
-        if (
-            disposed
-            || finished
-            || initialized
-            || event.origin !== options.expectedAppOrigin
-            || event.source !== options.opener
-            || !isCardframeInitMessage(event.data)
-        ) {
-            return;
-        }
+    const initialize = (message: import('./protocol').CardframeInitMessage) => {
+        if (disposed || finished || initialized) return;
         initialized = true;
-        mode = event.data.mode;
-        clientSecret = event.data.mode === 'authenticate'
-            ? event.data.clientSecret
+        mode = message.mode;
+        clientSecret = message.mode === 'authenticate'
+            ? message.clientSecret
             : '';
         setState({
             phase: 'loading',
             mode,
-            amount: event.data.amount,
+            amount: message.amount,
             cardComplete: false,
             zip: '',
             message: null,
         });
 
-        void options.loadStripe(event.data.accountId).then(loadedStripe => {
+        void options.loadStripe(message.accountId).then(loadedStripe => {
             if (disposed || finished) return;
             stripe = loadedStripe;
             if (mode === 'authenticate') {
@@ -217,10 +211,25 @@ export function createCardEntryController(options: CardEntryControllerOptions): 
         });
     };
 
+    const onMessage = (event: MessageEvent) => {
+        if (
+            event.origin !== options.expectedAppOrigin
+            || event.source !== options.opener
+            || !isCardframeInitMessage(event.data)
+        ) {
+            return;
+        }
+        initialize(event.data);
+    };
+
     return {
         start: () => {
             if (started || disposed) return;
             started = true;
+            if (options.initialMessage) {
+                initialize(options.initialMessage);
+                return;
+            }
             options.addMessageListener(onMessage);
             if (!options.opener) {
                 setState({

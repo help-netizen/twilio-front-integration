@@ -9,6 +9,7 @@ import { JobFinancialsTab } from './JobFinancialsTab';
 import { JobDescription } from './JobDescription';
 import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
 import { useAuthz } from '../../hooks/useAuthz';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '../ui/dialog';
@@ -51,6 +52,7 @@ export function JobDetailPanel({
     const [cancelReason, setCancelReason] = useState('');
     const [cancelSubmitting, setCancelSubmitting] = useState(false);
     const { hasAnyPermission } = useAuthz();
+    const isMobile = useIsMobile();
     // Finance surface renders only with finance visibility (PF007)
     const canViewFinancials = hasAnyPermission('financial_data.view', 'estimates.view', 'invoices.view');
 
@@ -117,6 +119,7 @@ export function JobDetailPanel({
                                     contactEmail={contactInfo?.email || job.customer_email}
                                     contactPhone={contactInfo?.phone || job.customer_phone}
                                     hasContact={Boolean(contactInfo?.id || job.contact_id)}
+                                    cardResumeEnabled={isMobile}
                                 />
                             )}
                         </div>
@@ -143,6 +146,7 @@ export function JobDetailPanel({
                             contactEmail={contactInfo?.email || job.customer_email}
                             contactPhone={contactInfo?.phone || job.customer_phone}
                             hasContact={Boolean(contactInfo?.id || job.contact_id)}
+                            cardResumeEnabled={!isMobile}
                         />
                     )}
                 </div>

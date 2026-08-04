@@ -28,6 +28,7 @@ interface Props {
     onSuccess?: () => void;
     onPaymentConfirmed?: (payment: ManualCardSessionResult) => boolean | void | Promise<boolean | void>;
     onDone?: () => void;
+    sameWindowResumeEnabled?: boolean;
 }
 
 interface ManualCardCollectionCallbacksArgs {
@@ -108,6 +109,7 @@ export function CollectPaymentDialog({
     onSuccess,
     onPaymentConfirmed,
     onDone,
+    sameWindowResumeEnabled,
 }: Props) {
     const [amount, setAmount] = useState('');
     const [busy, setBusy] = useState<null | 'send' | 'copy' | 'charge'>(null);
@@ -499,6 +501,7 @@ export function CollectPaymentDialog({
                 onPaymentConfirmed={manualCardCallbacks.onPaymentConfirmed}
                 onDone={manualCardCallbacks.onDone}
                 onCopyLinkFallback={copyLink}
+                sameWindowResumeEnabled={sameWindowResumeEnabled}
             />
         </>
     );

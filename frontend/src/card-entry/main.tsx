@@ -8,6 +8,10 @@ import {
     type CardEntryController,
 } from './controller';
 import { resolveExpectedAppOrigin } from './protocol';
+import {
+    completeCardEntrySameWindow,
+    consumeCardEntryHandoff,
+} from './handoff';
 import { mountStripeCard } from './stripeCard';
 import { loadStripe } from '../utils/loadStripe';
 import './card-entry.css';
@@ -25,10 +29,18 @@ export function CardEntryPage() {
     const zipFocusHandledRef = useRef(false);
     const controllerRef = useRef<CardEntryController | null>(null);
     const [state, setState] = useState(INITIAL_CARD_ENTRY_STATE);
+    const [sameWindow] = useState(() => consumeCardEntryHandoff(window));
 
     useEffect(() => {
+        if (sameWindow.requested && !sameWindow.handoff) return;
         const controller = createCardEntryController({
             opener: window.opener,
+            ...(sameWindow.handoff ? {
+                initialMessage: sameWindow.handoff.initMessage,
+                onComplete: (message: import('./protocol').CardframeCompletionMessage) => {
+                    completeCardEntrySameWindow(window, sameWindow.handoff!, message);
+                },
+            } : {}),
             expectedAppOrigin: resolveExpectedAppOrigin(
                 document.referrer,
                 window.location.origin,
@@ -48,7 +60,7 @@ export function CardEntryPage() {
             controllerRef.current = null;
             controller.dispose();
         };
-    }, []);
+    }, [sameWindow]);
 
     useEffect(() => {
         zipFocusHandledRef.current = focusZipInputIfNeeded(
@@ -62,6 +74,24 @@ export function CardEntryPage() {
     const amountText = formatAmount(state.amount);
     const authenticating = state.mode === 'authenticate';
     const zipNeeded = state.cardComplete && !state.zip.trim();
+
+    if (sameWindow.requested && !sameWindow.handoff) {
+        return (
+            <main className="card-entry-page">
+                <section className="card-entry-shell" aria-labelledby="card-entry-title">
+                    <h1 id="card-entry-title" className="card-entry-title">
+                        Payment session expired — please start again
+                    </h1>
+                    <p className="card-entry-security">
+                        The secure payment details are no longer available.
+                    </p>
+                    <a className="card-entry-button card-entry-button-primary" href={sameWindow.returnTo}>
+                        Back to job
+                    </a>
+                </section>
+            </main>
+        );
+    }
 
     return (
         <main className="card-entry-page">
