@@ -9,6 +9,12 @@ const {
     validateSubscriptions,
 } = require('./appEventCatalog');
 const { MAX_CONNECTIONS, validateConnections } = require('./appConnectionValidator');
+const {
+    MAX_SETTINGS,
+    MAX_SETTING_LABEL_LENGTH,
+    SETTING_TYPES,
+    validateSettings,
+} = require('./appSettingsValidator');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -72,7 +78,8 @@ function parseGeneratedArtifact(raw) {
         || !Object.prototype.hasOwnProperty.call(parsed, 'data_collections')
         || !Object.prototype.hasOwnProperty.call(parsed, 'actions')
         || !Object.prototype.hasOwnProperty.call(parsed, 'subscribes')
-        || !Object.prototype.hasOwnProperty.call(parsed, 'connections')) {
+        || !Object.prototype.hasOwnProperty.call(parsed, 'connections')
+        || !Object.prototype.hasOwnProperty.call(parsed, 'settings')) {
         throw new AppBuilderProviderError('Builder model returned an invalid artifact envelope');
     }
     let actions;
@@ -111,6 +118,15 @@ function parseGeneratedArtifact(raw) {
             error
         );
     }
+    let settings;
+    try {
+        settings = validateSettings(parsed.settings);
+    } catch (error) {
+        throw new AppBuilderProviderError(
+            `Builder model returned invalid settings: ${error.message}`,
+            error
+        );
+    }
     let suggestedSchedule = null;
     if (parsed.suggested_schedule !== undefined && parsed.suggested_schedule !== null) {
         try {
@@ -126,6 +142,7 @@ function parseGeneratedArtifact(raw) {
         actions,
         subscribes,
         connections,
+        settings,
     };
     if (suggestedSchedule) artifact.suggested_schedule = suggestedSchedule;
     return artifact;
@@ -252,10 +269,31 @@ async function generate(prompt) {
                                         required: ['name', 'base_url', 'auth'],
                                     },
                                 },
+                                settings: {
+                                    type: 'ARRAY',
+                                    maxItems: MAX_SETTINGS,
+                                    items: {
+                                        type: 'OBJECT',
+                                        properties: {
+                                            key: { type: 'STRING' },
+                                            label: {
+                                                type: 'STRING',
+                                                maxLength: MAX_SETTING_LABEL_LENGTH,
+                                            },
+                                            type: { type: 'STRING', enum: [...SETTING_TYPES] },
+                                            options: {
+                                                type: 'ARRAY',
+                                                items: { type: 'STRING' },
+                                            },
+                                            required: { type: 'BOOLEAN' },
+                                        },
+                                        required: ['key', 'label', 'type'],
+                                    },
+                                },
                             },
                             required: [
                                 'source', 'description', 'data_collections', 'actions', 'subscribes',
-                                'connections',
+                                'connections', 'settings',
                             ],
                         },
                     },

@@ -72,10 +72,22 @@ function validEnvelope(body, endpoint) {
             'source', 'expectedSourceSha256', 'input', 'fixtures', 'seed', 'anchor',
             'data_collections',
             'connections',
+            'company', 'settings',
         ])
-        : new Set(['source', 'expectedSourceSha256', 'runToken', 'input']);
+        : new Set([
+            'source', 'expectedSourceSha256', 'runToken', 'input', 'company', 'settings',
+        ]);
     if (Object.keys(body).some(key => !allowedKeys.has(key))) return false;
     if (typeof body.source !== 'string' || body.source.length === 0) return false;
+    if (!body.company
+        || typeof body.company !== 'object'
+        || Array.isArray(body.company)
+        || Object.keys(body.company).length !== 2
+        || typeof body.company.name !== 'string'
+        || typeof body.company.timezone !== 'string'
+        || !body.settings
+        || typeof body.settings !== 'object'
+        || Array.isArray(body.settings)) return false;
     if (Object.prototype.hasOwnProperty.call(body, 'anchor')
         && !(typeof body.anchor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.anchor))) return false;
     if (typeof body.expectedSourceSha256 !== 'string'
@@ -106,6 +118,7 @@ function usageFor(error, startedAt) {
         egress_calls: 0,
         result_bytes: null,
         error_code: error?.code || 'APP_RUNTIME_EXECUTION_FAILED',
+        logs: [],
     };
 }
 
@@ -182,6 +195,8 @@ function createRequestHandler({
                         anchor: body.anchor,
                         data_collections: body.data_collections,
                         connections: body.connections,
+                        company: body.company,
+                        settings: body.settings,
                         signal,
                     });
                 }
@@ -199,6 +214,8 @@ function createRequestHandler({
                         expectedSourceSha256: body.expectedSourceSha256,
                         runToken: body.runToken,
                         input: body.input,
+                        company: body.company,
+                        settings: body.settings,
                         gatewayBaseUrl,
                         executionMode: 'live',
                         onUsage: value => { usage = value; },
@@ -219,6 +236,7 @@ function createRequestHandler({
                 data_ops: execution.dataOps,
                 egress_calls: execution.egressCalls,
                 created_tasks: execution.createdTasks,
+                logs: execution.logs || execution.usage?.logs || [],
             });
         } catch (error) {
             writeJson(res, responseStatus(error), {

@@ -225,7 +225,7 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
         await expect(validateAndDryRun({
             source,
             expectedSourceSha256: sourceSha256(source),
-            input: { today: '2026-08-02', action },
+            input: { today: '2026-08-02', trigger: 'action', action },
         })).resolves.toMatchObject({ result: action });
 
         await expect(validateAndDryRun({
@@ -233,6 +233,7 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
             expectedSourceSha256: sourceSha256(source),
             input: {
                 today: '2026-08-02',
+                trigger: 'action',
                 action: { id: 'mark-ordered', row_key: 'purchase-41' },
             },
         })).rejects.toMatchObject({ code: 'DRY_RUN_INPUT_INVALID' });
@@ -247,19 +248,24 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
         await expect(validateAndDryRun({
             source,
             expectedSourceSha256: sourceSha256(source),
-            input: { today: '2026-08-02', event },
+            input: { today: '2026-08-02', trigger: 'event', event },
         })).resolves.toMatchObject({ result: event });
 
         await expect(validateAndDryRun({
             source,
             expectedSourceSha256: sourceSha256(source),
-            input: { today: '2026-08-02', event: { type: 'unknown.event', payload: {} } },
+            input: {
+                today: '2026-08-02',
+                trigger: 'event',
+                event: { type: 'unknown.event', payload: {} },
+            },
         })).rejects.toMatchObject({ code: 'DRY_RUN_INPUT_INVALID' });
         await expect(validateAndDryRun({
             source,
             expectedSourceSha256: sourceSha256(source),
             input: {
                 today: '2026-08-02',
+                trigger: 'event',
                 event: {
                     type: 'estimate.approved',
                     payload: { value: 'x'.repeat(8 * 1024) },
@@ -293,7 +299,7 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
         const execution = await validateAndDryRun({
             source,
             expectedSourceSha256: sourceSha256(source),
-            input: { today: '2026-08-03' },
+            input: { today: '2026-08-03', trigger: 'manual' },
             fixtures,
         });
         expect(execution.result).toEqual({

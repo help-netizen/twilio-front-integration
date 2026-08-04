@@ -245,7 +245,7 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
         const execution = await validateAndDryRun({
             source,
             expectedSourceSha256: sourceSha256(source),
-            input: { today: '2026-07-31' },
+            input: { today: '2026-07-31', trigger: 'manual' },
             seed: 'morning-digest-seed',
             anchor: '2026-07-31',
         });

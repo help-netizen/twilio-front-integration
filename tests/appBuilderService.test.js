@@ -61,6 +61,7 @@ function harness(overrides = {}) {
             actions: [],
             subscribes: [],
             connections: [],
+            settings: [],
             model: 'builder-test-model',
             token_usage: { input_tokens: 20, output_tokens: 30, total_tokens: 50 },
         }),
@@ -79,6 +80,7 @@ function harness(overrides = {}) {
                 egress_calls: 0,
                 result_bytes: 11,
                 error_code: null,
+                logs: [],
             },
             fixtures_summary: {
                 companies: 1, contacts: 6, leads: 6, jobs: 6,
@@ -92,6 +94,7 @@ function harness(overrides = {}) {
             },
             created_tasks: [],
             egress_calls: [],
+            logs: [],
         }),
         ...overrides.dryRunner,
     };
@@ -145,12 +148,14 @@ describe('APP-BUILD-001 generation pipeline', () => {
                         upsert: { calls: 0, rows: 0 },
                     }),
                     created_tasks: [],
+                    logs: [],
                 }),
             }),
             dataCollections: [],
             actions: [],
             subscribes: [],
             connections: [],
+            settings: [],
         }));
         expect(dryRunner.validateAndDryRun.mock.invocationCallOrder[0])
             .toBeLessThan(repository.persistSuccess.mock.invocationCallOrder[0]);

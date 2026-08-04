@@ -26,6 +26,10 @@ const mockSecretService = {
     listSecrets: jest.fn(),
     setSecret: jest.fn(),
 };
+const mockSettingsService = {
+    getSettings: jest.fn(),
+    updateSettings: jest.fn(),
+};
 
 jest.mock('../backend/src/middleware/keycloakAuth', () => ({
     authenticate: (req, _res, next) => {
@@ -48,6 +52,7 @@ jest.mock('../backend/src/services/appExecutionService', () => mockService);
 jest.mock('../backend/src/services/appScheduleService', () => mockScheduleService);
 jest.mock('../backend/src/services/appDataService', () => mockDataService);
 jest.mock('../backend/src/services/appInstallationSecretService', () => mockSecretService);
+jest.mock('../backend/src/services/appInstallationSettingsService', () => mockSettingsService);
 jest.mock('../backend/src/services/auditService', () => ({
     log: jest.fn().mockResolvedValue(undefined),
 }));
@@ -101,6 +106,14 @@ beforeEach(() => {
         connection: 'supplier',
         status: 'set',
         set_at: '2026-08-03T12:00:00.000Z',
+    });
+    mockSettingsService.getSettings.mockResolvedValue({
+        declarations: [{ key: 'threshold', label: 'Threshold', type: 'number' }],
+        settings: { threshold: 4 },
+    });
+    mockSettingsService.updateSettings.mockResolvedValue({
+        declarations: [{ key: 'threshold', label: 'Threshold', type: 'number' }],
+        settings: { threshold: 5 },
     });
 });
 
@@ -282,5 +295,43 @@ describe('APP-VIEW-001 company-scoped API', () => {
         expect(noPermission.status).toBe(403);
         expect(noPermission.body.code).toBe('ACCESS_DENIED');
         expect(mockSecretService.listSecrets).toHaveBeenCalledTimes(1);
+    });
+
+    test('Phase J settings GET uses the viewer service and PUT denies every non-admin role', async () => {
+        const app = buildApp();
+        const listed = await request(app).get('/api/apps/installations/91/settings');
+        expect(listed.status).toBe(200);
+        expect(listed.body).toMatchObject({
+            ok: true,
+            declarations: [{ key: 'threshold', label: 'Threshold', type: 'number' }],
+            settings: { threshold: 4 },
+        });
+        expect(mockSettingsService.getSettings).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            installationId: '91',
+            actorId: ACTOR_ID,
+        });
+
+        for (const role of ['manager', 'dispatcher', 'provider', 'custom']) {
+            const denied = await request(app)
+                .put('/api/apps/installations/91/settings')
+                .set('x-test-role', role)
+                .send({ settings: { threshold: 5 } });
+            expect(denied.status).toBe(403);
+            expect(denied.body.code).toBe('TENANT_ADMIN_ONLY');
+        }
+        expect(mockSettingsService.updateSettings).not.toHaveBeenCalled();
+
+        const updated = await request(app)
+            .put('/api/apps/installations/91/settings')
+            .set('x-test-role', 'tenant_admin')
+            .send({ settings: { threshold: 5 } });
+        expect(updated.status).toBe(200);
+        expect(mockSettingsService.updateSettings).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            installationId: '91',
+            actorId: ACTOR_ID,
+            settings: { threshold: 5 },
+        });
     });
 });

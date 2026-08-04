@@ -12,6 +12,7 @@ const {
     validateConnectionDestinations,
     validateConnections,
 } = require('./appConnectionValidator');
+const { validateSettings } = require('./appSettingsValidator');
 
 const ALLOWED_TRANSITIONS = Object.freeze({
     draft: Object.freeze(['submitted']),
@@ -82,6 +83,7 @@ function versionResponse(version) {
         actions: version.actions || version.scanner_report?.actions || [],
         subscribes: version.subscribes || version.scanner_report?.subscribes || [],
         connections: version.connections || version.scanner_report?.connections || [],
+        settings: version.settings || version.scanner_report?.settings || [],
         status: version.status,
         created_at: version.created_at,
         updated_at: version.updated_at,
@@ -135,6 +137,8 @@ function createAppVersionTransitionService({
                         AS subscribes,
                     COALESCE(version.scanner_report->'connections', '[]'::jsonb)
                         AS connections,
+                    COALESCE(version.scanner_report->'settings', '[]'::jsonb)
+                        AS settings,
                     version.created_by, version.created_at,
                     version.updated_at,
                     (to_jsonb(version)->>'submitted_at')::timestamptz AS submitted_at,
@@ -194,6 +198,7 @@ function createAppVersionTransitionService({
         validateActions(version.actions || []);
         validateSubscriptions(version.subscribes || []);
         const connections = validateConnections(version.connections || []);
+        validateSettings(version.settings || []);
         await validateConnectionOrigins(connections);
         const previous = await client.query(
             `SELECT prior.data_collections

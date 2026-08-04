@@ -7,6 +7,9 @@ const { AppRunnerError, GatewayError } = require('./errors');
 const { GatewayClient, containsSecret } = require('./gatewayClient');
 
 const NS_PER_MS = 1000000n;
+const MAX_LOG_LINES = 50;
+const MAX_LOG_CHARACTERS = 500;
+const LOG_TRUNCATION_MARKER = 'log truncated';
 
 const BOOTSTRAP_SOURCE = String.raw`
 'use strict';
@@ -163,6 +166,7 @@ for (const constructorFunction of constructorFunctions) harden(constructorFuncti
 const CREATE_INVOKER_SOURCE = String.raw`
 'use strict';
 const namespace = $0;
+const hostLog = $1;
 const exportNames = Object.keys(namespace);
 if (exportNames.length !== 1 || exportNames[0] !== 'run') {
     throw new Error('APP_RUNTIME_APP_FORMAT_INVALID: module must export only run');
@@ -193,14 +197,23 @@ const utf8Length = value => {
     }
     return bytes;
 };
+const log = Object.freeze(function log(message) {
+    if (typeof message !== 'string') return;
+    hostLog.applySync(undefined, [message], { arguments: { copy: true } });
+});
 
-return async function invoke(inputJson, maxOutputBytes) {
+return async function invoke(inputJson, companyJson, settingsJson, maxOutputBytes) {
     const input = deepFreeze(JSON.parse(inputJson));
+    const company = deepFreeze(JSON.parse(companyJson));
+    const settings = deepFreeze(JSON.parse(settingsJson));
     const ctx = Object.freeze({
         callTool: albusto.callTool,
         data: albusto.data,
         http: albusto.http,
         input,
+        company,
+        settings,
+        log,
     });
     const value = await namespace.run(ctx);
     const outputJson = JSON.stringify(value);
@@ -273,6 +286,16 @@ function jsonInput(input, runToken) {
     return serialized;
 }
 
+function companyContext(value) {
+    const company = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return {
+        name: typeof company.name === 'string' ? company.name : '',
+        timezone: typeof company.timezone === 'string'
+            ? company.timezone
+            : 'America/New_York',
+    };
+}
+
 function remainingCpuMs(isolate, baseline) {
     const elapsedNs = isolate.cpuTime - baseline;
     const elapsedMs = Number(elapsedNs / NS_PER_MS);
@@ -296,6 +319,8 @@ async function runApplication({
     source,
     expectedSourceSha256,
     input,
+    company = {},
+    settings = {},
     gatewayBaseUrl,
     runToken,
     fetchImpl,
@@ -338,6 +363,8 @@ async function runApplication({
         );
     }
     const inputJson = jsonInput(input, runToken);
+    const companyJson = jsonInput(companyContext(company), runToken);
+    const settingsJson = jsonInput(settings, runToken);
     const gateway = new GatewayClient({
         baseUrl: gatewayBaseUrl,
         runToken,
@@ -376,6 +403,7 @@ async function runApplication({
             egress_calls: 0,
             result_bytes: null,
             error_code: mismatch.code,
+            logs: [],
         };
         if (typeof onUsage === 'function') onUsage(usage);
         throw mismatch;
@@ -391,6 +419,7 @@ async function runApplication({
                 egress_calls: 0,
                 result_bytes: null,
                 error_code: error?.code || 'APP_RUNTIME_AUTHORIZATION_FAILED',
+                logs: [],
             };
             if (typeof onUsage === 'function') onUsage(usage);
             throw error;
@@ -405,6 +434,18 @@ async function runApplication({
     let applicationCpuBaseline = null;
     let resultBytes = null;
     let completionErrorCode = null;
+    const logs = [];
+
+    const collectLog = message => {
+        if (typeof message !== 'string') return;
+        for (const line of message.split(/\r\n|\r|\n/)) {
+            if (logs.length >= MAX_LOG_LINES) {
+                logs[MAX_LOG_LINES - 1] = LOG_TRUNCATION_MARKER;
+                return;
+            }
+            logs.push(Array.from(line).slice(0, MAX_LOG_CHARACTERS).join(''));
+        }
+    };
 
     const terminate = error => {
         if (!terminationError) terminationError = error;
@@ -598,9 +639,15 @@ async function runApplication({
             }
         });
 
-        await context.evalClosure(BOOTSTRAP_SOURCE, [callback, dataCallback, httpCallback], {
+        const logCallback = new ivm.Reference(collectLog);
+
+        await context.evalClosure(
+            BOOTSTRAP_SOURCE,
+            [callback, dataCallback, httpCallback],
+            {
             timeout: LIMITS.cpuTimeoutMs,
-        });
+            }
+        );
 
         const module = await isolate.compileModule(source, {
             filename: 'app://source/app.js',
@@ -623,13 +670,18 @@ async function runApplication({
 
         const invoker = await context.evalClosure(
             CREATE_INVOKER_SOURCE,
-            [module.namespace.derefInto()],
+            [module.namespace.derefInto(), logCallback],
             {
                 timeout: remainingCpuMs(isolate, applicationCpuBaseline),
                 result: { reference: true },
             }
         );
-        const outputJson = await invoker.apply(undefined, [inputJson, LIMITS.maxOutputBytes], {
+        const outputJson = await invoker.apply(undefined, [
+            inputJson,
+            companyJson,
+            settingsJson,
+            LIMITS.maxOutputBytes,
+        ], {
             timeout: remainingCpuMs(isolate, applicationCpuBaseline),
             arguments: { copy: true },
             result: { promise: true, copy: true },
@@ -668,15 +720,21 @@ async function runApplication({
             egress_calls: egressCalls,
             result_bytes: resultBytes,
             error_code: completionErrorCode,
+            logs: [...logs],
         };
         if (typeof onUsage === 'function') onUsage(usage);
         if (executionMode === 'live') {
-            await gateway.recordRunCompletion(usage);
+            const { logs: _authorLogs, ...metering } = usage;
+            await gateway.recordRunCompletion(metering);
         }
     }
 }
 
 module.exports = {
+    LOG_TRUNCATION_MARKER,
+    MAX_LOG_CHARACTERS,
+    MAX_LOG_LINES,
+    companyContext,
     runApplication,
     normalizeExecutionError,
     sourceSha256,

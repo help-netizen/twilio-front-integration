@@ -34,6 +34,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     egress_calls: 0,
                     result_bytes: 22,
                     error_code: null,
+                    logs: [],
                 },
                 fixtures_summary: {
                     companies: 1, contacts: 6, leads: 6, jobs: 6,
@@ -46,6 +47,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 },
                 created_tasks: [],
                 egress_calls: [],
+                logs: [],
             }),
         });
         await expect(dryRunner.validateAndDryRun({
@@ -63,6 +65,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 egress_calls: 0,
                 result_bytes: 22,
                 error_code: null,
+                logs: [],
             },
             fixtures_summary: {
                 companies: 1, contacts: 6, leads: 6, jobs: 6,
@@ -75,6 +78,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             },
             created_tasks: [],
             egress_calls: [],
+            logs: [],
             result: { today: '2026-07-31' },
         });
 
@@ -87,7 +91,12 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             // The sandbox is anchored to the real current day, so the dry-run input
             // must follow it: a pinned date silently made every date-aware draft
             // test against a day the fixtures no longer contain.
-            input: { today: new Date().toISOString().slice(0, 10) },
+            input: {
+                today: new Date().toISOString().slice(0, 10),
+                trigger: 'manual',
+            },
+            company: { name: 'Sandbox Company', timezone: 'America/New_York' },
+            settings: {},
             seed: 'app-studio-builder-v1',
             data_collections: [],
             connections: [],
@@ -119,6 +128,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     egress_calls: 0,
                     result_bytes: Buffer.byteLength(JSON.stringify(action), 'utf8'),
                     error_code: null,
+                    logs: [],
                 },
                 fixtures_summary: {},
                 data_ops: {
@@ -128,6 +138,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 },
                 created_tasks: [],
                 egress_calls: [],
+                logs: [],
             }),
         });
         await dryRunner.validateAndDryRun({
@@ -136,6 +147,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             action,
         }, { fetchImpl });
         expect(JSON.parse(fetchImpl.mock.calls[0][1].body).input.action).toEqual(action);
+        expect(JSON.parse(fetchImpl.mock.calls[0][1].body).input.trigger).toBe('action');
 
         await expect(dryRunner.validateAndDryRun({
             source: SOURCE,
@@ -160,6 +172,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     egress_calls: 0,
                     result_bytes: Buffer.byteLength(JSON.stringify(event), 'utf8'),
                     error_code: null,
+                    logs: [],
                 },
                 fixtures_summary: {},
                 data_ops: {
@@ -169,6 +182,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 },
                 created_tasks: [],
                 egress_calls: [],
+                logs: [],
             }),
         });
         await dryRunner.validateAndDryRun({
@@ -177,6 +191,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             event,
         }, { fetchImpl });
         expect(JSON.parse(fetchImpl.mock.calls[0][1].body).input.event).toEqual(event);
+        expect(JSON.parse(fetchImpl.mock.calls[0][1].body).input.trigger).toBe('event');
 
         await expect(dryRunner.validateAndDryRun({
             source: SOURCE,

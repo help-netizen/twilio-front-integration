@@ -33,6 +33,10 @@ function installation(overrides = {}) {
         source_sha256: 'a'.repeat(64),
         allowed_tools: ['svc.list_jobs'],
         declared_actions: [{ id: 'mark_ordered', label: 'Mark ordered' }],
+        declared_settings: [],
+        app_settings: {},
+        company_name: 'Acme Repairs',
+        company_timezone: 'America/Chicago',
         ...overrides,
     };
 }
@@ -69,6 +73,7 @@ function clientFor({ currentRun = null } = {}) {
         if (/UPDATE marketplace_installations installation/.test(sql)) {
             return { rows: [{ latest_run_id: RUN_ID }] };
         }
+        if (/INSERT INTO audit_log/.test(sql)) return { rows: [{ id: '1' }] };
         return { rows: [] };
     });
     return { query, release: jest.fn() };
@@ -88,7 +93,7 @@ function authorizationFor(value = {
     return { resolveCompanyUserAuthz: jest.fn().mockResolvedValue(value) };
 }
 
-function runnerResponse(result) {
+function runnerResponse(result, logs = []) {
     const resultBytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
     return {
         ok: true,
@@ -103,6 +108,7 @@ function runnerResponse(result) {
                 egress_calls: 0,
                 result_bytes: resultBytes,
                 error_code: null,
+                logs,
             },
         }),
     };
@@ -316,6 +322,7 @@ describe('APP-VIEW-001 execution core', () => {
             if (/UPDATE marketplace_installations installation/.test(sql)) {
                 return { rows: [{ latest_run_id: RUN_ID }] };
             }
+            if (/INSERT INTO audit_log/.test(sql)) return { rows: [{ id: '1' }] };
             return { rows: [] };
         });
         const tokens = {

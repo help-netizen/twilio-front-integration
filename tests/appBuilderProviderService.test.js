@@ -44,6 +44,7 @@ describe('APP-BUILD-001 provider seam', () => {
             actions: [],
             subscribes: [],
             connections: [],
+            settings: [],
         }))).toEqual({
             source: 'export async function run(ctx) { return ctx.input; }',
             description: 'Returns the supplied input.',
@@ -51,6 +52,7 @@ describe('APP-BUILD-001 provider seam', () => {
             actions: [],
             subscribes: [],
             connections: [],
+            settings: [],
         });
         expect(() => provider.parseGeneratedArtifact('{"description":"missing source"}'))
             .toThrow(provider.AppBuilderProviderError);

@@ -7,7 +7,14 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 // The sandbox is anchored to the real current day, so the dry-run input must be
 // too: a frozen 'today' made every date-aware app test against a day the
 // fixtures no longer contain and report zero while the code was correct.
-const dryRunInput = () => Object.freeze({ today: new Date().toISOString().slice(0, 10) });
+const dryRunInput = () => Object.freeze({
+    today: new Date().toISOString().slice(0, 10),
+    trigger: 'manual',
+});
+const DRY_RUN_COMPANY = Object.freeze({
+    name: 'Sandbox Company',
+    timezone: 'America/New_York',
+});
 const SANDBOX_SEED = 'app-studio-builder-v1';
 const ACTION_ID_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
 
@@ -154,7 +161,8 @@ function parseResult(payload, status = 200) {
         || typeof payload.data_ops !== 'object'
         || Array.isArray(payload.data_ops)
         || !Array.isArray(payload.created_tasks)
-        || !Array.isArray(payload.egress_calls)) {
+        || !Array.isArray(payload.egress_calls)
+        || !Array.isArray(payload.logs)) {
         throw new AppBuilderDryRunError(
             'RUNNER_PROTOCOL_ERROR',
             'App runner returned an invalid dry-run result.',
@@ -168,6 +176,7 @@ function parseResult(payload, status = 200) {
         data_ops: payload.data_ops,
         created_tasks: payload.created_tasks,
         egress_calls: payload.egress_calls,
+        logs: payload.logs,
         result: payload.result,
     };
 }
@@ -228,9 +237,12 @@ async function validateAndDryRun(
                 expectedSourceSha256,
                 input: {
                     ...dryRunInput(),
+                    trigger: action ? 'action' : event ? 'event' : 'manual',
                     ...(action ? { action } : {}),
                     ...(event ? { event } : {}),
                 },
+                company: DRY_RUN_COMPANY,
+                settings: {},
                 seed: SANDBOX_SEED,
                 data_collections: dataCollections,
                 connections,
@@ -259,6 +271,7 @@ async function validateAndDryRun(
 
 module.exports = {
     DEFAULT_TIMEOUT_MS,
+    DRY_RUN_COMPANY,
     dryRunInput,
     MAX_RESPONSE_BYTES,
     SANDBOX_SEED,

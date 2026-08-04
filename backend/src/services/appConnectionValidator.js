@@ -249,6 +249,7 @@ module.exports = {
     AppConnectionValidationError,
     isUnsafeAddress,
     isUnsafeHostname,
+    normalizeBaseUrl,
     validateConnections,
     resolvePublicOrigin,
     validateConnectionDestinations,

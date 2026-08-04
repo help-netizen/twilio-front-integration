@@ -11,11 +11,14 @@ const {
 } = require('./appViewDocumentValidator');
 const { ACTION_ID_PATTERN, validateActions } = require('./appActionValidator');
 const { validateSyntheticEvent } = require('./appEventCatalog');
+const { declaredSettingValues } = require('./appSettingsValidator');
 
 const DEFAULT_TIMEOUT_MS = 35000;
 const MAX_RUNNER_RESPONSE_BYTES = 384 * 1024;
 const RESULT_RETENTION_COUNT = 50;
 const RESULT_RETENTION_DAYS = 90;
+const MAX_LOG_LINES = 50;
+const MAX_LOG_CHARACTERS = 500;
 
 function runnerTimeoutMs() {
     const parsed = Number.parseInt(process.env.APP_RUNNER_REQUEST_TIMEOUT_MS || '', 10);
@@ -176,12 +179,20 @@ function normalizedUsage(value) {
     const egressCalls = value.egress_calls;
     const resultBytes = value.result_bytes;
     const errorCode = value.error_code;
+    const logs = value.logs === undefined ? [] : value.logs;
     if (!Number.isInteger(wallMs) || wallMs < 0 || wallMs > 24 * 60 * 60 * 1000
         || !Number.isInteger(gatewayCalls) || gatewayCalls < 0 || gatewayCalls > 5
         || !Number.isInteger(dataCalls) || dataCalls < 0 || dataCalls > 10
         || !Number.isInteger(egressCalls) || egressCalls < 0 || egressCalls > 5
         || (resultBytes !== null && (!Number.isInteger(resultBytes) || resultBytes < 0))
-        || (errorCode !== null && safeErrorCode(errorCode, null) === null)) {
+        || (errorCode !== null && safeErrorCode(errorCode, null) === null)
+        || !Array.isArray(logs)
+        || logs.length > MAX_LOG_LINES
+        || logs.some(line => (
+            typeof line !== 'string'
+            || Array.from(line).length > MAX_LOG_CHARACTERS
+            || /[\r\n]/.test(line)
+        ))) {
         return null;
     }
     return {
@@ -191,6 +202,7 @@ function normalizedUsage(value) {
         egress_calls: egressCalls,
         result_bytes: resultBytes,
         error_code: errorCode,
+        logs: [...logs],
     };
 }
 
@@ -198,6 +210,9 @@ async function executeOnRunner({
     sourceCode,
     sourceSha256,
     runToken,
+    trigger,
+    company,
+    settings,
     action = null,
     event = null,
 }, fetchImpl) {
@@ -221,8 +236,11 @@ async function executeOnRunner({
                 source: sourceCode,
                 expectedSourceSha256: sourceSha256,
                 runToken,
+                company,
+                settings,
                 input: {
                     today: new Date().toISOString().slice(0, 10),
+                    trigger,
                     ...(action ? { action } : {}),
                     ...(event ? { event } : {}),
                 },
@@ -326,10 +344,14 @@ function createAppExecutionService({
                     installation.company_id,
                     installation.app_id,
                     installation.latest_run_id,
+                    company.name AS company_name,
+                    COALESCE(company.timezone, 'America/New_York') AS company_timezone,
+                    installation.metadata->'app_settings' AS app_settings,
                     version.id AS version_id,
                     version.source_code,
                     version.source_sha256,
                     COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS declared_actions,
+                    COALESCE(version.scanner_report->'settings', '[]'::jsonb) AS declared_settings,
                     ARRAY(
                         SELECT tool.tool_name
                         FROM app_version_tools tool
@@ -340,6 +362,8 @@ function createAppExecutionService({
              JOIN marketplace_apps app
                ON app.id = installation.app_id
               AND app.status = 'published'
+             JOIN companies company
+               ON company.id = installation.company_id
              JOIN app_versions version
                ON version.app_id = installation.app_id
               AND version.id::text = installation.metadata->'app_runtime'->>'version_id'
@@ -502,6 +526,36 @@ function createAppExecutionService({
                 503
             );
         }
+        await storeRunLogs(database, {
+            companyId,
+            installationId,
+            runId,
+            logs: usage?.logs || [],
+        });
+    }
+
+    async function storeRunLogs(queryable, { companyId, installationId, runId, logs }) {
+        const { rows } = await queryable.query(
+            `INSERT INTO audit_log
+                (actor_id, actor_email, action, target_type, target_id, company_id,
+                 details, trace_id, app_id, installation_id, app_run_id)
+             SELECT NULL, NULL, 'app_runtime.author_log', 'app_runtime_run',
+                    run.id::text, run.company_id, $4::jsonb, NULL,
+                    run.app_id, run.installation_id, run.id
+             FROM app_runs run
+             WHERE run.company_id = $1
+               AND run.installation_id = $2
+               AND run.id = $3
+             RETURNING id`,
+            [companyId, installationId, runId, JSON.stringify({ logs })]
+        );
+        if (rows.length !== 1) {
+            throw appRuntimeError(
+                'APP_RUNTIME_RESULT_PERSISTENCE_FAILED',
+                'Application run result could not be recorded.',
+                503
+            );
+        }
     }
 
     async function persistSuccessfulResult({
@@ -509,6 +563,7 @@ function createAppExecutionService({
         installationId,
         runId,
         viewDocument,
+        logs = [],
     }) {
         return withTransaction(async client => {
             const accounting = await client.query(
@@ -538,6 +593,12 @@ function createAppExecutionService({
                  VALUES ($1, $2, $3, $4::jsonb, NOW())`,
                 [runId, companyId, installationId, JSON.stringify(viewDocument)]
             );
+            await storeRunLogs(client, {
+                companyId,
+                installationId,
+                runId,
+                logs,
+            });
             const moved = await client.query(
                 `UPDATE marketplace_installations installation
                  SET latest_run_id = $3,
@@ -599,17 +660,33 @@ function createAppExecutionService({
                 sourceCode: installation.source_code,
                 sourceSha256: installation.source_sha256,
                 runToken: minted.token,
+                trigger,
+                company: {
+                    name: installation.company_name,
+                    timezone: installation.company_timezone,
+                },
+                settings: declaredSettingValues(
+                    installation.declared_settings,
+                    installation.app_settings
+                ),
                 action,
                 event,
             }, fetchImpl);
-            const validated = validateViewDocument(execution.result, {
-                allowedActionIds: (installation.declared_actions || []).map(item => item.id),
-            });
+            let validated;
+            try {
+                validated = validateViewDocument(execution.result, {
+                    allowedActionIds: (installation.declared_actions || []).map(item => item.id),
+                });
+            } catch (error) {
+                error.details = { ...(error.details || {}), usage: execution.usage };
+                throw error;
+            }
             return await persistSuccessfulResult({
                 companyId,
                 installationId: String(installationId),
                 runId: minted.runId,
                 viewDocument: validated.document,
+                logs: execution.usage.logs,
             });
         } catch (error) {
             await markRunFailed({
@@ -625,13 +702,45 @@ function createAppExecutionService({
     async function withViewerAccess({ companyId, installationId, actorId }, work) {
         return withTransaction(async client => {
             const installation = await loadInstallation(client, companyId, installationId);
-            await requireViewerAccess(installation, actorId, client);
-            return work(client, installation);
+            const authz = await requireViewerAccess(installation, actorId, client);
+            let canViewLogs = authz.role_key === 'tenant_admin';
+            if (!canViewLogs) {
+                const { rows } = await client.query(
+                    `SELECT EXISTS (
+                         SELECT 1
+                         FROM app_studio_apps owned
+                         WHERE owned.company_id = $1
+                           AND owned.app_id = $2
+                           AND owned.created_by = $3
+                     ) AS is_author`,
+                    [companyId, installation.app_id, actorId]
+                );
+                canViewLogs = rows[0]?.is_author === true;
+            }
+            return work(client, installation, { canViewLogs });
         });
     }
 
+    async function logsByRun(client, companyId, installationId, runIds) {
+        if (runIds.length === 0) return new Map();
+        const { rows } = await client.query(
+            `SELECT entry.app_run_id, entry.details->'logs' AS logs
+             FROM audit_log entry
+             WHERE entry.company_id = $1
+               AND entry.installation_id = $2
+               AND entry.app_run_id = ANY($3::uuid[])
+               AND entry.action = 'app_runtime.author_log'`,
+            [companyId, installationId, runIds]
+        );
+        return new Map(rows.map(row => [String(row.app_run_id), row.logs || []]));
+    }
+
     async function listRuns({ companyId, installationId, actorId }) {
-        return withViewerAccess({ companyId, installationId, actorId }, async client => {
+        return withViewerAccess({ companyId, installationId, actorId }, async (
+            client,
+            _installation,
+            { canViewLogs }
+        ) => {
             const { rows } = await client.query(
                 `SELECT run.id AS run_id, run.status,
                         run.issued_at AS started_at, run.completed_at,
@@ -652,7 +761,15 @@ function createAppExecutionService({
                  LIMIT 50`,
                 [companyId, installationId]
             );
-            return rows.map(runSummary);
+            const summaries = rows.map(runSummary);
+            if (!canViewLogs) return summaries;
+            const logs = await logsByRun(
+                client,
+                companyId,
+                installationId,
+                summaries.map(run => run.run_id)
+            );
+            return summaries.map(run => ({ ...run, logs: logs.get(String(run.run_id)) || [] }));
         });
     }
 
@@ -660,7 +777,11 @@ function createAppExecutionService({
         if (!validUuid(runId)) {
             throw appRuntimeError('NOT_FOUND', 'App run result was not found.', 404);
         }
-        return withViewerAccess({ companyId, installationId, actorId }, async client => {
+        return withViewerAccess({ companyId, installationId, actorId }, async (
+            client,
+            _installation,
+            { canViewLogs }
+        ) => {
             const { rows } = await client.query(
                 `SELECT run.id AS run_id, run.status,
                         run.issued_at AS started_at, run.completed_at,
@@ -684,7 +805,10 @@ function createAppExecutionService({
             if (!rows[0]) {
                 throw appRuntimeError('NOT_FOUND', 'App run result was not found.', 404);
             }
-            return { ...runSummary(rows[0]), view_document: rows[0].view_document || null };
+            const result = { ...runSummary(rows[0]), view_document: rows[0].view_document || null };
+            if (!canViewLogs) return result;
+            const logs = await logsByRun(client, companyId, installationId, [runId]);
+            return { ...result, logs: logs.get(String(runId)) || [] };
         });
     }
 
@@ -744,6 +868,8 @@ module.exports = {
     MAX_RUNNER_RESPONSE_BYTES,
     RESULT_RETENTION_COUNT,
     RESULT_RETENTION_DAYS,
+    MAX_LOG_CHARACTERS,
+    MAX_LOG_LINES,
     createAppExecutionService,
     executeOnRunner,
     normalizedUsage,

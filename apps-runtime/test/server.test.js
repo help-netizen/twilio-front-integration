@@ -10,7 +10,9 @@ const SOURCE = 'export async function run(ctx) { return { today: ctx.input.today
 const DRY_RUN_BODY = {
     source: SOURCE,
     expectedSourceSha256: sourceSha256(SOURCE),
-    input: { today: '2026-07-31' },
+    input: { today: '2026-07-31', trigger: 'manual' },
+    company: { name: 'Sandbox Company', timezone: 'America/New_York' },
+    settings: {},
     seed: 'server-test-seed',
     data_collections: [],
     connections: [],
@@ -78,7 +80,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 ...DRY_RUN_BODY,
                 source,
                 expectedSourceSha256: sourceSha256(source),
-                input: { today: '2026-08-02', action },
+                input: { today: '2026-08-02', trigger: 'action', action },
             },
         });
         expect(accepted.status).toBe(200);
@@ -89,6 +91,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 ...DRY_RUN_BODY,
                 input: {
                     today: '2026-08-02',
+                    trigger: 'action',
                     action: { id: 'mark-ordered', row_key: 'purchase-41' },
                 },
             },
@@ -109,7 +112,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 ...DRY_RUN_BODY,
                 source,
                 expectedSourceSha256: sourceSha256(source),
-                input: { today: '2026-08-02', event },
+                input: { today: '2026-08-02', trigger: 'event', event },
             },
         });
         expect(accepted.status).toBe(200);
@@ -120,6 +123,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 ...DRY_RUN_BODY,
                 input: {
                     today: '2026-08-02',
+                    trigger: 'event',
                     event: { type: 'unknown.event', payload: {} },
                 },
             },
@@ -237,6 +241,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 egress_calls: 0,
                 result_bytes: 11,
                 error_code: null,
+                logs: [],
             });
             return { ok: 'ran' };
         });
@@ -249,6 +254,8 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 source: DRY_RUN_BODY.source,
                 expectedSourceSha256: DRY_RUN_BODY.expectedSourceSha256,
                 input: DRY_RUN_BODY.input,
+                company: DRY_RUN_BODY.company,
+                settings: DRY_RUN_BODY.settings,
                 runToken: 'host-only-run-token',
             },
         });
@@ -281,6 +288,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
             },
             createdTasks: [],
             egressCalls: [],
+            logs: [],
         });
         const runApplicationImpl = jest.fn();
         const baseUrl = await startServer({ dryRunImpl, runApplicationImpl });
@@ -290,6 +298,8 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 expectedSourceSha256: sourceSha256(SOURCE),
                 runToken: 'host-only-run-token',
                 input: {},
+                company: DRY_RUN_BODY.company,
+                settings: DRY_RUN_BODY.settings,
                 fixtures: { 'svc.list_jobs': { results: [] } },
             },
         });

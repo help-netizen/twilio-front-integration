@@ -29,6 +29,7 @@ const DRY_RUN_EVENT_TYPE_SET = new Set(DRY_RUN_EVENT_TYPES);
 const MAX_EVENT_PAYLOAD_BYTES = 8 * 1024;
 const dryRunInput = (action, event) => Object.freeze({
     today: new Date().toISOString().slice(0, 10),
+    trigger: action ? 'action' : event ? 'event' : 'manual',
     ...(action ? { action: Object.freeze({ ...action }) } : {}),
     ...(event ? { event: Object.freeze({ ...event }) } : {}),
 });
@@ -243,8 +244,11 @@ function createDryRunTaskStore(fixtures) {
 function validDryRunInput(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
     const keys = Object.keys(input);
-    if (keys.some(key => key !== 'today' && key !== 'action' && key !== 'event')) return false;
+    if (keys.some(key => !['today', 'trigger', 'action', 'event'].includes(key))) return false;
     if (typeof input.today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(input.today)) return false;
+    if (!['manual', 'schedule', 'action', 'event'].includes(input.trigger)
+        || (input.trigger === 'action') !== (input.action !== undefined)
+        || (input.trigger === 'event') !== (input.event !== undefined)) return false;
     if (input.action !== undefined) {
         const action = input.action;
         if (!(Boolean(action)
@@ -326,6 +330,8 @@ async function validateAndDryRun({
     anchor = null,
     data_collections = [],
     connections = [],
+    company = null,
+    settings = {},
     fetchImpl,
     signal,
 }) {
@@ -353,6 +359,7 @@ async function validateAndDryRun({
             egress_calls: 0,
             result_bytes: null,
             error_code: mismatch.code,
+            logs: [],
         };
         throw mismatch;
     }
@@ -375,6 +382,11 @@ async function validateAndDryRun({
             source,
             expectedSourceSha256,
             input,
+            company: company || {
+                name: activeFixtures.company?.name || 'Sandbox Company',
+                timezone: activeFixtures.company?.timezone || 'America/New_York',
+            },
+            settings,
             gatewayBaseUrl: DRY_RUN_GATEWAY,
             runToken: DRY_RUN_TOKEN,
             executionMode: 'sandbox',
@@ -410,6 +422,7 @@ async function validateAndDryRun({
             returned_type: result === null ? 'null' : Array.isArray(result) ? 'array' : typeof result,
         },
         usage,
+        logs: usage?.logs || [],
         fixturesSummary: summarizeSandboxFixtures(activeFixtures),
         dataOps: dataStore.report(),
         egressCalls: egressStore.report(),

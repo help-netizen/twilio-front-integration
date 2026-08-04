@@ -607,6 +607,7 @@ async function markDisconnected({ companyId, installationId, actorId, status = '
          SET status = $3,
              disconnected_by = $4,
              disconnected_at = NOW(),
+             metadata = COALESCE(metadata, '{}'::jsonb) - 'app_settings',
              updated_at = NOW()
          WHERE company_id = $1
            AND id = $2

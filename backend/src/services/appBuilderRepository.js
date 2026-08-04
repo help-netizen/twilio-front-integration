@@ -11,6 +11,7 @@ const {
 const { validateActions } = require('./appActionValidator');
 const { validateSubscriptions } = require('./appEventCatalog');
 const { validateConnections } = require('./appConnectionValidator');
+const { validateSettings } = require('./appSettingsValidator');
 
 class AppBuilderRepositoryError extends Error {
     constructor(code, message, httpStatus) {
@@ -122,6 +123,7 @@ async function listVersions(companyId, appId) {
                 COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions,
                 COALESCE(version.scanner_report->'subscribes', '[]'::jsonb) AS subscribes,
                 COALESCE(version.scanner_report->'connections', '[]'::jsonb) AS connections,
+                COALESCE(version.scanner_report->'settings', '[]'::jsonb) AS settings,
                 version.status, version.created_at,
                 COALESCE(
                     ARRAY_AGG(tool.tool_name ORDER BY tool.tool_name)
@@ -178,13 +180,15 @@ async function getGenerationContext(companyId, chatId) {
                 latest.data_collections AS current_data_collections,
                 latest.actions AS current_actions,
                 latest.subscribes AS current_subscribes,
-                latest.connections AS current_connections
+                latest.connections AS current_connections,
+                latest.settings AS current_settings
          FROM app_build_chats chat
          LEFT JOIN LATERAL (
              SELECT version.source_code, version.data_collections,
                     COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions,
                     COALESCE(version.scanner_report->'subscribes', '[]'::jsonb) AS subscribes,
-                    COALESCE(version.scanner_report->'connections', '[]'::jsonb) AS connections
+                    COALESCE(version.scanner_report->'connections', '[]'::jsonb) AS connections,
+                    COALESCE(version.scanner_report->'settings', '[]'::jsonb) AS settings
              FROM app_versions version
              JOIN app_studio_apps owned
                ON owned.app_id = version.app_id
@@ -339,6 +343,7 @@ async function persistSuccess({
     actions = [],
     subscribes = [],
     connections = [],
+    settings = [],
     tools,
     description,
     model,
@@ -365,6 +370,7 @@ async function persistSuccess({
     const normalizedActions = validateActions(actions);
     const normalizedSubscriptions = validateSubscriptions(subscribes);
     const normalizedConnections = validateConnections(connections);
+    const normalizedSettings = validateSettings(settings);
     return withTransaction(async client => {
         const chatResult = await client.query(
             `SELECT id, app_id, title
@@ -476,6 +482,7 @@ async function persistSuccess({
                     actions: normalizedActions,
                     subscribes: normalizedSubscriptions,
                     connections: normalizedConnections,
+                    settings: normalizedSettings,
                 }),
                 normalizedSuggestedSchedule
                     ? JSON.stringify(normalizedSuggestedSchedule)
@@ -541,6 +548,8 @@ async function persistSuccess({
                 ...version.rows[0],
                 actions: normalizedActions,
                 subscribes: normalizedSubscriptions,
+                connections: normalizedConnections,
+                settings: normalizedSettings,
                 tools,
             },
             message: message.rows[0],

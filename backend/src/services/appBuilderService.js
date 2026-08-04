@@ -7,6 +7,7 @@ const { renderDataCollectionsContract } = require('./appDataCollectionValidator'
 const { renderActionContract } = require('./appActionValidator');
 const { renderAppEventCatalogContract } = require('./appEventCatalog');
 const { renderConnectionsContract } = require('./appConnectionValidator');
+const { renderSettingsContract } = require('./appSettingsValidator');
 const defaultRepository = require('./appBuilderRepository');
 const defaultProvider = require('./appBuilderProviderService');
 const defaultDryRunner = require('./appBuilderDryRunService');
@@ -74,12 +75,13 @@ function buildPrompt(context) {
 
     return [
         `You generate one dependency-free Albusto App Studio JavaScript module.
-Return exactly one JSON object: {"source":"...","description":"...","suggested_schedule":null,"data_collections":[],"actions":[],"subscribes":[],"connections":[]}.
+Return exactly one JSON object: {"source":"...","description":"...","suggested_schedule":null,"data_collections":[],"actions":[],"subscribes":[],"connections":[],"settings":[]}.
 suggested_schedule may be null or exactly one of: {"kind":"every_minutes","n":15},
 {"kind":"hourly","minute":5}, {"kind":"daily","at":"07:00"},
 {"kind":"weekly","dow":1,"at":"07:00"}, or {"kind":"monthly","dom":1,"at":"07:00"}.
 The source must export exactly: export async function run(ctx).
-ctx has only ctx.callTool(name, args), ctx.data.list/upsert/delete, ctx.http.request, and ctx.input.
+ctx has only ctx.callTool(name, args), ctx.data.list/upsert/delete, ctx.http.request,
+ctx.input, ctx.company, ctx.settings, and ctx.log(message).
 Use only literal tool names from the trusted catalog below.
 Do not use imports, require, process, fetch, eval, Function, WebAssembly, timers,
 network, filesystem, dependencies, or another entry point.
@@ -99,6 +101,8 @@ secrets in source or description. Keep description under 2,000 characters.`,
         renderAppEventCatalogContract(),
         '',
         renderConnectionsContract(),
+        '',
+        renderSettingsContract(),
         '',
         'TRUSTED TOOL DOCUMENTATION:',
         toolDocumentation,
@@ -132,6 +136,11 @@ secrets in source or description. Keep description under 2,000 characters.`,
         '<BEGIN_CURRENT_CONNECTIONS>',
         JSON.stringify(context.current_connections || []),
         '<END_CURRENT_CONNECTIONS>',
+        '',
+        'CURRENT VERSION INSTALLATION SETTINGS DECLARATIONS:',
+        '<BEGIN_CURRENT_SETTINGS>',
+        JSON.stringify(context.current_settings || []),
+        '<END_CURRENT_SETTINGS>',
         '',
         'Return only the required JSON object.',
     ].join('\n');
@@ -242,6 +251,7 @@ function createAppBuilderService({
                         data_ops: report.data_ops,
                         created_tasks: report.created_tasks,
                         egress_calls: report.egress_calls,
+                        logs: report.logs,
                         result: report.result,
                     },
                 },
@@ -250,6 +260,7 @@ function createAppBuilderService({
                 actions: generated.actions,
                 subscribes: generated.subscribes,
                 connections: generated.connections,
+                settings: generated.settings,
                 tools: report.tools,
                 description,
                 model: generated.model,

@@ -7,6 +7,7 @@ const appExecutionService = require('../services/appExecutionService');
 const appDataService = require('../services/appDataService');
 const appScheduleService = require('../services/appScheduleService');
 const appInstallationSecretService = require('../services/appInstallationSecretService');
+const appInstallationSettingsService = require('../services/appInstallationSettingsService');
 const { AppRuntimeError } = require('../services/appRuntimeErrors');
 const { requirePermission } = require('../middleware/authorization');
 
@@ -89,6 +90,44 @@ const manageInstallationSecrets = [
     requirePermission('tenant.integrations.manage'),
     requireTenantAdmin,
 ];
+
+// tenant-safety-allow R-route-permission: Phase A viewer permissions are resolved live before settings from the tenant-paired accepted version are returned
+router.get('/installations/:id/settings', async (req, res) => {
+    try {
+        if (Object.keys(req.query || {}).length > 0) {
+            throw new AppRuntimeError(
+                'INVALID_REQUEST',
+                'Query parameters are not accepted.',
+                400
+            );
+        }
+        const result = await appInstallationSettingsService.getSettings(routeInput(req));
+        return res.json({ ok: true, ...result, request_id: req.requestId });
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+});
+
+// tenant-safety-allow R-route-permission: tenant_admin can replace only declared values on the company/installation-paired accepted version
+router.put('/installations/:id/settings', requireTenantAdmin, async (req, res) => {
+    try {
+        if (Object.keys(req.query || {}).length > 0
+            || !req.body
+            || typeof req.body !== 'object'
+            || Array.isArray(req.body)
+            || Object.keys(req.body).length !== 1
+            || !Object.prototype.hasOwnProperty.call(req.body, 'settings')) {
+            throw new AppRuntimeError('INVALID_REQUEST', 'Settings request is invalid.', 400);
+        }
+        const result = await appInstallationSettingsService.updateSettings({
+            ...routeInput(req),
+            settings: req.body.settings,
+        });
+        return res.json({ ok: true, ...result, request_id: req.requestId });
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+});
 
 // tenant-safety-allow R-route-permission: tenant_admin plus integrations permission can read only set/not_set for declarations on the tenant-paired accepted version
 router.get('/installations/:id/secrets', ...manageInstallationSecrets, async (req, res) => {
