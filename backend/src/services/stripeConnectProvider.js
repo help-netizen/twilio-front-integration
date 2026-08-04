@@ -113,6 +113,15 @@ async function getAccount(accountId) {
     return mapAccount(acct);
 }
 
+/**
+ * Raw connected-account payload — used when we need fields mapAccount drops,
+ * e.g. the merchant's verified business address for the Terminal Location
+ * (TAP2PAY-001: Stripe rejects US locations without address[line1]).
+ */
+async function getAccountRaw(accountId) {
+    return call('GET', `/accounts/${accountId}`);
+}
+
 function mapAccount(acct) {
     return {
         id: acct.id,
@@ -378,6 +387,7 @@ module.exports = {
     createLoginLink,
     deleteAccount,
     getAccount,
+    getAccountRaw,
     mapAccount,
     createCheckoutSession,
     retrieveCheckoutSession,

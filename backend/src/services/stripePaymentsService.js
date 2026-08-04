@@ -1404,8 +1404,33 @@ async function getConnectionToken(companyId) {
     // First use auto-provisions one on the connected account so the mobile
     // client never has to orchestrate location setup itself.
     if (locations.length === 0) {
+        // TAP2PAY-001 (owner report 2026-08-03): Stripe rejects a US Terminal
+        // Location without address[line1]. Our companies table only carries
+        // city/state/zip, so take the merchant's VERIFIED business address from
+        // their own connected account (company → individual → support address),
+        // and say plainly what to fix when it isn't there.
+        const raw = await provider.getAccountRaw(account.stripe_account_id);
+        const addr = raw?.company?.address
+            || raw?.individual?.address
+            || raw?.business_profile?.support_address
+            || null;
+        if (!addr?.line1) {
+            throw new StripePaymentsError(
+                'TERMINAL_LOCATION_ADDRESS_MISSING',
+                'Add your business street address in Stripe before using Tap to Pay.',
+                409
+            );
+        }
         const created = await provider.createTerminalLocation(account.stripe_account_id, {
-            displayName: 'Primary location',
+            displayName: raw?.business_profile?.name || raw?.settings?.dashboard?.display_name || 'Primary location',
+            address: {
+                line1: addr.line1,
+                line2: addr.line2 || undefined,
+                city: addr.city || undefined,
+                state: addr.state || undefined,
+                postal_code: addr.postal_code || undefined,
+                country: addr.country || 'US',
+            },
         });
         await q.insertTerminalLocation(companyId, {
             stripeAccountId: account.stripe_account_id,
