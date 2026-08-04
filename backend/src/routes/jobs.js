@@ -11,6 +11,7 @@ const router = express.Router();
 const jobsService = require('../services/jobsService');
 const zenbookerClient = require('../services/zenbookerClient');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
+const unitLabelScanService = require('../services/unitLabelScanService');
 const notesMutationService = require('../services/notesMutationService');
 const eventService = require('../services/eventService');
 const conversationsService = require('../services/conversationsService');
@@ -542,6 +543,19 @@ router.post('/:id/notes', requirePermission('jobs.edit', 'jobs.done_pending_appr
 
         const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
         const result = await jobsService.addNote(jobId, text, attachments, author, userId, noteId, companyId);
+        try {
+            unitLabelScanService.queueScan({
+                companyId,
+                entityType: 'job',
+                entityId: jobId,
+                sourceNoteId: noteId,
+                attachmentIds: attachments
+                    .filter(attachment => attachment.content_type?.startsWith('image/'))
+                    .map(attachment => attachment.id),
+            });
+        } catch (scanError) {
+            console.warn('[Jobs API] Unit label scan queue failed:', scanError.message);
+        }
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Add note error:', err.message);

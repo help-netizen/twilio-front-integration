@@ -61,6 +61,35 @@ async function uploadFile(buffer, contentType, storageKey) {
 }
 
 /**
+ * Download a stored object into memory.
+ *
+ * Note attachments are capped at 10 MB before upload, so buffering one image is
+ * bounded and lets the vision worker send the original bytes to Gemini.
+ *
+ * @param {string} storageKey - S3 object key
+ * @returns {Promise<Buffer>}
+ */
+async function downloadFile(storageKey) {
+    const client = getClient();
+    const response = await client.send(new GetObjectCommand({
+        Bucket: BUCKET,
+        Key: storageKey,
+    }));
+    const body = response.Body;
+    if (!body) throw new Error('Stored attachment has no body');
+    if (Buffer.isBuffer(body)) return body;
+    if (typeof body.transformToByteArray === 'function') {
+        return Buffer.from(await body.transformToByteArray());
+    }
+
+    const chunks = [];
+    for await (const chunk of body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+}
+
+/**
  * Generate a presigned GET URL for a file.
  *
  * @param {string} storageKey - S3 object key
@@ -92,6 +121,7 @@ async function deleteFile(storageKey) {
 module.exports = {
     generateStorageKey,
     uploadFile,
+    downloadFile,
     getPresignedUrl,
     deleteFile,
 };

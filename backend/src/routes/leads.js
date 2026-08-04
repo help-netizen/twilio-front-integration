@@ -14,6 +14,7 @@ const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const leadsService = require('../services/leadsService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
+const unitLabelScanService = require('../services/unitLabelScanService');
 const notesMutationService = require('../services/notesMutationService');
 const db = require('../db/connection');
 
@@ -1015,6 +1016,20 @@ router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attac
             'UPDATE leads SET structured_notes = $1::jsonb, updated_at = NOW() WHERE uuid = $2 AND company_id = $3',
             [JSON.stringify(updatedNotes), req.params.uuid, companyId]
         );
+
+        try {
+            unitLabelScanService.queueScan({
+                companyId,
+                entityType: 'lead',
+                entityId: leadId,
+                sourceNoteId: noteId,
+                attachmentIds: attachmentsMeta
+                    .filter(attachment => attachment.content_type?.startsWith('image/'))
+                    .map(attachment => attachment.id),
+            });
+        } catch (scanError) {
+            console.warn('[Leads] Unit label scan queue failed:', scanError.message);
+        }
 
         res.json({ ok: true, data: { notes: updatedNotes } });
     } catch (err) {

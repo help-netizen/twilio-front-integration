@@ -224,7 +224,12 @@ function buildRequest(provider, model, options) {
                     systemInstruction: options.systemPrompt
                         ? { parts: [{ text: options.systemPrompt }] }
                         : undefined,
-                    contents: [{ role: 'user', parts: [{ text: options.userPrompt }] }],
+                    contents: [{
+                        role: 'user',
+                        parts: Array.isArray(options.userParts) && options.userParts.length > 0
+                            ? options.userParts
+                            : [{ text: options.userPrompt }],
+                    }],
                     generationConfig: {
                         temperature: options.temperature,
                         maxOutputTokens: options.maxOutputTokens,

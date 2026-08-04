@@ -8,6 +8,7 @@
 // ── Mock the jobs router's service deps so it mounts cleanly ──
 const mockJobs = {
     getJobById: jest.fn(async () => ({ id: 5, blanc_status: 'Scheduled', company_id: 'co', contact_id: null, customer_name: 'C', customer_phone: null, service_name: 'S' })),
+    addNote: jest.fn(async () => ({ notes: [] })),
     updateBlancStatus: jest.fn(async (id, status) => ({ id, blanc_status: status })),
     markInProgress: jest.fn(async () => ({ id: 5, blanc_status: 'In Progress' })),
     markEnroute: jest.fn(async () => ({ id: 5, blanc_status: 'Enroute' })),
@@ -20,7 +21,18 @@ jest.mock('../backend/src/services/fsmService', () => ({
 jest.mock('../backend/src/services/eventService', () => ({ logEvent: jest.fn(), actorName: () => 'Tester', describeEvent: jest.fn() }));
 jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn(() => Promise.resolve()) }));
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
-jest.mock('../backend/src/services/noteAttachmentsService', () => ({ MAX_FILES_PER_NOTE: 5, createAttachments: jest.fn() }));
+jest.mock('../backend/src/services/noteAttachmentsService', () => ({
+    MAX_FILE_SIZE: 10 * 1024 * 1024,
+    MAX_FILES_PER_NOTE: 5,
+    createAttachments: jest.fn(),
+    associateStagedAttachments: jest.fn(async () => ([{
+        id: 7,
+        file_name: 'label.png',
+        content_type: 'image/png',
+        file_size: 100,
+    }])),
+}));
+jest.mock('../backend/src/services/unitLabelScanService', () => ({ queueScan: jest.fn(() => true) }));
 jest.mock('../backend/src/services/notesMutationService', () => ({ editNote: jest.fn(), softDeleteNote: jest.fn() }));
 jest.mock('../backend/src/services/conversationsService', () => ({}));
 jest.mock('../backend/src/services/routeDistanceService', () => ({}));
@@ -48,6 +60,7 @@ const jobsRouter = require('../backend/src/routes/jobs');
 const fsmRouter = require('../backend/src/routes/fsm');
 const authz = require('../backend/src/services/authorizationService');
 const roleQueries = require('../backend/src/db/roleQueries');
+const unitLabelScanService = require('../backend/src/services/unitLabelScanService');
 
 const PROVIDER = ['jobs.view', 'jobs.done_pending_approval', 'schedule.view', 'provider.enabled', 'tasks.view', 'tasks.create'];
 
@@ -89,6 +102,53 @@ describe('provider FSM gate', () => {
     test('a user WITH jobs.close CAN Cancel', async () => {
         const res = await request(appAs(['jobs.edit', 'jobs.close'])).patch('/5/status').send({ blanc_status: 'Canceled', cancel_reason: 'no-show' });
         expect(res.status).toBe(200);
+    });
+});
+
+describe('UNIT-LABEL-SCAN-001 job note trigger', () => {
+    beforeEach(() => {
+        mockJobs.getJobById.mockClear();
+        mockJobs.addNote.mockClear();
+        unitLabelScanService.queueScan.mockClear();
+    });
+
+    test('queues committed image attachments only after the source note is saved', async () => {
+        const res = await request(appAs(['jobs.edit']))
+            .post('/5/notes')
+            .field('text', 'Unit photo')
+            .field('attachment_ids', '[7]');
+
+        expect(res.status).toBe(200);
+        expect(mockJobs.addNote).toHaveBeenCalledTimes(1);
+        expect(unitLabelScanService.queueScan).toHaveBeenCalledWith({
+            companyId: 'co',
+            entityType: 'job',
+            entityId: 5,
+            sourceNoteId: expect.any(String),
+            attachmentIds: [7],
+        });
+        expect(mockJobs.addNote.mock.invocationCallOrder[0])
+            .toBeLessThan(unitLabelScanService.queueScan.mock.invocationCallOrder[0]);
+    });
+
+    test('a queue failure never changes the successful note-create response', async () => {
+        unitLabelScanService.queueScan.mockImplementationOnce(() => {
+            throw new Error('queue unavailable');
+        });
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const res = await request(appAs(['jobs.edit']))
+            .post('/5/notes')
+            .field('text', 'Unit photo')
+            .field('attachment_ids', '[7]');
+
+        expect(res.status).toBe(200);
+        expect(mockJobs.addNote).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(
+            '[Jobs API] Unit label scan queue failed:',
+            'queue unavailable'
+        );
+        warn.mockRestore();
     });
 });
 

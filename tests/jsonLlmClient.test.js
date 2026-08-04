@@ -83,6 +83,28 @@ describe('provider-neutral JSON LLM client', () => {
         expect(body.generationConfig.thinkingConfig.thinkingBudget).toBe(256);
     });
 
+    test('Gemini forwards explicit multimodal user parts for vision calls', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(response({
+            json: { candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] },
+        }));
+        await generateJson({
+            provider: 'gemini', apiKey: 'secret', primaryModel: 'gemini-test',
+            userPrompt: 'inspect',
+            userParts: [
+                { text: 'inspect' },
+                { inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } },
+            ],
+            maxRetries: 0,
+            fetchImpl,
+        });
+
+        const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+        expect(body.contents[0].parts).toEqual([
+            { text: 'inspect' },
+            { inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } },
+        ]);
+    });
+
     test('retries a transient response without recording provider bodies', async () => {
         const fetchImpl = jest.fn()
             .mockResolvedValueOnce(response({ status: 503 }))
