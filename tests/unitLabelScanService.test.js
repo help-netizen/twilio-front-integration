@@ -107,6 +107,57 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
         return { debug: jest.fn(), warn: jest.fn() };
     }
 
+    function enabledApp() {
+        return jest.fn(async () => true);
+    }
+
+    test('disabled app skips before scan-state writes, S3 download, or Gemini', async () => {
+        const database = { query: jest.fn() };
+        const storage = { downloadFile: jest.fn() };
+        const transport = jest.fn();
+        const appConnectionChecker = jest.fn(async () => false);
+        const service = createUnitLabelScanService({
+            database,
+            storage,
+            transport,
+            appConnectionChecker,
+            logger: makeLogger(),
+        });
+
+        await expect(service.runForAttachments(input())).resolves.toEqual({
+            claimed: 0,
+            labels: 0,
+            noteCreated: false,
+        });
+
+        expect(appConnectionChecker).toHaveBeenCalledWith(COMPANY_A);
+        expect(database.query).not.toHaveBeenCalled();
+        expect(storage.downloadFile).not.toHaveBeenCalled();
+        expect(transport).not.toHaveBeenCalled();
+    });
+
+    test('unknown company skips without any attachment or provider side effect', async () => {
+        const unknownCompany = '00000000-0000-0000-0000-000000000099';
+        const database = { query: jest.fn() };
+        const storage = { downloadFile: jest.fn() };
+        const transport = jest.fn();
+        const appConnectionChecker = jest.fn(async companyId => companyId !== unknownCompany);
+        const service = createUnitLabelScanService({
+            database,
+            storage,
+            transport,
+            appConnectionChecker,
+            logger: makeLogger(),
+        });
+
+        await service.runForAttachments(input({ companyId: unknownCompany }));
+
+        expect(appConnectionChecker).toHaveBeenCalledWith(unknownCompany);
+        expect(database.query).not.toHaveBeenCalled();
+        expect(storage.downloadFile).not.toHaveBeenCalled();
+        expect(transport).not.toHaveBeenCalled();
+    });
+
     test('detected images create one scoped AI/system note and complete the attachments', async () => {
         const database = {
             query: jest.fn()
@@ -124,10 +175,12 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
         const transport = jest.fn()
             .mockResolvedValueOnce(label())
             .mockResolvedValueOnce(label({ brand: 'Samsung', model: 'RF28', serial_number: 'S-2' }));
+        const appConnectionChecker = enabledApp();
         const service = createUnitLabelScanService({
             database,
             storage,
             transport,
+            appConnectionChecker,
             logger: makeLogger(),
             now: () => new Date('2026-08-03T12:00:00Z'),
         });
@@ -140,6 +193,9 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
 
         expect(storage.downloadFile).toHaveBeenCalledTimes(2);
         expect(transport).toHaveBeenCalledTimes(2);
+        expect(appConnectionChecker).toHaveBeenCalledWith(COMPANY_A);
+        expect(appConnectionChecker.mock.invocationCallOrder[0])
+            .toBeLessThan(database.query.mock.invocationCallOrder[0]);
         const [writeSql, writeParams] = database.query.mock.calls[1];
         expect(writeSql).toMatch(/UPDATE jobs/);
         expect(writeSql).toMatch(/WHERE company_id = \$1/);
@@ -164,6 +220,7 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
             database,
             storage: { downloadFile: jest.fn(async () => Buffer.from('image')) },
             transport: jest.fn(async () => noLabel()),
+            appConnectionChecker: enabledApp(),
             logger,
         });
 
@@ -192,6 +249,7 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
             database,
             storage: { downloadFile: jest.fn(async () => Buffer.from('image')) },
             transport: jest.fn(async () => label()),
+            appConnectionChecker: enabledApp(),
             logger: makeLogger(),
         });
 
@@ -225,6 +283,7 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
             database,
             storage: { downloadFile: jest.fn(async () => { throw new Error('S3 unavailable'); }) },
             transport,
+            appConnectionChecker: enabledApp(),
             logger,
         });
 
@@ -240,7 +299,9 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
             'S3 unavailable'
         );
         expect(database.query.mock.calls[1][0]).toMatch(/unit_label_scan_state = 'failed'/);
-        expect(database.query.mock.calls[0][0]).toMatch(/unit_label_scan_attempts < 2/);
+        expect(database.query.mock.calls[0][0]).toMatch(
+            /COALESCE\(unit_label_scan_attempts, 0\) < 2/
+        );
     });
 
     test('completed attachment is not scanned or noted again on a duplicate trigger', async () => {
@@ -254,7 +315,13 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
         };
         const storage = { downloadFile: jest.fn(async () => Buffer.from('image')) };
         const transport = jest.fn(async () => noLabel());
-        const service = createUnitLabelScanService({ database, storage, transport, logger: makeLogger() });
+        const service = createUnitLabelScanService({
+            database,
+            storage,
+            transport,
+            appConnectionChecker: enabledApp(),
+            logger: makeLogger(),
+        });
 
         await service.runForAttachments(input());
         await expect(service.runForAttachments(input())).resolves.toEqual({
@@ -266,7 +333,8 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
         expect(storage.downloadFile).toHaveBeenCalledTimes(1);
         expect(transport).toHaveBeenCalledTimes(1);
         const claimSql = database.query.mock.calls[0][0];
-        expect(claimSql).toMatch(/unit_label_scan_attempts < 2/);
+        expect(claimSql).toMatch(/COALESCE\(unit_label_scan_attempts, 0\) < 2/);
+        expect(claimSql).toMatch(/unit_label_scan_state IS NULL/);
         expect(claimSql).toMatch(/unit_label_scan_state = 'failed'/);
     });
 
@@ -284,7 +352,13 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
         };
         const storage = { downloadFile: jest.fn(async () => Buffer.from('owned-image')) };
         const transport = jest.fn(async () => label());
-        const service = createUnitLabelScanService({ database, storage, transport, logger: makeLogger() });
+        const service = createUnitLabelScanService({
+            database,
+            storage,
+            transport,
+            appConnectionChecker: enabledApp(),
+            logger: makeLogger(),
+        });
 
         await service.runForAttachments(input({ companyId: COMPANY_A }));
         await service.runForAttachments(input({ companyId: COMPANY_B }));
@@ -308,6 +382,7 @@ describe('UNIT-LABEL-SCAN-001 worker', () => {
             database: { query: jest.fn(async () => { throw new Error('db down'); }) },
             storage: { downloadFile: jest.fn() },
             transport: jest.fn(),
+            appConnectionChecker: enabledApp(),
             logger,
             schedule: fn => scheduled.push(fn),
         });

@@ -79,6 +79,14 @@ function createGeminiTransport({ generateJson = jsonLlmClient.generateJson } = {
     };
 }
 
+async function defaultAppConnectionChecker(companyId) {
+    const marketplaceService = require('./marketplaceService');
+    return marketplaceService.isAppConnected(
+        companyId,
+        marketplaceService.UNIT_LABEL_SCANNER_APP_KEY
+    );
+}
+
 function cleanField(value) {
     if (value == null) return null;
     if (typeof value !== 'string') throw new Error('Unit label response contains a non-string field');
@@ -162,7 +170,7 @@ async function claimAttachments(database, { companyId, entityType, entityId, att
     const { rows } = await database.query(
         `UPDATE note_attachments
             SET unit_label_scan_state = 'processing',
-                unit_label_scan_attempts = unit_label_scan_attempts + 1,
+                unit_label_scan_attempts = COALESCE(unit_label_scan_attempts, 0) + 1,
                 unit_label_scan_started_at = NOW(),
                 unit_label_scan_last_error = NULL
           WHERE company_id = $1
@@ -172,9 +180,10 @@ async function claimAttachments(database, { companyId, entityType, entityId, att
             AND note_id = $5
             AND note_index IS NOT NULL
             AND content_type LIKE 'image/%'
-            AND unit_label_scan_attempts < 2
+            AND COALESCE(unit_label_scan_attempts, 0) < 2
             AND (
-                unit_label_scan_state = 'pending'
+                unit_label_scan_state IS NULL
+                OR unit_label_scan_state = 'pending'
                 OR unit_label_scan_state = 'failed'
                 OR (
                     unit_label_scan_state = 'processing'
@@ -326,6 +335,7 @@ function createUnitLabelScanService({
     database = db,
     storage = storageService,
     transport = createGeminiTransport(),
+    appConnectionChecker = defaultAppConnectionChecker,
     logger = console,
     schedule = setImmediate,
     now = () => new Date(),
@@ -333,6 +343,18 @@ function createUnitLabelScanService({
     async function runForAttachments(rawInput) {
         const input = normalizeInput(rawInput);
         if (!input) return { claimed: 0, labels: 0, noteCreated: false };
+
+        let enabled;
+        try {
+            enabled = await appConnectionChecker(input.companyId);
+        } catch (err) {
+            logger.warn('[unit-label-scan] marketplace gate failed:', err && err.message);
+            return { claimed: 0, labels: 0, noteCreated: false };
+        }
+        // Opt-in marketplace gate. This is intentionally before the attachment
+        // claim so disabled/unknown companies cause no scan-state writes, S3
+        // download, or Gemini request.
+        if (!enabled) return { claimed: 0, labels: 0, noteCreated: false };
 
         let claimed;
         try {
@@ -436,6 +458,7 @@ module.exports = {
     USER_PROMPT,
     createGeminiTransport,
     createUnitLabelScanService,
+    defaultAppConnectionChecker,
     formatUnitLabelNote,
     parseVisionResult,
 };

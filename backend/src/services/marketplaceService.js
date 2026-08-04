@@ -341,6 +341,7 @@ const SMART_SLOT_ENGINE_APP_KEY = 'smart-slot-engine';
 // NO isAppConnected special-case (only google-email/telephony-twilio are special).
 const AI_REPAIR_ADVISOR_APP_KEY = 'ai-repair-advisor';
 const REPORT_TO_ESTIMATE_APP_KEY = 'report-to-estimate';
+const UNIT_LABEL_SCANNER_APP_KEY = 'unit-label-scanner';
 const CHATGPT_CRM_MCP_APP_KEY = 'chatgpt-crm-mcp';
 
 async function requireChatgptTenantAdmin(companyId, actorId, client) {
@@ -1823,6 +1824,7 @@ module.exports = {
     SMART_SLOT_ENGINE_APP_KEY,
     AI_REPAIR_ADVISOR_APP_KEY,
     REPORT_TO_ESTIMATE_APP_KEY,
+    UNIT_LABEL_SCANNER_APP_KEY,
     CHATGPT_CRM_MCP_APP_KEY,
     SETTINGS_ENABLED_APP_KEYS,
     isAppConnected,
