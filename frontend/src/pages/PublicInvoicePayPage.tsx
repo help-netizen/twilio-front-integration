@@ -43,6 +43,10 @@ export default function PublicInvoicePayPage() {
     const [step, setStep] = useState<'summary' | 'pay' | 'done'>('summary');
     const [preparing, setPreparing] = useState(false);
     const [paying, setPaying] = useState(false);
+    // PAYLINK-MOUNT-FIX: Pay stays disabled until the PaymentElement reports
+    // ready — confirmPayment on an unmounted element was the customer-facing
+    // "should have a mounted Payment Element" error.
+    const [payReady, setPayReady] = useState(false);
     const mountRef = useRef<HTMLDivElement>(null);
     const stripeRef = useRef<any>(null);
     const elementsRef = useRef<any>(null);
@@ -79,15 +83,29 @@ export default function PublicInvoicePayPage() {
             const stripe = await loadStripe(json.data.account_id);
             const elements = stripe.elements({ clientSecret: json.data.client_secret, appearance: { theme: 'stripe' } });
             stripeRef.current = stripe; elementsRef.current = elements;
+            setPayReady(false);
             setStep('pay');
-            requestAnimationFrame(() => { if (mountRef.current) elements.create('payment').mount(mountRef.current); });
+            // Mounting happens in the effect below AFTER React commits the
+            // 'pay' step render — the old single-rAF mount silently skipped
+            // when the container wasn't committed yet (mobile/slow devices),
+            // leaving Pay active with no mounted element.
         } catch (e: any) {
             setError(/not ready|NOT_READY/i.test(String(e?.message)) ? 'Online payment is temporarily unavailable.' : (e?.message || 'Could not start payment'));
         } finally { setPreparing(false); }
     };
 
+    // Deterministic mount: runs after the 'pay' step markup is committed, so the
+    // container ref is guaranteed. Pay unlocks only on the element's 'ready'.
+    useEffect(() => {
+        if (step !== 'pay' || !elementsRef.current || !mountRef.current) return;
+        const el = elementsRef.current.create('payment');
+        el.on('ready', () => setPayReady(true));
+        el.mount(mountRef.current);
+        return () => { setPayReady(false); try { el.destroy(); } catch { /* already gone */ } };
+    }, [step]);
+
     const pay = async () => {
-        if (!stripeRef.current || !elementsRef.current) return;
+        if (!stripeRef.current || !elementsRef.current || !payReady) return;
         setPaying(true); setError(null);
         try {
             const { error: payErr } = await stripeRef.current.confirmPayment({
@@ -184,7 +202,7 @@ export default function PublicInvoicePayPage() {
                                     <span>Total{tipValue > 0 ? ' (incl. tip)' : ''}</span><span>{money(total, info.currency)}</span>
                                 </div>
                                 <div ref={mountRef} style={{ minHeight: 40, marginBottom: 14 }} />
-                                <button onClick={pay} disabled={paying}
+                                <button onClick={pay} disabled={paying || !payReady}
                                     style={{ width: '100%', padding: '13px', borderRadius: 12, border: 'none', background: '#635bff', color: '#fff', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                                     {paying && <Loader2 className="h-4 w-4 animate-spin" />} Pay {money(total, info.currency)}
                                 </button>
