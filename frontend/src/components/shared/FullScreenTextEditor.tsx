@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Sparkles, Loader2 } from 'lucide-react';
 import { useKeyboardInset } from './NoteComposerOverlay';
@@ -17,6 +17,16 @@ interface FullScreenTextEditorProps {
     repolishLabel?: string;
     /** Disables the actions + shows a working state (during an in-flight polish). */
     busy?: boolean;
+    /**
+     * Composer controls pinned at the START of the bottom bar (attach, Polish…).
+     * Used by the note composer so a long report is written full-screen without
+     * losing any of the composer's actions.
+     */
+    leftActions?: ReactNode;
+    /** Blocks the primary action (e.g. nothing typed and nothing attached). */
+    doneDisabled?: boolean;
+    /** Spinner on the primary action while the note is being submitted. */
+    donePending?: boolean;
 }
 
 /**
@@ -29,6 +39,7 @@ interface FullScreenTextEditorProps {
 export function FullScreenTextEditor({
     open, initialValue, onDone, onCancel, title, placeholder, doneLabel = 'Done',
     onRepolish, repolishLabel = 'Re-polish', busy = false,
+    leftActions, doneDisabled = false, donePending = false,
 }: FullScreenTextEditorProps) {
     const [text, setText] = useState(initialValue);
     const keyboardInset = useKeyboardInset(open);
@@ -131,6 +142,9 @@ export function FullScreenTextEditor({
                         paddingBottom: 'calc(env(safe-area-inset-bottom) + 10px)',
                     }}
                 >
+                    {leftActions && (
+                        <div className="flex shrink-0 items-center gap-2">{leftActions}</div>
+                    )}
                     {onRepolish && (
                         <button
                             type="button"
@@ -146,11 +160,11 @@ export function FullScreenTextEditor({
                     <button
                         type="button"
                         onClick={() => onDone(text)}
-                        disabled={busy}
+                        disabled={busy || doneDisabled || donePending}
                         className="flex h-11 flex-1 items-center justify-center rounded-full text-sm font-semibold transition-opacity hover:opacity-85 disabled:opacity-40"
                         style={{ background: 'var(--blanc-accent)', color: '#fff' }}
                     >
-                        {doneLabel}
+                        {donePending ? <Loader2 className="size-4 animate-spin" /> : doneLabel}
                     </button>
                 </div>
         </div>,

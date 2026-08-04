@@ -201,12 +201,12 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     useEffect(() => { fetchNotes(); }, [fetchNotes]);
 
-    const handleSubmit = useCallback(async () => {
-        if ((!text.trim() && composeAttach.ids.length === 0) || composeAttach.blocked) return;
+    const submitNote = useCallback(async (noteText: string) => {
+        if ((!noteText.trim() && composeAttach.ids.length === 0) || composeAttach.blocked) return;
         setSubmitting(true);
         try {
             const formData = new FormData();
-            formData.append('text', text.trim());
+            formData.append('text', noteText.trim());
             // NOTE-ATTACH-UPLOAD-001: files are already uploaded (staged) — send their ids.
             formData.append('attachment_ids', JSON.stringify(composeAttach.ids));
 
@@ -222,7 +222,27 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         } finally {
             setSubmitting(false);
         }
-    }, [text, composeAttach, basePath, fetchNotes, onNoteAdded]);
+    }, [composeAttach, basePath, fetchNotes, onNoteAdded]);
+
+    const handleSubmit = useCallback(() => submitNote(text), [submitNote, text]);
+
+    /**
+     * NOTE-COMPOSER-FULLSCREEN: techs write long service reports here, so the mobile
+     * composer is the type-B full-screen editor (same surface as the report → estimate
+     * input) instead of the small keyboard-docked box. Polish runs on the editor's
+     * CURRENT text through onRepolish, so no second full-screen layer is opened.
+     */
+    const polishComposerText = useCallback(async (current: string) => {
+        setText(current);
+        setPolishBusy(true);
+        try {
+            setText(await polishReport(current));
+        } catch (e: any) {
+            reportPolishError(e);
+        } finally {
+            setPolishBusy(false);
+        }
+    }, []);
 
     // NOTE-COMPOSER-KEYBOARD: mobile uses the INLINE composer (normal document flow), not a
     // fixed bottom sheet. iOS natively scrolls a focused normal-flow input above the keyboard
@@ -354,7 +374,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         style={{
                             border: 'none',
                             padding: '2px 2px 0',
-                            minHeight: 64,
+                            minHeight: 160, // long service reports — the box grows from here
                             fontSize: 15,
                             lineHeight: 1.5,
                             color: 'var(--blanc-ink-1)',
@@ -443,34 +463,29 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
             {/* Mobile: floating ADD composer docked above the keyboard (NOTE-COMPOSER-KEYBOARD).
                 One filled --blanc-field card — borderless textarea over the round action row —
                 identical to the desktop composer / Pulse reply (COMPOSER-CANON). */}
-            <NoteComposerOverlay open={expanded && isMobile} onClose={() => setExpanded(false)}>
-                <div style={{ background: 'var(--blanc-field)', borderRadius: 16, padding: '10px 12px' }}>
-                    <textarea
-                        className="w-full resize-none outline-none bg-transparent"
-                        style={{ border: 'none', padding: '2px 2px 0', minHeight: 72, fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
-                        placeholder="Write a note…"
-                        value={text}
-                        onChange={e => setText(e.target.value)}
-                        autoFocus
+            <FullScreenTextEditor
+                open={expanded && isMobile}
+                initialValue={text}
+                title="New note"
+                placeholder="Write a note…"
+                doneLabel="Add note"
+                busy={polishBusy}
+                donePending={submitting}
+                doneDisabled={composeAttach.blocked}
+                {...(isProvider ? { onRepolish: polishComposerText, repolishLabel: 'Polish report' } : {})}
+                leftActions={(
+                    <NoteAttachmentInput
+                        key={composeAttachKey}
+                        entityType={entityType}
+                        entityId={entityId}
+                        onStateChange={setComposeAttach}
+                        variant="round"
+                        roundBg="var(--blanc-field)"
                     />
-                    <div className="flex items-center justify-between gap-3" style={{ marginTop: 6 }}>
-                        <div className="flex items-center gap-2">
-                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
-                            {renderPolishButton(40)}
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handleSubmit}
-                            disabled={!canSubmit}
-                            aria-label="Add note"
-                            className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
-                            style={{ width: 40, height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
-                        >
-                            {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
-                        </button>
-                    </div>
-                </div>
-            </NoteComposerOverlay>
+                )}
+                onDone={submitNote}
+                onCancel={() => setExpanded(false)}
+            />
 
             {/* Mobile: floating EDIT composer — same overlay + canon card as add. */}
             <NoteComposerOverlay open={!!editingNote && isMobile} onClose={cancelEdit}>
