@@ -8,6 +8,7 @@ const {
     MAX_SUBSCRIPTIONS,
     validateSubscriptions,
 } = require('./appEventCatalog');
+const { MAX_CONNECTIONS, validateConnections } = require('./appConnectionValidator');
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -70,7 +71,8 @@ function parseGeneratedArtifact(raw) {
         || typeof parsed.description !== 'string' || !parsed.description.trim()
         || !Object.prototype.hasOwnProperty.call(parsed, 'data_collections')
         || !Object.prototype.hasOwnProperty.call(parsed, 'actions')
-        || !Object.prototype.hasOwnProperty.call(parsed, 'subscribes')) {
+        || !Object.prototype.hasOwnProperty.call(parsed, 'subscribes')
+        || !Object.prototype.hasOwnProperty.call(parsed, 'connections')) {
         throw new AppBuilderProviderError('Builder model returned an invalid artifact envelope');
     }
     let actions;
@@ -100,6 +102,15 @@ function parseGeneratedArtifact(raw) {
             error
         );
     }
+    let connections;
+    try {
+        connections = validateConnections(parsed.connections);
+    } catch (error) {
+        throw new AppBuilderProviderError(
+            `Builder model returned invalid connections: ${error.message}`,
+            error
+        );
+    }
     let suggestedSchedule = null;
     if (parsed.suggested_schedule !== undefined && parsed.suggested_schedule !== null) {
         try {
@@ -114,6 +125,7 @@ function parseGeneratedArtifact(raw) {
         data_collections: dataCollections,
         actions,
         subscribes,
+        connections,
     };
     if (suggestedSchedule) artifact.suggested_schedule = suggestedSchedule;
     return artifact;
@@ -220,9 +232,30 @@ async function generate(prompt) {
                                         enum: [...APP_EVENT_TYPES],
                                     },
                                 },
+                                connections: {
+                                    type: 'ARRAY',
+                                    maxItems: MAX_CONNECTIONS,
+                                    items: {
+                                        type: 'OBJECT',
+                                        properties: {
+                                            name: { type: 'STRING' },
+                                            base_url: { type: 'STRING' },
+                                            auth: {
+                                                type: 'OBJECT',
+                                                properties: {
+                                                    kind: { type: 'STRING' },
+                                                    header: { type: 'STRING' },
+                                                },
+                                                required: ['kind'],
+                                            },
+                                        },
+                                        required: ['name', 'base_url', 'auth'],
+                                    },
+                                },
                             },
                             required: [
                                 'source', 'description', 'data_collections', 'actions', 'subscribes',
+                                'connections',
                             ],
                         },
                     },

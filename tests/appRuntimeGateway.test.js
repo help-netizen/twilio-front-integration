@@ -42,6 +42,7 @@ const mockConsumeInstallation = jest.fn();
 const mockDataList = jest.fn();
 const mockDataUpsert = jest.fn();
 const mockDataRemove = jest.fn();
+const mockEgressExecute = jest.fn();
 const mockCreateTask = jest.fn();
 const mockAddNote = jest.fn();
 
@@ -65,6 +66,9 @@ jest.mock('../backend/src/services/appDataService', () => ({
     list: mockDataList,
     upsert: mockDataUpsert,
     remove: mockDataRemove,
+}));
+jest.mock('../backend/src/services/appEgressService', () => ({
+    execute: mockEgressExecute,
 }));
 jest.mock('../backend/src/services/chatgptMcpReadService', () => ({
     execute: mockReadExecute,
@@ -187,6 +191,7 @@ beforeEach(() => {
     mockDataList.mockResolvedValue({ rows: [], pagination: { limit: 100, offset: 0, total: 0 } });
     mockDataUpsert.mockResolvedValue({ upserted: 1 });
     mockDataRemove.mockResolvedValue({ deleted: 1 });
+    mockEgressExecute.mockResolvedValue({ status: 200, body: { order_id: 'PO-41' } });
     mockCreateTask.mockResolvedValue({ task_id: 41, status: 'open' });
     mockAddNote.mockResolvedValue({ note_id: 'note-41' });
 });
@@ -448,6 +453,22 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
         expect(mockTokenService.consumeRunCall).not.toHaveBeenCalled();
     });
 
+    test('Phase I egress route passes only run-token context, connection name, and request body', async () => {
+        const body = { method: 'GET', path: '/orders', query: { status: 'open' } };
+        const response = await request(buildApp())
+            .post('/internal/app-runtime/v1/egress/supplier')
+            .set('Authorization', 'Bearer valid-token')
+            .send(body);
+        expect(response.status).toBe(200);
+        expect(response.body.data).toEqual({ status: 200, body: { order_id: 'PO-41' } });
+        expect(mockEgressExecute).toHaveBeenCalledWith(
+            context(),
+            'supplier',
+            body,
+            { transportQuery: {} }
+        );
+    });
+
     test('registered non-runtime writes and URL-like names never dispatch', async () => {
         const app = buildApp();
         for (const name of ['svc.list_calls', 'svc.create_job', 'svc.fetch_url']) {
@@ -700,6 +721,7 @@ describe('APP-GW-001 catalog, validation, authorization, masking, and audit', ()
             wall_ms: 37,
             gateway_calls: 2,
             data_calls: 3,
+            egress_calls: 0,
             result_bytes: 18,
             error_code: null,
         };

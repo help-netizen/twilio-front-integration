@@ -153,7 +153,8 @@ function parseResult(payload, status = 200) {
         || !payload.data_ops
         || typeof payload.data_ops !== 'object'
         || Array.isArray(payload.data_ops)
-        || !Array.isArray(payload.created_tasks)) {
+        || !Array.isArray(payload.created_tasks)
+        || !Array.isArray(payload.egress_calls)) {
         throw new AppBuilderDryRunError(
             'RUNNER_PROTOCOL_ERROR',
             'App runner returned an invalid dry-run result.',
@@ -166,12 +167,20 @@ function parseResult(payload, status = 200) {
         fixtures_summary: payload.fixtures_summary,
         data_ops: payload.data_ops,
         created_tasks: payload.created_tasks,
+        egress_calls: payload.egress_calls,
         result: payload.result,
     };
 }
 
 async function validateAndDryRun(
-    { source, expectedSourceSha256, dataCollections = [], action = null, event = null },
+    {
+        source,
+        expectedSourceSha256,
+        dataCollections = [],
+        connections = [],
+        action = null,
+        event = null,
+    },
     { fetchImpl = globalThis.fetch } = {}
 ) {
     if (action !== null && (
@@ -224,6 +233,7 @@ async function validateAndDryRun(
                 },
                 seed: SANDBOX_SEED,
                 data_collections: dataCollections,
+                connections,
             }),
             signal: controller.signal,
         });

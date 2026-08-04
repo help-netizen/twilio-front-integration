@@ -14,6 +14,7 @@ const { AppRuntimeError, appRuntimeError } = require('../services/appRuntimeErro
 const router = express.Router();
 const runtimeJson = express.json({ limit: 32 * 1024, strict: true });
 const dataJson = express.json({ limit: 1024 * 1024, strict: true });
+const egressJson = express.json({ limit: 40 * 1024, strict: true });
 
 router.use((req, res, next) => {
     requestId(req);
@@ -164,6 +165,25 @@ router.post(
                 req,
                 'delete',
                 req.params.collection,
+                req.body
+            );
+            return res.json({ ok: true, data, request_id: req.requestId });
+        } catch (error) {
+            return sendFailure(req, res, error);
+        }
+    }
+);
+
+// tenant-safety-allow R-route-permission: the live run token is pinned to the accepted version before its declared connection and tenant-held secret can reach the SSRF-guarded proxy
+router.post(
+    '/v1/egress/:connection',
+    egressJson,
+    authenticateAppRuntime,
+    async (req, res) => {
+        try {
+            const data = await gatewayService.executeEgress(
+                req,
+                req.params.connection,
                 req.body
             );
             return res.json({ ok: true, data, request_id: req.requestId });

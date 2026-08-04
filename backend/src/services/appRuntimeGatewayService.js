@@ -5,6 +5,7 @@ const tokenService = require('./appRuntimeTokenService');
 const rateLimit = require('./appRuntimeRateLimit');
 const auditService = require('./appRuntimeAuditService');
 const dataService = require('./appDataService');
+const egressService = require('./appEgressService');
 const catalog = require('./appRuntimeToolCatalog');
 const maskingService = require('./pulseMaskingService');
 const { AppRuntimeError, appRuntimeError } = require('./appRuntimeErrors');
@@ -151,10 +152,24 @@ async function executeData(req, operation, collection, args) {
     }
 }
 
+async function executeEgress(req, connection, args) {
+    try {
+        return await egressService.execute(
+            req.appRuntimeContext,
+            connection,
+            args,
+            { transportQuery: req.query }
+        );
+    } catch (error) {
+        throw normalizeError(error);
+    }
+}
+
 module.exports = {
     normalizeError,
     installRequestContext,
     authorizeExecution,
     execute,
     executeData,
+    executeEgress,
 };

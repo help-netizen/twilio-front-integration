@@ -31,6 +31,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     wall_ms: 2,
                     gateway_calls: 0,
                     data_calls: 0,
+                    egress_calls: 0,
                     result_bytes: 22,
                     error_code: null,
                 },
@@ -44,6 +45,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     delete: { calls: 0, rows: 0 },
                 },
                 created_tasks: [],
+                egress_calls: [],
             }),
         });
         await expect(dryRunner.validateAndDryRun({
@@ -58,6 +60,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 wall_ms: 2,
                 gateway_calls: 0,
                 data_calls: 0,
+                egress_calls: 0,
                 result_bytes: 22,
                 error_code: null,
             },
@@ -71,6 +74,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                 delete: { calls: 0, rows: 0 },
             },
             created_tasks: [],
+            egress_calls: [],
             result: { today: '2026-07-31' },
         });
 
@@ -86,6 +90,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
             input: { today: new Date().toISOString().slice(0, 10) },
             seed: 'app-studio-builder-v1',
             data_collections: [],
+            connections: [],
         });
         expect(JSON.parse(options.body)).not.toHaveProperty('fixtures');
     });
@@ -111,6 +116,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     wall_ms: 1,
                     gateway_calls: 0,
                     data_calls: 0,
+                    egress_calls: 0,
                     result_bytes: Buffer.byteLength(JSON.stringify(action), 'utf8'),
                     error_code: null,
                 },
@@ -121,6 +127,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     delete: { calls: 0, rows: 0 },
                 },
                 created_tasks: [],
+                egress_calls: [],
             }),
         });
         await dryRunner.validateAndDryRun({
@@ -150,6 +157,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     wall_ms: 1,
                     gateway_calls: 0,
                     data_calls: 0,
+                    egress_calls: 0,
                     result_bytes: Buffer.byteLength(JSON.stringify(event), 'utf8'),
                     error_code: null,
                 },
@@ -160,6 +168,7 @@ describe('APP-SVC-001 CRM-to-runner HTTP seam', () => {
                     delete: { calls: 0, rows: 0 },
                 },
                 created_tasks: [],
+                egress_calls: [],
             }),
         });
         await dryRunner.validateAndDryRun({

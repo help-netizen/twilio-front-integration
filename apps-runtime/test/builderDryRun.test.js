@@ -149,6 +149,76 @@ describe('APP-BUILD-001 static validation and isolated dry run', () => {
         })).rejects.toMatchObject({ code: 'DATA_COLLECTIONS_INVALID' });
     });
 
+    test('6 Phase I dry-run returns sandbox_echo, reports egress, and opens zero sockets', async () => {
+        const source = `
+            export async function run(ctx) {
+                return ctx.http.request('supplier', {
+                    method: 'POST',
+                    path: '/orders',
+                    body: { sku: 'P-41' },
+                });
+            }
+        `;
+        const fetchImpl = jest.fn(async () => {
+            throw new Error('A dry-run attempted to open a socket.');
+        });
+        const execution = await validateAndDryRun({
+            source,
+            expectedSourceSha256: sourceSha256(source),
+            connections: [{
+                name: 'supplier',
+                base_url: 'https://api.supplier.test',
+                auth: { kind: 'bearer' },
+            }],
+            fetchImpl,
+        });
+        expect(execution.result).toEqual({
+            status: 200,
+            body: {
+                sandbox_echo: {
+                    connection: 'supplier',
+                    method: 'POST',
+                    path: '/orders',
+                },
+            },
+        });
+        expect(execution.egressCalls).toEqual([{
+            connection: 'supplier',
+            method: 'POST',
+            path: '/orders',
+        }]);
+        expect(execution.usage).toMatchObject({
+            gateway_calls: 0,
+            data_calls: 0,
+            egress_calls: 1,
+            error_code: null,
+        });
+        expect(fetchImpl).not.toHaveBeenCalled();
+
+        const invalidSource = `export async function run(ctx) {
+            try {
+                return await ctx.http.request('supplier', {
+                    method: 'GET', path: '/orders', body: { invalid: true }
+                });
+            } catch (error) {
+                return { code: error.code, status: error.status };
+            }
+        }`;
+        await expect(validateAndDryRun({
+            source: invalidSource,
+            expectedSourceSha256: sourceSha256(invalidSource),
+            connections: [{
+                name: 'supplier',
+                base_url: 'https://api.supplier.test',
+                auth: { kind: 'bearer' },
+            }],
+            fetchImpl,
+        })).resolves.toMatchObject({
+            result: { code: 'INVALID_REQUEST', status: 400 },
+        });
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
     test('Phase E exposes a validated action as ctx.input.action in the isolate', async () => {
         const source = 'export async function run(ctx) { return ctx.input.action; }';
         const action = { id: 'mark_ordered', row_key: 'purchase-41' };

@@ -88,8 +88,8 @@ describe('APP-RUN-001 isolate capability boundary', () => {
         });
 
         expect(JSON.stringify(result)).not.toContain(TEST_TOKEN);
-        expect(result.ctxKeys).toEqual(['callTool', 'data', 'input']);
-        expect(result.albustoKeys).toEqual(['callTool', 'data']);
+        expect(result.ctxKeys).toEqual(['callTool', 'data', 'http', 'input']);
+        expect(result.albustoKeys).toEqual(['callTool', 'data', 'http']);
     });
 
     test('source and input cannot smuggle the host run token into the isolate', async () => {

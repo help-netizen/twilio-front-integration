@@ -60,6 +60,7 @@ function harness(overrides = {}) {
             data_collections: [],
             actions: [],
             subscribes: [],
+            connections: [],
             model: 'builder-test-model',
             token_usage: { input_tokens: 20, output_tokens: 30, total_tokens: 50 },
         }),
@@ -75,6 +76,7 @@ function harness(overrides = {}) {
                 wall_ms: 3,
                 gateway_calls: 1,
                 data_calls: 0,
+                egress_calls: 0,
                 result_bytes: 11,
                 error_code: null,
             },
@@ -89,6 +91,7 @@ function harness(overrides = {}) {
                 delete: { calls: 0, rows: 0 },
             },
             created_tasks: [],
+            egress_calls: [],
         }),
         ...overrides.dryRunner,
     };
@@ -122,6 +125,7 @@ describe('APP-BUILD-001 generation pipeline', () => {
             source: SAFE_SOURCE,
             expectedSourceSha256: crypto.createHash('sha256').update(SAFE_SOURCE).digest('hex'),
             dataCollections: [],
+            connections: [],
         });
         expect(repository.persistSuccess).toHaveBeenCalledWith(expect.objectContaining({
             companyId: COMPANY_ID,
@@ -146,6 +150,7 @@ describe('APP-BUILD-001 generation pipeline', () => {
             dataCollections: [],
             actions: [],
             subscribes: [],
+            connections: [],
         }));
         expect(dryRunner.validateAndDryRun.mock.invocationCallOrder[0])
             .toBeLessThan(repository.persistSuccess.mock.invocationCallOrder[0]);

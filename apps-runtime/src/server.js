@@ -7,7 +7,7 @@ const { runApplication } = require('./runner');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 4010;
-const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_TIMEOUT_MS = 30000;
 const MAX_BODY_BYTES = 256 * 1024;
 
 class RunnerHttpError extends Error {
@@ -71,6 +71,7 @@ function validEnvelope(body, endpoint) {
         ? new Set([
             'source', 'expectedSourceSha256', 'input', 'fixtures', 'seed', 'anchor',
             'data_collections',
+            'connections',
         ])
         : new Set(['source', 'expectedSourceSha256', 'runToken', 'input']);
     if (Object.keys(body).some(key => !allowedKeys.has(key))) return false;
@@ -89,6 +90,7 @@ function validEnvelope(body, endpoint) {
         return fixturesValid
             && seedValid
             && Array.isArray(body.data_collections)
+            && Array.isArray(body.connections)
             && Object.prototype.hasOwnProperty.call(body, 'input')
             && validDryRunInput(body.input);
     }
@@ -101,6 +103,7 @@ function usageFor(error, startedAt) {
         wall_ms: Date.now() - startedAt,
         gateway_calls: 0,
         data_calls: 0,
+        egress_calls: 0,
         result_bytes: null,
         error_code: error?.code || 'APP_RUNTIME_EXECUTION_FAILED',
     };
@@ -178,6 +181,7 @@ function createRequestHandler({
                         seed: body.seed,
                         anchor: body.anchor,
                         data_collections: body.data_collections,
+                        connections: body.connections,
                         signal,
                     });
                 }
@@ -213,6 +217,7 @@ function createRequestHandler({
                 usage: execution.usage || usageFor(null, startedAt),
                 fixtures_summary: execution.fixturesSummary,
                 data_ops: execution.dataOps,
+                egress_calls: execution.egressCalls,
                 created_tasks: execution.createdTasks,
             });
         } catch (error) {

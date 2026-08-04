@@ -6,7 +6,9 @@ const { authenticate, requireCompanyAccess } = require('../middleware/keycloakAu
 const appExecutionService = require('../services/appExecutionService');
 const appDataService = require('../services/appDataService');
 const appScheduleService = require('../services/appScheduleService');
+const appInstallationSecretService = require('../services/appInstallationSecretService');
 const { AppRuntimeError } = require('../services/appRuntimeErrors');
+const { requirePermission } = require('../middleware/authorization');
 
 const router = express.Router();
 
@@ -29,6 +31,16 @@ function requestContext(req) {
 
 function validInstallationId(value) {
     return typeof value === 'string' && /^[1-9]\d*$/.test(value);
+}
+
+function requireTenantAdmin(req, res, next) {
+    if (req.user?._devMode || req.authz?.membership?.role_key === 'tenant_admin') return next();
+    return res.status(403).json({
+        ok: false,
+        code: 'TENANT_ADMIN_ONLY',
+        message: 'Tenant admin role required.',
+        request_id: req.requestId,
+    });
 }
 
 function sendError(req, res, error) {
@@ -72,6 +84,54 @@ function optionalQueryInteger(value, name, { min, max = Number.MAX_SAFE_INTEGER 
     }
     return parsed;
 }
+
+const manageInstallationSecrets = [
+    requirePermission('tenant.integrations.manage'),
+    requireTenantAdmin,
+];
+
+// tenant-safety-allow R-route-permission: tenant_admin plus integrations permission can read only set/not_set for declarations on the tenant-paired accepted version
+router.get('/installations/:id/secrets', ...manageInstallationSecrets, async (req, res) => {
+    try {
+        if (Object.keys(req.query || {}).length > 0) {
+            throw new AppRuntimeError(
+                'INVALID_REQUEST',
+                'Query parameters are not accepted.',
+                400
+            );
+        }
+        const secrets = await appInstallationSecretService.listSecrets(routeInput(req));
+        return res.json({ ok: true, secrets, request_id: req.requestId });
+    } catch (error) {
+        return sendError(req, res, error);
+    }
+});
+
+// tenant-safety-allow R-route-permission: tenant_admin plus integrations permission can set only a declared accepted-version secret inside the company/installation partition
+router.put(
+    '/installations/:id/secrets/:connection',
+    ...manageInstallationSecrets,
+    async (req, res) => {
+        try {
+            if (Object.keys(req.query || {}).length > 0
+                || !req.body
+                || typeof req.body !== 'object'
+                || Array.isArray(req.body)
+                || Object.keys(req.body).length !== 1
+                || !Object.prototype.hasOwnProperty.call(req.body, 'value')) {
+                throw new AppRuntimeError('INVALID_REQUEST', 'Secret request is invalid.', 400);
+            }
+            const secret = await appInstallationSecretService.setSecret({
+                ...routeInput(req),
+                connectionName: req.params.connection,
+                value: req.body.value,
+            });
+            return res.json({ ok: true, secret, request_id: req.requestId });
+        } catch (error) {
+            return sendError(req, res, error);
+        }
+    }
+);
 
 // tenant-safety-allow R-route-permission: Phase A viewer gates run live before the company/installation/collection partition is listed
 router.get('/installations/:id/data/:collection', async (req, res) => {

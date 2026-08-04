@@ -13,6 +13,7 @@ const DRY_RUN_BODY = {
     input: { today: '2026-07-31' },
     seed: 'server-test-seed',
     data_collections: [],
+    connections: [],
 };
 
 const servers = [];
@@ -233,6 +234,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 wall_ms: 1,
                 gateway_calls: 0,
                 data_calls: 0,
+                egress_calls: 0,
                 result_bytes: 11,
                 error_code: null,
             });
@@ -267,6 +269,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 wall_ms: 1,
                 gateway_calls: 0,
                 data_calls: 0,
+                egress_calls: 0,
                 result_bytes: 4,
                 error_code: null,
             },
@@ -277,6 +280,7 @@ describe('APP-SVC-001 runner HTTP service', () => {
                 delete: { calls: 0, rows: 0 },
             },
             createdTasks: [],
+            egressCalls: [],
         });
         const runApplicationImpl = jest.fn();
         const baseUrl = await startServer({ dryRunImpl, runApplicationImpl });

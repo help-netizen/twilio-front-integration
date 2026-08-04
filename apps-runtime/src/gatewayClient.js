@@ -5,6 +5,7 @@ const { AppRunnerError, GatewayError } = require('./errors');
 
 const TOOL_NAMES = new Set(GATEWAY_TOOLS);
 const DATA_OPERATIONS = new Set(['list', 'upsert', 'delete']);
+const CONNECTION_NAME = /^[a-z][a-z0-9_]{0,31}$/;
 
 function gatewayOrigin(value) {
     let url;
@@ -91,7 +92,7 @@ class GatewayClient {
         }
     }
 
-    async fetchJson(url, options, signal) {
+    async fetchJson(url, options, signal, timeoutMs = LIMITS.gatewayRequestTimeoutMs) {
         const controller = new AbortController();
         let timedOut = false;
         const forwardAbort = () => controller.abort();
@@ -108,7 +109,7 @@ class GatewayClient {
                 'APP_RUNTIME_GATEWAY_TIMEOUT',
                 'Gateway request exceeded the host timeout.'
             ));
-        }, LIMITS.gatewayRequestTimeoutMs);
+        }, timeoutMs);
 
         try {
             const operation = (async () => {
@@ -237,6 +238,50 @@ class GatewayClient {
             );
         }
         return responsePayload.data;
+    }
+
+    async callHttp(connection, request, signal) {
+        if (typeof connection !== 'string' || !CONNECTION_NAME.test(connection)
+            || !request || typeof request !== 'object' || Array.isArray(request)) {
+            throw new GatewayError('INVALID_REQUEST', 'HTTP request is invalid.', 400);
+        }
+        let body;
+        try {
+            body = JSON.stringify(request);
+        } catch (_error) {
+            throw new GatewayError('INVALID_REQUEST', 'HTTP request must be JSON-serializable.', 400);
+        }
+        if (body === undefined) {
+            throw new GatewayError('INVALID_REQUEST', 'HTTP request must be JSON-serializable.', 400);
+        }
+        const url = new URL(
+            `/internal/app-runtime/v1/egress/${encodeURIComponent(connection)}`,
+            this.baseUrl
+        );
+        const { response, payload } = await this.fetchJson(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${this.runToken}`,
+                'Content-Type': 'application/json',
+            },
+            body,
+        }, signal, LIMITS.egressGatewayRequestTimeoutMs);
+        if (containsSecret(payload, this.runToken)) {
+            throw new AppRunnerError(
+                'APP_RUNTIME_TOKEN_EXPOSURE_BLOCKED',
+                'Gateway response was blocked by secret hygiene.'
+            );
+        }
+        if (!response.ok || payload?.ok !== true) {
+            throw new GatewayError(
+                typeof payload?.code === 'string' ? payload.code : 'APP_RUNTIME_GATEWAY_ERROR',
+                typeof payload?.message === 'string'
+                    ? payload.message
+                    : 'Gateway HTTP call failed.',
+                Number.isInteger(response.status) ? response.status : 502
+            );
+        }
+        return payload.data;
     }
 
     async recordRunCompletion(metrics, signal) {

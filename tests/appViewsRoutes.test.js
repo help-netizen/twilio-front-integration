@@ -22,6 +22,10 @@ const mockScheduleService = {
 const mockDataService = {
     listForViewer: jest.fn(),
 };
+const mockSecretService = {
+    listSecrets: jest.fn(),
+    setSecret: jest.fn(),
+};
 
 jest.mock('../backend/src/middleware/keycloakAuth', () => ({
     authenticate: (req, _res, next) => {
@@ -29,7 +33,9 @@ jest.mock('../backend/src/middleware/keycloakAuth', () => ({
         req.authz = {
             company: { id: req.headers['x-test-company'] || COMPANY_A },
             membership: { role_key: req.headers['x-test-role'] || 'dispatcher' },
-            permissions: [],
+            permissions: req.headers['x-test-integrations'] === 'true'
+                ? ['tenant.integrations.manage']
+                : [],
         };
         next();
     },
@@ -41,6 +47,10 @@ jest.mock('../backend/src/middleware/keycloakAuth', () => ({
 jest.mock('../backend/src/services/appExecutionService', () => mockService);
 jest.mock('../backend/src/services/appScheduleService', () => mockScheduleService);
 jest.mock('../backend/src/services/appDataService', () => mockDataService);
+jest.mock('../backend/src/services/appInstallationSecretService', () => mockSecretService);
+jest.mock('../backend/src/services/auditService', () => ({
+    log: jest.fn().mockResolvedValue(undefined),
+}));
 
 const { AppRuntimeError } = require('../backend/src/services/appRuntimeErrors');
 const appViewsRouter = require('../backend/src/routes/appViews');
@@ -82,6 +92,15 @@ beforeEach(() => {
         collection: 'purchases',
         rows: [{ data: { estimate_id: 41 }, created_at: '2026-08-02T12:00:00.000Z' }],
         pagination: { limit: 25, offset: 0, total: 1 },
+    });
+    mockSecretService.listSecrets.mockResolvedValue([
+        { connection: 'supplier', status: 'set' },
+        { connection: 'inventory', status: 'not_set' },
+    ]);
+    mockSecretService.setSecret.mockResolvedValue({
+        connection: 'supplier',
+        status: 'set',
+        set_at: '2026-08-03T12:00:00.000Z',
     });
 });
 
@@ -215,5 +234,53 @@ describe('APP-VIEW-001 company-scoped API', () => {
             .get('/api/apps/installations/91/data/purchases?company_id=foreign');
         expect(invalid.status).toBe(400);
         expect(mockDataService.listForViewer).toHaveBeenCalledTimes(1);
+    });
+
+    test('5 secrets API is write-only, tenant_admin-only, permission-gated, and passes only tenant-paired context', async () => {
+        const app = buildApp();
+        const allowedHeaders = {
+            'x-test-role': 'tenant_admin',
+            'x-test-integrations': 'true',
+        };
+        const listed = await request(app)
+            .get('/api/apps/installations/91/secrets')
+            .set(allowedHeaders);
+        const written = await request(app)
+            .put('/api/apps/installations/91/secrets/supplier')
+            .set(allowedHeaders)
+            .send({ value: 'write-only-value' });
+        expect([listed.status, written.status]).toEqual([200, 200]);
+        expect(listed.body.secrets).toEqual([
+            { connection: 'supplier', status: 'set' },
+            { connection: 'inventory', status: 'not_set' },
+        ]);
+        expect(JSON.stringify([listed.body, written.body])).not.toContain('write-only-value');
+        expect(mockSecretService.listSecrets).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            installationId: '91',
+            actorId: ACTOR_ID,
+        });
+        expect(mockSecretService.setSecret).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            installationId: '91',
+            actorId: ACTOR_ID,
+            connectionName: 'supplier',
+            value: 'write-only-value',
+        });
+
+        for (const role of ['manager', 'dispatcher', 'provider', 'custom']) {
+            const denied = await request(app)
+                .get('/api/apps/installations/91/secrets')
+                .set('x-test-role', role)
+                .set('x-test-integrations', 'true');
+            expect(denied.status).toBe(403);
+            expect(denied.body.code).toBe('TENANT_ADMIN_ONLY');
+        }
+        const noPermission = await request(app)
+            .get('/api/apps/installations/91/secrets')
+            .set('x-test-role', 'tenant_admin');
+        expect(noPermission.status).toBe(403);
+        expect(noPermission.body.code).toBe('ACCESS_DENIED');
+        expect(mockSecretService.listSecrets).toHaveBeenCalledTimes(1);
     });
 });

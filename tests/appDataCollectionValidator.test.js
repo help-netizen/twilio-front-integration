@@ -58,6 +58,7 @@ describe('APP-DATA-001 Phase D declaration contract', () => {
             data_collections: PURCHASES,
             actions: [],
             subscribes: [],
+            connections: [],
         }));
         expect(artifact.data_collections).toEqual(PURCHASES);
         const rendered = renderDataCollectionsContract();
@@ -70,6 +71,7 @@ describe('APP-DATA-001 Phase D declaration contract', () => {
             data_collections: [{ ...PURCHASES[0], name: 'invalid-name' }],
             actions: [],
             subscribes: [],
+            connections: [],
         }))).toThrow(/invalid data collections/i);
     });
 

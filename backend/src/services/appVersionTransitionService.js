@@ -8,6 +8,10 @@ const {
 } = require('./appDataCollectionValidator');
 const { validateActions } = require('./appActionValidator');
 const { validateSubscriptions } = require('./appEventCatalog');
+const {
+    validateConnectionDestinations,
+    validateConnections,
+} = require('./appConnectionValidator');
 
 const ALLOWED_TRANSITIONS = Object.freeze({
     draft: Object.freeze(['submitted']),
@@ -77,6 +81,7 @@ function versionResponse(version) {
         data_collections: version.data_collections || [],
         actions: version.actions || version.scanner_report?.actions || [],
         subscribes: version.subscribes || version.scanner_report?.subscribes || [],
+        connections: version.connections || version.scanner_report?.connections || [],
         status: version.status,
         created_at: version.created_at,
         updated_at: version.updated_at,
@@ -90,6 +95,7 @@ function versionResponse(version) {
 function createAppVersionTransitionService({
     database = db,
     afterVersionLock = null,
+    validateConnectionOrigins = validateConnectionDestinations,
 } = {}) {
     async function withTransaction(work) {
         const client = await database.getClient();
@@ -127,6 +133,8 @@ function createAppVersionTransitionService({
                     COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions,
                     COALESCE(version.scanner_report->'subscribes', '[]'::jsonb)
                         AS subscribes,
+                    COALESCE(version.scanner_report->'connections', '[]'::jsonb)
+                        AS connections,
                     version.created_by, version.created_at,
                     version.updated_at,
                     (to_jsonb(version)->>'submitted_at')::timestamptz AS submitted_at,
@@ -185,6 +193,8 @@ function createAppVersionTransitionService({
         const normalized = validateDataCollections(version.data_collections || []);
         validateActions(version.actions || []);
         validateSubscriptions(version.subscribes || []);
+        const connections = validateConnections(version.connections || []);
+        await validateConnectionOrigins(connections);
         const previous = await client.query(
             `SELECT prior.data_collections
              FROM app_versions prior

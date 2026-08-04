@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db/connection');
 const identityService = require('./appRuntimeIdentityService');
 const catalog = require('./appRuntimeToolCatalog');
+const { validateConnections } = require('./appConnectionValidator');
 const { AppRuntimeError, appRuntimeError } = require('./appRuntimeErrors');
 
 const DEFAULT_TTL_SECONDS = 300;
@@ -12,6 +13,8 @@ const MAX_TTL_SECONDS = 300;
 const RUN_CALL_LIMIT = 5;
 const DATA_CALL_LIMIT = 10;
 const WRITE_CALL_LIMIT = 3;
+const EGRESS_CALL_LIMIT = 5;
+const DAILY_EGRESS_CALL_LIMIT = 500;
 const CLAIM_KEYS = Object.freeze([
     'exp',
     'installation_id',
@@ -178,6 +181,7 @@ async function mintRunTokenWithClient({ installationId, versionId, ttlSeconds },
                 version.app_id,
                 version.source_code,
                 version.source_sha256,
+                COALESCE(version.scanner_report->'connections', '[]'::jsonb) AS connections,
                 ARRAY(
                     SELECT tool.tool_name
                     FROM app_version_tools tool
@@ -208,12 +212,22 @@ async function mintRunTokenWithClient({ installationId, versionId, ttlSeconds },
     }
     const consent = parseConsent(installation.installation_metadata);
     const allowedTools = new Set(version.allowed_tools || []);
+    let connections;
+    try {
+        connections = validateConnections(version.connections || []);
+    } catch (_error) {
+        throw appRuntimeError(
+            'APP_RUNTIME_INACTIVE',
+            'App runtime authorization is not active.',
+            403
+        );
+    }
     const effectiveTools = catalog.TOOL_NAMES.filter((name) => (
         consent?.versionId === versionId
         && consent.tools.has(name)
         && allowedTools.has(name)
     ));
-    if (effectiveTools.length === 0) {
+    if (effectiveTools.length === 0 && connections.length === 0) {
         throw appRuntimeError(
             'TOOL_NOT_CONSENTED',
             'No app runtime tools are consented.',
@@ -322,6 +336,7 @@ async function resolveRunContext(claims) {
                 run.gateway_call_limit,
                 run.data_calls_made,
                 run.write_calls_made,
+                run.egress_calls_made,
                 run.execution_authorized_at,
                 installation.status AS installation_status,
                 installation.installed_by,
@@ -452,12 +467,18 @@ async function authorizeRunExecution(context, sourceSha256) {
                         AND jsonb_typeof(
                             installation.metadata->'app_runtime'->'consented_tools'
                         ) = 'array'
-                        AND EXISTS (
-                            SELECT 1
-                            FROM app_version_tools tool
-                            WHERE tool.version_id = run.version_id
-                              AND installation.metadata->'app_runtime'->'consented_tools'
-                                  @> to_jsonb(ARRAY[tool.tool_name]::text[])
+                        AND (
+                            EXISTS (
+                                SELECT 1
+                                FROM app_version_tools tool
+                                WHERE tool.version_id = run.version_id
+                                  AND installation.metadata->'app_runtime'->'consented_tools'
+                                      @> to_jsonb(ARRAY[tool.tool_name]::text[])
+                            )
+                            OR (
+                                jsonb_typeof(version.scanner_report->'connections') = 'array'
+                                AND jsonb_array_length(version.scanner_report->'connections') > 0
+                            )
                         )
                     ) AS consent_live
              FROM app_runs run
@@ -958,9 +979,131 @@ async function consumeRunWriteCall(context) {
     );
 }
 
+async function consumeRunEgressCall(context) {
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+        const installation = await client.query(
+            `SELECT installation.id
+             FROM marketplace_installations installation
+             WHERE installation.company_id = $1
+               AND installation.app_id = $2
+               AND installation.id = $3
+               AND installation.status = 'connected'
+             FOR UPDATE`,
+            [context.company_id, context.app_id, context.installation_id]
+        );
+        if (!installation.rows[0]) {
+            throw appRuntimeError(
+                'APP_RUNTIME_INACTIVE',
+                'App runtime authorization is not active.',
+                403
+            );
+        }
+        const { rows } = await client.query(
+            `UPDATE app_runs run
+             SET egress_calls_made = run.egress_calls_made + 1,
+                 updated_at = NOW()
+             WHERE run.id = $1
+               AND run.company_id = $2
+               AND run.app_id = $3
+               AND run.installation_id = $4
+               AND run.version_id = $5
+               AND run.nonce_sha256 = $6
+               AND run.status IN ('issued', 'exhausted')
+               AND run.revoked_at IS NULL
+               AND run.expires_at > NOW()
+               AND run.execution_authorized_at IS NOT NULL
+               AND run.completed_at IS NULL
+               AND run.egress_calls_made < $7
+               AND (
+                    SELECT COALESCE(SUM(daily.egress_calls_made), 0)
+                    FROM app_runs daily
+                    WHERE daily.company_id = $2
+                      AND daily.installation_id = $4
+                      AND (daily.issued_at AT TIME ZONE 'UTC')::date
+                          = (NOW() AT TIME ZONE 'UTC')::date
+               ) < $8
+             RETURNING run.egress_calls_made AS call_ordinal`,
+            [
+                context.run_id,
+                context.company_id,
+                context.app_id,
+                context.installation_id,
+                context.version_id,
+                context.nonce_sha256,
+                EGRESS_CALL_LIMIT,
+                DAILY_EGRESS_CALL_LIMIT,
+            ]
+        );
+        if (rows[0]) {
+            await client.query('COMMIT');
+            return Number(rows[0].call_ordinal);
+        }
+        const current = await client.query(
+            `SELECT run.egress_calls_made,
+                    (
+                        SELECT COALESCE(SUM(daily.egress_calls_made), 0)
+                        FROM app_runs daily
+                        WHERE daily.company_id = $2
+                          AND daily.installation_id = $4
+                          AND (daily.issued_at AT TIME ZONE 'UTC')::date
+                              = (NOW() AT TIME ZONE 'UTC')::date
+                    ) AS daily_egress_calls
+             FROM app_runs run
+             WHERE run.id = $1
+               AND run.company_id = $2
+               AND run.app_id = $3
+               AND run.installation_id = $4
+               AND run.version_id = $5
+               AND run.nonce_sha256 = $6
+               AND run.status IN ('issued', 'exhausted')
+               AND run.revoked_at IS NULL
+               AND run.expires_at > NOW()
+               AND run.execution_authorized_at IS NOT NULL
+               AND run.completed_at IS NULL`,
+            [
+                context.run_id,
+                context.company_id,
+                context.app_id,
+                context.installation_id,
+                context.version_id,
+                context.nonce_sha256,
+            ]
+        );
+        if (Number(current.rows[0]?.egress_calls_made) >= EGRESS_CALL_LIMIT) {
+            throw appRuntimeError(
+                'EGRESS_CALL_LIMIT',
+                'Egress call limit of 5 reached.',
+                429,
+                { callOrdinal: Number(current.rows[0].egress_calls_made) + 1 }
+            );
+        }
+        if (Number(current.rows[0]?.daily_egress_calls) >= DAILY_EGRESS_CALL_LIMIT) {
+            throw appRuntimeError(
+                'EGRESS_DAILY_CALL_LIMIT',
+                'Daily egress call limit of 500 reached.',
+                429
+            );
+        }
+        throw appRuntimeError(
+            'APP_RUNTIME_INACTIVE',
+            'App runtime authorization is not active.',
+            403
+        );
+    } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
 function validateRunMetrics(metrics) {
     const keys = Object.keys(metrics || {}).sort();
-    const expectedKeys = ['data_calls', 'error_code', 'gateway_calls', 'result_bytes', 'wall_ms'];
+    const expectedKeys = [
+        'data_calls', 'egress_calls', 'error_code', 'gateway_calls', 'result_bytes', 'wall_ms',
+    ];
     if (keys.length !== expectedKeys.length
         || keys.some((key, index) => key !== expectedKeys[index])
         || !Number.isInteger(metrics.wall_ms)
@@ -972,6 +1115,9 @@ function validateRunMetrics(metrics) {
         || !Number.isInteger(metrics.data_calls)
         || metrics.data_calls < 0
         || metrics.data_calls > DATA_CALL_LIMIT
+        || !Number.isInteger(metrics.egress_calls)
+        || metrics.egress_calls < 0
+        || metrics.egress_calls > EGRESS_CALL_LIMIT
         || (metrics.result_bytes !== null && (
             !Number.isInteger(metrics.result_bytes)
             || metrics.result_bytes < 0
@@ -1050,7 +1196,7 @@ async function recordRunCompletion(claims, rawMetrics) {
                AND run.app_id = candidate.app_id
                AND run.installation_id = candidate.installation_id
              RETURNING run.id, run.status, run.wall_ms, run.gateway_calls_made,
-                       run.data_calls_made,
+                       run.data_calls_made, run.egress_calls_made,
                        run.result_bytes, run.error_code, run.completed_at
          ), usage AS (
              INSERT INTO app_runtime_usage
@@ -1120,6 +1266,8 @@ module.exports = {
     RUN_CALL_LIMIT,
     DATA_CALL_LIMIT,
     WRITE_CALL_LIMIT,
+    EGRESS_CALL_LIMIT,
+    DAILY_EGRESS_CALL_LIMIT,
     CLAIM_KEYS,
     configuredSecret,
     normalizedTtl,
@@ -1134,6 +1282,7 @@ module.exports = {
     consumeRunCall,
     consumeRunDataCall,
     consumeRunWriteCall,
+    consumeRunEgressCall,
     validateRunMetrics,
     recordRunCompletion,
 };

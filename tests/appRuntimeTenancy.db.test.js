@@ -11,6 +11,9 @@ const tokenService = require('../backend/src/services/appRuntimeTokenService');
 const gatewayService = require('../backend/src/services/appRuntimeGatewayService');
 const appRuntimeTaskService = require('../backend/src/services/appRuntimeTaskService');
 const appRuntimeNoteService = require('../backend/src/services/appRuntimeNoteService');
+const {
+    createAppInstallationSecretService,
+} = require('../backend/src/services/appInstallationSecretService');
 const rateLimit = require('../backend/src/services/appRuntimeRateLimit');
 const callMaskingService = require('../backend/src/services/callMaskingService');
 const appVersionTransitionModule = require('../backend/src/services/appVersionTransitionService');
@@ -39,6 +42,14 @@ const WRITE_SCHEMA = fs.readFileSync(
 );
 const WRITE_ROLLBACK = fs.readFileSync(
     path.join(MIGRATIONS, 'rollback_237_app_create_task_write_tool.sql'),
+    'utf8'
+);
+const EGRESS_SCHEMA = fs.readFileSync(
+    path.join(MIGRATIONS, '238_app_egress_phase_i.sql'),
+    'utf8'
+);
+const EGRESS_ROLLBACK = fs.readFileSync(
+    path.join(MIGRATIONS, 'rollback_238_app_egress_phase_i.sql'),
     'utf8'
 );
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
@@ -203,7 +214,7 @@ async function configureConsent(client, installationId, versionId) {
     );
 }
 
-async function setupFixture(client) {
+async function setupFixture(client, { connections = [] } = {}) {
     await client.query(ORDER_LIST_SCHEMA);
     await client.query(MASKING_SCHEMA);
     await client.query(SCHEMA);
@@ -212,6 +223,7 @@ async function setupFixture(client) {
     await client.query(EXECUTION_SCHEMA);
     await client.query(DATA_SCHEMA);
     await client.query(WRITE_SCHEMA);
+    await client.query(EGRESS_SCHEMA);
     const companyA = await insertCompany(client, 'A');
     const companyB = await insertCompany(client, 'B');
     const humanA = await insertHuman(client, companyA, 'owner-a', 'manager');
@@ -242,10 +254,17 @@ async function setupFixture(client) {
     const source = 'module.exports = async function app() { return true; };';
     const version = await client.query(
         `INSERT INTO app_versions
-            (app_id, version_number, source_code, source_sha256, status, created_by)
-         VALUES ($1, '1.0.0', $2, $3, 'draft', $4)
+            (app_id, version_number, source_code, source_sha256,
+             scanner_report, status, created_by)
+         VALUES ($1, '1.0.0', $2, $3, $4::jsonb, 'draft', $5)
          RETURNING id`,
-        [app.rows[0].id, source, digest(source), humanA.id]
+        [
+            app.rows[0].id,
+            source,
+            digest(source),
+            JSON.stringify({ connections }),
+            humanA.id,
+        ]
     );
     for (const toolName of TOOLS) {
         await client.query(
@@ -495,6 +514,35 @@ async function createRunContext(client, fixture, side = 'A', authorize = true) {
     return { ...resolved, nonce_for_test: nonce };
 }
 
+function nestedTransactionDatabase(client, prefix) {
+    let sequence = 0;
+    return {
+        getClient: async () => {
+            const savepoint = `${prefix}_${sequence += 1}`;
+            let open = false;
+            return {
+                query: async (text, params) => {
+                    if (text === 'BEGIN') {
+                        open = true;
+                        return client.query(`SAVEPOINT ${savepoint}`);
+                    }
+                    if (text === 'COMMIT') {
+                        open = false;
+                        return client.query(`RELEASE SAVEPOINT ${savepoint}`);
+                    }
+                    if (text === 'ROLLBACK') {
+                        if (!open) return undefined;
+                        open = false;
+                        return client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+                    }
+                    return client.query(text, params);
+                },
+                release: jest.fn(),
+            };
+        },
+    };
+}
+
 async function invoke(client, fixture, toolName, args = {}, existingContext = null) {
     const appRuntimeContext = existingContext || await createRunContext(client, fixture);
     const req = {
@@ -541,6 +589,206 @@ async function snapshotCompanyB(client, fixture) {
 }
 
 describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
+    databaseTest('migration 238 applies twice and rollback/forward restores secrets plus egress metering', async () => {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(SCHEMA);
+            await client.query(EGRESS_SCHEMA);
+            await client.query(EGRESS_SCHEMA);
+            const applied = await client.query(
+                `SELECT to_regclass('app_installation_secrets') IS NOT NULL AS secrets_table,
+                        EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runs'
+                              AND column_name = 'egress_calls_made'
+                        ) AS egress_meter`
+            );
+            expect(applied.rows[0]).toEqual({ secrets_table: true, egress_meter: true });
+
+            await client.query(EGRESS_ROLLBACK);
+            await client.query(EGRESS_ROLLBACK);
+            const rolledBack = await client.query(
+                `SELECT to_regclass('app_installation_secrets') IS NULL AS no_secrets_table,
+                        NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'app_runs'
+                              AND column_name = 'egress_calls_made'
+                        ) AS no_egress_meter`
+            );
+            expect(rolledBack.rows[0]).toEqual({
+                no_secrets_table: true,
+                no_egress_meter: true,
+            });
+            await client.query(EGRESS_SCHEMA);
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
+    databaseTest('5 APP-EGRESS secrets are write-only, tenant-isolated, and cascade only with their own uninstall', async () => {
+        const client = await db.pool.connect();
+        const originalKey = process.env.APP_SECRETS_KEY;
+        try {
+            await client.query('BEGIN');
+            const declaration = {
+                name: 'supplier',
+                base_url: 'https://api.supplier.test',
+                auth: { kind: 'bearer' },
+            };
+            const fixture = await setupFixture(client, { connections: [declaration] });
+            process.env.APP_SECRETS_KEY = '22'.repeat(32);
+            const secrets = createAppInstallationSecretService({
+                database: nestedTransactionDatabase(client, 'secret_api'),
+            });
+            const valueA = `secret-a-${randomUUID()}`;
+            const valueB = `secret-b-${randomUUID()}`;
+            await expect(secrets.setSecret({
+                companyId: fixture.companyA,
+                installationId: fixture.installationA,
+                connectionName: 'supplier',
+                actorId: fixture.humanA.id,
+                value: valueA,
+            })).resolves.toMatchObject({ connection: 'supplier', status: 'set' });
+            await expect(secrets.setSecret({
+                companyId: fixture.companyB,
+                installationId: fixture.installationB,
+                connectionName: 'supplier',
+                actorId: fixture.humanB.id,
+                value: valueB,
+            })).resolves.toMatchObject({ connection: 'supplier', status: 'set' });
+
+            const beforeB = await client.query(
+                `SELECT ciphertext, set_by, set_at
+                 FROM app_installation_secrets
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyB, fixture.installationB]
+            );
+            await expect(secrets.setSecret({
+                companyId: fixture.companyA,
+                installationId: fixture.installationB,
+                connectionName: 'supplier',
+                actorId: fixture.humanA.id,
+                value: 'cross-tenant-overwrite',
+            })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+            const afterBlast = await client.query(
+                `SELECT ciphertext, set_by, set_at
+                 FROM app_installation_secrets
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyB, fixture.installationB]
+            );
+            expect(afterBlast.rows).toEqual(beforeB.rows);
+
+            const listed = await secrets.listSecrets({
+                companyId: fixture.companyA,
+                installationId: fixture.installationA,
+                actorId: fixture.humanA.id,
+            });
+            expect(listed).toEqual([{ connection: 'supplier', status: 'set' }]);
+            expect(JSON.stringify(listed)).not.toContain(valueA);
+            const storedA = await client.query(
+                `SELECT ciphertext
+                 FROM app_installation_secrets
+                 WHERE company_id = $1 AND installation_id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            expect(storedA.rows[0].ciphertext).not.toContain(valueA);
+            expect(storedA.rows[0].ciphertext.split(':')).toHaveLength(3);
+
+            await client.query(
+                `DELETE FROM marketplace_installations
+                 WHERE company_id = $1 AND id = $2`,
+                [fixture.companyA, fixture.installationA]
+            );
+            const remaining = await client.query(
+                `SELECT company_id, installation_id
+                 FROM app_installation_secrets
+                 WHERE (company_id = $1 AND installation_id = $2)
+                    OR (company_id = $3 AND installation_id = $4)
+                 ORDER BY company_id`,
+                [
+                    fixture.companyA,
+                    fixture.installationA,
+                    fixture.companyB,
+                    fixture.installationB,
+                ]
+            );
+            expect(remaining.rows).toEqual([{
+                company_id: fixture.companyB,
+                installation_id: String(fixture.installationB),
+            }]);
+        } finally {
+            if (originalKey === undefined) delete process.env.APP_SECRETS_KEY;
+            else process.env.APP_SECRETS_KEY = originalKey;
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
+    databaseTest('4 APP-EGRESS PostgreSQL meter refuses the sixth run call and the 501st daily call atomically', async () => {
+        const client = await db.pool.connect();
+        let dbQuerySpy;
+        let dbClientSpy;
+        try {
+            await client.query('BEGIN');
+            const fixture = await setupFixture(client);
+            dbQuerySpy = jest.spyOn(db, 'query').mockImplementation((text, params) => (
+                client.query(text, params)
+            ));
+            const nested = nestedTransactionDatabase(client, 'egress_meter');
+            dbClientSpy = jest.spyOn(db, 'getClient').mockImplementation(nested.getClient);
+
+            const metered = await createRunContext(client, fixture);
+            for (let ordinal = 1; ordinal <= 5; ordinal += 1) {
+                await expect(tokenService.consumeRunEgressCall(metered)).resolves.toBe(ordinal);
+            }
+            await expect(tokenService.consumeRunEgressCall(metered)).rejects.toMatchObject({
+                code: 'EGRESS_CALL_LIMIT',
+                message: 'Egress call limit of 5 reached.',
+                httpStatus: 429,
+            });
+
+            await client.query(
+                `INSERT INTO app_runs
+                    (id, company_id, app_id, installation_id, version_id, principal_id,
+                     artifact_sha256, nonce_sha256, issued_at, expires_at,
+                     egress_calls_made)
+                 SELECT gen_random_uuid(), $1, $2, $3, $4, $5, $6,
+                        repeat(md5(series::text || random()::text), 2),
+                        NOW(), NOW() + INTERVAL '5 minutes', 5
+                 FROM generate_series(1, 99) AS series`,
+                [
+                    fixture.companyA,
+                    fixture.appId,
+                    fixture.installationA,
+                    fixture.versionId,
+                    fixture.principalA.principal.id,
+                    fixture.artifactSha256,
+                ]
+            );
+            const daily = await createRunContext(client, fixture);
+            await expect(tokenService.consumeRunEgressCall(daily)).rejects.toMatchObject({
+                code: 'EGRESS_DAILY_CALL_LIMIT',
+                message: 'Daily egress call limit of 500 reached.',
+                httpStatus: 429,
+            });
+            const stored = await client.query(
+                `SELECT egress_calls_made
+                 FROM app_runs
+                 WHERE company_id = $1 AND id = ANY($2::uuid[])
+                 ORDER BY id`,
+                [fixture.companyA, [metered.run_id, daily.run_id]]
+            );
+            expect(stored.rows.map(row => row.egress_calls_made).sort()).toEqual([0, 5]);
+        } finally {
+            dbClientSpy?.mockRestore();
+            dbQuerySpy?.mockRestore();
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    });
+
     databaseTest('migration 233 applies twice and rollback/forward restores write metering', async () => {
         const client = await db.pool.connect();
         try {
@@ -1089,6 +1337,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 wall_ms: 41,
                 gateway_calls: 0,
                 data_calls: 0,
+                egress_calls: 0,
                 result_bytes: 17,
                 error_code: null,
             });
@@ -1538,6 +1787,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 wall_ms: 29,
                 gateway_calls: 0,
                 data_calls: 0,
+                egress_calls: 0,
                 result_bytes: null,
                 error_code: 'APP_RUNTIME_SUSPENDED',
             });
@@ -1600,7 +1850,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 run_id: unstarted.run_id,
                 nonce: unstarted.nonce_for_test,
             }, {
-                wall_ms: 1, gateway_calls: 0, data_calls: 0,
+                wall_ms: 1, gateway_calls: 0, data_calls: 0, egress_calls: 0,
                 result_bytes: 4, error_code: null,
             })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
             await expect(tokenService.authorizeRunExecution(
@@ -1715,7 +1965,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 run_id: wallMetered.run_id,
                 nonce: wallMetered.nonce_for_test,
             }, {
-                wall_ms: 2, gateway_calls: 0, data_calls: 0,
+                wall_ms: 2, gateway_calls: 0, data_calls: 0, egress_calls: 0,
                 result_bytes: 4, error_code: null,
             });
             const wallSuspension = await client.query(
@@ -1756,7 +2006,7 @@ describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
                 run_id: revoked.run_id,
                 nonce: revoked.nonce_for_test,
             }, {
-                wall_ms: 2, gateway_calls: 0, data_calls: 0,
+                wall_ms: 2, gateway_calls: 0, data_calls: 0, egress_calls: 0,
                 result_bytes: 4, error_code: null,
             })).rejects.toMatchObject({ code: 'APP_RUNTIME_INACTIVE', httpStatus: 403 });
             expect(await client.query(

@@ -114,4 +114,46 @@ describe('APP-RUN-001 host gateway bridge', () => {
         });
         expect(usage).toMatchObject({ gateway_calls: 0, data_calls: 1, error_code: null });
     });
+
+    test('ctx.http bridges only a declared connection name and bounded request to the CRM gateway', async () => {
+        const source = app(`return ctx.http.request('supplier', {
+            method: 'POST', path: '/orders', query: { confirm: true }, body: { sku: 'P-41' }
+        });`);
+        const fetchImpl = jest.fn(async url => {
+            if (url.pathname.includes('/egress/')) {
+                return response({ status: 201, body: { order_id: 'PO-41' } });
+            }
+            return response(null);
+        });
+        let usage;
+        const result = await runner.runApplication({
+            source,
+            expectedSourceSha256: runner.sourceSha256(source),
+            input: {},
+            gatewayBaseUrl: GATEWAY_BASE_URL,
+            runToken: TEST_TOKEN,
+            fetchImpl,
+            executionMode: 'live',
+            onUsage: value => { usage = value; },
+        });
+        expect(result).toEqual({ status: 201, body: { order_id: 'PO-41' } });
+        const egressCall = fetchImpl.mock.calls.find(([url]) => url.pathname.includes('/egress/'));
+        expect(egressCall[0].href).toBe(
+            'https://crm.albusto.test/internal/app-runtime/v1/egress/supplier'
+        );
+        expect(egressCall[1]).toMatchObject({
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${TEST_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                method: 'POST',
+                path: '/orders',
+                query: { confirm: true },
+                body: { sku: 'P-41' },
+            }),
+        });
+        expect(usage).toMatchObject({ egress_calls: 1, error_code: null });
+    });
 });

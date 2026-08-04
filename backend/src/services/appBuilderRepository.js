@@ -10,6 +10,7 @@ const {
 } = require('./appDataCollectionValidator');
 const { validateActions } = require('./appActionValidator');
 const { validateSubscriptions } = require('./appEventCatalog');
+const { validateConnections } = require('./appConnectionValidator');
 
 class AppBuilderRepositoryError extends Error {
     constructor(code, message, httpStatus) {
@@ -120,6 +121,7 @@ async function listVersions(companyId, appId) {
                 version.data_collections,
                 COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions,
                 COALESCE(version.scanner_report->'subscribes', '[]'::jsonb) AS subscribes,
+                COALESCE(version.scanner_report->'connections', '[]'::jsonb) AS connections,
                 version.status, version.created_at,
                 COALESCE(
                     ARRAY_AGG(tool.tool_name ORDER BY tool.tool_name)
@@ -175,12 +177,14 @@ async function getGenerationContext(companyId, chatId) {
                 latest.source_code AS current_source,
                 latest.data_collections AS current_data_collections,
                 latest.actions AS current_actions,
-                latest.subscribes AS current_subscribes
+                latest.subscribes AS current_subscribes,
+                latest.connections AS current_connections
          FROM app_build_chats chat
          LEFT JOIN LATERAL (
              SELECT version.source_code, version.data_collections,
                     COALESCE(version.scanner_report->'actions', '[]'::jsonb) AS actions,
-                    COALESCE(version.scanner_report->'subscribes', '[]'::jsonb) AS subscribes
+                    COALESCE(version.scanner_report->'subscribes', '[]'::jsonb) AS subscribes,
+                    COALESCE(version.scanner_report->'connections', '[]'::jsonb) AS connections
              FROM app_versions version
              JOIN app_studio_apps owned
                ON owned.app_id = version.app_id
@@ -334,6 +338,7 @@ async function persistSuccess({
     dataCollections = [],
     actions = [],
     subscribes = [],
+    connections = [],
     tools,
     description,
     model,
@@ -359,6 +364,7 @@ async function persistSuccess({
     let normalizedDataCollections = validateDataCollections(dataCollections);
     const normalizedActions = validateActions(actions);
     const normalizedSubscriptions = validateSubscriptions(subscribes);
+    const normalizedConnections = validateConnections(connections);
     return withTransaction(async client => {
         const chatResult = await client.query(
             `SELECT id, app_id, title
@@ -469,6 +475,7 @@ async function persistSuccess({
                     ...scannerReport,
                     actions: normalizedActions,
                     subscribes: normalizedSubscriptions,
+                    connections: normalizedConnections,
                 }),
                 normalizedSuggestedSchedule
                     ? JSON.stringify(normalizedSuggestedSchedule)

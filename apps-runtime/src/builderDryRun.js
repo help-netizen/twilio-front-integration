@@ -4,6 +4,7 @@ const { runApplication, sourceMatchesExpected } = require('./runner');
 const { AppRunnerError } = require('./errors');
 const { validateApplicationSource } = require('./builderValidator');
 const { createDryRunDataStore } = require('./dataCollections');
+const { createDryRunEgressStore } = require('./connections');
 const {
     DEFAULT_SANDBOX_SEED,
     SandboxFixtureError,
@@ -324,6 +325,8 @@ async function validateAndDryRun({
     seed = DEFAULT_SANDBOX_SEED,
     anchor = null,
     data_collections = [],
+    connections = [],
+    fetchImpl,
     signal,
 }) {
     if (!validDryRunInput(input)) {
@@ -347,6 +350,7 @@ async function validateAndDryRun({
             wall_ms: 0,
             gateway_calls: 0,
             data_calls: 0,
+            egress_calls: 0,
             result_bytes: null,
             error_code: mismatch.code,
         };
@@ -354,6 +358,7 @@ async function validateAndDryRun({
     }
     const validation = await validateApplicationSource(source);
     const dataStore = createDryRunDataStore(data_collections);
+    const egressStore = createDryRunEgressStore(connections);
     const activeFixtures = fixtures === undefined
         ? generateSandboxFixtures(seed, anchor)
         : fixtures;
@@ -373,7 +378,7 @@ async function validateAndDryRun({
             gatewayBaseUrl: DRY_RUN_GATEWAY,
             runToken: DRY_RUN_TOKEN,
             executionMode: 'sandbox',
-            fetchImpl: async (url, options) => {
+            fetchImpl: fetchImpl || (async (url, options) => {
                 let args;
                 try {
                     args = JSON.parse(options.body);
@@ -386,9 +391,10 @@ async function validateAndDryRun({
                     activeFixtures,
                     taskStore
                 );
-            },
+            }),
             onUsage: value => { usage = value; },
             dataHandler: dataStore.handle,
+            httpHandler: egressStore.handle,
             signal,
         });
     } catch (error) {
@@ -406,6 +412,7 @@ async function validateAndDryRun({
         usage,
         fixturesSummary: summarizeSandboxFixtures(activeFixtures),
         dataOps: dataStore.report(),
+        egressCalls: egressStore.report(),
         createdTasks: taskStore.report(),
         createdNotes: taskStore.reportNotes(),
     };
