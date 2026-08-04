@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bell, Share, PlusSquare } from 'lucide-react';
 import { BottomSheet } from './ui/BottomSheet';
+import { isBareRoute } from './layout/publicBareRoutes';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
 import { isSupported, getPermissionState, subscribeToPush } from '../services/pushNotificationService';
@@ -132,6 +133,9 @@ export default function InstallOnboardingSheet() {
         } finally { setBusy(false); close(); }
     };
 
+    // Public customer-facing routes (pay links, estimates, Rate Me, signup)
+    // must never pitch the internal CRM app install.
+    if (isBareRoute(window.location.pathname)) return null;
     if (!step) return null;
 
     return (
