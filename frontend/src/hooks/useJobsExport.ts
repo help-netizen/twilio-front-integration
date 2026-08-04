@@ -75,7 +75,11 @@ export function useJobsExport({
                 j.metadata ? Object.values(j.metadata).filter(v => v != null && v !== '').join('; ') : '',
             ]);
 
-            const escape = (val: string) => {
+            // Cells may be numbers after the job-pool money derivation
+            // (amount_paid) — coerce before string ops ("O.includes is not
+            // a function" in the minified prod bundle).
+            const escape = (raw: string | number | null | undefined) => {
+                const val = String(raw ?? '');
                 if (val.includes(',') || val.includes('"') || val.includes('\n')) {
                     return `"${val.replace(/"/g, '""')}"`;
                 }
