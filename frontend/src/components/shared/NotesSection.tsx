@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 import { TaskStack } from '../tasks/TaskStack';
 import { prepareNotesForDisplay } from './notesDisplay';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { NoteComposerOverlay } from './NoteComposerOverlay';
+import { NoteComposerOverlay, useKeyboardInset } from './NoteComposerOverlay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -226,23 +226,6 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     const handleSubmit = useCallback(() => submitNote(text), [submitNote, text]);
 
-    /**
-     * NOTE-COMPOSER-FULLSCREEN: techs write long service reports here, so the mobile
-     * composer is the type-B full-screen editor (same surface as the report → estimate
-     * input) instead of the small keyboard-docked box. Polish runs on the editor's
-     * CURRENT text through onRepolish, so no second full-screen layer is opened.
-     */
-    const polishComposerText = useCallback(async (current: string) => {
-        setText(current);
-        setPolishBusy(true);
-        try {
-            setText(await polishReport(current));
-        } catch (e: any) {
-            reportPolishError(e);
-        } finally {
-            setPolishBusy(false);
-        }
-    }, []);
 
     // NOTE-COMPOSER-KEYBOARD: mobile uses the INLINE composer (normal document flow), not a
     // fixed bottom sheet. iOS natively scrolls a focused normal-flow input above the keyboard
@@ -350,6 +333,17 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         document.addEventListener('mousedown', close);
         return () => document.removeEventListener('mousedown', close);
     }, [menuOpenKey]);
+
+    // Grow up to the top of the screen, then let the text scroll inside the card.
+    const composerKeyboardInset = useKeyboardInset(expanded && isMobile);
+    const composerMaxHeight = Math.max(
+        96,
+        (typeof window === 'undefined' ? 800 : window.innerHeight) - composerKeyboardInset - 150,
+    );
+    const growComposer = (el: HTMLTextAreaElement) => {
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(el.scrollHeight, composerMaxHeight)}px`;
+    };
 
     const canSubmit = (!!text.trim() || composeAttach.ids.length > 0) && !submitting && !composeAttach.blocked;
     const canSaveEdit = (!!editText.trim() || editAttach.ids.length > 0) && !editSubmitting && !editAttach.blocked;
@@ -463,29 +457,49 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
             {/* Mobile: floating ADD composer docked above the keyboard (NOTE-COMPOSER-KEYBOARD).
                 One filled --blanc-field card — borderless textarea over the round action row —
                 identical to the desktop composer / Pulse reply (COMPOSER-CANON). */}
-            <FullScreenTextEditor
-                open={expanded && isMobile}
-                initialValue={text}
-                title="New note"
-                placeholder="Write a note…"
-                doneLabel="Add note"
-                busy={polishBusy}
-                donePending={submitting}
-                doneDisabled={composeAttach.blocked}
-                {...(isProvider ? { onRepolish: polishComposerText, repolishLabel: 'Polish report' } : {})}
-                leftActions={(
-                    <NoteAttachmentInput
-                        key={composeAttachKey}
-                        entityType={entityType}
-                        entityId={entityId}
-                        onStateChange={setComposeAttach}
-                        variant="round"
-                        roundBg="var(--blanc-field)"
+            {/* Mobile ADD composer (owner reference: Todoist). A card docked above the
+                keyboard that GROWS with the text — from two lines up to the top of the
+                screen, then the text scrolls inside. No title, no divider: just the text
+                and the action row. */}
+            <NoteComposerOverlay open={expanded && isMobile} onClose={() => setExpanded(false)}>
+                <div style={{ background: 'var(--blanc-field)', borderRadius: 16, padding: '10px 12px' }}>
+                    <textarea
+                        className="w-full resize-none outline-none bg-transparent"
+                        style={{
+                            border: 'none',
+                            padding: '2px 2px 0',
+                            minHeight: 72,
+                            maxHeight: composerMaxHeight,
+                            overflowY: 'auto',
+                            fontSize: 16,
+                            lineHeight: 1.5,
+                            color: 'var(--blanc-ink-1)',
+                        }}
+                        placeholder="Write a note…"
+                        value={text}
+                        onChange={e => setText(e.target.value)}
+                        onInput={e => growComposer(e.target as HTMLTextAreaElement)}
+                        ref={el => { if (el) growComposer(el); }}
+                        autoFocus
                     />
-                )}
-                onDone={submitNote}
-                onCancel={() => setExpanded(false)}
-            />
+                    <div className="flex items-center justify-between gap-3" style={{ marginTop: 6 }}>
+                        <div className="flex items-center gap-2">
+                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            {renderPolishButton(40)}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleSubmit}
+                            disabled={!canSubmit}
+                            aria-label="Add note"
+                            className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                            style={{ width: 40, height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
+                        >
+                            {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
+                        </button>
+                    </div>
+                </div>
+            </NoteComposerOverlay>
 
             {/* Mobile: floating EDIT composer — same overlay + canon card as add. */}
             <NoteComposerOverlay open={!!editingNote && isMobile} onClose={cancelEdit}>
