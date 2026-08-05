@@ -168,3 +168,70 @@ export async function acceptAppVersion(installationId: number, versionId: string
     }
     return (payload as { version: AppVersionState }).version;
 }
+
+/** Phases I/J: installation settings (a declared form the tenant fills) and
+ *  connection secrets (write-only supplier keys). */
+export interface AppSettingField {
+    key: string;
+    label: string;
+    type: 'text' | 'number' | 'email' | 'url' | 'boolean' | 'select';
+    required?: boolean;
+    options?: string[];
+}
+
+export interface AppSettingsResponse {
+    declarations: AppSettingField[];
+    settings: Record<string, string | number | boolean>;
+}
+
+export interface AppSecretStatus {
+    connection: string;
+    status: 'set' | 'not_set';
+}
+
+export async function fetchAppSettings(installationId: number): Promise<AppSettingsResponse> {
+    const response = await authedFetch(`${API_BASE}/installations/${installationId}/settings`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new AppViewApiError(payload.code || 'REQUEST_FAILED', payload.message || 'Settings could not be loaded.', response.status);
+    }
+    return payload as AppSettingsResponse;
+}
+
+export async function saveAppSettings(
+    installationId: number,
+    settings: Record<string, string | number | boolean>
+): Promise<AppSettingsResponse> {
+    const response = await authedFetch(`${API_BASE}/installations/${installationId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new AppViewApiError(payload.code || 'REQUEST_FAILED', payload.message || 'Settings could not be saved.', response.status);
+    }
+    return payload as AppSettingsResponse;
+}
+
+export async function fetchAppSecrets(installationId: number): Promise<AppSecretStatus[]> {
+    const response = await authedFetch(`${API_BASE}/installations/${installationId}/secrets`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        if (response.status === 403 || response.status === 404) return [];
+        throw new AppViewApiError(payload.code || 'REQUEST_FAILED', payload.message || 'Secrets could not be loaded.', response.status);
+    }
+    return (payload.secrets as AppSecretStatus[]) || [];
+}
+
+export async function saveAppSecret(installationId: number, connection: string, value: string): Promise<void> {
+    const response = await authedFetch(`${API_BASE}/installations/${installationId}/secrets/${connection}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+    });
+    if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new AppViewApiError(payload.code || 'REQUEST_FAILED', payload.message || 'Secret could not be saved.', response.status);
+    }
+}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CalendarClock, History, Loader2, RefreshCw } from 'lucide-react';
+import { CalendarClock, History, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { AppViewDocument, type ViewDocument } from './AppViewBlocks';
@@ -37,6 +37,8 @@ export interface AppViewPanelProps {
     /** Phase B: the schedule editor, and the banner offering a newer approved version. */
     schedule?: React.ReactNode;
     updateBanner?: React.ReactNode;
+    /** Phases I/J: the tenant's settings and connection secrets for this install. */
+    setup?: React.ReactNode;
 }
 
 function relativeTime(iso: string | null): string | null {
@@ -94,11 +96,11 @@ function RunHistory({ history, onSelectRun }: { history: AppRunSummary[]; onSele
     );
 }
 
-type PanelView = 'result' | 'history' | 'schedule';
+type PanelView = 'result' | 'history' | 'schedule' | 'setup';
 
 export function AppViewPanel({
     open, onOpenChange, appName, tools, document, lastRunAt, lastWallMs,
-    running, error, history, onRun, onSelectRun, onAction, schedule, updateBanner,
+    running, error, history, onRun, onSelectRun, onAction, schedule, updateBanner, setup,
 }: AppViewPanelProps) {
     const [view, setView] = useState<PanelView>('result');
     const showHistory = view === 'history';
@@ -133,7 +135,9 @@ export function AppViewPanel({
 
                         {updateBanner}
 
-                        {view === 'schedule'
+                        {view === 'setup'
+                            ? setup
+                            : view === 'schedule'
                             ? schedule
                             : showHistory
                             ? <RunHistory history={history} onSelectRun={onSelectRun} />
@@ -168,6 +172,15 @@ export function AppViewPanel({
                         >
                             <CalendarClock className="mr-1.5 size-4" />
                             {view === 'schedule' ? 'Result' : 'Schedule'}
+                        </Button>
+                    )}
+                    {setup && (
+                        <Button
+                            variant="ghost"
+                            onClick={() => setView(current => (current === 'setup' ? 'result' : 'setup'))}
+                        >
+                            <SlidersHorizontal className="mr-1.5 size-4" />
+                            {view === 'setup' ? 'Result' : 'Setup'}
                         </Button>
                     )}
                     <Button onClick={onRun} disabled={running}>

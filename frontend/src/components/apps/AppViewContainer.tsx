@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AppViewPanel, type AppRunSummary } from './AppViewPanel';
 import { AppScheduleEditor } from './AppSchedule';
+import { AppSetup } from './AppSetup';
 import type { ViewDocument } from './AppViewBlocks';
 import {
     AppViewApiError,
@@ -11,9 +12,13 @@ import {
     fetchAppRun,
     fetchAppRuns,
     fetchAppSchedule,
+    fetchAppSecrets,
+    fetchAppSettings,
     fetchLatestAppRun,
     runApp,
     saveAppSchedule,
+    saveAppSecret,
+    saveAppSettings,
 } from '../../services/appViewsApi';
 
 export interface AppViewContainerProps {
@@ -78,6 +83,36 @@ export function AppViewContainer({ installationId, appName, tools = [], open, on
         ),
     });
 
+    const settings = useQuery({
+        queryKey: ['app-settings', installationId],
+        queryFn: () => fetchAppSettings(installationId),
+        enabled: open,
+    });
+    const secrets = useQuery({
+        queryKey: ['app-secrets', installationId],
+        queryFn: () => fetchAppSecrets(installationId),
+        enabled: open,
+    });
+    const saveSettings = useMutation({
+        mutationFn: (values: Record<string, string | number | boolean>) => saveAppSettings(installationId, values),
+        onMutate: () => setError(null),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['app-settings', installationId] }),
+        onError: (failure: unknown) => setError(
+            failure instanceof AppViewApiError ? failure.message : 'Settings could not be saved.'
+        ),
+    });
+    const [savingSecret, setSavingSecret] = useState<string | null>(null);
+    const saveSecret = useMutation({
+        mutationFn: ({ connection, value }: { connection: string; value: string }) =>
+            saveAppSecret(installationId, connection, value),
+        onMutate: ({ connection }) => { setError(null); setSavingSecret(connection); },
+        onSettled: () => setSavingSecret(null),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['app-secrets', installationId] }),
+        onError: (failure: unknown) => setError(
+            failure instanceof AppViewApiError ? failure.message : 'The key could not be saved.'
+        ),
+    });
+
     const acceptVersion = useMutation({
         mutationFn: (versionId: string) => acceptAppVersion(installationId, versionId),
         onMutate: () => setError(null),
@@ -139,6 +174,17 @@ export function AppViewContainer({ installationId, appName, tools = [], open, on
                     schedule={schedule.data.schedule}
                     saving={saveSchedule.isPending}
                     onSave={body => saveSchedule.mutate(body)}
+                />
+            )}
+            setup={((settings.data?.declarations.length ?? 0) > 0 || (secrets.data?.length ?? 0) > 0) && (
+                <AppSetup
+                    fields={settings.data?.declarations || []}
+                    values={settings.data?.settings || {}}
+                    secrets={secrets.data || []}
+                    savingSettings={saveSettings.isPending}
+                    onSaveSettings={values => saveSettings.mutate(values)}
+                    onSaveSecret={(connection, value) => saveSecret.mutate({ connection, value })}
+                    savingSecret={savingSecret}
                 />
             )}
             updateBanner={schedule.data?.version?.update_available && schedule.data.version.available && (
