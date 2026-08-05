@@ -1,6 +1,8 @@
 jest.mock('../backend/src/db/technicianServiceAreaQueries', () => ({
     listTargets: jest.fn(),
     listValidAssignments: jest.fn(),
+    listWildcardTechnicians: jest.fn(),
+    setWildcardTechnician: jest.fn(),
     replaceTechnicianDistricts: jest.fn(),
     replaceTechnicianRadii: jest.fn(),
     replaceDistrictTechnicians: jest.fn(),
@@ -42,6 +44,7 @@ beforeEach(() => {
         ],
     });
     queries.listValidAssignments.mockResolvedValue({ districts: [], radii: [] });
+    queries.listWildcardTechnicians.mockResolvedValue([]);
     rosterService.listActive.mockResolvedValue(TECHS);
     rosterService.requireActive.mockImplementation(async (_companyId, techId) => {
         const technician = TECHS.find(item => item.id === String(techId));
@@ -53,7 +56,10 @@ beforeEach(() => {
     });
 });
 
-test('TC-SA-WILDCARD-01 — empty active set is wildcard for every target', async () => {
+// ZONE-STRICT-001 — these two used to assert the OPPOSITE. An empty assignment
+// list was the wildcard, which is exactly how a technician got offered into an
+// area he does not work. Serving everywhere is now an explicit mark.
+test('TC-SA-STRICT-01 — a technician with nothing assigned is NOT offered', async () => {
     queries.listValidAssignments.mockResolvedValue({
         districts: [{ technician_id: 'tech-2', district_name: 'North' }],
         radii: [],
@@ -63,21 +69,64 @@ test('TC-SA-WILDCARD-01 — empty active set is wildcard for every target', asyn
     });
     const result = await service.filterEligibleTechnicians(COMPANY, TECHS, { query: '02118' });
     expect(result.matches).toEqual([
-        { technician_id: 'tech-1', wildcard: true, eligible: true },
-        { technician_id: 'tech-2', wildcard: false, eligible: false },
+        { technician_id: 'tech-1', wildcard: false, unassigned: true, eligible: false },
+        { technician_id: 'tech-2', wildcard: false, unassigned: false, eligible: false },
+    ]);
+    expect(result.technicians).toEqual([]);
+});
+
+test('TC-SA-STRICT-02 — the explicit whole-territory mark is eligible for any target', async () => {
+    queries.listValidAssignments.mockResolvedValue({
+        districts: [{ technician_id: 'tech-2', district_name: 'North' }],
+        radii: [],
+    });
+    queries.listWildcardTechnicians.mockResolvedValue(['tech-1']);
+    territoryService.resolveActiveTargets.mockResolvedValue({
+        mode: 'list', resolved: true, no_targets: false, target_ids: ['South'],
+    });
+    const result = await service.filterEligibleTechnicians(COMPANY, TECHS, { query: '02118' });
+    expect(result.matches).toEqual([
+        { technician_id: 'tech-1', wildcard: true, unassigned: false, eligible: true },
+        { technician_id: 'tech-2', wildcard: false, unassigned: false, eligible: false },
     ]);
     expect(result.technicians.map(technician => technician.id)).toEqual(['tech-1']);
 });
 
-test('TC-SA-WILDCARD-STALE-01 — a stale district row does not suppress wildcard', async () => {
+test('TC-SA-STRICT-03 — a stale district row NARROWS the offer instead of widening it', async () => {
+    // Renaming a district invalidates its rows. That used to promote the
+    // technician to company-wide; now it takes him out of the offer entirely,
+    // so a configuration mistake can never send someone to the wrong area.
     queries.listValidAssignments.mockResolvedValue({
         districts: [{ technician_id: 'tech-1', district_name: 'Deleted district' }],
         radii: [],
     });
     const result = await service.filterEligibleTechnicians(COMPANY, [TECHS[0]], { query: '02135' });
     expect(result.matches).toEqual([
-        { technician_id: 'tech-1', wildcard: true, eligible: true },
+        { technician_id: 'tech-1', wildcard: false, unassigned: true, eligible: false },
     ]);
+    expect(result.technicians).toEqual([]);
+});
+
+test('TC-SA-STRICT-04 — the whole-territory mark is written and cleared deliberately', async () => {
+    queries.setWildcardTechnician.mockResolvedValue();
+    await service.setTechnicianServesAllTerritory(COMPANY, 'tech-1', true, 'crm-user-1');
+    expect(queries.setWildcardTechnician).toHaveBeenCalledWith(COMPANY, 'tech-1', true, 'crm-user-1');
+
+    await service.setTechnicianServesAllTerritory(COMPANY, 'tech-1', false, 'crm-user-1');
+    expect(queries.setWildcardTechnician).toHaveBeenLastCalledWith(COMPANY, 'tech-1', false, 'crm-user-1');
+
+    await expect(service.setTechnicianServesAllTerritory(COMPANY, 'tech-1', 'yes', 'crm-user-1'))
+        .rejects.toMatchObject({ code: 'VALIDATION' });
+});
+
+test('TC-SA-STRICT-05 — unassigned technicians are reported so they are not silently invisible', async () => {
+    queries.listValidAssignments.mockResolvedValue({
+        districts: [{ technician_id: 'tech-2', district_name: 'North' }],
+        radii: [],
+    });
+    const state = await service.getAssignmentState(COMPANY, TECHS);
+    expect(state.unassigned_technicians).toEqual([{ id: 'tech-1', name: 'Alex Rivera' }]);
+    expect(state.wildcard_technicians).toEqual([]);
 });
 
 test('district and radius assignments coexist while active-mode wildcard is mode-specific', async () => {

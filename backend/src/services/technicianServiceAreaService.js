@@ -50,12 +50,14 @@ function assignmentMap(rows, key) {
 }
 
 async function getAssignmentState(companyId, rosterOverride) {
-    const [settings, targets, assignments, roster] = await Promise.all([
+    const [settings, targets, assignments, roster, wildcardIds] = await Promise.all([
         radiusQueries.getSettings(companyId),
         queries.listTargets(companyId),
         queries.listValidAssignments(companyId),
         rosterOverride ? Promise.resolve(rosterOverride) : rosterService.listActive(companyId),
+        queries.listWildcardTechnicians(companyId),
     ]);
+    const servesAll = new Set((wildcardIds || []).map(id => String(id)));
     const activeMode = settings?.active_mode === 'radius' ? 'radius' : 'list';
     const technicians = (roster || []).map(technician => ({
         id: String(technician.id),
@@ -83,7 +85,12 @@ async function getAssignmentState(companyId, rosterOverride) {
             technician_name: technician.name,
             district_names: districtNames,
             radius_ids: radiusIds,
-            wildcard_in_active_mode: activeAssignments.length === 0,
+            // ZONE-STRICT-001: two different facts that used to be one. "No
+            // assignments" is now merely a state (and means NOT offered);
+            // "serves the whole territory" is an explicit, deliberate mark.
+            unassigned_in_active_mode: activeAssignments.length === 0,
+            serves_all_territory: servesAll.has(technician.id),
+            wildcard_in_active_mode: servesAll.has(technician.id),
         };
     });
     const assignmentByTech = new Map(
@@ -107,7 +114,16 @@ async function getAssignmentState(companyId, rosterOverride) {
         })),
         technician_assignments: technicianAssignments,
         wildcard_technicians: technicianAssignments
-            .filter(item => item.wildcard_in_active_mode)
+            .filter(item => item.serves_all_territory)
+            .map(item => ({
+                id: item.technician_id,
+                name: item.technician_name,
+            })),
+        // Technicians the scheduler will NOT offer at all — nothing assigned and
+        // not marked company-wide. Surfaced so the settings screen can say so out
+        // loud instead of leaving a silently invisible technician.
+        unassigned_technicians: technicianAssignments
+            .filter(item => item.unassigned_in_active_mode && !item.serves_all_territory)
             .map(item => ({
                 id: item.technician_id,
                 name: item.technician_name,
@@ -127,7 +143,10 @@ function technicianAreaSettings(state, technicianId) {
         technician_id: id,
         district_names: [],
         radius_ids: [],
-        wildcard_in_active_mode: true,
+        // A technician we know nothing about is NOT company-wide (ZONE-STRICT-001).
+        unassigned_in_active_mode: true,
+        serves_all_territory: false,
+        wildcard_in_active_mode: false,
     };
     return {
         active_mode: state.active_mode,
@@ -139,7 +158,9 @@ function technicianAreaSettings(state, technicianId) {
         })),
         district_assignments: assigned.district_names,
         radius_assignments: assigned.radius_ids,
-        wildcard_in_active_mode: assigned.wildcard_in_active_mode,
+        serves_all_territory: Boolean(assigned.serves_all_territory),
+        unassigned_in_active_mode: Boolean(assigned.unassigned_in_active_mode),
+        wildcard_in_active_mode: Boolean(assigned.serves_all_territory),
     };
 }
 
@@ -153,10 +174,16 @@ function activeSummary(state, technicianId) {
     const ids = state.active_mode === 'radius'
         ? settings.radius_assignments
         : settings.district_assignments;
-    if (ids.length === 0) {
+    if (settings.serves_all_territory) {
         return state.active_mode === 'radius'
-            ? 'All radii (wildcard)'
-            : 'All districts (wildcard)';
+            ? 'Whole territory (all radii)'
+            : 'Whole territory (all districts)';
+    }
+    if (ids.length === 0) {
+        // Says what actually happens now, instead of the old "wildcard".
+        return state.active_mode === 'radius'
+            ? 'No radii — not offered'
+            : 'No districts — not offered';
     }
     const names = state.active_mode === 'radius'
         ? ids.map(id => {
@@ -176,6 +203,20 @@ async function replaceTechnicianAssignments(companyId, technicianId, modeInput, 
     } else {
         await queries.replaceTechnicianRadii(companyId, technician.id, assignments, createdBy);
     }
+    return getTechnicianSettings(companyId, technician);
+}
+
+/**
+ * ZONE-STRICT-001 — mark (or unmark) a technician as serving the whole territory.
+ * This is the only way back to the old "offered everywhere" behaviour, and it now
+ * takes a deliberate act rather than an empty assignment list.
+ */
+async function setTechnicianServesAllTerritory(companyId, technicianId, servesAll, createdBy) {
+    if (typeof servesAll !== 'boolean') {
+        throw new TechnicianServiceAreaError('VALIDATION', 'serves_all_territory must be a boolean', 400);
+    }
+    const technician = await rosterService.requireActive(companyId, technicianId);
+    await queries.setWildcardTechnician(companyId, technician.id, servesAll, createdBy);
     return getTechnicianSettings(companyId, technician);
 }
 
@@ -210,10 +251,18 @@ async function replaceRadiusTechnicians(companyId, radiusId, technicianIds, crea
     return publicState(await getAssignmentState(companyId, roster));
 }
 
-function isEligible(validAssignments, targetIds) {
-    // SAFETY-WILDCARD-ELIGIBLE: no VALID active-mode assignments means the
-    // technician serves every resolved target. Never invert this empty branch.
-    if (validAssignments.size === 0) return true;
+function isEligible({ servesAllTerritory, validAssignments }, targetIds) {
+    // ZONE-STRICT-001 — this empty branch USED to return true, and that is the
+    // bug the owner reported: a technician nobody had assigned anywhere was
+    // offered for every ZIP the company covers. Worse, the failure direction was
+    // wrong — renaming a district invalidated its rows, and a properly zoned
+    // technician silently became a company-wide one.
+    //
+    // Serving the whole territory is now something you SAY, not something that
+    // happens by omission. Absence of assignments means the technician is simply
+    // not offered; a missing configuration narrows the offer instead of widening it.
+    if (servesAllTerritory) return true;
+    if (validAssignments.size === 0) return false;
     return targetIds.some(targetId => validAssignments.has(String(targetId)));
 }
 
@@ -233,11 +282,20 @@ async function filterEligibleTechnicians(companyId, technicians, location) {
         const values = state.active_mode === 'radius'
             ? assigned?.radius_ids || []
             : assigned?.district_names || [];
-        const wildcard = values.length === 0;
+        const servesAllTerritory = Boolean(assigned?.serves_all_territory);
         return {
             technician_id: String(technician.id),
-            wildcard,
-            eligible: resolved.resolved && (resolved.no_targets || isEligible(new Set(values), resolved.target_ids)),
+            // The company-wide mark, and separately the plain fact of having
+            // nothing assigned — which now excludes rather than includes.
+            wildcard: servesAllTerritory,
+            unassigned: values.length === 0 && !servesAllTerritory,
+            eligible: resolved.resolved && (
+                // A company that has configured no districts/radii at all is not
+                // making a statement about anybody — everyone stays eligible, or a
+                // fresh tenant would get zero slots forever.
+                resolved.no_targets
+                || isEligible({ servesAllTerritory, validAssignments: new Set(values) }, resolved.target_ids)
+            ),
         };
     });
     const eligibleIds = new Set(matches.filter(match => match.eligible).map(match => match.technician_id));
@@ -269,6 +327,7 @@ module.exports = {
     getTechnicianSettings,
     activeSummary,
     replaceTechnicianAssignments,
+    setTechnicianServesAllTerritory,
     replaceDistrictTechnicians,
     replaceRadiusTechnicians,
     filterEligibleTechnicians,

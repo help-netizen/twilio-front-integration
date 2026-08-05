@@ -214,9 +214,44 @@ async function replaceRadiusTechnicians(companyId, radiusId, technicianIds, crea
     }
 }
 
+/**
+ * ZONE-STRICT-001 — the explicit "works across the whole territory" mark.
+ * A row here is the ONLY thing that makes a technician eligible outside their
+ * assigned districts/radii; absence of assignments no longer means "everywhere".
+ */
+async function listWildcardTechnicians(companyId) {
+    const { rows } = await db.query(
+        `SELECT technician_id
+         FROM technician_area_wildcards
+         WHERE company_id = $1`,
+        [companyId]
+    );
+    return rows.map(row => String(row.technician_id));
+}
+
+async function setWildcardTechnician(companyId, technicianId, servesAll, createdBy) {
+    const id = String(technicianId);
+    if (servesAll) {
+        await db.query(
+            `INSERT INTO technician_area_wildcards (company_id, technician_id, created_by)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (company_id, technician_id) DO NOTHING`,
+            [companyId, id, createdBy || null]
+        );
+        return;
+    }
+    await db.query(
+        `DELETE FROM technician_area_wildcards
+         WHERE company_id = $1 AND technician_id = $2`,
+        [companyId, id]
+    );
+}
+
 module.exports = {
     listTargets,
     listValidAssignments,
+    listWildcardTechnicians,
+    setWildcardTechnician,
     replaceTechnicianDistricts,
     replaceTechnicianRadii,
     replaceDistrictTechnicians,
