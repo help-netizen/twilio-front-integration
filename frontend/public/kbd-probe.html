@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+<title>Keyboard bar probe</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 14px 14px 60vh; font: 15px/1.45 -apple-system, system-ui, sans-serif; background: #F1F1F0; color: #191919; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p.hint { margin: 0 0 14px; font-size: 13px; color: #6E6E6E; }
+  .card { background: #fff; border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+  .label { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #8A8A8A; margin-bottom: 8px; }
+  .field { background: #F0F0F0; border: none; border-radius: 10px; padding: 10px 12px; width: 100%;
+           font: inherit; color: inherit; min-height: 44px; box-sizing: border-box; outline: none; }
+  .field:empty::before { content: attr(data-placeholder); color: #8A8A8A; }
+  #readout { position: fixed; left: 0; right: 0; top: 0; background: #7F42E1; color: #fff;
+             font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 6px 10px; z-index: 9; }
+  main { margin-top: 46px; }
+</style>
+</head>
+<body>
+<div id="readout">measuring…</div>
+<main>
+  <h1>Keyboard bar probe</h1>
+  <p class="hint">Tap each field. Note which ones show the system bar (^ v ✓) above the keyboard. Check in Safari and in the installed app.</p>
+
+  <div class="card">
+    <div class="label">1 — textarea (what the note composer uses today)</div>
+    <textarea class="field" rows="2" placeholder="Type here…"></textarea>
+  </div>
+
+  <div class="card">
+    <div class="label">2 — input type=text</div>
+    <input class="field" type="text" placeholder="Type here…" />
+  </div>
+
+  <div class="card">
+    <div class="label">3 — contenteditable div</div>
+    <div class="field" contenteditable="true" data-placeholder="Type here…"></div>
+  </div>
+
+  <div class="card">
+    <div class="label">4 — contenteditable plaintext-only</div>
+    <div class="field" contenteditable="plaintext-only" data-placeholder="Type here…"></div>
+  </div>
+</main>
+<script>
+  var el = document.getElementById('readout');
+  function read() {
+    var vv = window.visualViewport;
+    el.textContent =
+      'standalone=' + (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true) +
+      '  innerH=' + window.innerHeight +
+      (vv ? '  vvH=' + Math.round(vv.height) + '  vvTop=' + Math.round(vv.offsetTop) +
+            '  inset=' + Math.round(window.innerHeight - vv.height - vv.offsetTop) : '  no visualViewport');
+  }
+  read();
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', read);
+    window.visualViewport.addEventListener('scroll', read);
+  }
+  window.addEventListener('resize', read);
+  setInterval(read, 250);
+</script>
+</body>
+</html>
