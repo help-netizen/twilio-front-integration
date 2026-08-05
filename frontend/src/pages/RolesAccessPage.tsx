@@ -4,6 +4,7 @@ import { Loader2, ShieldCheck, Lock, Info } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Checkbox } from '../components/ui/checkbox';
+import { Switch } from '../components/ui/switch';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { useIsMobile } from '../hooks/useIsMobile';
 import {
@@ -50,6 +51,102 @@ function PermissionHint({ label, description }: { label: string; description: st
 
 function isLockedRole(role: RoleMatrixRole): boolean {
     return role.role_key === LOCKED_ROLE_KEY || role.is_locked;
+}
+
+// ── Roles tab — MOBILE: one role at a time, permissions listed vertically ────
+// A permission × role grid cannot fit a phone, and blocking the page ("use a
+// larger screen") left admins unable to grant access from the field. Fixing one
+// axis — the role — turns the matrix into a plain settings list.
+function RolesMatrixMobile({ matrix, onMatrixChange }: { matrix: RoleMatrix; onMatrixChange: (m: RoleMatrix) => void }) {
+    const { catalog, roles } = matrix;
+    const [roleKey, setRoleKey] = useState(roles[0]?.role_key ?? '');
+    const role = roles.find(r => r.role_key === roleKey) ?? roles[0];
+
+    const setCell = (key: string, value: boolean) => {
+        onMatrixChange({
+            ...matrix,
+            roles: matrix.roles.map(r =>
+                r.role_key === role.role_key ? { ...r, permissions: { ...r.permissions, [key]: value } } : r,
+            ),
+        });
+    };
+
+    const toggle = async (key: string, next: boolean) => {
+        const prev = role.permissions[key] ?? false;
+        setCell(key, next); // optimistic
+        try {
+            const { permissions } = await setRolePermission(role.role_key, key, next);
+            onMatrixChange({
+                ...matrix,
+                roles: matrix.roles.map(r => (r.role_key === role.role_key ? { ...r, permissions } : r)),
+            });
+        } catch (e: any) {
+            setCell(key, prev); // revert
+            toast.error(e?.message || 'Could not update permission');
+        }
+    };
+
+    if (!role) return null;
+    const locked = isLockedRole(role);
+
+    return (
+        <div className="space-y-4">
+            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                {roles.map(r => {
+                    const active = r.role_key === role.role_key;
+                    return (
+                        <button
+                            key={r.role_key}
+                            type="button"
+                            onClick={() => setRoleKey(r.role_key)}
+                            className="shrink-0 rounded-full px-3.5 py-2 text-sm font-medium"
+                            style={active
+                                ? { background: 'var(--blanc-accent)', color: '#fff' }
+                                : { background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            {r.display_name}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {locked && (
+                <p className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
+                    <Lock className="size-3.5 shrink-0" /> {role.display_name} always has full access.
+                </p>
+            )}
+
+            {catalog.map(group => (
+                <div key={group.category}>
+                    <p className="blanc-eyebrow">{group.category}</p>
+                    <div className="mt-1.5">
+                        {group.items.map(item => (
+                            <label
+                                key={item.key}
+                                className="flex items-center justify-between gap-3 py-3"
+                                style={{ borderTop: '1px solid var(--blanc-line)' }}
+                            >
+                                <span className="min-w-0 text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
+                                    {item.label}
+                                    {item.description && (
+                                        <span className="ml-1.5 align-middle">
+                                            <PermissionHint label={item.label} description={item.description} />
+                                        </span>
+                                    )}
+                                </span>
+                                <Switch
+                                    checked={locked ? true : (role.permissions[item.key] ?? false)}
+                                    disabled={locked}
+                                    onCheckedChange={v => toggle(item.key, v === true)}
+                                    aria-label={`${role.display_name}: ${item.label}`}
+                                />
+                            </label>
+                        ))}
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
 }
 
 // ── Roles tab — permission × role matrix ────────────────────────────────────
@@ -370,23 +467,12 @@ export default function RolesAccessPage() {
     const [err, setErr] = useState<string | null>(null);
 
     useEffect(() => {
-        if (isMobile) return;
         let alive = true;
         getRoleMatrix()
             .then(m => alive && setMatrix(m))
             .catch(e => alive && setErr(e?.message || 'Failed to load roles'));
         return () => { alive = false; };
-    }, [isMobile]);
-
-    if (isMobile) {
-        return (
-            <SettingsPageShell title="Roles & permissions">
-                <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                    The access grid is wide — please manage roles and permissions on a larger screen.
-                </p>
-            </SettingsPageShell>
-        );
-    }
+    }, []);
 
     return (
         <SettingsPageShell
@@ -408,7 +494,9 @@ export default function RolesAccessPage() {
                         <TabsTrigger value="people">People</TabsTrigger>
                     </TabsList>
                     <TabsContent value="roles" className="pt-4">
-                        <RolesMatrix matrix={matrix} onMatrixChange={setMatrix} />
+                        {isMobile
+                            ? <RolesMatrixMobile matrix={matrix} onMatrixChange={setMatrix} />
+                            : <RolesMatrix matrix={matrix} onMatrixChange={setMatrix} />}
                     </TabsContent>
                     <TabsContent value="people" className="pt-4">
                         <PeoplePanel matrix={matrix} />
