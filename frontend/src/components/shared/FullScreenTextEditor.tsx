@@ -134,12 +134,15 @@ export function FullScreenTextEditor({
                 the text scrolls above it. Mirrors the search-picker's bottom dock. Always
                 shown: onDone (Accept/Done) is required; Re-polish is added when provided. */}
             <div
-                className="flex shrink-0 items-center gap-2 border-t"
+                className="flex shrink-0 items-center gap-2"
                     style={{
-                        borderColor: 'var(--blanc-line)',
                         background: 'var(--blanc-surface-strong)',
                         padding: '10px 12px',
-                        paddingBottom: 'calc(env(safe-area-inset-bottom) + 10px)',
+                        // The home-indicator inset is only ours when the keyboard is DOWN.
+                        // With the keyboard up the layer already ends at its top edge, so
+                        // keeping the inset left a dead white strip under the buttons in the
+                        // installed PWA (standalone reports ~34px; a browser tab reports 0).
+                        paddingBottom: keyboardInset > 0 ? '10px' : 'calc(env(safe-area-inset-bottom) + 10px)',
                     }}
                 >
                     {leftActions && (
