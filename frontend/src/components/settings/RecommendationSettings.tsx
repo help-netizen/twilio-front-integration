@@ -12,7 +12,7 @@ import {
 
 // ─── REC-SETTINGS-001 — "Recommendation settings" block ───────────────────────
 // Per-company controls that feed the slot-recommendation engine. Self-contained:
-// loads settings on mount, edits the 5 parameters, saves all 5 at once. Two further
+// loads settings on mount, edits the parameters, saves them all at once. Two further
 // engine values (empty-day candidates, max day utilization) are fixed server-side
 // and intentionally NOT shown here. Matches the CompanyBaseAddress form idiom.
 
@@ -29,6 +29,7 @@ function toForm(s: SlotEngineSettings): FormState {
         min_buffer_minutes: String(s.min_buffer_minutes),
         horizon_days: String(s.horizon_days),
         recommendations_shown: String(s.recommendations_shown),
+        fallback_max_distance_miles: String(s.fallback_max_distance_miles),
     };
 }
 
@@ -158,6 +159,19 @@ export function RecommendationSettings() {
                     disabled={loading || saving}
                     onChange={v => set('recommendations_shown', v)}
                     range={RANGES.recommendations_shown}
+                />
+
+                {/* ZONE-STRICT-001 — the rescue used to be a hardcoded 25 miles that
+                    nobody could see or turn off, and it is what stretched a booking
+                    across the map when the normal rules found nothing. */}
+                <NumberField
+                    label="Fallback distance (mi)"
+                    helper="Only used when the normal rules find no slot at all: how far the nearest provider may be. Must exceed max distance. 0 turns it off — no slot is offered instead."
+                    value={form.fallback_max_distance_miles}
+                    error={errors.fallback_max_distance_miles}
+                    disabled={loading || saving}
+                    onChange={v => set('fallback_max_distance_miles', v)}
+                    range={RANGES.fallback_max_distance_miles}
                 />
             </div>
 

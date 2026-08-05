@@ -16,6 +16,10 @@ const DEFAULTS = {
     min_buffer_minutes: 0,
     horizon_days: 3,
     recommendations_shown: 3,
+    // ZONE-STRICT-001: how far the "nearest technician" rescue may reach when the
+    // normal rules produce nothing at all. Was hardcoded at 25 with no way to see
+    // or change it; 0 turns the rescue off entirely. Owner decision, 2026-08-05.
+    fallback_max_distance_miles: 25,
 };
 
 // Inclusive integer ranges, server-enforced (RS-R5).
@@ -25,6 +29,7 @@ const VALIDATION = {
     min_buffer_minutes: { min: 0, max: 240 },
     horizon_days: { min: 1, max: 14 },
     recommendations_shown: { min: 1, max: 10 },
+    fallback_max_distance_miles: { min: 0, max: 100 },
 };
 
 const KEYS = Object.keys(DEFAULTS);
@@ -72,6 +77,16 @@ function validate(input) {
             throw invalid(key, `${key} must be between ${range.min} and ${range.max}.`);
         }
         cleaned[key] = n;
+    }
+    // Cross-field: the engine only runs the rescue when its ceiling EXCEEDS the normal
+    // search radius, so a smaller-or-equal value does nothing at all. That used to be an
+    // invisible trap (any max_distance >= 25 silently killed the rescue); say it instead.
+    if (cleaned.fallback_max_distance_miles > 0
+        && cleaned.fallback_max_distance_miles <= cleaned.max_distance_miles) {
+        throw invalid(
+            'fallback_max_distance_miles',
+            `fallback_max_distance_miles must be 0 (off) or greater than max_distance_miles (${cleaned.max_distance_miles}).`
+        );
     }
     return cleaned;
 }
@@ -151,7 +166,10 @@ function buildConfigOverride(settings) {
             max_distance_from_existing_job_miles: settings.max_distance_miles,
             max_distance_from_base_if_empty_day_miles: settings.max_distance_miles, // ONE radius -> BOTH keys
             allow_empty_day_candidates: true, // fixed, always
-            fallback_max_distance_miles: 25, // fixed, always (SLOT-ENGINE-NEAREST-FALLBACK-001 Tier-2 ceiling)
+            // ZONE-STRICT-001: was a hardcoded 25 with no admin control. Now the
+            // company's own value; 0 disables the Tier-2 rescue outright (the engine
+            // requires this to exceed the normal radius before it will fire).
+            fallback_max_distance_miles: settings.fallback_max_distance_miles,
         },
         overlap: { max_timeframe_overlap_minutes: settings.overlap_minutes },
         feasibility: { min_required_slack_minutes: settings.min_buffer_minutes },

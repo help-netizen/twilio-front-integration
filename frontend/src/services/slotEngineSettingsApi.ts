@@ -12,6 +12,8 @@ export interface SlotEngineSettings {
     min_buffer_minutes: number;
     horizon_days: number;
     recommendations_shown: number;
+    /** ZONE-STRICT-001: how far the nearest-technician rescue may reach; 0 turns it off. */
+    fallback_max_distance_miles: number;
 }
 
 /** Server-side defaults, mirrored for first-paint / load-failure fallback. */
@@ -21,6 +23,7 @@ export const SLOT_ENGINE_SETTINGS_DEFAULTS: SlotEngineSettings = {
     min_buffer_minutes: 0,
     horizon_days: 3,
     recommendations_shown: 3,
+    fallback_max_distance_miles: 25,
 };
 
 /** Inclusive integer ranges, mirrored for client-side hints (server is authoritative). */
@@ -30,6 +33,7 @@ export const SLOT_ENGINE_SETTINGS_RANGES: Record<keyof SlotEngineSettings, { min
     min_buffer_minutes: { min: 0, max: 240 },
     horizon_days: { min: 1, max: 14 },
     recommendations_shown: { min: 1, max: 10 },
+    fallback_max_distance_miles: { min: 0, max: 100 },
 };
 
 /**

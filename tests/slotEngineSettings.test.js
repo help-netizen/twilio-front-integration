@@ -91,7 +91,7 @@ describe('buildConfigOverride', () => {
     it('TC-RS-002: custom set → exact override', () => {
         const o = svc.buildConfigOverride({
             max_distance_miles: 25, overlap_minutes: 30, min_buffer_minutes: 45,
-            horizon_days: 7, recommendations_shown: 5,
+            horizon_days: 7, recommendations_shown: 5, fallback_max_distance_miles: 25,
         });
         expect(o.geography.max_distance_from_existing_job_miles).toBe(25);
         expect(o.overlap.max_timeframe_overlap_minutes).toBe(30);
@@ -118,7 +118,7 @@ describe('buildConfigOverride', () => {
     it('TC-RS-005: two fixed values present regardless of input (no overlap/no buffer)', () => {
         const o = svc.buildConfigOverride({
             max_distance_miles: 1, overlap_minutes: 0, min_buffer_minutes: 0,
-            horizon_days: 1, recommendations_shown: 1,
+            horizon_days: 1, recommendations_shown: 1, fallback_max_distance_miles: 25,
         });
         expect(o.geography.allow_empty_day_candidates).toBe(true);
         expect(o.workload.max_day_utilization).toBe(0.95);
@@ -279,7 +279,7 @@ describe('buildConfigOverride — REC-SETTINGS-002 travel caps', () => {
             svc.buildConfigOverride(DEFAULTS),
             svc.buildConfigOverride({
                 max_distance_miles: 1, overlap_minutes: 0, min_buffer_minutes: 0,
-                horizon_days: 1, recommendations_shown: 1,
+                horizon_days: 1, recommendations_shown: 1, fallback_max_distance_miles: 25,
             }),
         ]) {
             expect(o.geography.allow_empty_day_candidates).toBe(true);
@@ -290,7 +290,7 @@ describe('buildConfigOverride — REC-SETTINGS-002 travel caps', () => {
     it('TC-RS2-013: geography / overlap / feasibility / planning / ranking mappings unchanged', () => {
         const o = svc.buildConfigOverride({
             max_distance_miles: 25, overlap_minutes: 30, min_buffer_minutes: 45,
-            horizon_days: 7, recommendations_shown: 5,
+            horizon_days: 7, recommendations_shown: 5, fallback_max_distance_miles: 25,
         });
         expect(o.geography.max_distance_from_existing_job_miles).toBe(25);
         expect(o.geography.max_distance_from_base_if_empty_day_miles).toBe(25);
@@ -323,7 +323,7 @@ describe('resolve / get', () => {
     });
 
     it('TC-RS-011: full row → its 5 values, integer-typed', async () => {
-        const stored = { max_distance_miles: 20, overlap_minutes: 30, min_buffer_minutes: 0, horizon_days: 10, recommendations_shown: 8 };
+        const stored = { max_distance_miles: 20, overlap_minutes: 30, min_buffer_minutes: 0, horizon_days: 10, recommendations_shown: 8, fallback_max_distance_miles: 25 };
         db.query.mockImplementation(async (sql) => /SELECT config/.test(String(sql)) ? configRow(stored) : { rows: [] });
         await expect(svc.resolve(COMPANY_A)).resolves.toEqual(stored);
     });
@@ -331,7 +331,7 @@ describe('resolve / get', () => {
     it('TC-RS-012: missing individual key → that key falls back to default', async () => {
         db.query.mockImplementation(async (sql) => /SELECT config/.test(String(sql)) ? configRow({ max_distance_miles: 20 }) : { rows: [] });
         await expect(svc.resolve(COMPANY_A)).resolves.toEqual({
-            max_distance_miles: 20, overlap_minutes: 0, min_buffer_minutes: 0, horizon_days: 3, recommendations_shown: 3,
+            max_distance_miles: 20, overlap_minutes: 0, min_buffer_minutes: 0, horizon_days: 3, recommendations_shown: 3, fallback_max_distance_miles: 25,
         });
     });
 
@@ -339,7 +339,7 @@ describe('resolve / get', () => {
         db.query.mockImplementation(async (sql) =>
             /SELECT config/.test(String(sql)) ? configRow({ max_distance_miles: 'abc', overlap_minutes: null, horizon_days: 7 }) : { rows: [] });
         await expect(svc.resolve(COMPANY_A)).resolves.toEqual({
-            max_distance_miles: 10, overlap_minutes: 0, min_buffer_minutes: 0, horizon_days: 7, recommendations_shown: 3,
+            max_distance_miles: 10, overlap_minutes: 0, min_buffer_minutes: 0, horizon_days: 7, recommendations_shown: 3, fallback_max_distance_miles: 25,
         });
     });
 
@@ -368,18 +368,44 @@ describe('validate', () => {
     };
 
     it('TC-RS-020: all-fields-valid baseline → coerced integers returned', () => {
-        const input = { max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5 };
+        const input = { max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5, fallback_max_distance_miles: 25 };
         expect(svc.validate(input)).toEqual(input);
     });
 
     it('TC-RS-021: numeric-string coercion "15" → 15', () => {
-        const input = { max_distance_miles: '15', overlap_minutes: '0', min_buffer_minutes: '30', horizon_days: '5', recommendations_shown: '5' };
-        expect(svc.validate(input)).toEqual({ max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5 });
+        const input = { max_distance_miles: '15', overlap_minutes: '0', min_buffer_minutes: '30', horizon_days: '5', recommendations_shown: '5', fallback_max_distance_miles: 25 };
+        expect(svc.validate(input)).toEqual({ max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5, fallback_max_distance_miles: 25 });
     });
 
     it('TC-RS-022: max_distance_miles 1 ok, 100 ok', () => {
         expect(svc.validate({ ...base, max_distance_miles: 1 }).max_distance_miles).toBe(1);
-        expect(svc.validate({ ...base, max_distance_miles: 100 }).max_distance_miles).toBe(100);
+        // At 100 the default 25-mile rescue is below the search radius and would do
+        // nothing, so it has to be switched off explicitly now (TC-RS-060).
+        expect(svc.validate({ ...base, max_distance_miles: 100, fallback_max_distance_miles: 0 })
+            .max_distance_miles).toBe(100);
+    });
+
+    // ZONE-STRICT-001 — the rescue radius became visible and controllable.
+    it('TC-RS-060: fallback 0 turns the nearest-technician rescue off', () => {
+        expect(svc.validate({ ...base, fallback_max_distance_miles: 0 })
+            .fallback_max_distance_miles).toBe(0);
+        expect(svc.buildConfigOverride({ ...base, fallback_max_distance_miles: 0 })
+            .geography.fallback_max_distance_miles).toBe(0);
+    });
+
+    it('TC-RS-061: the rescue radius reaches the engine instead of a hardcoded 25', () => {
+        const override = svc.buildConfigOverride({ ...base, max_distance_miles: 10, fallback_max_distance_miles: 15 });
+        expect(override.geography.fallback_max_distance_miles).toBe(15);
+    });
+
+    it('TC-RS-062: a rescue radius that could never fire is rejected, not silently ignored', () => {
+        // The engine only runs the rescue when it EXCEEDS the search radius. Equal or
+        // smaller used to be accepted and then quietly do nothing — the trap where any
+        // max_distance >= 25 killed the rescue without a word.
+        expectReject({ ...base, max_distance_miles: 20, fallback_max_distance_miles: 20 }, 'fallback_max_distance_miles');
+        expectReject({ ...base, max_distance_miles: 30, fallback_max_distance_miles: 25 }, 'fallback_max_distance_miles');
+        expect(svc.validate({ ...base, max_distance_miles: 20, fallback_max_distance_miles: 21 })
+            .fallback_max_distance_miles).toBe(21);
     });
 
     it('TC-RS-023: max_distance_miles 0 reject, 101 reject', () => {
@@ -409,10 +435,10 @@ describe('validate', () => {
     });
 
     it('TC-RS-027: recommendations_shown 1/10 ok, 0/11 reject', () => {
-        expect(svc.validate({ ...base, recommendations_shown: 1 }).recommendations_shown).toBe(1);
-        expect(svc.validate({ ...base, recommendations_shown: 10 }).recommendations_shown).toBe(10);
-        expectReject({ ...base, recommendations_shown: 0 }, 'recommendations_shown');
-        expectReject({ ...base, recommendations_shown: 11 }, 'recommendations_shown');
+        expect(svc.validate({ ...base, recommendations_shown: 1, fallback_max_distance_miles: 25 }).recommendations_shown).toBe(1);
+        expect(svc.validate({ ...base, recommendations_shown: 10, fallback_max_distance_miles: 25 }).recommendations_shown).toBe(10);
+        expectReject({ ...base, recommendations_shown: 0, fallback_max_distance_miles: 25 }, 'recommendations_shown');
+        expectReject({ ...base, recommendations_shown: 11, fallback_max_distance_miles: 25 }, 'recommendations_shown');
     });
 
     it('TC-RS-028: non-integer (float) rejected', () => {
@@ -436,6 +462,7 @@ describe('validate', () => {
     it('TC-RS-032: unknown keys stripped (not persisted)', () => {
         const out = svc.validate({ ...base, company_id: COMPANY_A, top_n: 99, evil: 1 });
         expect(Object.keys(out).sort()).toEqual([
+            'fallback_max_distance_miles',
             'horizon_days', 'max_distance_miles', 'min_buffer_minutes', 'overlap_minutes', 'recommendations_shown',
         ]);
         expect(out.company_id).toBeUndefined();
@@ -452,7 +479,7 @@ describe('validate', () => {
 
 describe('save (service)', () => {
     it('valid input → upsert called → returns the 5 saved keys', async () => {
-        const input = { max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5 };
+        const input = { max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5, fallback_max_distance_miles: 25 };
         db.query.mockImplementation(async (sql) => /INSERT INTO slot_engine_settings/.test(String(sql)) ? configRow(input) : { rows: [] });
         const out = await svc.save(COMPANY_A, input);
         expect(out).toEqual(input);
@@ -520,7 +547,7 @@ describe('routes GET / PUT /api/settings/slot-engine-settings', () => {
     });
 
     it('TC-RS-045: GET row → saved values', async () => {
-        const stored = { max_distance_miles: 20, overlap_minutes: 30, min_buffer_minutes: 0, horizon_days: 10, recommendations_shown: 8 };
+        const stored = { max_distance_miles: 20, overlap_minutes: 30, min_buffer_minutes: 0, horizon_days: 10, recommendations_shown: 8, fallback_max_distance_miles: 25 };
         db.query.mockImplementation(async (sql) => /SELECT config/.test(String(sql)) ? configRow(stored) : { rows: [] });
         const res = await request(appWith({ permissions: ['tenant.company.manage'] })).get('/');
         expect(res.status).toBe(200);
@@ -528,7 +555,7 @@ describe('routes GET / PUT /api/settings/slot-engine-settings', () => {
     });
 
     it('TC-RS-046: PUT valid → upsert + returns saved', async () => {
-        const body = { max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5 };
+        const body = { max_distance_miles: 15, overlap_minutes: 0, min_buffer_minutes: 30, horizon_days: 5, recommendations_shown: 5, fallback_max_distance_miles: 25 };
         db.query.mockImplementation(async (sql) => /INSERT INTO slot_engine_settings/.test(String(sql)) ? configRow(body) : { rows: [] });
         const res = await request(appWith({ permissions: ['tenant.company.manage'] })).put('/').send(body);
         expect(res.status).toBe(200);
