@@ -80,10 +80,63 @@ const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function savedCardChargeLabel(
     card: Pick<SavedPaymentMethod, 'brand' | 'last4'>,
-    due: number,
+    amount: number | null,
 ): string {
     const brand = card.brand.charAt(0).toUpperCase() + card.brand.slice(1);
-    return `Charge ${brand} •••• ${card.last4} — $${due.toFixed(2)}`;
+    const amountLabel = amount == null ? 'Enter a valid amount' : `$${amount.toFixed(2)}`;
+    return `Charge ${brand} •••• ${card.last4} — ${amountLabel}`;
+}
+
+export function savedCardConfirmationCopy(
+    card: Pick<SavedPaymentMethod, 'brand' | 'last4'>,
+    amount: number,
+): string {
+    const brand = card.brand.charAt(0).toUpperCase() + card.brand.slice(1);
+    return `Charge $${amount.toFixed(2)} to ${brand} •••• ${card.last4}?`;
+}
+
+function savedCardChargeAmount(rawAmount: string, due: number): number | null {
+    if (validateAmount(rawAmount)) return null;
+    const amount = Number(Number(rawAmount).toFixed(2));
+    const currentDue = Number(due);
+    if (!Number.isFinite(currentDue) || currentDue < MIN_AMOUNT) return null;
+    if (Math.round(amount * 100) > Math.round(currentDue * 100)) return null;
+    return amount;
+}
+
+interface SavedCardChargeButtonProps {
+    card: SavedPaymentMethod;
+    amount: string;
+    due: number;
+    disabled: boolean;
+    onCharge: (card: SavedPaymentMethod, amount: number) => void;
+}
+
+export function SavedCardChargeButton({
+    card,
+    amount,
+    due,
+    disabled,
+    onCharge,
+}: SavedCardChargeButtonProps) {
+    const chargeAmount = savedCardChargeAmount(amount, due);
+    const chargeDisabled = disabled || chargeAmount == null;
+    return (
+        <button
+            type="button"
+            disabled={chargeDisabled}
+            onClick={() => {
+                if (chargeDisabled || chargeAmount == null) return;
+                onCharge(card, chargeAmount);
+            }}
+            className="flex w-full items-center gap-3 rounded-2xl bg-[var(--blanc-accent)] px-4 py-4 text-left text-[var(--blanc-surface-strong)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+            <CreditCard className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1 text-sm font-semibold tabular-nums">
+                {savedCardChargeLabel(card, chargeAmount)}
+            </span>
+        </button>
+    );
 }
 
 type SendChannel = 'email' | 'sms';
@@ -115,6 +168,7 @@ export function CollectPaymentDialog({
     const [busy, setBusy] = useState<null | 'send' | 'copy' | 'charge'>(null);
     const [manualCardOpen, setManualCardOpen] = useState(false);
     const [confirmCard, setConfirmCard] = useState<SavedPaymentMethod | null>(null);
+    const [confirmAmount, setConfirmAmount] = useState(0);
     const [confirmDue, setConfirmDue] = useState(0);
     const [requestKey, setRequestKey] = useState('');
     const [savedCardError, setSavedCardError] = useState<string | null>(null);
@@ -224,10 +278,11 @@ export function CollectPaymentDialog({
         }
     };
 
-    const openSavedCardConfirm = (card: SavedPaymentMethod) => {
+    const openSavedCardConfirm = (card: SavedPaymentMethod, chargeAmount: number) => {
         const due = Number(savedCardsData?.due || 0);
-        if (due < MIN_AMOUNT) return;
+        if (savedCardChargeAmount(chargeAmount.toFixed(2), due) == null) return;
         setConfirmCard(card);
+        setConfirmAmount(chargeAmount);
         setConfirmDue(due);
         setRequestKey(crypto.randomUUID());
         setSavedCardError(null);
@@ -239,6 +294,7 @@ export function CollectPaymentDialog({
         try {
             const result = await jobStripeApi.chargeSavedPaymentMethod(jobId, {
                 savedCardId: confirmCard.id,
+                amount: confirmAmount,
                 expectedDue: confirmDue,
                 requestKey,
             });
@@ -264,7 +320,7 @@ export function CollectPaymentDialog({
                 setConfirmCard(null);
                 toast.error(error.message || 'The saved card could not be charged.');
                 if (error.canEnterCard) {
-                    setAmount(confirmDue.toFixed(2));
+                    setAmount(confirmAmount.toFixed(2));
                     setManualCardOpen(true);
                 } else {
                     setSavedCardError(error.message || 'The saved card could not be charged.');
@@ -293,31 +349,6 @@ export function CollectPaymentDialog({
 
                     <DialogBody className="md:px-8 md:py-7">
                         <div className="mx-auto w-full max-w-[740px] space-y-6">
-                            {primarySavedCard && Number(savedCardsData?.due || 0) >= MIN_AMOUNT && mode === 'choose' && (
-                                <div>
-                                    <button
-                                        type="button"
-                                        disabled={busy != null}
-                                        onClick={() => openSavedCardConfirm(primarySavedCard)}
-                                        className="flex w-full items-center gap-3 rounded-2xl bg-[var(--blanc-accent)] px-4 py-4 text-left text-[var(--blanc-surface-strong)] transition-opacity hover:opacity-90 disabled:opacity-50"
-                                    >
-                                        <CreditCard className="size-4 shrink-0" />
-                                        <span className="min-w-0 flex-1 text-sm font-semibold tabular-nums">
-                                            {savedCardChargeLabel(primarySavedCard, Number(savedCardsData?.due || 0))}
-                                        </span>
-                                    </button>
-                                </div>
-                            )}
-
-                            {savedCardError && mode === 'choose' && (
-                                <div className="space-y-3.5" role="alert">
-                                    <p className="text-sm text-[var(--blanc-danger)]">{savedCardError}</p>
-                                    <Button type="button" onClick={() => setManualCardOpen(true)}>
-                                        Enter a different card
-                                    </Button>
-                                </div>
-                            )}
-
                             {/* Amount step */}
                             <div className="space-y-3.5">
                                 <FloatingField
@@ -336,6 +367,25 @@ export function CollectPaymentDialog({
                                     <p className="text-sm text-red-600">{error}</p>
                                 )}
                             </div>
+
+                            {primarySavedCard && Number(savedCardsData?.due || 0) >= MIN_AMOUNT && mode === 'choose' && (
+                                <SavedCardChargeButton
+                                    card={primarySavedCard}
+                                    amount={amount}
+                                    due={Number(savedCardsData?.due || 0)}
+                                    disabled={busy != null}
+                                    onCharge={openSavedCardConfirm}
+                                />
+                            )}
+
+                            {savedCardError && mode === 'choose' && (
+                                <div className="space-y-3.5" role="alert">
+                                    <p className="text-sm text-[var(--blanc-danger)]">{savedCardError}</p>
+                                    <Button type="button" onClick={() => setManualCardOpen(true)}>
+                                        Enter a different card
+                                    </Button>
+                                </div>
+                            )}
 
                             {mode === 'choose' ? (
                                 /* Method chooser */
@@ -474,7 +524,7 @@ export function CollectPaymentDialog({
                         <DialogTitle>Charge saved card?</DialogTitle>
                         <DialogDescription>
                             {confirmCard
-                                ? `Charge $${confirmDue.toFixed(2)} to ${confirmCard.brand.charAt(0).toUpperCase() + confirmCard.brand.slice(1)} ending ${confirmCard.last4}.`
+                                ? `${savedCardConfirmationCopy(confirmCard, confirmAmount)} Current job balance: $${confirmDue.toFixed(2)}.`
                                 : 'Confirm the saved-card payment.'}
                         </DialogDescription>
                     </DialogHeader>
@@ -482,7 +532,7 @@ export function CollectPaymentDialog({
                         <Button variant="ghost" onClick={() => setConfirmCard(null)} disabled={busy === 'charge'}>Cancel</Button>
                         <Button onClick={chargeSavedCard} disabled={busy === 'charge'}>
                             {busy === 'charge' && <Loader2 className="size-4 animate-spin" />}
-                            Charge ${confirmDue.toFixed(2)}
+                            Charge ${confirmAmount.toFixed(2)}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

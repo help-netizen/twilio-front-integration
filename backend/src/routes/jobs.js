@@ -1305,6 +1305,7 @@ router.post('/:id/charge-saved-payment-method', requirePermission('payments.coll
             req.params.id,
             {
                 savedCardId: req.body?.saved_card_id,
+                amount: req.body?.amount,
                 expectedDue: req.body?.expected_due,
                 requestKey: req.body?.request_key,
             },

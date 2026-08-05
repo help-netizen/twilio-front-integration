@@ -21,6 +21,22 @@ afterAll(() => {
 });
 
 describe('Stripe Connect PaymentIntent provider split', () => {
+    it('converts a $1.00 saved-card charge to a 100-cent PaymentIntent', async () => {
+        await provider.createOffSessionPaymentIntent('acct_merchant', {
+            amount: 1,
+            customerId: 'cus_1',
+            paymentMethodId: 'pm_1',
+        }, { idempotencyKey: 'saved-card-key' });
+
+        const [url, options] = global.fetch.mock.calls[0];
+        const body = new URLSearchParams(options.body);
+        expect(url).toBe('https://api.stripe.com/v1/payment_intents');
+        expect(body.get('amount')).toBe('100');
+        expect(body.get('customer')).toBe('cus_1');
+        expect(body.get('payment_method')).toBe('pm_1');
+        expect(options.headers['Idempotency-Key']).toBe('saved-card-key');
+    });
+
     it('CTRL-PUBLIC-AUTOMATIC: public createPaymentIntent remains automatic-only', async () => {
         await provider.createPaymentIntent('acct_public', {
             amount: 95,

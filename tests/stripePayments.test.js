@@ -1146,19 +1146,39 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
         savedCardsQueries.markCardUsed.mockResolvedValue(savedCard);
     }
 
-    it('charges the server-computed due and records the current standalone Stripe ledger shape', async () => {
+    it('charges the entered $1.00 against a $280 due and records exactly $1.00 in the ledger', async () => {
         primeCharge();
+        jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 280 }]);
+        q.insertSession.mockImplementation(async (companyId, data) => ({
+            id: 71,
+            company_id: companyId,
+            ...data,
+        }));
+        provider.createOffSessionPaymentIntent.mockResolvedValue({
+            id: 'pi_saved_71',
+            status: 'succeeded',
+            amount: 100,
+            amount_received: 100,
+            currency: 'usd',
+            latest_charge: 'ch_saved_71',
+        });
 
         const result = await svc.chargeJobSavedCard(COMPANY, actor, 7, {
             savedCardId: 41,
-            expectedDue: 95,
+            amount: 1,
+            expectedDue: 280,
             requestKey,
         });
 
+        expect(q.insertSession).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({ amount: 1 }),
+            mockTransactionClient
+        );
         expect(provider.createOffSessionPaymentIntent).toHaveBeenCalledWith(
             ACCT,
             expect.objectContaining({
-                amount: 95,
+                amount: 1,
                 customerId: 'cus_contact_5',
                 paymentMethodId: 'pm_saved_41',
                 metadata: expect.objectContaining({ surface: 'saved_card' }),
@@ -1171,7 +1191,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
                 transaction_type: 'payment',
                 payment_method: 'credit_card',
                 status: 'completed',
-                amount: 95,
+                amount: 1,
                 invoice_id: null,
                 contact_id: 5,
                 job_id: 7,
@@ -1187,7 +1207,81 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
             41,
             mockTransactionClient
         );
-        expect(result).toMatchObject({ status: 'succeeded', amount: 95 });
+        expect(result).toMatchObject({ status: 'succeeded', amount: 1 });
+    });
+
+    it('rejects an amount above the current due before any Stripe or ledger mutation', async () => {
+        primeCharge();
+
+        await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
+            savedCardId: 41,
+            amount: 95.01,
+            expectedDue: 95,
+            requestKey,
+        })).rejects.toMatchObject({
+            code: 'AMOUNT_EXCEEDS_DUE',
+            httpStatus: 400,
+            details: { current_due: 95, can_enter_card: true },
+        });
+        expect(provider.retrievePaymentMethod).not.toHaveBeenCalled();
+        expect(provider.createOffSessionPaymentIntent).not.toHaveBeenCalled();
+        expect(q.insertSession).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, 0.49])(
+        'rejects missing or below-minimum amount %p before job or Stripe access',
+        async amount => {
+            primeCharge();
+
+            await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
+                savedCardId: 41,
+                amount,
+                expectedDue: 95,
+                requestKey,
+            })).rejects.toMatchObject({ code: 'INVALID_AMOUNT', httpStatus: 400 });
+            expect(mockGetJobById).not.toHaveBeenCalled();
+            expect(provider.retrievePaymentMethod).not.toHaveBeenCalled();
+            expect(provider.createOffSessionPaymentIntent).not.toHaveBeenCalled();
+            expect(q.insertSession).not.toHaveBeenCalled();
+        },
+    );
+
+    it('retries an open partial-payment request without creating a second session', async () => {
+        primeCharge();
+        jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 280 }]);
+        q.getSessionByRequestKey.mockResolvedValue({
+            id: 71,
+            job_id: 7,
+            contact_id: 5,
+            created_by: actor.id,
+            surface: 'saved_card',
+            amount: 1,
+            currency: 'USD',
+            status: 'open',
+            metadata: { saved_card_id: 41 },
+        });
+        provider.createOffSessionPaymentIntent.mockResolvedValue({
+            id: 'pi_saved_71',
+            status: 'succeeded',
+            amount: 100,
+            amount_received: 100,
+            currency: 'usd',
+            latest_charge: 'ch_saved_71',
+        });
+
+        await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
+            savedCardId: 41,
+            amount: 1,
+            expectedDue: 280,
+            requestKey,
+        })).resolves.toMatchObject({ status: 'succeeded', amount: 1 });
+        expect(q.insertSession).not.toHaveBeenCalled();
+        expect(provider.createOffSessionPaymentIntent).toHaveBeenCalledWith(
+            ACCT,
+            expect.objectContaining({ amount: 1 }),
+            { idempotencyKey: 'saved-card-session-71' }
+        );
     });
 
     it('double-submit with the same completed request key returns the existing ledger row without Stripe', async () => {
@@ -1205,6 +1299,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
 
         await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
             savedCardId: 41,
+            amount: 95,
             expectedDue: 95,
             requestKey,
         })).resolves.toEqual({ status: 'succeeded', amount: 95, payment });
@@ -1219,6 +1314,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
 
         await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
             savedCardId: 41,
+            amount: 80,
             expectedDue: 95,
             requestKey,
         })).rejects.toMatchObject({
@@ -1236,6 +1332,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
 
         await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
             savedCardId: 999,
+            amount: 95,
             expectedDue: 95,
             requestKey,
         })).rejects.toMatchObject({
@@ -1266,6 +1363,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
 
         await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
             savedCardId: 41,
+            amount: 95,
             expectedDue: 95,
             requestKey,
         })).rejects.toMatchObject({

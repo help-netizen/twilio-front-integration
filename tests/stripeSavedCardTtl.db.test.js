@@ -151,6 +151,7 @@ describe('CARD-ON-FILE-001 real PostgreSQL TTL and tenant controls', () => {
     test('TTL-SABOTAGE: charge rejects a >14-day card from saved_at before any Stripe call', async () => {
         await expect(service.chargeJobSavedCard(COMPANY_A, ACTOR, 7001, {
             savedCardId: Number(expiredCardA.id),
+            amount: 95,
             expectedDue: 95,
             requestKey: REQUEST_KEY,
         })).rejects.toMatchObject({
@@ -181,6 +182,7 @@ describe('CARD-ON-FILE-001 real PostgreSQL TTL and tenant controls', () => {
 
         await expect(service.chargeJobSavedCard(COMPANY_A, ACTOR, 7001, {
             savedCardId: Number(freshCardB.id),
+            amount: 95,
             expectedDue: 95,
             requestKey: randomUUID(),
         })).rejects.toMatchObject({ code: 'CARD_EXPIRED', httpStatus: 409 });

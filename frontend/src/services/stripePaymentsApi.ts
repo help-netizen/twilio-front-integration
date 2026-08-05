@@ -242,13 +242,14 @@ export const jobStripeApi = {
     },
     chargeSavedPaymentMethod: async (
         jobId: number | string,
-        body: { savedCardId: number; expectedDue: number; requestKey: string },
+        body: { savedCardId: number; amount: number; expectedDue: number; requestKey: string },
     ): Promise<{ status: 'succeeded'; amount: number }> => {
         const res = await authedFetch(`/api/jobs/${jobId}/charge-saved-payment-method`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 saved_card_id: body.savedCardId,
+                amount: body.amount,
                 expected_due: body.expectedDue,
                 request_key: body.requestKey,
             }),

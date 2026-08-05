@@ -1106,15 +1106,20 @@ async function removeContactSavedCard(companyId, actor, contactId, cardId) {
     return { removed: true };
 }
 
-function validateSavedCardChargeInput({ expectedDue, requestKey }) {
+function validateSavedCardChargeInput({ amount, expectedDue, requestKey }) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(requestKey || ''))) {
         throw new StripePaymentsError('INVALID_REQUEST_KEY', 'A valid request key is required', 400);
     }
-    const amount = Number(expectedDue);
-    if (!Number.isFinite(amount)) {
+    const chargeAmount = assertAdhocAmount(amount);
+    const displayedDue = Number(expectedDue);
+    if (!Number.isFinite(displayedDue)) {
         throw new StripePaymentsError('INVALID_AMOUNT', 'Expected due is required', 400);
     }
-    return { expectedDue: Number(amount.toFixed(2)), requestKey: String(requestKey) };
+    return {
+        amount: chargeAmount,
+        expectedDue: Number(displayedDue.toFixed(2)),
+        requestKey: String(requestKey),
+    };
 }
 
 function savedCardFailure(error) {
@@ -1140,7 +1145,7 @@ function savedCardFailure(error) {
 }
 
 async function chargeJobSavedCard(companyId, actor, jobId, input, access = null) {
-    const { expectedDue, requestKey } = validateSavedCardChargeInput(input);
+    const { amount, expectedDue, requestKey } = validateSavedCardChargeInput(input);
     const job = await getScopedJob(companyId, jobId, access);
     if (!job.contact_id) {
         throw new StripePaymentsError('NO_CONTACT', 'This job has no contact with a saved card', 409);
@@ -1182,6 +1187,14 @@ async function chargeJobSavedCard(companyId, actor, jobId, input, access = null)
             { current_due: due }
         );
     }
+    if (Math.round(amount * 100) > Math.round(due * 100)) {
+        throw new StripePaymentsError(
+            'AMOUNT_EXCEEDS_DUE',
+            'Saved-card charge amount cannot exceed the current job balance. Enter the card manually to charge more.',
+            400,
+            { current_due: due, can_enter_card: true }
+        );
+    }
 
     const cardId = Number(input.savedCardId);
     if (!Number.isInteger(cardId) || cardId <= 0) {
@@ -1192,16 +1205,11 @@ async function chargeJobSavedCard(companyId, actor, jobId, input, access = null)
         if (Number(priorMetadata.saved_card_id) !== cardId) {
             throw new StripePaymentsError('IDEMPOTENCY_CONFLICT', 'Request key was already used', 409);
         }
-        if (Math.round(Number(prior.amount) * 100) !== Math.round(due * 100)) {
-            await q.updateSession(companyId, prior.id, {
-                status: 'failed',
-                failure_reason: 'Job due changed before charge completion',
-            });
+        if (Math.round(Number(prior.amount) * 100) !== Math.round(amount * 100)) {
             throw new StripePaymentsError(
-                'DUE_CHANGED',
-                'The job balance changed. Confirm the new amount.',
-                409,
-                { current_due: due }
+                'IDEMPOTENCY_CONFLICT',
+                'Request key was already used',
+                409
             );
         }
     }
@@ -1261,7 +1269,7 @@ async function chargeJobSavedCard(companyId, actor, jobId, input, access = null)
                 contact_id: job.contact_id,
                 created_by: actor?.id || null,
                 surface: 'saved_card',
-                amount: due,
+                amount,
                 currency: 'USD',
                 status: 'open',
                 stripe_account_id: account.stripe_account_id,

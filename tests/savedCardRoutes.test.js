@@ -116,6 +116,7 @@ describe('job saved-card and manual-create route controls', () => {
         mockStripeService.chargeJobSavedCard.mockResolvedValue({ status: 'succeeded', amount: 95 });
         const body = {
             saved_card_id: 41,
+            amount: 1,
             expected_due: 95,
             request_key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         };
@@ -131,6 +132,7 @@ describe('job saved-card and manual-create route controls', () => {
             '7',
             {
                 savedCardId: 41,
+                amount: 1,
                 expectedDue: 95,
                 requestKey: body.request_key,
             },
