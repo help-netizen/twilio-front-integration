@@ -199,15 +199,27 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                     {phone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Phone</span>
-                            <MaskedCallLine entityType="job" entityId={job.id}>
-                                <div className="flex items-center gap-2">
-                                    <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
-                                        {formatPhone(phone)}
-                                    </a>
-                                    <ClickToCallButton phone={phone} contactName={customerName || undefined} />
-                                    <OpenTimelineButton phone={phone} contactId={contactInfo?.id} />
-                                </div>
-                            </MaskedCallLine>
+                            {/* Masking replaces the number AND the call action — a masked
+                                call is the only dial a masked viewer gets. Messaging is not a
+                                masking concern (Pulse redacts on its own and sends to an opaque
+                                target), so Text lives OUTSIDE the wrapper: it used to be
+                                swallowed together with the number, leaving field techs with no
+                                way to text the customer from the job. */}
+                            <div className="flex items-center gap-2">
+                                <MaskedCallLine entityType="job" entityId={job.id} maskedLabel="Call">
+                                    <div className="flex items-center gap-2">
+                                        <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                            {formatPhone(phone)}
+                                        </a>
+                                        <ClickToCallButton phone={phone} contactName={customerName || undefined} />
+                                    </div>
+                                </MaskedCallLine>
+                                <OpenTimelineButton
+                                    phone={phone}
+                                    contactId={contactInfo?.id}
+                                    contactName={customerName || undefined}
+                                />
+                            </div>
                         </div>
                     )}
                     {email && (
