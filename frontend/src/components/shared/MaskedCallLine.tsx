@@ -29,7 +29,8 @@ interface MaskedDial {
 
 interface MaskedCallLineProps {
     entityType: 'job' | 'contact';
-    entityId: string | number;
+    /** Null when the entity has no contact yet (a fresh lead) — nothing to mask, children show. */
+    entityId: string | number | null | undefined;
     /** The normal real-number row, shown when masking does not apply to this viewer. */
     children: ReactNode;
     /** Digits-free label for compact actions such as the Pulse contact bar. */

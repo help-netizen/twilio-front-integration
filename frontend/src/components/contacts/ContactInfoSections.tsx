@@ -70,26 +70,41 @@ export function ContactInfoSections({ contact, onAddressesChanged }: ContactInfo
                     {phone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Phone</span>
-                            <MaskedCallLine entityType="contact" entityId={contact.id}>
-                                <div className="flex items-center gap-2">
-                                    <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
-                                        {formatPhone(phone)}
-                                    </a>
-                                    <ClickToCallButton phone={phone} contactName={name || undefined} />
-                                    <OpenTimelineButton phone={phone} contactId={contact.id} />
-                                </div>
-                            </MaskedCallLine>
+                            {/* Text stays OUTSIDE the masking wrapper — see JobInfoSections:
+                                masking replaces the number and the call, but messaging goes
+                                through Pulse, which redacts on its own. Inside, it vanished
+                                with the number and left no way to message the customer. */}
+                            <div className="flex items-center gap-2">
+                                <MaskedCallLine entityType="contact" entityId={contact.id} maskedLabel="Call">
+                                    <div className="flex items-center gap-2">
+                                        <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                            {formatPhone(phone)}
+                                        </a>
+                                        <ClickToCallButton phone={phone} contactName={name || undefined} />
+                                    </div>
+                                </MaskedCallLine>
+                                <OpenTimelineButton phone={phone} contactId={contact.id} contactName={name || undefined} />
+                            </div>
                         </div>
                     )}
                     {secondaryPhone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>{contact.secondary_phone_name || 'Phone 2'}</span>
+                            {/* Masking allocates ONE route per contact and it bridges to their
+                                primary line, so there is no masked way to reach this number.
+                                A masked viewer therefore gets the same masked "Call" here rather
+                                than the raw second number — which used to sit here in the clear,
+                                one row under a number masking had just hidden. */}
                             <div className="flex items-center gap-2">
-                                <a href={`tel:${secondaryPhone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
-                                    {formatPhone(secondaryPhone)}
-                                </a>
-                                <ClickToCallButton phone={secondaryPhone} contactName={name || undefined} />
-                                <OpenTimelineButton phone={secondaryPhone} contactId={contact.id} />
+                                <MaskedCallLine entityType="contact" entityId={contact.id} maskedLabel="Call">
+                                    <div className="flex items-center gap-2">
+                                        <a href={`tel:${secondaryPhone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                            {formatPhone(secondaryPhone)}
+                                        </a>
+                                        <ClickToCallButton phone={secondaryPhone} contactName={name || undefined} />
+                                    </div>
+                                </MaskedCallLine>
+                                <OpenTimelineButton phone={secondaryPhone} contactId={contact.id} contactName={name || undefined} />
                             </div>
                         </div>
                     )}

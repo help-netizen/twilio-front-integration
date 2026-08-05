@@ -2,6 +2,7 @@ import { ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { Lead } from '../../types/lead';
 import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
+import { MaskedCallLine } from '../shared/MaskedCallLine';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 
@@ -85,12 +86,22 @@ export function LeadInfoSections({ lead }: LeadInfoSectionsProps) {
                     {phone && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Phone</span>
+                            {/* The lead card had NO masking at all — a masked viewer read the
+                                customer's number here in the clear. A lead that already has a
+                                contact reuses that contact's masked route (masking is allocated
+                                per contact); a lead with no contact yet has no masked route to
+                                offer, so it stays as it was. Text is outside the wrapper, same
+                                as the job and contact cards. */}
                             <div className="flex items-center gap-2">
-                                <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
-                                    {formatPhone(phone)}
-                                </a>
-                                <ClickToCallButton phone={phone} contactName={name || undefined} />
-                                <OpenTimelineButton phone={phone} contactId={lead.ContactId ?? undefined} />
+                                <MaskedCallLine entityType="contact" entityId={lead.ContactId ?? null} maskedLabel="Call">
+                                    <div className="flex items-center gap-2">
+                                        <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                            {formatPhone(phone)}
+                                        </a>
+                                        <ClickToCallButton phone={phone} contactName={name || undefined} />
+                                    </div>
+                                </MaskedCallLine>
+                                <OpenTimelineButton phone={phone} contactId={lead.ContactId ?? undefined} contactName={name || undefined} />
                             </div>
                         </div>
                     )}
