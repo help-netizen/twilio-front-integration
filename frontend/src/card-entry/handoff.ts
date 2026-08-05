@@ -5,8 +5,12 @@ import {
     type CardframeInitMessage,
 } from './protocol';
 
-const HANDOFF_TTL_MS = 10 * 60 * 1000;
-const RESULT_TTL_MS = 30 * 60 * 1000;
+// Both hand-offs are consumed by the very next page load — about a second. The windows
+// below are pure slack for a slow device, deliberately kept short: a shared store is
+// only as safe as the time something sits in it, and an ABANDONED flow (the user never
+// opens the card page) is the one case where an entry waits for its expiry.
+const HANDOFF_TTL_MS = 5 * 60 * 1000;
+const RESULT_TTL_MS = 10 * 60 * 1000;
 
 interface StoredCardEntryHandoff {
     version: 1;
@@ -214,12 +218,22 @@ export function consumeCardEntryHandoff(
     const params = new URLSearchParams(host.location.search);
     const key = params.get('handoff');
     const returnTo = safeReturnTo(params.get('return_to'), host.location.origin);
-    if (!key) return { handoff: null, returnTo, requested: false };
+    if (!key) {
+        pruneExpired(host, now);
+        return { handoff: null, returnTo, requested: false };
+    }
     if (!key.startsWith('cardframe:')) {
+        pruneExpired(host, now);
         return { handoff: null, returnTo, requested: true, failure: 'bad-key' };
     }
 
+    // Take OUR entry first, then sweep: pruning ahead of the read would delete an expired
+    // hand-off before we could see it and report it as merely missing — two different
+    // diagnoses collapsing into one. Sweeping on the way in as well as on the way out means
+    // an abandoned flow is cleared by the next card page anyone opens, not only by the next
+    // payment anyone starts.
     const raw = takeFromStores(host, key);
+    pruneExpired(host, now);
     if (!raw) return { handoff: null, returnTo, requested: true, failure: 'not-found' };
 
     try {
@@ -294,7 +308,10 @@ export function consumeCardEntrySameWindowResult(
 ): CardEntrySameWindowResult | null {
     const params = new URLSearchParams(host.location.search);
     const key = params.get('cardResult');
-    if (!key) return null;
+    if (!key) {
+        pruneExpired(host, now);
+        return null;
+    }
 
     params.delete('cardResult');
     const search = params.toString();
@@ -305,6 +322,7 @@ export function consumeCardEntrySameWindowResult(
     );
     if (!key.startsWith('cardframe:')) return null;
     const raw = takeFromStores(host, key);
+    pruneExpired(host, now);
     if (!raw) return null;
 
     try {
