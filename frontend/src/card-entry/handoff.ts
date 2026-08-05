@@ -92,10 +92,85 @@ function randomStorageKey(crypto: RandomSource): string {
     return `cardframe:${crypto.randomUUID()}`;
 }
 
+/**
+ * CARDFRAME-HANDOFF-002 — the hand-off must survive a change of BROWSING CONTEXT.
+ *
+ * It originally lived in sessionStorage only, which is scoped to one tab: it works for
+ * the same-window navigation and for nothing else. But this flow deliberately spans
+ * contexts — an installed PWA opens the card page as a separate document, a blocked
+ * pop-up falls back to the same window, an opened pop-up is a second context — and in
+ * every one of those the receiving document read an empty sessionStorage. That is both
+ * reported symptoms: the card details "not saving" (the RESULT was lost on the way back)
+ * and now "payment session expired" (the INIT was lost on the way there).
+ *
+ * localStorage is shared across every context of the origin, so it carries the hand-off
+ * whichever way the browser decides to open the page. It is written alongside
+ * sessionStorage and read as the fallback; entries are deleted the moment they are read
+ * and expire on their own, so nothing lingers. Secrets stay out of the URL either way.
+ */
+type HandoffStores = { sessionStorage?: Storage | null; localStorage?: Storage | null };
+
+function eachStore(host: HandoffStores): Storage[] {
+    const stores: Storage[] = [];
+    // sessionStorage first: same-tab is the common path and the shortest-lived store.
+    for (const store of [host.sessionStorage, host.localStorage]) {
+        if (store) stores.push(store);
+    }
+    return stores;
+}
+
+function writeToStores(host: HandoffStores, key: string, value: string): void {
+    for (const store of eachStore(host)) {
+        try {
+            store.setItem(key, value);
+        } catch {
+            /* private mode / quota — the other store may still take it */
+        }
+    }
+}
+
+function takeFromStores(host: HandoffStores, key: string): string | null {
+    let found: string | null = null;
+    for (const store of eachStore(host)) {
+        try {
+            found = found ?? store.getItem(key);
+            store.removeItem(key);
+        } catch {
+            /* unreadable store — try the next one */
+        }
+    }
+    return found;
+}
+
+/** Drop hand-offs the receiving page never picked up, so localStorage can't accumulate. */
+function pruneExpired(host: HandoffStores, now: number): void {
+    const store = host.localStorage;
+    if (!store) return;
+    try {
+        const stale: string[] = [];
+        for (let i = 0; i < store.length; i++) {
+            const key = store.key(i);
+            if (!key || !key.startsWith('cardframe:')) continue;
+            try {
+                const parsed: unknown = JSON.parse(store.getItem(key) || 'null');
+                if (!isRecord(parsed) || typeof parsed.expiresAt !== 'number' || parsed.expiresAt < now) {
+                    stale.push(key);
+                }
+            } catch {
+                stale.push(key);
+            }
+        }
+        stale.forEach(key => store.removeItem(key));
+    } catch {
+        /* best effort */
+    }
+}
+
 export function beginCardEntrySameWindow(
     host: {
         location: Pick<SameWindowLocation, 'origin' | 'pathname' | 'search' | 'hash' | 'assign'>;
-        sessionStorage: Storage;
+        sessionStorage?: Storage | null;
+        localStorage?: Storage | null;
         crypto: RandomSource;
     },
     payload: {
@@ -114,29 +189,38 @@ export function beginCardEntrySameWindow(
         initMessage: payload.initMessage,
         ...(payload.resumeContext === undefined ? {} : { resumeContext: payload.resumeContext }),
     };
-    host.sessionStorage.setItem(key, JSON.stringify(stored));
+    pruneExpired(host, now);
+    writeToStores(host, key, JSON.stringify(stored));
     const params = new URLSearchParams({ handoff: key, return_to: returnTo });
     host.location.assign(`/card-entry.html?${params.toString()}`);
 }
 
+/** Why a requested hand-off could not be restored — surfaced so a failure is diagnosable. */
+export type CardEntryHandoffFailure = 'bad-key' | 'not-found' | 'expired' | 'bad-payload';
+
 export function consumeCardEntryHandoff(
     host: {
         location: Pick<SameWindowLocation, 'origin' | 'search'>;
-        sessionStorage: Storage;
+        sessionStorage?: Storage | null;
+        localStorage?: Storage | null;
     },
     now = Date.now(),
-): { handoff: CardEntryHandoff | null; returnTo: string; requested: boolean } {
+): {
+    handoff: CardEntryHandoff | null;
+    returnTo: string;
+    requested: boolean;
+    failure?: CardEntryHandoffFailure;
+} {
     const params = new URLSearchParams(host.location.search);
     const key = params.get('handoff');
     const returnTo = safeReturnTo(params.get('return_to'), host.location.origin);
     if (!key) return { handoff: null, returnTo, requested: false };
     if (!key.startsWith('cardframe:')) {
-        return { handoff: null, returnTo, requested: true };
+        return { handoff: null, returnTo, requested: true, failure: 'bad-key' };
     }
 
-    const raw = host.sessionStorage.getItem(key);
-    host.sessionStorage.removeItem(key);
-    if (!raw) return { handoff: null, returnTo, requested: true };
+    const raw = takeFromStores(host, key);
+    if (!raw) return { handoff: null, returnTo, requested: true, failure: 'not-found' };
 
     try {
         const stored: unknown = JSON.parse(raw);
@@ -144,11 +228,13 @@ export function consumeCardEntryHandoff(
             !isRecord(stored)
             || stored.version !== 1
             || typeof stored.expiresAt !== 'number'
-            || stored.expiresAt < now
             || !isPositiveInteger(stored.sessionId)
             || !isCardframeInitMessage(stored.initMessage)
         ) {
-            return { handoff: null, returnTo, requested: true };
+            return { handoff: null, returnTo, requested: true, failure: 'bad-payload' };
+        }
+        if (stored.expiresAt < now) {
+            return { handoff: null, returnTo, requested: true, failure: 'expired' };
         }
         return {
             handoff: {
@@ -163,14 +249,15 @@ export function consumeCardEntryHandoff(
             requested: true,
         };
     } catch {
-        return { handoff: null, returnTo, requested: true };
+        return { handoff: null, returnTo, requested: true, failure: 'bad-payload' };
     }
 }
 
 export function completeCardEntrySameWindow(
     host: {
         location: Pick<SameWindowLocation, 'origin' | 'replace'>;
-        sessionStorage: Storage;
+        sessionStorage?: Storage | null;
+        localStorage?: Storage | null;
         crypto: RandomSource;
     },
     handoff: CardEntryHandoff,
@@ -187,7 +274,7 @@ export function completeCardEntrySameWindow(
             ? {}
             : { resumeContext: handoff.resumeContext }),
     };
-    host.sessionStorage.setItem(key, JSON.stringify(stored));
+    writeToStores(host, key, JSON.stringify(stored));
     host.location.replace(withQueryParam(
         handoff.returnTo,
         'cardResult',
@@ -199,7 +286,8 @@ export function completeCardEntrySameWindow(
 export function consumeCardEntrySameWindowResult(
     host: {
         location: Pick<SameWindowLocation, 'pathname' | 'search' | 'hash'>;
-        sessionStorage: Storage;
+        sessionStorage?: Storage | null;
+        localStorage?: Storage | null;
         history: SameWindowHistory;
     },
     now = Date.now(),
@@ -216,8 +304,7 @@ export function consumeCardEntrySameWindowResult(
         `${host.location.pathname}${search ? `?${search}` : ''}${host.location.hash}`,
     );
     if (!key.startsWith('cardframe:')) return null;
-    const raw = host.sessionStorage.getItem(key);
-    host.sessionStorage.removeItem(key);
+    const raw = takeFromStores(host, key);
     if (!raw) return null;
 
     try {

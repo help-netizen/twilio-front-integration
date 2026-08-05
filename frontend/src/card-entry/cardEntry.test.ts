@@ -11,6 +11,7 @@ import {
     resolveExpectedAppOrigin,
 } from './protocol';
 import {
+    beginCardEntrySameWindow,
     completeCardEntrySameWindow,
     consumeCardEntryHandoff,
     consumeCardEntrySameWindowResult,
@@ -217,6 +218,7 @@ describe('same-window card-entry handoff', () => {
             handoff: null,
             returnTo: '/jobs/1617',
             requested: true,
+            failure: 'expired',
         });
         expect(storage.getItem(key)).toBeNull();
     });
@@ -270,6 +272,125 @@ describe('same-window card-entry handoff', () => {
         expect(crmLocation.pathname).toBe('/jobs/1617');
         expect(crmLocation.search).toBe('');
         expect(consumeCardEntrySameWindowResult(crmWindow)).toBeNull();
+    });
+});
+
+describe('card-entry hand-off across browsing contexts', () => {
+    // The regression these cover: the hand-off used to live in sessionStorage only, which
+    // is per-TAB. Every path in this flow that opens the card page as a separate context —
+    // the installed PWA, a pop-up, a new tab — landed on an empty store, which is what the
+    // field saw as "payment session expired" on the way in and "the card didn't save" on
+    // the way back. The old tests handed BOTH windows the same storage object, so they
+    // could never catch it; here each context gets its own sessionStorage and shares only
+    // localStorage, exactly like a real browser.
+    it('restores the init hand-off in a context with its own sessionStorage', () => {
+        const sharedLocal = memoryStorage();
+        const assign = vi.fn();
+        const crmWindow = {
+            location: {
+                origin: 'https://app.albusto.test',
+                pathname: '/jobs/1617',
+                search: '',
+                hash: '',
+                assign,
+            },
+            sessionStorage: memoryStorage(),
+            localStorage: sharedLocal,
+            crypto: { randomUUID: () => 'handoff-key' },
+        };
+
+        beginCardEntrySameWindow(crmWindow, {
+            sessionId: 11,
+            initMessage: {
+                kind: 'cardframe:init',
+                mode: 'collect',
+                accountId: 'acct_11',
+                amount: 95,
+            },
+        });
+
+        const assignedUrl = String(assign.mock.calls[0]?.[0]);
+        expect(assignedUrl).not.toContain('acct_11'); // secrets still never ride the URL
+
+        const cardWindow = {
+            location: {
+                origin: 'https://app.albusto.test',
+                search: new URL(assignedUrl, 'https://app.albusto.test').search,
+            },
+            sessionStorage: memoryStorage(), // a fresh context — nothing carried over here
+            localStorage: sharedLocal,
+        };
+        const consumed = consumeCardEntryHandoff(cardWindow);
+        expect(consumed.failure).toBeUndefined();
+        expect(consumed.handoff?.sessionId).toBe(11);
+        expect(consumed.handoff?.initMessage.accountId).toBe('acct_11');
+        // Consumed once and gone from every store — no replay.
+        expect(consumeCardEntryHandoff(cardWindow).failure).toBe('not-found');
+    });
+
+    it('restores the result in a context with its own sessionStorage', () => {
+        const sharedLocal = memoryStorage();
+        const replace = vi.fn();
+        const cardWindow = {
+            location: { origin: 'https://app.albusto.test', replace },
+            sessionStorage: memoryStorage(),
+            localStorage: sharedLocal,
+            crypto: { randomUUID: () => 'result-key' },
+        };
+
+        completeCardEntrySameWindow(cardWindow, {
+            sessionId: 11,
+            initMessage: { kind: 'cardframe:init', mode: 'collect', accountId: 'acct_11', amount: 95 },
+            returnTo: '/jobs/1617',
+        }, { kind: 'cardframe:result', status: 'succeeded' });
+
+        const crmLocation = {
+            origin: 'https://app.albusto.test',
+            pathname: '/jobs/1617',
+            search: new URL(String(replace.mock.calls[0]?.[0]), 'https://app.albusto.test').search,
+            hash: '',
+        };
+        const crmWindow = {
+            location: crmLocation,
+            sessionStorage: memoryStorage(), // the CRM tab never saw the card page's session
+            localStorage: sharedLocal,
+            history: { replaceState: vi.fn() },
+        };
+
+        expect(consumeCardEntrySameWindowResult(crmWindow)).toEqual({
+            sessionId: 11,
+            completion: { kind: 'cardframe:result', status: 'succeeded' },
+        });
+    });
+
+    it('names the failing branch instead of one opaque expiry message', () => {
+        const base = {
+            location: { origin: 'https://app.albusto.test', search: '?handoff=nope&return_to=%2Fjobs%2F1' },
+            sessionStorage: memoryStorage(),
+            localStorage: memoryStorage(),
+        };
+        expect(consumeCardEntryHandoff(base).failure).toBe('bad-key');
+
+        const local = memoryStorage();
+        local.setItem('cardframe:k', JSON.stringify({
+            version: 1,
+            expiresAt: Date.now() - 1,
+            sessionId: 11,
+            initMessage: { kind: 'cardframe:init', mode: 'collect', accountId: 'acct_11', amount: 95 },
+        }));
+        expect(consumeCardEntryHandoff({
+            location: { origin: 'https://app.albusto.test', search: '?handoff=cardframe%3Ak' },
+            sessionStorage: memoryStorage(),
+            localStorage: local,
+        }).failure).toBe('expired');
+
+        const bad = memoryStorage();
+        bad.setItem('cardframe:k', JSON.stringify({ version: 1, expiresAt: Date.now() + 1000, sessionId: 0 }));
+        expect(consumeCardEntryHandoff({
+            location: { origin: 'https://app.albusto.test', search: '?handoff=cardframe%3Ak' },
+            sessionStorage: memoryStorage(),
+            localStorage: bad,
+        }).failure).toBe('bad-payload');
     });
 });
 

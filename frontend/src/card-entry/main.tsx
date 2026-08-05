@@ -88,6 +88,12 @@ export function CardEntryPage() {
                     <a className="card-entry-button card-entry-button-primary" href={sameWindow.returnTo}>
                         Back to job
                     </a>
+                    {/* Which branch failed, in one word. Without it a report of this screen
+                        is indistinguishable between "storage was empty" and "the payload was
+                        rejected" — two different bugs with two different fixes. */}
+                    {sameWindow.failure && (
+                        <p className="card-entry-caption">Ref: {sameWindow.failure}</p>
+                    )}
                 </section>
             </main>
         );
