@@ -5,7 +5,7 @@
  * history, and offers inline Send Receipt + Void actions. Panel chrome is the caller's.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Mail, Ban, Check } from 'lucide-react';
+import { Loader2, Mail, Ban, Check, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { FloatingField } from '../ui/floating-field';
@@ -195,13 +195,35 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
             <div className="space-y-3 pt-1">
                 {receiptOpen ? (
                     <div className="space-y-3 rounded-2xl bg-[var(--blanc-field)] p-4">
+                        {/* RECEIPT-EMAIL-COPY: a double-tap inside an email input selects
+                            only one "word" — the part after @ — so techs could not copy the
+                            address. Focusing selects the WHOLE address, and an explicit Copy
+                            puts it on the clipboard without touching the value. */}
                         <FloatingField
                             label="Customer email"
                             type="email"
                             inputMode="email"
                             value={email}
+                            onFocus={e => e.currentTarget.select()}
                             onChange={e => setEmail(e.target.value)}
                         />
+                        {email.trim() && (
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    try {
+                                        await navigator.clipboard.writeText(email.trim());
+                                        toast.success('Email copied');
+                                    } catch {
+                                        toast.error('Could not copy the email');
+                                    }
+                                }}
+                                className="flex items-center gap-1.5 text-xs font-medium"
+                                style={{ color: 'var(--blanc-accent)' }}
+                            >
+                                <Copy className="size-3.5" />Copy email
+                            </button>
+                        )}
                         <div className="flex gap-3">
                             <Button variant="ghost" className="flex-1" onClick={() => setReceiptOpen(false)} disabled={sending}>Cancel</Button>
                             <Button className="flex-[2]" onClick={() => void sendReceipt()} disabled={!email.trim() || sending}>
