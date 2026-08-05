@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { Badge } from '../ui/badge';
 import { Skeleton } from '../ui/skeleton';
-import { Plus, MoreHorizontal, Copy, Play, Pause, Archive, Users, ShieldAlert } from 'lucide-react';
+import { Plus, MoreHorizontal, Copy, Play, Pause, Archive, Users, ShieldAlert, Blocks } from 'lucide-react';
 import { toast } from 'sonner';
 import { CreateCompanyDialog } from './CreateCompanyDialog';
 import { BootstrapAdminDialog } from './BootstrapAdminDialog';
@@ -21,6 +21,7 @@ interface Company {
     contact_email?: string;
     created_at: string;
     active_users: number;
+    app_studio_enabled?: boolean;
 }
 
 export function CompaniesManager() {
@@ -68,6 +69,24 @@ export function CompaniesManager() {
                 fetchCompanies();
             } else {
                 toast.error('Failed to update status');
+            }
+        } catch {
+            toast.error('Connection error');
+        }
+    };
+
+    const handleAppStudioToggle = async (id: string, enabled: boolean) => {
+        try {
+            const res = await authedFetch(`/api/admin/companies/${id}/app-studio`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+            if (res.ok) {
+                toast.success(enabled ? 'App Studio enabled' : 'App Studio disabled');
+                fetchCompanies();
+            } else {
+                toast.error('Failed to update App Studio access');
             }
         } catch {
             toast.error('Connection error');
@@ -176,6 +195,11 @@ export function CompaniesManager() {
                                                         <Archive className="mr-2 h-4 w-4" /> Archive
                                                     </DropdownMenuItem>
                                                 )}
+                                                <DropdownMenuSeparator />
+                                                <DropdownMenuItem onClick={() => handleAppStudioToggle(c.id, !c.app_studio_enabled)}>
+                                                    <Blocks className="mr-2 h-4 w-4" />
+                                                    {c.app_studio_enabled ? 'Disable App Studio' : 'Enable App Studio'}
+                                                </DropdownMenuItem>
                                             </DropdownMenuContent>
                                         </DropdownMenu>
                                     </TableCell>

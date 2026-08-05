@@ -73,19 +73,29 @@ describe('SETTINGS-IA-001 navigation model', () => {
             .toContain('document-templates');
     });
 
-    it('shows App Studio only to tenant admins with integrations access', () => {
+    it('shows App Studio only to tenant admins whose company has it enabled', () => {
         const manager = getVisibleSettingsGroups({
             permissions: ['tenant.integrations.manage'],
             tenantRole: 'manager',
+            companyFlags: { app_studio_enabled: true },
         });
         expect(manager.find(group => group.id === 'apps-integrations')?.links.map(link => link.id))
             .not.toContain('app-studio');
 
-        const admin = getVisibleSettingsGroups({
+        // Tenant admin, but the company flag is off (the default) - still hidden.
+        const adminNoFlag = getVisibleSettingsGroups({
             permissions: ['tenant.integrations.manage'],
             tenantRole: 'tenant_admin',
         });
-        expect(admin.find(group => group.id === 'apps-integrations')?.links.map(link => link.id))
+        expect(adminNoFlag.find(group => group.id === 'apps-integrations')?.links.map(link => link.id))
+            .not.toContain('app-studio');
+
+        const adminEnabled = getVisibleSettingsGroups({
+            permissions: ['tenant.integrations.manage'],
+            tenantRole: 'tenant_admin',
+            companyFlags: { app_studio_enabled: true },
+        });
+        expect(adminEnabled.find(group => group.id === 'apps-integrations')?.links.map(link => link.id))
             .toContain('app-studio');
     });
 

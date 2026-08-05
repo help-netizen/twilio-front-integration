@@ -447,7 +447,11 @@ function AppStudioDataPage() {
 }
 
 export default function AppStudioPage() {
-    const { membership } = useAuthz();
-    if (!canAccessAppStudio(membership?.role_key)) return <AppStudioAccessDenied />;
+    const { membership, company } = useAuthz();
+    // A direct visit must fail the same way the nav hides it: the company flag
+    // gates the whole surface, on top of the tenant-admin role.
+    if (!canAccessAppStudio(membership?.role_key) || company?.app_studio_enabled !== true) {
+        return <AppStudioAccessDenied />;
+    }
     return <AppStudioDataPage />;
 }

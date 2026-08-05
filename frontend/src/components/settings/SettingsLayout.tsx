@@ -13,11 +13,12 @@ import {
 export default function SettingsLayout() {
     const location = useLocation();
     const navigate = useNavigate();
-    const { permissions, platformRole, membership } = useAuthz();
+    const { permissions, platformRole, membership, company } = useAuthz();
     const groups = getVisibleSettingsGroups({
         permissions,
         platformRole,
         tenantRole: membership?.role_key,
+        companyFlags: { app_studio_enabled: company?.app_studio_enabled },
     });
     const activeGroup = findActiveSettingsGroup(groups, location);
     // SETTINGS-NAV-MOBILE: the sidebar is desktop-only (md:block), so on a phone the

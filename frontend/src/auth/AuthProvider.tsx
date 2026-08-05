@@ -28,7 +28,7 @@ interface AuthContextType {
     
     // PF007 Extended Profile
     platformRole?: string;
-    company?: { id: string; name: string; slug: string; status: string; timezone: string } | null;
+    company?: { id: string; name: string; slug: string; status: string; timezone: string; app_studio_enabled?: boolean } | null;
     membership?: { id: string; role_key: string; role_name: string; is_primary: boolean; status: string } | null;
     permissions?: string[];
     scopes?: Record<string, any>;

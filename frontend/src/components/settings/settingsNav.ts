@@ -45,6 +45,9 @@ export interface SettingsNavLink {
     platformRoles?: readonly string[];
     /** Exact tenant membership roles for surfaces narrower than their permission. */
     tenantRoles?: readonly string[];
+    /** A per-company feature flag (e.g. app_studio_enabled) that must be on for
+     *  this link to appear, on top of permission and role. */
+    requiresCompanyFlag?: 'app_studio_enabled';
     /** Overrides default matching when several subsections share one pathname. */
     matches?: readonly SettingsNavMatch[];
     /** Clickable destinations owned by this subsection rather than the top-level Settings list. */
@@ -63,6 +66,8 @@ export interface SettingsNavAccess {
     permissions?: readonly string[];
     platformRole?: string | null;
     tenantRole?: string | null;
+    /** Per-company feature flags gating individual links. */
+    companyFlags?: { app_studio_enabled?: boolean };
 }
 
 export const SETTINGS_GROUP_PATHS: Record<SettingsGroupId, string> = {
@@ -199,6 +204,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
             {
                 id: 'app-studio', label: 'App Studio', to: '/settings/app-studio',
                 permissions: ['tenant.integrations.manage'], tenantRoles: ['tenant_admin'],
+                requiresCompanyFlag: 'app_studio_enabled',
             },
             {
                 id: 'zenbooker', label: 'Zenbooker', to: '/settings/integrations?tab=zenbooker', permissions: ['tenant.integrations.manage'],
@@ -265,6 +271,7 @@ export function canAccessSettingsLink(link: SettingsNavLink, access: SettingsNav
         && !link.platformRoles.includes(access.platformRole ?? '')) return false;
     if (link.tenantRoles?.length
         && !link.tenantRoles.includes(access.tenantRole ?? '')) return false;
+    if (link.requiresCompanyFlag && access.companyFlags?.[link.requiresCompanyFlag] !== true) return false;
     return true;
 }
 
