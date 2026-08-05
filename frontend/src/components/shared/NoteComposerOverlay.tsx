@@ -34,6 +34,33 @@ export function useKeyboardInset(active: boolean): number {
     return inset;
 }
 
+/**
+ * Height of the area the user can actually SEE right now (visualViewport). Sizing a growing
+ * composer off `window.innerHeight` is wrong on iOS: Safari counts the space behind its own
+ * collapsed toolbars, the installed PWA counts the full screen — same code, two different
+ * ceilings. The visible height is the one number both shells agree on.
+ */
+export function useVisibleViewportHeight(active: boolean): number {
+    const [height, setHeight] = useState(() =>
+        typeof window === 'undefined' ? 800 : window.visualViewport?.height ?? window.innerHeight);
+    useEffect(() => {
+        if (!active || typeof window === 'undefined') return;
+        const read = () => setHeight(window.visualViewport?.height ?? window.innerHeight);
+        read();
+        window.visualViewport?.addEventListener('resize', read);
+        window.visualViewport?.addEventListener('scroll', read);
+        window.addEventListener('resize', read);
+        const poll = window.setInterval(read, 250);
+        return () => {
+            window.visualViewport?.removeEventListener('resize', read);
+            window.visualViewport?.removeEventListener('scroll', read);
+            window.removeEventListener('resize', read);
+            clearInterval(poll);
+        };
+    }, [active]);
+    return height;
+}
+
 interface NoteComposerOverlayProps {
     open: boolean;
     onClose: () => void;
@@ -82,11 +109,32 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
                     transform: `translateY(${-keyboardInset}px)`,
                     background: 'transparent',
                     padding: keyboardInset > 0
-                        ? '0 10px 8px'
+                        ? '0 10px 0'
                         : '0 10px calc(8px + env(safe-area-inset-bottom))',
                 }}
             >
                 {children}
+                {/* KEYBOARD-SHELF — iOS 26 draws its form bar as a FLOATING pill with a transparent
+                    margin above it, and Safari and the installed PWA measure the keyboard's top edge
+                    differently (innerHeight counts Safari's collapsed toolbars, standalone counts the
+                    whole screen). Whatever is left between the composer and the keyboard therefore
+                    showed as a strip of dark scrim — the "empty space under the input". This shelf
+                    paints that strip in the composer's own colour, so the input always reads as
+                    sitting ON the keyboard, identically in both shells. Purely cosmetic: it lives
+                    outside the card's box and is clipped by whichever shell owns that band. */}
+                {keyboardInset > 0 && (
+                    <div
+                        aria-hidden
+                        style={{
+                            position: 'absolute',
+                            left: 0,
+                            right: 0,
+                            top: '100%',
+                            height: 72,
+                            background: 'var(--blanc-field)',
+                        }}
+                    />
+                )}
             </div>
         </div>,
         document.body,

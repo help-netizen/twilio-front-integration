@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 import { TaskStack } from '../tasks/TaskStack';
 import { prepareNotesForDisplay } from './notesDisplay';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { NoteComposerOverlay, useKeyboardInset } from './NoteComposerOverlay';
+import { NoteComposerOverlay, useVisibleViewportHeight } from './NoteComposerOverlay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -334,12 +334,11 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         return () => document.removeEventListener('mousedown', close);
     }, [menuOpenKey]);
 
-    // Grow up to the top of the screen, then let the text scroll inside the card.
-    const composerKeyboardInset = useKeyboardInset(expanded && isMobile);
-    const composerMaxHeight = Math.max(
-        96,
-        (typeof window === 'undefined' ? 800 : window.innerHeight) - composerKeyboardInset - 150,
-    );
+    // Grow up to the top of the visible area, then let the text scroll inside the card. The
+    // ceiling is the VISIBLE height (visualViewport), not innerHeight — the latter counts space
+    // hidden behind Safari's toolbars / the keyboard and let the card grow off-screen.
+    const composerViewportHeight = useVisibleViewportHeight(isMobile && (expanded || !!editingKey));
+    const composerMaxHeight = Math.max(96, composerViewportHeight - 150);
     const growComposer = (el: HTMLTextAreaElement) => {
         el.style.height = 'auto';
         el.style.height = `${Math.min(el.scrollHeight, composerMaxHeight)}px`;
@@ -507,10 +506,12 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     <div style={{ background: 'var(--blanc-field)', borderRadius: 16, padding: '10px 12px' }}>
                         <textarea
                             className="w-full resize-none outline-none bg-transparent"
-                            style={{ border: 'none', padding: '2px 2px 0', minHeight: 72, fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
+                            style={{ border: 'none', padding: '2px 2px 0', minHeight: 72, maxHeight: composerMaxHeight, overflowY: 'auto', fontSize: 16, lineHeight: 1.5, color: 'var(--blanc-ink-1)' }}
                             placeholder="Write a note…"
                             value={editText}
                             onChange={e => setEditText(e.target.value)}
+                            onInput={e => growComposer(e.target as HTMLTextAreaElement)}
+                            ref={el => { if (el) growComposer(el); }}
                             autoFocus
                         />
                         {editingNote.attachments && editingNote.attachments.length > 0 && (
