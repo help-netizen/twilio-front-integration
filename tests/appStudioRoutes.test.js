@@ -26,10 +26,12 @@ const mockTransitionService = {
     publishVersion: jest.fn(),
     forkRejectedVersion: jest.fn(),
 };
+const mockDbQuery = jest.fn();
 
 jest.mock('../backend/src/services/appBuilderService', () => mockService);
 jest.mock('../backend/src/services/appVersionTransitionService', () => mockTransitionService);
 jest.mock('../backend/src/services/auditService', () => ({ log: mockAuditLog }));
+jest.mock('../backend/src/db/connection', () => ({ query: mockDbQuery }));
 
 const appStudioRouter = require('../backend/src/routes/appStudio');
 const { requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -60,6 +62,7 @@ function buildApp({
 
 beforeEach(() => {
     jest.clearAllMocks();
+    mockDbQuery.mockResolvedValue({ rows: [{ app_studio_enabled: true }] });
     process.env.APP_STUDIO_ENABLED = 'true';
     process.env.NODE_ENV = 'test';
     process.env.APP_RUNNER_BASE_URL = 'https://runner.albusto.test';
@@ -102,6 +105,47 @@ describe('APP-BUILD-001 tenant admin API', () => {
     test('feature flag disabled remains a 404', async () => {
         process.env.APP_STUDIO_ENABLED = 'false';
         const response = await request(buildApp()).get('/api/app-studio/chats');
+        expect(response.status).toBe(404);
+        expect(response.body.code).toBe('APP_STUDIO_DISABLED');
+        expect(mockDbQuery).not.toHaveBeenCalled();
+        expect(mockService.listChats).not.toHaveBeenCalled();
+    });
+
+    test('SAB company flag disabled remains a 404 with env and runner enabled', async () => {
+        mockDbQuery.mockResolvedValueOnce({ rows: [{ app_studio_enabled: false }] });
+
+        const response = await request(buildApp()).get('/api/app-studio/chats');
+
+        expect(response.status).toBe(404);
+        expect(response.body).toMatchObject({
+            code: 'APP_STUDIO_DISABLED',
+            message: 'App Studio is not available.',
+        });
+        expect(mockDbQuery).toHaveBeenCalledWith(
+            expect.stringContaining('WHERE id = $1'),
+            [COMPANY_A]
+        );
+        expect(mockService.listChats).not.toHaveBeenCalled();
+    });
+
+    test('company flag lookup fails closed as APP_STUDIO_DISABLED', async () => {
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        mockDbQuery.mockRejectedValueOnce(new Error('database unavailable'));
+        try {
+            const response = await request(buildApp()).get('/api/app-studio/chats');
+            expect(response.status).toBe(404);
+            expect(response.body.code).toBe('APP_STUDIO_DISABLED');
+            expect(mockService.listChats).not.toHaveBeenCalled();
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    test('missing company row fails closed as APP_STUDIO_DISABLED', async () => {
+        mockDbQuery.mockResolvedValueOnce({ rows: [] });
+
+        const response = await request(buildApp()).get('/api/app-studio/chats');
+
         expect(response.status).toBe(404);
         expect(response.body.code).toBe('APP_STUDIO_DISABLED');
         expect(mockService.listChats).not.toHaveBeenCalled();

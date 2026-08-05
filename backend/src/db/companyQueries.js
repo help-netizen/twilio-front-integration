@@ -12,7 +12,7 @@ const marketplaceQueries = require('./marketplaceQueries');
  */
 async function getCompanyById(companyId) {
     const { rows } = await db.query(
-        `SELECT id, name, slug, status, timezone, locale,
+        `SELECT id, name, slug, status, timezone, locale, app_studio_enabled,
                 contact_email, contact_phone, billing_email,
                 created_by_user_id, suspended_at, archived_at, status_reason,
                 settings, created_at, updated_at
@@ -51,7 +51,7 @@ async function listCompanies(opts = {}) {
     const total = parseInt(countRes.rows[0].total, 10);
 
     const { rows } = await db.query(
-        `SELECT id, name, slug, status, timezone, contact_email,
+        `SELECT id, name, slug, status, timezone, contact_email, app_studio_enabled,
                 created_at, updated_at, suspended_at, archived_at
          FROM companies ${where}
          ORDER BY created_at DESC
@@ -110,6 +110,7 @@ async function updateCompany(companyId, fields) {
         'name', 'slug', 'status', 'timezone', 'locale',
         'contact_email', 'contact_phone', 'billing_email',
         'status_reason', 'suspended_at', 'archived_at',
+        'app_studio_enabled',
         // COMPANY-PROFILE-001: branding + payment (ACH) details.
         'logo_storage_key',
         'payment_bank_name', 'payment_account_name', 'payment_account_number',

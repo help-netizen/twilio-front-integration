@@ -195,6 +195,41 @@ router.post('/', async (req, res) => {
 });
 
 /**
+ * PATCH /api/admin/companies/:id/app-studio — Toggle App Studio for a company
+ */
+router.patch('/:id/app-studio', async (req, res) => {
+    try {
+        const { enabled } = req.body || {};
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).json({ error: 'Enabled must be a boolean' });
+        }
+
+        const companyId = req.params.id;
+        const current = await companyQueries.getCompanyById(companyId);
+        if (!current) return res.status(404).json({ error: 'Company not found' });
+
+        const updated = await companyQueries.updateCompany(companyId, {
+            app_studio_enabled: enabled,
+        });
+
+        await auditService.log({
+            actor_id: req.user.crmUser?.id,
+            actor_email: req.user.email,
+            action: 'company_app_studio_toggled',
+            target_type: 'company',
+            target_id: companyId,
+            details: { previous: current.app_studio_enabled, new: enabled },
+            trace_id: req.traceId
+        });
+
+        res.json(updated);
+    } catch (err) {
+        console.error('[Admin Companies] PATCH /:id/app-studio failed:', err.message);
+        res.status(500).json({ error: 'Failed to update App Studio availability' });
+    }
+});
+
+/**
  * PATCH /api/admin/companies/:id/status — Update company lifecycle status
  */
 router.patch('/:id/status', async (req, res) => {

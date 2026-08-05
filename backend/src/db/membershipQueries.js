@@ -21,7 +21,8 @@ async function getActiveMembership(userId) {
                 m.disabled_at, m.disabled_reason,
                 m.created_at, m.updated_at,
                 c.name as company_name, c.slug as company_slug,
-                c.status as company_status, c.timezone as company_timezone
+                c.status as company_status, c.timezone as company_timezone,
+                COALESCE(c.app_studio_enabled, false) AS company_app_studio_enabled
          FROM company_memberships m
          JOIN companies c ON c.id = m.company_id
          WHERE m.user_id = $1 AND m.status = 'active'
@@ -115,6 +116,7 @@ async function getActiveMembershipInCompany(userId, companyId, client = null) {
                 c.name AS company_name, c.slug AS company_slug,
                 c.status AS company_status,
                 COALESCE(c.timezone, 'America/New_York') AS company_timezone,
+                COALESCE(c.app_studio_enabled, false) AS company_app_studio_enabled,
                 u.keycloak_sub, u.email, u.full_name,
                 u.status AS user_status, u.onboarding_status, u.kind
          FROM company_memberships m

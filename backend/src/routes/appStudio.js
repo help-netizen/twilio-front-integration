@@ -5,6 +5,7 @@ const appBuilderService = require('../services/appBuilderService');
 const appVersionTransitionService = require('../services/appVersionTransitionService');
 const { runnerConfigurationIssue } = require('../services/appBuilderDryRunService');
 const { requirePermission } = require('../middleware/authorization');
+const db = require('../db/connection');
 
 const router = express.Router();
 
@@ -13,7 +14,7 @@ router.use(requireTenantAdmin);
 
 // APP-SVC-001: explicit product flag plus a complete remote-runner configuration.
 // There is no local execution fallback; missing service settings fail closed.
-router.use((req, res, next) => {
+router.use(async (req, res, next) => {
     const enabled = String(process.env.APP_STUDIO_ENABLED || '').trim() === 'true';
     if (!enabled) {
         return res.status(404).json({
@@ -22,6 +23,32 @@ router.use((req, res, next) => {
             request_id: req.requestId,
         });
     }
+
+    const companyId = req.companyFilter?.company_id;
+    try {
+        if (!companyId) throw new Error('Company context is missing');
+        const { rows } = await db.query(
+            `SELECT app_studio_enabled
+             FROM companies
+             WHERE id = $1`,
+            [companyId]
+        );
+        if (rows[0]?.app_studio_enabled !== true) {
+            return res.status(404).json({
+                code: 'APP_STUDIO_DISABLED',
+                message: 'App Studio is not available.',
+                request_id: req.requestId,
+            });
+        }
+    } catch (error) {
+        console.error('[AppStudio] Company availability check failed:', error?.message || error);
+        return res.status(404).json({
+            code: 'APP_STUDIO_DISABLED',
+            message: 'App Studio is not available.',
+            request_id: req.requestId,
+        });
+    }
+
     const configurationIssue = runnerConfigurationIssue();
     if (configurationIssue) {
         return res.status(503).json({
