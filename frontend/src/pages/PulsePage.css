@@ -542,9 +542,17 @@
     color: var(--blanc-ink-3);
 }
 
-/* ── Mobile back button — 42px touch target like Schedule ────── */
-.pulse-back-btn {
-    display: none;
+/* ── Mobile timeline close — 42px touch target like Schedule ────
+   Only rendered on mobile (the desktop timeline sits beside its list and needs
+   no exit). An opaque pill, because the row it lives in is transparent and the
+   thread scrolls underneath it. */
+.pulse-timeline-close-row {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.pulse-timeline-close {
+    display: flex;
     align-items: center;
     justify-content: center;
     width: 42px;
@@ -559,7 +567,7 @@
     box-shadow: rgba(25, 25, 25, 0.06) 0px 6px 16px;
 }
 
-.pulse-back-btn:hover {
+.pulse-timeline-close:hover {
     opacity: 0.7;
 }
 
@@ -762,12 +770,11 @@
         padding: 0;
     }
 
-    /* Back button visible on mobile content panel */
-    .pulse-back-btn {
-        display: flex;
-    }
-
-    .pulse-back-btn-hidden {
+    /* Timeline open = the timeline IS the screen. Everything in the page header
+       (title, search, All/Unread/Action Required) drives the LIST, which is not
+       on screen then — so the header goes, and the timeline's own corner X is
+       the way back. */
+    .pulse-header-mobile-hidden {
         display: none !important;
     }
 

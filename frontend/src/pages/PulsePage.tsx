@@ -24,7 +24,7 @@ import { useOnboardingChecklist } from '../hooks/useOnboardingChecklist';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Skeleton } from '../components/ui/skeleton';
-import { PhoneOff, Activity, ChevronLeft } from 'lucide-react';
+import { PhoneOff, Activity, X } from 'lucide-react';
 import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
@@ -222,17 +222,11 @@ const PulsePageInner: React.FC = () => {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* Unified header: title + search + controls in one row */}
-            <div className="blanc-unified-header">
-                {/* Mobile back button — only shown on mobile when in content panel */}
-                <button
-                    className={`pulse-back-btn${mobilePanel === 'list' ? ' pulse-back-btn-hidden' : ''}`}
-                    onClick={handleMobileBack}
-                    aria-label="Back to contacts"
-                >
-                    <ChevronLeft className="size-5" />
-                </button>
-
+            {/* Unified header: title + search + controls in one row. On mobile it is hidden
+                while a timeline is open — every control in it (search, All/Unread/Action
+                Required) drives the LIST, and the list is not on screen then. The way back
+                is the corner X inside the timeline. */}
+            <div className={`blanc-unified-header${mobilePanel === 'content' ? ' pulse-header-mobile-hidden' : ''}`}>
                 <h1 className="blanc-header-title">Pulse</h1>
 
                 <div className="blanc-search-wrapper">
@@ -331,6 +325,22 @@ const PulsePageInner: React.FC = () => {
                                 selected entity bar — independent sticky elements would both pin
                                 to top:0 and overlap. */}
                             <div className="pulse-sticky-stack">
+                            {/* Mobile: this column IS the screen (no page header), so the timeline
+                                carries its own way out — the same corner X as a job card. It rides
+                                the sticky stack, so it stays reachable however far the thread is
+                                scrolled. */}
+                            {isMobile && (
+                                <div className="pulse-timeline-close-row">
+                                    <button
+                                        type="button"
+                                        className="pulse-timeline-close"
+                                        onClick={handleMobileBack}
+                                        aria-label="Close timeline"
+                                    >
+                                        <X className="size-5" />
+                                    </button>
+                                </div>
+                            )}
                             {/* One row per task; taskless manual flags keep thread-level controls. */}
                             <ActionRequiredPlaque
                                 timelineId={(p.selectedConv as any)?.timeline_id || null}
