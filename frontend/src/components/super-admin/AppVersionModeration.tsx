@@ -19,6 +19,7 @@ import {
     rejectAppVersion,
     revokeAppVersion,
     startAppVersionReview,
+    type AppCadence,
     type AppVersionQueueStatus,
     type AppVersionReviewDetail,
     type AppVersionReviewRequest,
@@ -47,6 +48,81 @@ function formatDate(value: string | null | undefined, timeZone: string) {
         timeStyle: 'short',
         timeZone,
     }).format(new Date(value));
+}
+
+function cadenceText(cadence: AppCadence): string {
+    if (cadence.kind === 'every_minutes') return `Every ${cadence.n} minute${cadence.n === 1 ? '' : 's'}`;
+    if (cadence.kind === 'hourly') return `Hourly at :${String(cadence.minute).padStart(2, '0')}`;
+    if (cadence.kind === 'daily') return `Daily at ${cadence.at}`;
+    if (cadence.kind === 'weekly') return `Weekly on day ${cadence.dow} at ${cadence.at}`;
+    return `Monthly on day ${cadence.dom} at ${cadence.at}`;
+}
+
+function Pills({ items, tone }: { items: string[]; tone?: 'danger' | 'accent' | 'warning' }) {
+    const style = tone === 'danger'
+        ? { background: 'var(--blanc-danger-soft)', color: 'var(--blanc-danger)' }
+        : tone === 'warning'
+            ? { background: 'var(--blanc-lead-soft)', color: 'var(--blanc-lead)' }
+            : { background: 'var(--blanc-field)', color: 'var(--blanc-ink-2)' };
+    return (
+        <div className="flex flex-wrap gap-2">
+            {items.map(item => (
+                <span key={item} className="rounded-full px-3 py-1 text-xs font-medium" style={style}>{item}</span>
+            ))}
+        </div>
+    );
+}
+
+/** Everything a version is asking for beyond its tools — the reach a moderator
+ *  is actually approving: where it calls out, what it listens to, what it keeps,
+ *  what it can do to a row, and what the tenant must fill in. */
+function CapabilitySurface({ version }: { version: AppVersionReviewDetail['version'] }) {
+    const rows: Array<{ label: string; tone?: 'danger' | 'warning'; body: React.ReactNode }> = [];
+
+    if (version.connections?.length) {
+        rows.push({
+            label: 'Calls out to', tone: 'danger',
+            body: <Pills tone="danger" items={version.connections.map(c => `${c.base_url} (${c.auth.kind})`)} />,
+        });
+    }
+    if (version.subscribes?.length) {
+        rows.push({ label: 'Triggered by events', tone: 'warning', body: <Pills tone="warning" items={version.subscribes} /> });
+    }
+    if (version.suggested_schedule) {
+        rows.push({ label: 'Suggested schedule', body: <Pills items={[cadenceText(version.suggested_schedule)]} /> });
+    }
+    if (version.actions?.length) {
+        rows.push({ label: 'Row actions', body: <Pills items={version.actions.map(a => a.label)} /> });
+    }
+    if (version.data_collections?.length) {
+        rows.push({
+            label: 'Stores data',
+            body: <Pills items={version.data_collections.map(c => `${c.name} [${c.columns.map(col => col.key).join(', ')}]`)} />,
+        });
+    }
+    if (version.settings?.length) {
+        rows.push({
+            label: 'Asks the tenant for',
+            body: <Pills items={version.settings.map(s => `${s.label}${s.required ? ' *' : ''} (${s.type})`)} />,
+        });
+    }
+
+    if (!rows.length) return null;
+    return (
+        <section className="space-y-3.5">
+            <div className="blanc-eyebrow">Capabilities</div>
+            <div className="space-y-3">
+                {rows.map(row => (
+                    <div key={row.label} className="space-y-1.5">
+                        <div className="text-xs font-semibold" style={{ color: row.tone === 'danger' ? 'var(--blanc-danger)' : 'var(--blanc-ink-2)' }}>
+                            {row.label}
+                        </div>
+                        {row.body}
+                    </div>
+                ))}
+            </div>
+        </section>
+    );
 }
 
 function JsonReport({ value }: { value: unknown }) {
@@ -174,14 +250,26 @@ export function AppReviewDetail({
                 <section className="space-y-3.5">
                     <div className="blanc-eyebrow">Requested tools</div>
                     <div className="flex flex-wrap gap-2">
-                        {detail.version.tools.map(tool => (
-                            <span key={tool} className="rounded-full bg-[var(--blanc-accent-soft)] px-3 py-1 text-xs font-medium text-[var(--blanc-accent)]">
-                                {tool}
-                            </span>
-                        ))}
+                        {detail.version.tools.map(tool => {
+                            const writes = tool.kind === 'write';
+                            return (
+                                <span
+                                    key={tool.name}
+                                    className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+                                    style={writes
+                                        ? { background: 'var(--blanc-danger-soft)', color: 'var(--blanc-danger)' }
+                                        : { background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
+                                >
+                                    {tool.name}
+                                    {writes && <span className="font-bold uppercase tracking-wide">write</span>}
+                                </span>
+                            );
+                        })}
                     </div>
                 </section>
             )}
+
+            <CapabilitySurface version={detail.version} />
 
             <section className="space-y-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-3">

@@ -87,6 +87,7 @@
        is the lavender accent-tint family on the neutral canvas. */
     --blanc-today-soft: rgba(231, 219, 253, 0.4);
     --blanc-danger: #F0503F;
+    --blanc-danger-soft: rgba(240, 80, 63, 0.12);
     --blanc-success: #1b8b63;
     --blanc-warning: #b26a1d;
     --blanc-info: #2f63d8;

@@ -45,7 +45,16 @@ const detail: AppVersionReviewDetail = {
         reviewed_at: null,
         published_at: null,
         rejection_reason: null,
-        tools: ['svc.list_jobs'],
+        tools: [
+            { name: 'svc.list_jobs', kind: 'read' as const },
+            { name: 'svc.create_task', kind: 'write' as const },
+        ],
+        suggested_schedule: { kind: 'daily' as const, at: '07:00' },
+        data_collections: [{ name: 'purchases', key_fields: ['estimate_id'], columns: [{ key: 'estimate_id', type: 'number' }] }],
+        actions: [{ id: 'mark_ordered', label: 'Mark ordered' }],
+        subscribes: ['estimate.approved'],
+        connections: [{ name: 'supplier', base_url: 'https://api.supplier.com', auth: { kind: 'bearer' } }],
+        settings: [{ key: 'supplier_email', label: 'Supplier email', type: 'email', required: true }],
     },
     app: {
         id: request.app_id,
@@ -141,6 +150,12 @@ describe('APP-MOD-001 super-admin Apps UI', () => {
         expect(detailMarkup).not.toContain('>Revoke<');
         expect(detailMarkup).toContain('Requested tools');
         expect(detailMarkup).toContain('svc.list_jobs');
+        // The write tool and the reach it asks for must be legible to a moderator.
+        expect(detailMarkup).toContain('svc.create_task');
+        expect(detailMarkup).toContain('Capabilities');
+        expect(detailMarkup).toContain('https://api.supplier.com');
+        expect(detailMarkup).toContain('estimate.approved');
+        expect(detailMarkup).toContain('Supplier email');
         expect(detailMarkup).toContain('Latest sandbox validation');
         expect(detailMarkup).toContain('return newValue;');
         expect(detailMarkup).toContain('Build a morning task digest.');

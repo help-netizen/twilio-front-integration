@@ -225,6 +225,7 @@ async function getReview(versionId, {
                 actions: version.scanner_report?.actions || [],
                 subscribes: version.scanner_report?.subscribes || [],
                 connections: version.scanner_report?.connections || [],
+                settings: version.scanner_report?.settings || [],
                 sandbox_run: version.scanner_report?.dry_run || null,
                 status: version.status,
                 created_at: version.created_at,

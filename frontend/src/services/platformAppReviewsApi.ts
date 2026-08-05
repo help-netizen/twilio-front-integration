@@ -3,6 +3,17 @@ import { authedFetch } from './apiClient';
 const API_BASE = '/api/platform/app-reviews';
 
 export type AppVersionQueueStatus = 'pending' | 'published' | 'rejected' | 'revoked';
+
+/** The capability surface a version declares — what moderation reviews. */
+export type AppCadence =
+    | { kind: 'every_minutes'; n: number }
+    | { kind: 'hourly'; minute: number }
+    | { kind: 'daily'; at: string }
+    | { kind: 'weekly'; dow: number; at: string }
+    | { kind: 'monthly'; dom: number; at: string };
+export interface AppDataCollection { name: string; key_fields: string[]; columns: Array<{ key: string; type: string }> }
+export interface AppConnection { name: string; base_url: string; auth: { kind: string; header?: string } }
+export interface AppSettingField { key: string; label: string; type: string; required?: boolean; options?: string[] }
 export type AppVersionStatus =
     | 'draft'
     | 'submitted'
@@ -47,7 +58,16 @@ export interface AppVersionReviewDetail {
         reviewed_at: string | null;
         published_at: string | null;
         rejection_reason: string | null;
-        tools: string[];
+        // A tool carries its kind now (read vs write) so moderation can flag
+        // the writes; the backend started returning objects when create_task
+        // landed, and this type trailed it.
+        tools: Array<{ name: string; kind: 'read' | 'write' }>;
+        suggested_schedule: AppCadence | null;
+        data_collections: AppDataCollection[];
+        actions: Array<{ id: string; label: string }>;
+        subscribes: string[];
+        connections: AppConnection[];
+        settings: AppSettingField[];
         source_code?: string;
     };
     app: {
