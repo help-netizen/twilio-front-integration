@@ -1,5 +1,6 @@
 const { XMLParser } = require('fast-xml-parser');
 const db = require('../db/connection');
+const { getFallbackJobActions } = require('./jobWorkflowFallback');
 
 /**
  * Parse SCXML XML string into a structured graph.
@@ -67,6 +68,9 @@ function parseStateNode(node, isFinal) {
       target: tr['@_target'] || null,
       targetStatusName: null, // resolved later
       action: parseBool(tr['@_blanc:action']),
+      button: parseOptionalBool(tr['@_blanc:button']),
+      variant: tr['@_blanc:variant'] || null,
+      op: tr['@_blanc:op'] || null,
       label: tr['@_blanc:label'] || null,
       icon: tr['@_blanc:icon'] || null,
       confirm: parseBool(tr['@_blanc:confirm']),
@@ -225,6 +229,12 @@ function normalizeToArray(val) {
 function parseBool(val) {
   if (val === true || val === 'true') return true;
   return false;
+}
+
+/** Parse an optional boolean attribute while preserving the unset state. */
+function parseOptionalBool(val) {
+  if (val == null) return null;
+  return parseBool(val);
 }
 
 // =============================================================================
@@ -494,13 +504,13 @@ async function listMachines(companyId) {
  * @param {string} machineKey
  * @returns {Promise<object|null>}
  */
-async function getActiveVersion(companyId, machineKey) {
+async function getActiveVersion(companyId, machineKey, { queryable = db } = {}) {
   const sql = `
     SELECT v.* FROM fsm_versions v
     JOIN fsm_machines m ON m.id = v.machine_id
     WHERE m.company_id = $1 AND m.machine_key = $2 AND v.id = m.active_version_id
   `;
-  const { rows } = await db.query(sql, [companyId, machineKey]);
+  const { rows } = await queryable.query(sql, [companyId, machineKey]);
   return rows[0] || null;
 }
 
@@ -548,14 +558,14 @@ async function listVersions(companyId, machineKey) {
  * @param {string} machineKey
  * @returns {Promise<object|null>} ParsedGraph or null if no published version
  */
-async function getPublishedGraph(companyId, machineKey) {
+async function getPublishedGraph(companyId, machineKey, { queryable = db } = {}) {
   const cacheKey = `${companyId}:${machineKey}`;
 
   if (graphCache.has(cacheKey)) {
     return graphCache.get(cacheKey);
   }
 
-  const activeVersion = await getActiveVersion(companyId, machineKey);
+  const activeVersion = await getActiveVersion(companyId, machineKey, { queryable });
   if (!activeVersion) {
     return null;
   }
@@ -611,8 +621,8 @@ function findState(states, stateRef) {
  * @param {string} eventOrTarget - Event name or target state name/id
  * @returns {Promise<{ valid: boolean|null, fallback?: boolean, targetState?: string, event?: string, error?: string }>}
  */
-async function resolveTransition(companyId, machineKey, currentState, eventOrTarget) {
-  const graph = await getPublishedGraph(companyId, machineKey);
+async function resolveTransition(companyId, machineKey, currentState, eventOrTarget, { queryable = db } = {}) {
+  const graph = await getPublishedGraph(companyId, machineKey, { queryable });
   if (!graph) {
     return { valid: null, fallback: true };
   }
@@ -669,6 +679,8 @@ async function resolveTransition(companyId, machineKey, currentState, eventOrTar
       valid: true,
       targetState: transition.targetStatusName || transition.target,
       event: transition.event,
+      transition,
+      op: transition.op,
     };
   }
 
@@ -686,7 +698,8 @@ async function resolveTransition(companyId, machineKey, currentState, eventOrTar
 async function getAvailableActions(companyId, machineKey, currentState, userRoles) {
   const graph = await getPublishedGraph(companyId, machineKey);
   if (!graph) {
-    return { actions: [], fallback: true };
+    const actions = machineKey === 'job' ? getFallbackJobActions(currentState) : [];
+    return { actions, fallback: true };
   }
 
   const state = findState(graph.states, currentState);
@@ -696,8 +709,13 @@ async function getAvailableActions(companyId, machineKey, currentState, userRole
 
   const roles = userRoles || [];
 
-  const actions = state.transitions
-    .filter(tr => tr.action === true)
+  const configuredActions = state.transitions.filter(tr => tr.action === true);
+  if (configuredActions.length === 0) {
+    const actions = machineKey === 'job' ? getFallbackJobActions(currentState) : [];
+    return { actions, fallback: actions.length > 0 };
+  }
+
+  const actionable = configuredActions
     .filter(tr => {
       if (!tr.roles || tr.roles.length === 0) return true;
       return tr.roles.some(r => roles.includes(r));
@@ -706,16 +724,34 @@ async function getAvailableActions(companyId, machineKey, currentState, userRole
       const orderA = a.order != null ? a.order : Infinity;
       const orderB = b.order != null ? b.order : Infinity;
       return orderA - orderB;
-    })
-    .map(tr => ({
+    });
+
+  const actions = actionable.map((tr, index) => {
+    const target = graph.states.get(tr.target);
+    let variant = tr.variant;
+    if (!variant) {
+      if (tr.targetStatusName === 'Canceled') variant = 'danger';
+      else if (tr.targetStatusName === 'Job is Done' || target?.isFinal) variant = 'success';
+      else if (actionable.length === 1 || index === 0) variant = 'primary';
+      else variant = 'secondary';
+    }
+
+    return {
       event: tr.event,
+      target: tr.targetStatusName,
       label: tr.label,
       icon: tr.icon,
       confirm: tr.confirm,
       confirmText: tr.confirmText,
+      roles: tr.roles,
       order: tr.order,
       targetStatusName: tr.targetStatusName,
-    }));
+      action: tr.action,
+      button: tr.button == null ? true : tr.button,
+      variant,
+      op: tr.op,
+    };
+  });
 
   return { actions, fallback: false };
 }

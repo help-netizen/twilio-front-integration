@@ -14,6 +14,12 @@ export interface FsmAction {
     confirmText: string | null;
     order: number;
     roles: string | null;
+    /** FSM-JOB-ACTIONS-001 — render as a prominent button (vs dropdown-only). Server-defaulted. */
+    button: boolean;
+    /** Button visual weight: primary | secondary | success | danger | neutral. Server-defaulted. */
+    variant: string;
+    /** Optional side-effect hook fired on apply (e.g. 'notify_on_the_way'). */
+    op: string | null;
 }
 
 export interface TransitionResult {
@@ -57,12 +63,12 @@ export function useFsmActions(machineKey: string, currentState: string | null) {
 export function useApplyTransition(machineKey: string) {
     const queryClient = useQueryClient();
 
-    return useMutation<TransitionResult, Error, { entityId: number; event: string; reason?: string }>({
-        mutationFn: async ({ entityId, event, reason }) => {
+    return useMutation<TransitionResult, Error, { entityId: number; event: string; reason?: string; eta_minutes?: number }>({
+        mutationFn: async ({ entityId, event, reason, eta_minutes }) => {
             const res = await authedFetch(`${API_BASE}/api/fsm/${machineKey}/apply`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entityId, event, reason }),
+                body: JSON.stringify({ entityId, event, reason, eta_minutes }),
             });
             const json = await res.json();
             if (!res.ok || !json.ok) throw new Error(json.error || 'Transition failed');

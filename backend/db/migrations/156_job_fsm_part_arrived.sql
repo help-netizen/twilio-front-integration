@@ -63,7 +63,7 @@ BEGIN
             ),
             '  <state id="Waiting_for_parts" blanc:label="Waiting for parts">',
             '  <state id="Waiting_for_parts" blanc:label="Waiting for parts">
-    <transition event="TO_PART_ARRIVED" target="Part_arrived" blanc:action="true" blanc:label="Part arrived" blanc:order="0" />'
+    <transition event="TO_PART_ARRIVED" target="Part_arrived" blanc:action="true" blanc:button="true" blanc:label="Part arrived" blanc:order="0" />'
         );
 
         IF new_scxml = rec.scxml_source THEN

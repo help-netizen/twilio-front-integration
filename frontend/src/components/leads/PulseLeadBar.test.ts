@@ -81,12 +81,12 @@ describe('PULSE-LEAD-PIN-001 — status is state, not an action', () => {
 describe('PULSE-LEAD-PIN-001 — sticky overlay wiring', () => {
     it('puts Contact and Lead bars inside the same sticky stack', () => {
         const stackStart = pageSource.indexOf('<div className="pulse-sticky-stack">');
-        const stackEnd = pageSource.indexOf('</div>', stackStart);
-        const stack = pageSource.slice(stackStart, stackEnd);
-
         expect(stackStart).toBeGreaterThan(-1);
-        expect(stack).toContain('<PulseContactBar');
-        expect(stack).toContain('<PulseLeadBar');
+        // Both entity bars live in the sticky stack, after its opening tag (which also hosts the
+        // mobile close-timeline row and the Action Required plaque — so a naive first-</div>
+        // slice would stop short of them).
+        expect(pageSource.indexOf('<PulseContactBar', stackStart)).toBeGreaterThan(stackStart);
+        expect(pageSource.indexOf('<PulseLeadBar', stackStart)).toBeGreaterThan(stackStart);
     });
 
     it('removes the 560px lead card from flow and hosts the existing panel in an overlay', () => {
@@ -107,11 +107,14 @@ describe('PULSE-LEAD-PIN-001 — sticky overlay wiring', () => {
 });
 
 describe('PULSE-LEAD-PIN-001 — shared pinned-bar primitives and ladder', () => {
-    it('uses the same shell, actions and expand primitive for Contact and Lead', () => {
+    it('uses the same shell + actions for Contact and Lead; tapping identity opens the card', () => {
         expect(contactBarSource).toContain('<PulsePinnedBar');
         expect(barSource).toContain('<PulsePinnedBar');
-        expect(contactBarSource).toContain('<PulsePinnedBarExpand');
-        expect(barSource).toContain('<PulsePinnedBarExpand');
+        // The chevron expand primitive is gone — tapping the identity/name opens the full card.
+        expect(contactBarSource).not.toContain('PulsePinnedBarExpand');
+        expect(barSource).not.toContain('PulsePinnedBarExpand');
+        expect(contactBarSource).toContain('is-expandable');
+        expect(barSource).toContain('is-expandable');
         expect(primitiveSource).toContain("'pulse-pinned-bar-action'");
         expect(primitiveSource).toContain("aria-label={props['aria-label'] || label}");
     });
@@ -127,7 +130,7 @@ describe('PULSE-LEAD-PIN-001 — shared pinned-bar primitives and ladder', () =>
         expect(cssSource).toMatch(/\.pulse-lead-bar \{[\s\S]*?height: 68px;/);
         expect(cssSource).toMatch(/\.pulse-pinned-bar-action \{[\s\S]*?min-height: 40px;[\s\S]*?border-radius: 13px;/);
         expect(cssSource).toMatch(/\.pulse-pinned-bar-action svg \{[\s\S]*?width: 15px;[\s\S]*?height: 15px;/);
-        expect(cssSource).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.pulse-lead-bar[\s\S]*?'actions actions'/);
+        expect(cssSource).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.pulse-lead-bar[\s\S]*?'identity'[\s\S]*?'actions'/);
         expect(cssSource).not.toMatch(/@media \(max-width: 768px\)[\s\S]*?\.pulse-pinned-bar-action-label \{ display: none; \}/);
     });
 });

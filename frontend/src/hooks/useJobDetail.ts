@@ -41,9 +41,6 @@ export interface UseJobDetailResult {
     setNoteJobId: (v: number | null) => void;
     handleBlancStatusChange: (id: number, s: string) => void;
     handleAddNote: (files?: File[]) => void;
-    handleMarkEnroute: (id: number) => void;
-    handleMarkInProgress: (id: number) => void;
-    handleMarkComplete: (id: number) => void;
     handleCancel: (id: number, reason: string) => Promise<boolean>;
     handleTagsChange: (jobId: number, tagIds: number[]) => void;
     handleJobUpdated: (updatedJob: LocalJob) => void;
@@ -140,36 +137,6 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
         }
     }, [afterMutation]);
 
-    const handleMarkEnroute = useCallback(async (id: number) => {
-        try {
-            await jobsApi.markEnroute(id);
-            toast.success('Job marked as en-route');
-            afterMutation(id);
-        } catch (err) {
-            toast.error('Failed', { description: err instanceof Error ? err.message : '' });
-        }
-    }, [afterMutation]);
-
-    const handleMarkInProgress = useCallback(async (id: number) => {
-        try {
-            await jobsApi.markInProgress(id);
-            toast.success('Job started');
-            afterMutation(id);
-        } catch (err) {
-            toast.error('Failed', { description: err instanceof Error ? err.message : '' });
-        }
-    }, [afterMutation]);
-
-    const handleMarkComplete = useCallback(async (id: number) => {
-        try {
-            await jobsApi.markComplete(id);
-            toast.success('Job completed');
-            afterMutation(id);
-        } catch (err) {
-            toast.error('Failed', { description: err instanceof Error ? err.message : '' });
-        }
-    }, [afterMutation]);
-
     const handleCancel = useCallback(async (id: number, reason: string) => {
         try {
             await jobsApi.cancelJob(id, reason);
@@ -226,9 +193,6 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
         noteJobId, setNoteJobId,
         handleBlancStatusChange,
         handleAddNote,
-        handleMarkEnroute,
-        handleMarkInProgress,
-        handleMarkComplete,
         handleCancel,
         handleTagsChange,
         handleJobUpdated,

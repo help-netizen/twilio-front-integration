@@ -28,6 +28,12 @@ export interface WorkflowEdgeData {
     order: number | null;
     roles: string;
     hotkey: string;
+    /** FSM-JOB-ACTIONS-001 — render this action as a prominent button (unset → default true). */
+    button?: boolean;
+    /** Button style: primary | secondary | success | danger | neutral (unset → auto). */
+    variant?: string;
+    /** Side-effect hook fired on apply (e.g. notify_on_the_way). */
+    op?: string;
     [key: string]: unknown;
 }
 
@@ -101,6 +107,10 @@ export function scxmlToGraph(scxmlString: string): ScxmlGraph {
             const order = orderAttr ? Number(orderAttr) : null;
             const roles = tr.getAttributeNS(BLANC_NS, 'roles') || '';
             const hotkey = tr.getAttributeNS(BLANC_NS, 'hotkey') || '';
+            const buttonAttr = tr.getAttributeNS(BLANC_NS, 'button');
+            const button = buttonAttr == null ? undefined : buttonAttr === 'true';
+            const variant = tr.getAttributeNS(BLANC_NS, 'variant') || undefined;
+            const op = tr.getAttributeNS(BLANC_NS, 'op') || undefined;
 
             edges.push({
                 id: `${id}--${event}--${target}`,
@@ -111,7 +121,7 @@ export function scxmlToGraph(scxmlString: string): ScxmlGraph {
                 markerEnd: { type: 'arrowclosed' as any },
                 style: { strokeWidth: 2 },
                 labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
-                data: { event, isAction, label: edgeLabel, icon, confirm, confirmText, order, roles, hotkey },
+                data: { event, isAction, label: edgeLabel, icon, confirm, confirmText, order, roles, hotkey, button, variant, op },
             });
         });
     });
@@ -179,6 +189,10 @@ export function graphToScxml(
                 if (ed.confirmText) ta.push(`blanc:confirmText="${esc(ed.confirmText)}"`);
                 if (ed.roles) ta.push(`blanc:roles="${esc(ed.roles)}"`);
                 if (ed.hotkey) ta.push(`blanc:hotkey="${esc(ed.hotkey)}"`);
+                if (ed.button === false) ta.push(`blanc:button="false"`);
+                else if (ed.button === true) ta.push(`blanc:button="true"`);
+                if (ed.variant) ta.push(`blanc:variant="${esc(ed.variant)}"`);
+                if (ed.op) ta.push(`blanc:op="${esc(ed.op)}"`);
                 xml += `    <transition ${ta.join(' ')} />\n`;
             }
             xml += `  </${tag}>\n\n`;

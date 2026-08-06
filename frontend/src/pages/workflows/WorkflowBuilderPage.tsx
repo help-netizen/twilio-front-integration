@@ -23,7 +23,6 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
     ArrowLeft,
-    Save,
     Undo2,
     Redo2,
     LayoutGrid,
@@ -45,6 +44,8 @@ import {
     type ValidationResult,
 } from '../../hooks/useFsmEditor';
 import PublishDialog from '../../components/workflows/PublishDialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../components/ui/dialog';
+import { Button } from '../../components/ui/button';
 
 import { layoutBipartite } from '../../utils/workflowElkLayout';
 import {
@@ -61,6 +62,7 @@ import {
     BipartiteTargetNode,
     BipartiteEdge,
     setOnEdgeInsert,
+    setOnEdgeLabelClick,
 } from './workflowNodeTypes';
 import {
     FlowPropertiesPanel,
@@ -166,6 +168,7 @@ export default function WorkflowBuilderPage() {
     const [machineTitle, setMachineTitle] = useState('');
     const [dirty, setDirty] = useState(false);
     const [publishOpen, setPublishOpen] = useState(false);
+    const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
     const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
     const [selectedNode, setSelectedNode] = useState<Node<WorkflowNodeData> | null>(null);
     const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
@@ -444,17 +447,28 @@ export default function WorkflowBuilderPage() {
         [],
     );
 
-    const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-        // Map bipartite edge to original logical edge for inspector
-        const originalId = getOriginalEdgeId(edge.id);
+    // Core edge-selection, shared by an edge-LINE click (onEdgeClick) and an edge-LABEL click
+    // (routed via setOnEdgeLabelClick below). Keyed on id + source so the label overlay — which
+    // isn't the SVG path React Flow tracks — can select its own edge just the same.
+    const selectEdge = useCallback((edgeId: string, edgeSource: string, fallback?: Edge) => {
+        const originalId = getOriginalEdgeId(edgeId);
         const logicalEdge = logicalEdgesRef.current.find(e => e.id === originalId);
-        setSelectedEdge(logicalEdge || edge);
+        setSelectedEdge(logicalEdge || fallback || ({ id: edgeId, source: edgeSource, target: '' } as Edge));
         setSelectedNode(null);
         // Focus on source node subgraph + mark this specific edge as active (green)
-        const srcBipId = `${getOriginalId(edge.source)}__src`;
-        setFocusedBipId(srcBipId);
-        setActiveEdgeBipId(edge.id);
+        setFocusedBipId(`${getOriginalId(edgeSource)}__src`);
+        setActiveEdgeBipId(edgeId);
     }, []);
+
+    const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
+        selectEdge(edge.id, edge.source, edge);
+    }, [selectEdge]);
+
+    // Route edge-LABEL clicks (the HTML/SVG label overlay) through the same selection.
+    useEffect(() => {
+        setOnEdgeLabelClick((edgeId, edgeSource) => selectEdge(edgeId, edgeSource));
+        return () => setOnEdgeLabelClick(null);
+    }, [selectEdge]);
 
     const onPaneClick = useCallback(() => {
         // Don't reset during edge drag (user is connecting nodes)
@@ -663,6 +677,15 @@ export default function WorkflowBuilderPage() {
         }
     }, [dirty, saveDraft, initialStateId, machineKey, machineTitle]);
 
+    // Save the working draft as part of Publish (no toast — Publish shows its own). Throws on
+    // failure so PublishDialog aborts instead of publishing a stale server draft.
+    const saveDraftForPublish = useCallback(async () => {
+        if (!dirty) return;
+        const scxml = graphToScxml(logicalNodesRef.current, logicalEdgesRef.current, initialStateId, machineKey, machineTitle);
+        await saveDraft.mutateAsync({ scxml_source: scxml });
+        setDirty(false);
+    }, [dirty, saveDraft, initialStateId, machineKey, machineTitle]);
+
     const handleValidate = useCallback(async () => {
         // Use logical model for validation
         try {
@@ -690,14 +713,25 @@ export default function WorkflowBuilderPage() {
         URL.revokeObjectURL(url);
     }, [nodes, edges, initialStateId, machineKey, machineTitle]);
 
-    const handleBack = useCallback(() => {
-        if (dirty) {
-            if (!window.confirm('You have unsaved changes. Discard and leave?')) return;
-        }
+    const doLeave = useCallback(() => {
+        setCloseConfirmOpen(false);
         navigate('/settings/lead-form');
-    }, [dirty, navigate]);
+    }, [navigate]);
+
+    // Close/back: a proper confirm MODAL when there are unsaved changes (was a window.confirm).
+    const handleBack = useCallback(() => {
+        if (dirty) { setCloseConfirmOpen(true); return; }
+        doLeave();
+    }, [dirty, doLeave]);
 
     // ── Status badge ──────────────────────────────────────────────────────
+
+    // Something to publish when the working copy is dirty OR the saved server draft differs from
+    // the live active version (a previously-saved-but-unpublished draft).
+    const hasUnpublishedDraft = useMemo(
+        () => !!draft && (!active || (draft.scxml_source || '').trim() !== (active.scxml_source || '').trim()),
+        [draft, active],
+    );
 
     const statusBadge = useMemo(() => {
         if (validationResult && !validationResult.valid) {
@@ -804,21 +838,23 @@ export default function WorkflowBuilderPage() {
                     <ShieldCheck className="w-3.5 h-3.5" /> Validate
                 </button>
 
+                {/* Publish is the only save action — enabled on any change, saves the draft then
+                    publishes (FSM-100 confirm dialog). Ctrl+S still saves a draft silently. */}
                 <button
-                    onClick={handleSave}
-                    disabled={!dirty || saveDraft.isPending}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors disabled:opacity-50"
+                    onClick={() => setPublishOpen(true)}
+                    disabled={(!dirty && !hasUnpublishedDraft) || saveDraft.isPending || !machineKey}
+                    title={(!dirty && !hasUnpublishedDraft) ? 'No changes to publish' : 'Publish your changes to production'}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--blanc-accent)] text-white hover:opacity-90 transition-colors disabled:opacity-50"
                 >
-                    <Save className="w-3.5 h-3.5" /> {saveDraft.isPending ? 'Saving…' : 'Save draft'}
+                    <UploadCloud className="w-3.5 h-3.5" /> {saveDraft.isPending ? 'Saving…' : 'Publish'}
                 </button>
 
                 <button
-                    onClick={() => setPublishOpen(true)}
-                    disabled={dirty || saveDraft.isPending || !machineKey}
-                    title={dirty ? 'Save your changes first' : 'Publish this draft to production'}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--blanc-accent)] text-white hover:opacity-90 transition-colors disabled:opacity-50"
+                    onClick={handleBack}
+                    title="Close and return to Job workflows"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(25,25,25,0.12)] transition-colors"
                 >
-                    <UploadCloud className="w-3.5 h-3.5" /> Publish
+                    <X className="w-3.5 h-3.5" /> Close
                 </button>
 
                 <button
@@ -980,15 +1016,33 @@ export default function WorkflowBuilderPage() {
                 </div>
             )}
 
-            {/* Explicit publish (replaces silent auto-publish-on-save) */}
+            {/* Explicit publish (replaces silent auto-publish-on-save). Saves the working draft
+                first (onBeforePublish) so a single Publish captures the latest edits. */}
             {machineKey && (
                 <PublishDialog
                     machineKey={machineKey}
                     open={publishOpen}
                     onOpenChange={setPublishOpen}
+                    onBeforePublish={saveDraftForPublish}
                     onPublished={() => { refetchActive(); }}
                 />
             )}
+
+            {/* Close with unsaved changes → confirm before leaving */}
+            <Dialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
+                <DialogContent className="md:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Leave without saving?</DialogTitle>
+                        <DialogDescription>
+                            You have unsaved changes to this workflow. If you leave now, they'll be lost.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="mt-2 flex justify-end gap-2">
+                        <Button variant="ghost" onClick={() => setCloseConfirmOpen(false)}>Keep editing</Button>
+                        <Button onClick={doLeave}>Leave without saving</Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

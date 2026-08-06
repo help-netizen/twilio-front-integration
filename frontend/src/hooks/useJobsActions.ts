@@ -42,39 +42,6 @@ export function useJobsActions({
         }
     };
 
-    const handleMarkEnroute = async (id: number) => {
-        try {
-            await jobsApi.markEnroute(id);
-            toast.success('Job marked as en-route');
-            loadJobs(offset);
-            if (selectedJob?.id === id) refreshSelected(id);
-        } catch (err) {
-            toast.error('Failed', { description: err instanceof Error ? err.message : '' });
-        }
-    };
-
-    const handleMarkInProgress = async (id: number) => {
-        try {
-            await jobsApi.markInProgress(id);
-            toast.success('Job started');
-            loadJobs(offset);
-            if (selectedJob?.id === id) refreshSelected(id);
-        } catch (err) {
-            toast.error('Failed', { description: err instanceof Error ? err.message : '' });
-        }
-    };
-
-    const handleMarkComplete = async (id: number) => {
-        try {
-            await jobsApi.markComplete(id);
-            toast.success('Job completed');
-            loadJobs(offset);
-            if (selectedJob?.id === id) refreshSelected(id);
-        } catch (err) {
-            toast.error('Failed', { description: err instanceof Error ? err.message : '' });
-        }
-    };
-
     const handleBlancStatusChange = async (id: number, newStatus: string) => {
         try {
             await jobsApi.updateBlancStatus(id, newStatus);
@@ -115,9 +82,6 @@ export function useJobsActions({
         noteText, setNoteText,
         noteJobId, setNoteJobId,
         handleCancel,
-        handleMarkEnroute,
-        handleMarkInProgress,
-        handleMarkComplete,
         handleBlancStatusChange,
         handleTagsChange,
         handleAddNote,

@@ -173,7 +173,9 @@ async function resolveContext(companyId, data = {}, client = null) {
 
         const sequence = await estimatesQueries.nextEstimateSequence(
             companyId,
-            { jobId: job.id },
+            // Same key as buildEstimateNumber below, so the sequence is unique within this
+            // number's "ESTIMATE L-<leadSerial>-" namespace.
+            { leadSerialId: job.lead_serial_id || job.lead_id || job.id },
             client
         );
         return {
@@ -193,7 +195,7 @@ async function resolveContext(companyId, data = {}, client = null) {
 
         const sequence = await estimatesQueries.nextEstimateSequence(
             companyId,
-            { leadId: lead.id },
+            { leadSerialId: lead.serial_id || lead.id },
             client
         );
         return {
@@ -891,7 +893,11 @@ async function linkJob(companyId, userId, id, jobId, client = null, activityActo
     const job = await estimatesQueries.getJobContext(companyId, jobId, client);
     if (!job) throw new EstimatesServiceError('VALIDATION', 'Job not found', 400);
 
-    const sequence = await estimatesQueries.nextEstimateSequence(companyId, { jobId: job.id }, client);
+    const sequence = await estimatesQueries.nextEstimateSequence(
+        companyId,
+        { leadSerialId: job.lead_serial_id || job.lead_id || job.id },
+        client,
+    );
     const updated = await estimatesQueries.updateEstimate(id, companyId, {
         job_id: job.id,
         lead_id: estimate.lead_id || job.lead_id || null,
@@ -999,8 +1005,8 @@ async function convertToInvoiceInTransaction(
             leadSerialId = lead?.serial_id || lead?.id || null;
         }
         const sequence = await invoicesQueries.nextInvoiceSequence(companyId, {
-            jobId: estimate.job_id,
-            leadId: estimate.lead_id,
+            leadSerialId,
+            jobId: jobIdForNum,
         }, client);
         invoiceNumber = invoicesQueries.buildInvoiceNumber({
             leadSerialId,

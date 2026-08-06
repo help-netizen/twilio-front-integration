@@ -598,7 +598,7 @@ export function TransitionInspector({
                 </div>
             </div>
 
-            {/* Is Action */}
+            {/* Is Action — a user-triggerable transition (shown in the status menu + eligible as a button) */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input
                     type="checkbox"
@@ -607,9 +607,62 @@ export function TransitionInspector({
                     style={{ accentColor: 'var(--blanc-accent)' }}
                 />
                 <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
-                    Action Button
+                    User action
                 </span>
             </div>
+
+            {/* FSM-JOB-ACTIONS-001 — button rendering + side effect (only meaningful for user actions) */}
+            {ed.isAction && (
+                <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                            type="checkbox"
+                            checked={ed.button !== false}
+                            onChange={(e) => onUpdateEdge(edge.id, { button: e.target.checked })}
+                            style={{ accentColor: 'var(--blanc-accent)' }}
+                        />
+                        <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
+                            Show as button
+                        </span>
+                    </div>
+
+                    {ed.button !== false && (
+                        <div>
+                            <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
+                                Button style
+                            </label>
+                            <select
+                                value={ed.variant || ''}
+                                onChange={(e) => onUpdateEdge(edge.id, { variant: e.target.value || undefined })}
+                                className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
+                                style={{ width: '100%', fontSize: 13, padding: '6px 10px', borderRadius: 8 }}
+                            >
+                                <option value="">Auto</option>
+                                <option value="primary">Primary (violet)</option>
+                                <option value="secondary">Secondary (outline)</option>
+                                <option value="success">Success (green)</option>
+                                <option value="danger">Danger (red)</option>
+                                <option value="neutral">Neutral</option>
+                            </select>
+                        </div>
+                    )}
+
+                    <div>
+                        <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
+                            On apply
+                        </label>
+                        <select
+                            value={ed.op || ''}
+                            onChange={(e) => onUpdateEdge(edge.id, { op: e.target.value || undefined })}
+                            className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
+                            style={{ width: '100%', fontSize: 13, padding: '6px 10px', borderRadius: 8 }}
+                        >
+                            <option value="">Just change status</option>
+                            <option value="notify_on_the_way">Send “on the way” SMS + ETA</option>
+                        </select>
+                    </div>
+                </>
+            )}
 
             {/* Icon */}
             <div>

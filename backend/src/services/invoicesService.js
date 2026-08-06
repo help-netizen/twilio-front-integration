@@ -179,10 +179,9 @@ async function createInvoice(companyId, userId, data, client = null, activityAct
             }
             const sequence = await invoicesQueries.nextInvoiceSequence(
                 companyId,
-                {
-                    jobId: resolved.job_id,
-                    leadId: resolved.lead_id,
-                },
+                // Same key as buildInvoiceNumber below, so the sequence is unique within this
+                // number's prefix namespace.
+                { leadSerialId, jobId: jobIdForNum },
                 client
             );
             resolved.invoice_number = invoicesQueries.buildInvoiceNumber({

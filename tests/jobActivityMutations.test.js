@@ -29,9 +29,6 @@ jest.mock('../backend/src/services/fsmService', () => ({
 }));
 jest.mock('../backend/src/services/zenbookerClient', () => ({
     cancelJob: jest.fn(),
-    markJobEnroute: jest.fn(),
-    markJobInProgress: jest.fn(),
-    markJobComplete: jest.fn(),
 }));
 jest.mock('../backend/src/db/routeQueries', () => ({
     getCompanyTimezone: jest.fn(async () => 'America/New_York'),
@@ -72,9 +69,6 @@ function clone(value) {
 function jobIdAndCompany(sql, params) {
     if (/zb_canceled = true/.test(sql)) return [params[1], params[2]];
     if (/blanc_status = \$1/.test(sql)) return [params[2], params[3]];
-    if (/zb_status = 'en-route'/.test(sql)) return [params[0], params[1]];
-    if (/zb_status = 'in-progress'/.test(sql)) return [params[0], params[1]];
-    if (/zb_status = 'complete'/.test(sql)) return [params[0], params[1]];
     if (/SET start_date = \$3/.test(sql)) return [params[0], params[1]];
     if (/address\s+= COALESCE/.test(sql)) return [params[0], params[1]];
     if (/SET description = \$1/.test(sql)) return [params[1], params[2]];
@@ -94,13 +88,6 @@ function applyJobUpdate(sql, params) {
     } else if (/zb_canceled = true/.test(sql)) {
         job.blanc_status = 'Canceled';
         job.zb_canceled = true;
-    } else if (/zb_status = 'en-route'/.test(sql)) {
-        job.zb_status = 'en-route';
-    } else if (/zb_status = 'in-progress'/.test(sql)) {
-        job.zb_status = 'in-progress';
-    } else if (/zb_status = 'complete'/.test(sql)) {
-        job.zb_status = 'complete';
-        job.blanc_status = 'Visit completed';
     } else if (/SET start_date = \$3/.test(sql)) {
         job.start_date = params[2];
         job.end_date = params[3];
@@ -177,16 +164,11 @@ beforeEach(() => {
     });
 });
 
-describe.each([
-    ['cancel', jobsService.cancelJob, 'Canceled'],
-    ['enroute', jobsService.markEnroute, 'en-route'],
-    ['start', jobsService.markInProgress, 'in-progress'],
-    ['complete', jobsService.markComplete, 'Visit completed'],
-])('%s tenant isolation', (_label, mutation, status) => {
+describe('cancelJob tenant isolation', () => {
     test('a foreign-company call returns 404 and leaves the owned row byte-unchanged', async () => {
         const before = clone(job);
 
-        await expect(mutation(50, COMPANY_B, ACTOR)).rejects.toMatchObject({
+        await expect(jobsService.cancelJob(50, COMPANY_B, ACTOR)).rejects.toMatchObject({
             statusCode: 404,
         });
 
@@ -196,7 +178,7 @@ describe.each([
     });
 
     test('the committed UPDATE independently carries company_id', async () => {
-        await mutation(50, COMPANY_A, ACTOR);
+        await jobsService.cancelJob(50, COMPANY_A, ACTOR);
 
         const update = mockTxQuery.mock.calls.find(([sql]) => /UPDATE jobs/i.test(String(sql)));
         expect(update).toBeDefined();
@@ -207,7 +189,7 @@ describe.each([
             action: 'job.status_changed',
             jobId: 50,
             actor: ACTOR,
-            summary: { status },
+            summary: { status: 'Canceled' },
         }, expect.objectContaining({ client: expect.any(Object) }));
     });
 });
@@ -218,12 +200,12 @@ test('same-company FSM status transition keeps its behavior and logs the CRM act
     expect(mockEventBusEmit).toHaveBeenCalledWith(
         COMPANY_A,
         'job.status_changed',
-        {
+        expect.objectContaining({
             job_id: 50,
             record_refs: [{ type: 'job', id: 50 }],
             from: 'Submitted',
             to: 'On the way',
-        },
+        }),
         expect.objectContaining({
             actorType: 'user',
             actorId: ACTOR.id,

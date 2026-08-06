@@ -13,6 +13,9 @@ const eventService = require('../services/eventService');
 const { userActor } = require('../services/jobActivityService');
 const { getProviderScope } = require('../middleware/providerScope');
 const { closePermissionError } = require('../services/jobTransitionPerms');
+const { withTransaction } = require('../services/transactionService');
+const { resolveFallbackJobTransition } = require('../services/jobWorkflowFallback');
+const { runTransitionOp } = require('../services/fsmTransitionOps');
 
 /**
  * Server-derived roles for FSM action filtering (PF007-HARDENING-001):
@@ -47,6 +50,14 @@ function normalizeCancelReason(input) {
         return { error: `cancel reason must be ${CANCEL_REASON_MAX_LENGTH} characters or less` };
     }
     return { reason };
+}
+
+function applyError(status, message, code = null) {
+    return Object.assign(new Error(message), {
+        httpStatus: status,
+        statusCode: status,
+        ...(code ? { code } : {}),
+    });
 }
 
 // Feature flags — default to true (enabled) during development
@@ -213,99 +224,139 @@ router.post('/:machineKey/versions/:versionId/restore', requireEditorEnabled, re
   }
 });
 
-// ─── Apply transition (placeholder) ────────────────────────────────────────────
+// ─── Apply transition ──────────────────────────────────────────────────────────
 
-router.post('/:machineKey/apply', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
+async function applyTransitionHandler(req, res) {
   try {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;
-    const { entityId, event, reason } = req.body || {};
+    const { entityId, event, reason, eta_minutes: etaMinutes } = req.body || {};
 
     if (!entityId || !event) {
       return res.status(400).json({ ok: false, error: 'entityId and event are required' });
     }
 
-    // Load entity's current state based on machine type
-    let currentState;
-    let currentJob = null;
-    if (machineKey === 'job') {
-      // Tenant + provider scoped: non-visible jobs read as missing (404)
-      const job = await jobsService.getJobById(entityId, companyId, getProviderScope(req));
-      if (!job) return res.status(404).json({ ok: false, error: `Job #${entityId} not found` });
-      currentJob = job;
-      currentState = job.blanc_status;
-    } else {
+    if (machineKey !== 'job') {
       return res.status(400).json({ ok: false, error: `Unsupported machine: ${machineKey}` });
     }
 
-    const result = await fsmService.resolveTransition(companyId, machineKey, currentState, event);
+    const applied = await withTransaction(async client => {
+      // Lock and re-read inside the transaction so the resolved edge and update use
+      // the same source state. Provider scope remains part of the tenant-owned read.
+      const currentJob = await jobsService.getJobById(
+        entityId,
+        companyId,
+        getProviderScope(req),
+        { client, forUpdate: true }
+      );
+      if (!currentJob) throw applyError(404, `Job #${entityId} not found`);
 
-    // If no published graph exists, the fallback must not widen permissions:
-    // it only reports "no graph" — it never mutates entity state.
-    if (result.valid === null && result.fallback) {
-      return res.json({ ok: true, data: { targetState: null, event, fallback: true } });
-    }
-
-    if (!result.valid) {
-      return res.status(400).json({ ok: false, error: result.error || 'Transition not allowed' });
-    }
-
-    // Closing/terminal transitions need a closing permission (PF007, RBAC-FSM-FIX-001,
-    // ROLE-JOB-CLOSE-PERMS-001). Same source of truth as PATCH /jobs/:id/status so this
-    // /apply side-door can't bypass any closing guard — including Visit completed.
-    if (machineKey === 'job' && !req.user?._devMode) {
-      const permErr = closePermissionError(req.authz?.permissions || [], result.targetState);
-      if (permErr) return res.status(permErr.status).json({ ok: false, error: permErr.error });
-    }
-
-    let cancelReason = null;
-    if (machineKey === 'job' && result.targetState === 'Canceled') {
-      const parsedReason = normalizeCancelReason(reason);
-      if (parsedReason.error) return res.status(400).json({ ok: false, error: parsedReason.error });
-      cancelReason = parsedReason.reason;
-    }
-
-    // Apply the transition — update the entity's status
-    if (machineKey === 'job') {
-      if (result.targetState === 'Canceled') {
-        await jobsService.cancelJob(
-          parseInt(entityId, 10),
-          companyId,
-          userActor(req.user?.crmUser?.id || null)
-        );
-      } else {
-        await jobsService.updateBlancStatus(
-          parseInt(entityId, 10),
-          result.targetState,
-          companyId,
-          userActor(req.user?.crmUser?.id || null)
-        );
+      let result = await fsmService.resolveTransition(
+        companyId,
+        machineKey,
+        currentJob.blanc_status,
+        event,
+        { queryable: client }
+      );
+      if (result.valid === null && result.fallback) {
+        result = resolveFallbackJobTransition(currentJob.blanc_status, event);
+      }
+      if (!result.valid || !result.transition || result.transition.action !== true) {
+        throw applyError(400, result.error || 'Transition not allowed');
       }
 
-      const eventData = {
-        from: currentState,
-        to: result.targetState,
-        actor_name: eventService.actorName(req),
-        reason: cancelReason,
-      };
-      eventService.logEvent(
+      const serverRoles = getServerRoles(req);
+      const transitionRoles = result.transition.roles || [];
+      if (transitionRoles.length > 0 && !transitionRoles.some(role => serverRoles.includes(role))) {
+        throw applyError(403, 'Transition not permitted for this role', 'ACCESS_DENIED');
+      }
+
+      // Closing/terminal transitions use the same source of truth as PATCH
+      // /jobs/:id/status, including the Visit completed gate.
+      if (!req.user?._devMode) {
+        const permErr = closePermissionError(req.authz?.permissions || [], result.targetState);
+        if (permErr) throw applyError(permErr.status, permErr.error, 'ACCESS_DENIED');
+        if (result.op === 'notify_on_the_way'
+            && !(req.authz?.permissions || []).includes('messages.send')) {
+          throw applyError(403, 'Insufficient permissions to send messages', 'ACCESS_DENIED');
+        }
+      }
+
+      let cancelReason = null;
+      if (result.targetState === 'Canceled') {
+        const parsedReason = normalizeCancelReason(reason);
+        if (parsedReason.error) throw applyError(400, parsedReason.error);
+        cancelReason = parsedReason.reason;
+      }
+
+      const actor = userActor(req.user?.crmUser?.id || null);
+      const updatedJob = await jobsService.updateBlancStatus(
+        parseInt(entityId, 10),
+        result.targetState,
         companyId,
-        'job',
-        entityId,
-        result.targetState === 'Canceled' ? 'canceled' : 'status_changed',
-        eventData,
-        'user',
-        req.user?.sub
+        actor,
+        { client, job: currentJob, resolvedTransition: result }
       );
 
-    }
+      if (result.op) {
+        await runTransitionOp(result.op, {
+          job: updatedJob || { ...currentJob, blanc_status: result.targetState },
+          companyId,
+          etaMinutes,
+          activityActor: actor,
+          client,
+        });
+      }
 
-    res.json({ ok: true, data: { previousState: currentState, newState: result.targetState, targetState: result.targetState, entityId: Number(entityId), event: result.event } });
+      return {
+        currentState: currentJob.blanc_status,
+        result,
+        cancelReason,
+      };
+    });
+
+    const eventData = {
+      from: applied.currentState,
+      to: applied.result.targetState,
+      actor_name: eventService.actorName(req),
+      reason: applied.cancelReason,
+    };
+    eventService.logEvent(
+      companyId,
+      'job',
+      entityId,
+      applied.result.targetState === 'Canceled' ? 'canceled' : 'status_changed',
+      eventData,
+      'user',
+      req.user?.sub
+    );
+
+    res.json({ ok: true, data: {
+      previousState: applied.currentState,
+      newState: applied.result.targetState,
+      targetState: applied.result.targetState,
+      entityId: Number(entityId),
+      event: applied.result.event,
+      op: applied.result.op || null,
+      fallback: Boolean(applied.result.fallback),
+    } });
   } catch (err) {
-    console.error('[FSM] apply error:', err);
-    res.status(500).json({ ok: false, error: err.message || 'Internal error' });
+    const status = err.httpStatus || err.statusCode || 500;
+    if (status >= 500) console.error('[FSM] apply error:', err);
+    res.status(status).json({
+      ok: false,
+      ...(err.code ? { code: err.code } : {}),
+      error: err.message || 'Internal error',
+      ...(err.code && err.code !== 'ACCESS_DENIED' ? { message: err.message } : {}),
+    });
   }
-});
+}
+
+router.post(
+  '/:machineKey/apply',
+  requirePermission('jobs.edit', 'jobs.done_pending_approval'),
+  applyTransitionHandler
+);
 
 // ─── Override status (placeholder) ─────────────────────────────────────────────
 
@@ -354,42 +405,9 @@ router.get('/:machineKey/actions', requirePermission('jobs.view', 'fsm.viewer'),
       return res.status(400).json({ ok: false, error: 'state query parameter is required' });
     }
 
-    // Load the active version
-    const version = await fsmService.getActiveVersion(companyId, machineKey);
-    if (!version) {
-      return res.json({ ok: true, data: [] });
-    }
-
-    // Parse SCXML and find transitions for the given state
-    const graph = await fsmService.getPublishedGraph(companyId, machineKey);
-    if (!graph) {
-      return res.json({ ok: true, data: [] });
-    }
-    const stateNode = fsmService.findState(graph.states, state);
-    if (!stateNode) {
-      return res.json({ ok: true, data: [] });
-    }
-
-    // Filter transitions that are marked as actions
-    let actions = stateNode.transitions
-      .filter(tr => tr.action)
-      .map(tr => ({
-        event: tr.event,
-        target: tr.targetStatusName,
-        label: tr.label,
-        icon: tr.icon,
-        confirm: tr.confirm,
-        confirmText: tr.confirmText,
-        order: tr.order,
-        roles: tr.roles.length > 0 ? tr.roles : null,
-      }));
-
-    // Filter by SERVER-derived roles — query-string role hints are ignored (PF007)
     const userRoles = getServerRoles(req);
-    actions = actions.filter(a => {
-      if (!a.roles) return true; // no role restriction
-      return a.roles.some(r => userRoles.includes(r));
-    });
+    const result = await fsmService.getAvailableActions(companyId, machineKey, state, userRoles);
+    let actions = result.actions;
 
     // ROLE-JOB-CLOSE-PERMS-001: also drop closing/terminal actions the caller can't
     // perform, so the picker never offers a Visit-completed / Job-is-Done / Cancel button
@@ -397,14 +415,8 @@ router.get('/:machineKey/actions', requirePermission('jobs.view', 'fsm.viewer'),
     if (machineKey === 'job' && !req.user?._devMode) {
       const perms = req.authz?.permissions || [];
       actions = actions.filter(a => !closePermissionError(perms, a.target));
+      actions = actions.filter(a => a.op !== 'notify_on_the_way' || perms.includes('messages.send'));
     }
-
-    // Sort by order
-    actions.sort((a, b) => {
-      const oa = a.order != null ? a.order : Infinity;
-      const ob = b.order != null ? b.order : Infinity;
-      return oa - ob;
-    });
 
     res.json({ ok: true, data: actions });
   } catch (err) {
@@ -441,3 +453,4 @@ router.get('/:machineKey/states', requirePermission('jobs.view', 'fsm.viewer'), 
 });
 
 module.exports = router;
+module.exports.applyTransitionHandler = applyTransitionHandler;

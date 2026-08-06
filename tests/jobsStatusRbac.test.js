@@ -2,10 +2,10 @@
  * MTECH-T0 / RBAC-FSM-FIX-001 — provider status-transition gates.
  *
  * Regression guard for the mobile field-tech app (MOBILE-TECH-APP-001 §0 G3, §3.3, C6):
- * the `provider` role does NOT have `jobs.edit`, so the operational status routes
- *   POST /:id/enroute, POST /:id/start, PATCH /:id/status
- * MUST accept the OR-gate `requirePermission('jobs.edit','jobs.done_pending_approval')`
- * — otherwise a technician changing their own job's status from the app gets a 403.
+ * the `provider` role does NOT have `jobs.edit`, so the retained status route
+ * PATCH /:id/status MUST accept the OR-gate
+ * `requirePermission('jobs.edit','jobs.done_pending_approval')` — otherwise a
+ * technician changing their own job's status from the app gets a 403.
  *
  * This test locks the gate so a future edit can't silently narrow it back to
  * `jobs.edit` only (which is what broke the mobile status change).
@@ -30,9 +30,6 @@ jest.mock('../backend/src/db/connection', () => {
     return { query, getClient: jest.fn(async () => ({ query, release: jest.fn() })) };
 });
 jest.mock('../backend/src/services/zenbookerClient', () => ({
-    markJobEnroute: jest.fn(async () => {}),
-    markJobInProgress: jest.fn(async () => {}),
-    markComplete: jest.fn(async () => {}),
     cancelJob: jest.fn(async () => {}),
 }));
 jest.mock('../backend/src/services/fsmService', () => ({
@@ -61,8 +58,7 @@ const db = require('../backend/src/db/connection');
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const PROVIDER_USER = '11111111-1111-1111-1111-111111111111';
 
-// A minimal job row that satisfies getJobById + the status service methods.
-// zenbooker_job_id=null keeps the ZB side-effect branch out of the path.
+// A minimal job row that satisfies getJobById + the status service method.
 const JOB_ROW = {
     id: 123,
     blanc_status: 'Submitted',
@@ -126,20 +122,6 @@ function appWithAuthz({ permissions = [], scopes = { job_visibility: 'assigned_o
 const PROVIDER_PERMS = ['jobs.view', 'jobs.done_pending_approval'];
 
 describe('Provider status gates — own job succeeds with jobs.done_pending_approval (no jobs.edit)', () => {
-    it('POST /:id/enroute → 200 and zb_status=en-route', async () => {
-        db.query.mockResolvedValue({ rows: [JOB_ROW] }); // every getJobById/UPDATE resolves to the row
-        const res = await request(appWithAuthz({ permissions: PROVIDER_PERMS }), 'POST', '/123/enroute');
-        expect(res.status).toBe(200);
-        expect(res.body.data.zb_status).toBe('en-route');
-    });
-
-    it('POST /:id/start → 200 and zb_status=in-progress', async () => {
-        db.query.mockResolvedValue({ rows: [JOB_ROW] });
-        const res = await request(appWithAuthz({ permissions: PROVIDER_PERMS }), 'POST', '/123/start');
-        expect(res.status).toBe(200);
-        expect(res.body.data.zb_status).toBe('in-progress');
-    });
-
     it('PATCH /:id/status (operational, non-closing) → 200', async () => {
         db.query.mockResolvedValue({ rows: [JOB_ROW] });
         const res = await request(
@@ -151,19 +133,6 @@ describe('Provider status gates — own job succeeds with jobs.done_pending_appr
 });
 
 describe('Provider status gates — foreign job is 404 (scope hides it), never 403', () => {
-    it('POST /:id/enroute on a job not assigned to me → 404', async () => {
-        db.query.mockResolvedValue({ rows: [] }); // assignee filter excludes it → getJobById null
-        const res = await request(appWithAuthz({ permissions: PROVIDER_PERMS }), 'POST', '/999/enroute');
-        expect(res.status).toBe(404);
-        expect(res.body.error).toMatch(/not found/i);
-    });
-
-    it('POST /:id/start on a foreign job → 404', async () => {
-        db.query.mockResolvedValue({ rows: [] });
-        const res = await request(appWithAuthz({ permissions: PROVIDER_PERMS }), 'POST', '/999/start');
-        expect(res.status).toBe(404);
-    });
-
     it('PATCH /:id/status on a foreign job → 404', async () => {
         db.query.mockResolvedValue({ rows: [] });
         const res = await request(
@@ -175,18 +144,6 @@ describe('Provider status gates — foreign job is 404 (scope hides it), never 4
 });
 
 describe('Provider status gates — 403 without either operational permission', () => {
-    it('POST /:id/enroute with neither jobs.edit nor jobs.done_pending_approval → 403', async () => {
-        db.query.mockResolvedValue({ rows: [JOB_ROW] });
-        const res = await request(appWithAuthz({ permissions: ['jobs.view'] }), 'POST', '/123/enroute');
-        expect(res.status).toBe(403);
-    });
-
-    it('POST /:id/start without either → 403', async () => {
-        db.query.mockResolvedValue({ rows: [JOB_ROW] });
-        const res = await request(appWithAuthz({ permissions: ['jobs.view'] }), 'POST', '/123/start');
-        expect(res.status).toBe(403);
-    });
-
     it('PATCH /:id/status without either → 403 (gate blocks before the handler)', async () => {
         db.query.mockResolvedValue({ rows: [JOB_ROW] });
         const res = await request(
@@ -198,7 +155,7 @@ describe('Provider status gates — 403 without either operational permission', 
 });
 
 // ROLE-JOB-CLOSE-PERMS-001 — the closing/terminal transitions must be gated on the
-// closing permissions on EVERY write path, not just POST /:id/complete. Owner semantics:
+// closing permissions on EVERY write path. Owner semantics:
 //   'Job is Done'     → jobs.close
 //   'Visit completed' → jobs.done_pending_approval OR jobs.close
 //   'Canceled'        → jobs.close

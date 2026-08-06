@@ -52,7 +52,7 @@ BEGIN
                     rec.scxml_source,
                     '  <final id="Canceled" blanc:label="Canceled" />',
                     '  <state id="On_the_way" blanc:label="On the way" blanc:statusName="On the way">
-    <transition event="TO_VISIT_COMPLETED" target="Visit_completed" blanc:action="true" blanc:label="Visit completed" blanc:order="1" />
+    <transition event="TO_VISIT_COMPLETED" target="Visit_completed" blanc:action="true" blanc:button="true" blanc:label="Visit completed" blanc:order="1" />
     <transition event="TO_CANCELED" target="Canceled" blanc:action="true" blanc:label="Cancel" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to cancel this job?" />
   </state>
 
@@ -60,11 +60,11 @@ BEGIN
                 ),
                 '  <state id="Submitted" blanc:label="Submitted">',
                 '  <state id="Submitted" blanc:label="Submitted">
-    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:label="On the way" blanc:order="0" />'
+    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:button="true" blanc:op="notify_on_the_way" blanc:label="On the way" blanc:order="0" />'
             ),
             '  <state id="Rescheduled" blanc:label="Rescheduled">',
             '  <state id="Rescheduled" blanc:label="Rescheduled">
-    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:label="On the way" blanc:order="0" />'
+    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:button="true" blanc:op="notify_on_the_way" blanc:label="On the way" blanc:order="0" />'
         );
 
         IF new_scxml = rec.scxml_source THEN

@@ -189,38 +189,35 @@ async function getInvoiceById(companyId, id, client = null) {
  * Compute the next per-(job|lead) invoice sequence number.
  * Mirrors `nextEstimateSequence` from estimatesQueries.
  */
-async function nextInvoiceSequence(companyId, { jobId, leadId }, client = null) {
+function invoiceNumberPrefix({ leadSerialId, jobId }) {
+    if (leadSerialId) return `INVOICE L-${leadSerialId}-`;
+    if (jobId) return `INVOICE J-${jobId}-`;
+    return 'INVOICE ';
+}
+
+async function nextInvoiceSequence(companyId, { leadSerialId, jobId }, client = null) {
     const query = queryFor(client);
-    const params = [companyId];
-    let clause = '';
-    if (jobId) {
-        params.push(jobId);
-        clause = 'job_id = $2';
-    } else if (leadId) {
-        params.push(leadId);
-        clause = 'lead_id = $2 AND job_id IS NULL';
-    } else {
-        // Fallback — global sequence per company when no job/lead linkage.
-        clause = 'TRUE';
-    }
-    // Count existing invoices for the same job/lead bucket; sequence = count + 1.
+    // Unique within the exact invoice-number namespace (mirrors EST-DUP-001). The number is keyed
+    // on a lead serial / lead id / job id — id spaces that can numerically overlap — so counting by
+    // job_id/lead_id let two different entities mint the SAME number and violate the unique index.
+    // Count by the number PREFIX itself, taking the max trailing sequence (robust to voided/deleted
+    // rows, unlike a plain COUNT which reuses a number after a gap).
     const { rows } = await query(
-        `SELECT COUNT(*)::int + 1 AS next_sequence
+        `SELECT COALESCE(MAX(CAST(substring(invoice_number FROM '[0-9]+$') AS INTEGER)), 0) + 1 AS next_sequence
          FROM invoices
-         WHERE company_id = $1 AND ${clause}`,
-        params
+         WHERE company_id = $1 AND invoice_number LIKE $2`,
+        [companyId, `${invoiceNumberPrefix({ leadSerialId, jobId })}%`]
     );
     return parseInt(rows[0]?.next_sequence || '1', 10);
 }
 
 /**
  * Format an invoice number that mirrors the estimate scheme (`INVOICE L-{leadSerialId}-{seq}`).
- * Falls back to a job-id-based label when no lead serial is available.
+ * Falls back to a job-id-based label when no lead serial is available. The prefix here MUST match
+ * nextInvoiceSequence's LIKE prefix so the sequence stays unique within it.
  */
 function buildInvoiceNumber({ leadSerialId, jobId, sequence }) {
-    if (leadSerialId) return `INVOICE L-${leadSerialId}-${sequence}`;
-    if (jobId) return `INVOICE J-${jobId}-${sequence}`;
-    return `INVOICE ${sequence}`;
+    return `${invoiceNumberPrefix({ leadSerialId, jobId })}${sequence}`;
 }
 
 /**

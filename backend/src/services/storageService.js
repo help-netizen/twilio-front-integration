@@ -1,9 +1,12 @@
 /**
- * Storage Service — S3-compatible object storage (Tigris on Fly.io)
+ * Storage Service — S3-compatible object storage.
  *
- * Provides file upload, presigned URL generation, and deletion.
- * Uses environment variables set by `fly storage create`:
+ * STORAGE-VULTR-001 (2026-08): migrated off the decommissioned Tigris (Fly) bucket to
+ * self-hosted MinIO on the Vultr box, fronted by Caddy at https://storage.albusto.com.
+ * Provides file upload, presigned URL generation, and deletion. Config via env:
  *   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_ENDPOINT_URL_S3, BUCKET_NAME
+ * MinIO uses PATH-STYLE addressing (endpoint/bucket/key), so forcePathStyle is required —
+ * both for the SDK's own requests and for the presigned URLs it hands the browser.
  */
 
 const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
@@ -21,6 +24,7 @@ function getClient() {
     _client = new S3Client({
         region: 'auto',
         endpoint: process.env.AWS_ENDPOINT_URL_S3,
+        forcePathStyle: true, // MinIO (self-hosted) addresses buckets by path, not vhost
         credentials: {
             accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
             secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',

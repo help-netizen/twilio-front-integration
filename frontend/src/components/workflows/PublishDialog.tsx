@@ -16,6 +16,9 @@ interface PublishDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onPublished: () => void;
+    /** Runs before the publish request — e.g. saves the working draft so Publish activates the
+     *  latest edits. Throwing aborts the publish (nothing is published). */
+    onBeforePublish?: () => Promise<void>;
 }
 
 export default function PublishDialog({
@@ -23,14 +26,18 @@ export default function PublishDialog({
     open,
     onOpenChange,
     onPublished,
+    onBeforePublish,
 }: PublishDialogProps) {
     const [changeNote, setChangeNote] = useState('');
+    const [busy, setBusy] = useState(false);
     const publishMutation = usePublishDraft(machineKey);
 
-    const canPublish = changeNote.trim().length > 0 && !publishMutation.isPending;
+    const canPublish = changeNote.trim().length > 0 && !busy;
 
     const handlePublish = async () => {
+        setBusy(true);
         try {
+            if (onBeforePublish) await onBeforePublish(); // save the working draft first
             await publishMutation.mutateAsync({ change_note: changeNote.trim() });
             toast.success('Workflow published');
             setChangeNote('');
@@ -40,6 +47,8 @@ export default function PublishDialog({
             const message =
                 err instanceof Error ? err.message : 'Failed to publish workflow';
             toast.error(message);
+        } finally {
+            setBusy(false);
         }
     };
 
@@ -87,7 +96,7 @@ export default function PublishDialog({
                             disabled={!canPublish}
                             onClick={handlePublish}
                         >
-                            {publishMutation.isPending && (
+                            {busy && (
                                 <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                             )}
                             Publish

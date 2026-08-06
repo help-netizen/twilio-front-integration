@@ -313,6 +313,9 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                 order_list: serializeOrderList(orderList),
             };
             await onSave(data);
+        } catch (err) {
+            // EST-DUP-001: never fail silently — the dialog stays open so the user can retry.
+            toast.error(err instanceof Error && err.message ? err.message : 'Could not save the estimate. Please try again.');
         } finally {
             setSaving(false);
         }

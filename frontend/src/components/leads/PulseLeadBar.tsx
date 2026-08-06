@@ -1,5 +1,5 @@
 import type { Lead } from '../../types/lead';
-import { PulsePinnedBar, PulsePinnedBarExpand } from '../pulse/PulsePinnedBar';
+import { PulsePinnedBar } from '../pulse/PulsePinnedBar';
 import { LeadActionButtons } from './LeadActionButtons';
 import { LeadStatusDropdown } from './LeadStatusDropdown';
 
@@ -28,7 +28,17 @@ export function PulseLeadBar({
                     {lead.JobType && <span className="pulse-lead-bar-repair-type">{lead.JobType}</span>}
                 </p>
                 <div className="pulse-lead-bar-name-row">
-                    <h2 className="pulse-lead-bar-name" style={{ fontFamily: 'var(--blanc-font-heading)' }}>{contactName}</h2>
+                    {/* Tapping the name opens the full lead card — replaces the removed chevron
+                        (owner). The status dropdown stays a separate control beside it. */}
+                    <h2
+                        className="pulse-lead-bar-name is-expandable"
+                        style={{ fontFamily: 'var(--blanc-font-heading)' }}
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Open full lead card"
+                        onClick={onExpand}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onExpand(); } }}
+                    >{contactName}</h2>
                     <LeadStatusDropdown lead={lead} onUpdateStatus={onUpdateStatus} compact />
                 </div>
             </div>
@@ -42,8 +52,6 @@ export function PulseLeadBar({
                 onConvert={onConvert}
                 onDelete={onDelete}
             />
-
-            <PulsePinnedBarExpand label="Open full lead card" onClick={onExpand} />
         </PulsePinnedBar>
     );
 }
