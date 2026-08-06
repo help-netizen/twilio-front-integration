@@ -173,9 +173,9 @@ async function resolveContext(companyId, data = {}, client = null) {
 
         const sequence = await estimatesQueries.nextEstimateSequence(
             companyId,
-            // Scope the sequence to the lead when the job has one, so it matches the lead-keyed
-            // number and stays unique across all of the customer's jobs.
-            { jobId: job.id, leadId: job.lead_id || null },
+            // Same key as buildEstimateNumber below, so the sequence is unique within this
+            // number's "ESTIMATE L-<leadSerial>-" namespace.
+            { leadSerialId: job.lead_serial_id || job.lead_id || job.id },
             client
         );
         return {
@@ -195,7 +195,7 @@ async function resolveContext(companyId, data = {}, client = null) {
 
         const sequence = await estimatesQueries.nextEstimateSequence(
             companyId,
-            { leadId: lead.id },
+            { leadSerialId: lead.serial_id || lead.id },
             client
         );
         return {
@@ -895,7 +895,7 @@ async function linkJob(companyId, userId, id, jobId, client = null, activityActo
 
     const sequence = await estimatesQueries.nextEstimateSequence(
         companyId,
-        { jobId: job.id, leadId: estimate.lead_id || job.lead_id || null },
+        { leadSerialId: job.lead_serial_id || job.lead_id || job.id },
         client,
     );
     const updated = await estimatesQueries.updateEstimate(id, companyId, {

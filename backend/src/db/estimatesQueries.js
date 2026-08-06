@@ -241,33 +241,30 @@ async function getContactContext(companyId, contactId, client = null) {
     return rows[0] || null;
 }
 
-async function nextEstimateSequence(companyId, { jobId, leadId }, client = null) {
-    const query = queryFor(client);
-    const params = [companyId];
-    let clause = '';
-    if (leadId) {
-        // The estimate number is keyed on the LEAD ("ESTIMATE L-<leadSerial>-<seq>"), so the
-        // sequence must count every estimate for that lead across ALL of its jobs. Scoping by
-        // job_id instead let a repeat customer's second job restart the sequence at 1 and collide
-        // on uq_estimates_number_company — the save failed silently (buttons flicker, nothing saves).
-        params.push(leadId);
-        clause = 'lead_id = $2';
-    } else {
-        params.push(jobId);
-        clause = 'job_id = $2 AND lead_id IS NULL';
-    }
+function estimateNumberPrefix(leadSerialId) {
+    return `ESTIMATE L-${leadSerialId || '0'}-`;
+}
 
+async function nextEstimateSequence(companyId, { leadSerialId }, client = null) {
+    const query = queryFor(client);
+    // The sequence must be unique within the exact estimate-number namespace
+    // ("ESTIMATE L-<leadSerialId>-<seq>"). leadSerialId is derived from a lead serial, a lead id,
+    // or a job id (fallback) — separate id spaces that can numerically collide (e.g. lead serial
+    // 1528 vs job id 1528). Counting by lead_id/job_id let two different entities mint the SAME
+    // number and violate uq_estimates_number_company, so the estimate save failed silently (the FE
+    // swallows the error → buttons flicker, nothing saves). Count by the number prefix itself so
+    // the sequence is guaranteed unique across whatever produced that key.
     const { rows } = await query(
         `SELECT COALESCE(MAX(estimate_sequence), 0) + 1 AS next_sequence
          FROM estimates
-         WHERE company_id = $1 AND ${clause}`,
-        params
+         WHERE company_id = $1 AND estimate_number LIKE $2`,
+        [companyId, `${estimateNumberPrefix(leadSerialId)}%`]
     );
     return parseInt(rows[0]?.next_sequence || '1', 10);
 }
 
 function buildEstimateNumber({ leadSerialId, sequence }) {
-    return `ESTIMATE L-${leadSerialId || '0'}-${sequence}`;
+    return `${estimateNumberPrefix(leadSerialId)}${sequence}`;
 }
 
 async function createEstimate(companyId, data, client = null) {
