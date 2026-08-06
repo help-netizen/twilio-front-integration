@@ -149,7 +149,25 @@ same eligible set (North: A,C; other: C; B: never); flip the ZONE-STRICT empty b
 git) → green; and removing company scope from the external-map join must fail the shared-id case.
 
 ## Verification
-(Filled per task as it ships — each with exact run command + sabotage control.)
+### T1 (migration 240 + native query layer) — DONE, commits d96be1ad, 8c6ade76
+- Migration proven by a rolled-back apply against the REAL prod schema (PG 17.10): all
+  objects + 8 `*_native_fk` create, `ROLLBACK` leaves 0 tables. No persistent change.
+- `backend/src/db/technicianDirectoryQueries.js` — company-scoped primitives (create /
+  upsert-external / resolve external↔uuid / list-active / link-crm-user); no ZB calls, no
+  default-company fallback; company_id is the first bound param of every query.
+- Unit test (mocked pool, runs without a DB), 7/7:
+  `env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/" --runTestsByPath tests/technicianDirectoryQueries.test.js`
+- Sabotage SAB-T1-TENANT: reorder `resolveExternalToUuid` params so company isn't `$1` →
+  1 failed → restore from cp backup → 7 passed.
+- Deferred: the full `.db` round-trip against migration 240 runs at DEPLOY (the local dev DB
+  `twilio_calls` is not fully migrated — missing company_memberships / mig-239 table /
+  work_schedule_days). Add `tests/nativeTechnicianDirectory.db.test.js` when a migrated test
+  DB exists, or verify at the deploy migration step.
+- Codex L-016 twice (session compacted, drafted-without-applying); T1 code written by Claude
+  from the approved design.
+
+### T2..T6 — not started (see Phase A design above).
+
 
 ### Debt surfaced
 - mig 239 (`technician_area_wildcards`, shipped 2026-08-05) has no `rollback_239_*.sql` — add
