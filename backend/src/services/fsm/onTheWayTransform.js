@@ -34,7 +34,7 @@ const ON_THE_WAY_MARKER = 'id="On_the_way"';
 //     marker. Indentation matches the neighboring states in `fsm/job.scxml`.
 const ON_THE_WAY_STATE_BLOCK =
 `  <state id="On_the_way" blanc:label="On the way" blanc:statusName="On the way">
-    <transition event="TO_VISIT_COMPLETED" target="Visit_completed" blanc:action="true" blanc:label="Visit completed" blanc:order="1" />
+    <transition event="TO_VISIT_COMPLETED" target="Visit_completed" blanc:action="true" blanc:button="true" blanc:label="Visit completed" blanc:order="1" />
     <transition event="TO_CANCELED" target="Canceled" blanc:action="true" blanc:label="Cancel" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to cancel this job?" />
   </state>
 
@@ -48,7 +48,7 @@ const CANCELED_FINAL_MARKER = '  <final id="Canceled" blanc:label="Canceled" />'
 const SUBMITTED_OPEN = '  <state id="Submitted" blanc:label="Submitted">';
 const RESCHEDULED_OPEN = '  <state id="Rescheduled" blanc:label="Rescheduled">';
 const INBOUND_TRANSITION =
-'\n    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:label="On the way" blanc:order="0" />';
+'\n    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:button="true" blanc:op="notify_on_the_way" blanc:label="On the way" blanc:order="0" />';
 
 /**
  * Inject the "On the way" state + inbound transitions into a job SCXML source.

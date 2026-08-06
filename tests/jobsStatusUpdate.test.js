@@ -14,8 +14,13 @@ jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/fsmService', () => ({
     resolveTransition: jest.fn(async () => ({ valid: true })),
 }));
+jest.mock('../backend/src/services/zenbookerClient', () => ({
+    markJobComplete: jest.fn(),
+    cancelJob: jest.fn(),
+}));
 
 const db = require('../backend/src/db/connection');
+const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const jobsService = require('../backend/src/services/jobsService');
 
 const COMPANY = '11111111-1111-1111-1111-111111111111';
@@ -72,5 +77,48 @@ describe('updateBlancStatus query shape', () => {
             from: 'Submitted',
             to: 'Canceled',
         });
+    });
+
+    it('does not call Zenbooker from the blanc_status change path', async () => {
+        db.query.mockResolvedValue({
+            rows: [{
+                id: 5,
+                blanc_status: 'Submitted',
+                zenbooker_job_id: 'zb-job-5',
+                zb_status: 'scheduled',
+                company_id: COMPANY,
+            }],
+        });
+
+        await jobsService.updateBlancStatus(5, 'Job is Done', COMPANY);
+
+        expect(zenbookerClient.markJobComplete).not.toHaveBeenCalled();
+        expect(zenbookerClient.cancelJob).not.toHaveBeenCalled();
+    });
+
+    it('uses a supplied transaction client for the status write and domain event', async () => {
+        const job = {
+            id: 5,
+            blanc_status: 'Submitted',
+            job_number: 'J-5',
+            company_id: COMPANY,
+        };
+        const client = {
+            query: jest.fn()
+                .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+                .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'event-1' }] }),
+        };
+
+        await jobsService.updateBlancStatus(5, 'On the way', COMPANY, null, {
+            client,
+            job,
+            resolvedTransition: { valid: true, targetState: 'On the way', event: 'TO_ON_THE_WAY' },
+        });
+
+        expect(client.query).toHaveBeenCalledTimes(2);
+        expect(client.query.mock.calls[0][0]).toContain('UPDATE jobs');
+        expect(client.query.mock.calls[0][1]).toEqual(['On the way', false, 5, COMPANY]);
+        expect(client.query.mock.calls[1][0]).toContain('INSERT INTO domain_events');
+        expect(db.query).not.toHaveBeenCalled();
     });
 });

@@ -8,6 +8,7 @@ const {
   getAllStates,
   graphCache,
 } = require('../../backend/src/services/fsmService');
+const { ALLOWED_TRANSITIONS } = require('../../backend/src/services/jobWorkflowFallback');
 
 const JOB_SCXML = fs.readFileSync(path.resolve(__dirname, '../../fsm/job.scxml'), 'utf8');
 const LEAD_SCXML = fs.readFileSync(path.resolve(__dirname, '../../fsm/lead.scxml'), 'utf8');
@@ -157,6 +158,26 @@ describe('parseSCXML', () => {
       const graph = parseSCXML(xml);
       const tr = graph.states.get('A').transitions[0];
       expect(tr.roles).toEqual(['agent', 'admin']);
+    });
+
+    test('extracts button, variant, and op while preserving unset defaults', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" xmlns:blanc="https://blanc.app/fsm" initial="A">
+  <state id="A">
+    <transition event="PROMOTE" target="B" blanc:action="true" blanc:button="false" blanc:variant="neutral" blanc:op="notify_on_the_way"/>
+    <transition event="DEFAULTS" target="C" blanc:action="true"/>
+  </state>
+  <state id="B"/>
+  <state id="C"/>
+</scxml>`;
+      const transitions = parseSCXML(xml).states.get('A').transitions;
+
+      expect(transitions[0]).toMatchObject({
+        button: false,
+        variant: 'neutral',
+        op: 'notify_on_the_way',
+      });
+      expect(transitions[1]).toMatchObject({ button: null, variant: null, op: null });
     });
   });
 });
@@ -351,6 +372,15 @@ describe('resolveTransition', () => {
     expect(result.event).toBe('TO_FOLLOW_UP');
   });
 
+  test('returns the parsed operation carried by the resolved transition', async () => {
+    const result = await resolveTransition(COMPANY, MACHINE, 'Submitted', 'TO_ON_THE_WAY');
+    expect(result.op).toBe('notify_on_the_way');
+    expect(result.transition).toMatchObject({
+      button: true,
+      op: 'notify_on_the_way',
+    });
+  });
+
   test('resolves transition by target statusName', async () => {
     const result = await resolveTransition(COMPANY, MACHINE, 'Submitted', 'Follow Up with Client');
     expect(result.valid).toBe(true);
@@ -467,6 +497,37 @@ describe('getAvailableActions', () => {
     expect(orders).toEqual([0, 1, 2, 3]);
   });
 
+  test('computes effective button and variant defaults after role filtering and sorting', async () => {
+    const result = await getAvailableActions(COMPANY, MACHINE, 'Submitted', []);
+    const byEvent = Object.fromEntries(result.actions.map(action => [action.event, action]));
+
+    expect(byEvent.TO_ON_THE_WAY).toMatchObject({
+      button: true,
+      variant: 'primary',
+      op: 'notify_on_the_way',
+    });
+    expect(byEvent.TO_FOLLOW_UP).toMatchObject({ button: true, variant: 'secondary', op: null });
+    expect(byEvent.TO_WAITING_PARTS).toMatchObject({ button: true, variant: 'secondary' });
+    expect(byEvent.TO_CANCELED).toMatchObject({ button: true, variant: 'danger' });
+  });
+
+  test('final targets default to success and explicit button/variant values win', async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" xmlns:blanc="https://blanc.app/fsm" initial="A">
+  <state id="A">
+    <transition event="FINISH" target="Done" blanc:action="true" blanc:order="1"/>
+    <transition event="CANCEL" target="Canceled" blanc:action="true" blanc:button="false" blanc:variant="neutral" blanc:order="2"/>
+  </state>
+  <final id="Done" blanc:statusName="Job is Done"/>
+  <final id="Canceled"/>
+</scxml>`;
+    graphCache.set('defaults:test', parseSCXML(xml));
+
+    const result = await getAvailableActions('defaults', 'test', 'A', []);
+    expect(result.actions[0]).toMatchObject({ event: 'FINISH', button: true, variant: 'success' });
+    expect(result.actions[1]).toMatchObject({ event: 'CANCEL', button: false, variant: 'neutral' });
+  });
+
   // TC-FSM-023: Confirm metadata returned
   test('TC-FSM-023: includes confirm metadata in actions', async () => {
     const result = await getAvailableActions(COMPANY, MACHINE, 'Submitted', []);
@@ -525,6 +586,22 @@ describe('getAvailableActions', () => {
     expect(result.fallback).toBe(false);
   });
 
+  test('uses neutral hardcoded actions when a published job state has no actionable edges', async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" xmlns:blanc="https://blanc.app/fsm" initial="Submitted">
+  <state id="Submitted">
+    <transition event="HIDDEN" target="Canceled"/>
+  </state>
+  <final id="Canceled"/>
+</scxml>`;
+    graphCache.set('no-actions:job', parseSCXML(xml));
+
+    const result = await getAvailableActions('no-actions', 'job', 'Submitted', []);
+    expect(result.fallback).toBe(true);
+    expect(result.actions.map(action => action.targetStatusName)).toEqual(ALLOWED_TRANSITIONS.Submitted);
+    expect(result.actions.every(action => action.variant === 'neutral' && action.button === true)).toBe(true);
+  });
+
   // TC-FSM-031: Fallback actions when no published graph
   test('TC-FSM-031: returns fallback flag when no published graph', async () => {
     graphCache.clear();
@@ -535,7 +612,9 @@ describe('getAvailableActions', () => {
     try {
       const result = await getAvailableActions('no-fsm-company', MACHINE, 'Submitted', []);
       expect(result.fallback).toBe(true);
-      expect(result.actions).toEqual([]);
+      expect(result.actions.length).toBeGreaterThan(0);
+      expect(result.actions.every(action => action.button === true && action.variant === 'neutral')).toBe(true);
+      expect(result.actions.every(action => action.op === null)).toBe(true);
     } finally {
       db.query = originalQuery;
     }

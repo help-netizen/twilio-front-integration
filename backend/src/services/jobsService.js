@@ -32,67 +32,35 @@ const {
     bigintCursorExpression,
 } = require('../utils/listCursor');
 const { companyDateFilterBounds } = require('../utils/companyTime');
+const {
+    ALLOWED_TRANSITIONS,
+    BLANC_STATUSES,
+    getFallbackJobActions,
+} = require('./jobWorkflowFallback');
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const BLANC_STATUSES = [
-    'Submitted',
-    'Waiting for parts',
-    'Part arrived',
-    'Follow Up with Client',
-    'Visit completed',
-    'Job is Done',
-    'Rescheduled',
-    'Canceled',
-    'On the way',
-];
-
-/** Manual transitions allowed in Albusto UI (§7) */
-const ALLOWED_TRANSITIONS = {
-    'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled', 'On the way'],
-    'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled', 'Part arrived'],
-    // JOB-FSM-PART-ARRIVED-FORWARD-001: non-blocking — forward (On the way / Visit
-    // completed), lateral (Rescheduled), back (Waiting for parts / Submitted), plus the
-    // original Follow Up / Canceled. Mirrors the published-graph fix in migration 160.
-    'Part arrived': ['On the way', 'Visit completed', 'Rescheduled', 'Waiting for parts', 'Follow Up with Client', 'Submitted', 'Canceled'],
-    'Follow Up with Client': ['Waiting for parts', 'Submitted', 'Canceled'],
-    'Visit completed': ['Follow Up with Client', 'Job is Done', 'Canceled'],
-    'Job is Done': ['Canceled'],
-    'Rescheduled': ['Submitted', 'Canceled', 'On the way'],
-    'Canceled': [],  // terminal
-    'On the way': ['Visit completed', 'Canceled'],
-};
-
-/**
- * Albusto → Zenbooker outbound sync matrix (§6).
- * Handled inline in updateBlancStatus. Documented here for reference:
- *
- *   Submitted             → no ZB action (operator-driven reopen; see note below)
- *   Waiting for parts     → no ZB action (Albusto-only operational state)
- *   Visit completed       → no ZB action (Albusto-only operational state)
- *   Job is Done           → markJobComplete                             (finalized)
- *   Canceled              → cancelJob
- *   Follow Up with Client → no ZB action (Albusto-only operational state)
- *   Rescheduled           → no ZB action (operator-driven reopen; see note below)
- *
- * Reopen limitation: Zenbooker API has NO endpoint to un-cancel or un-complete
- * a job. rescheduleJob only updates start_date + sets the rescheduled flag —
- * it does NOT reset status=complete or canceled=true back to scheduled.
- * For operator-driven reopens (Albusto → Submitted or Rescheduled on a job that
- * is still complete/canceled in ZB), Albusto maintains its own state and the
- * inbound syncFromZenbooker logic preserves it (see "operator reopen override").
- *
- * All ZB calls are skipped if the ZB job is already in the target state, to
- * avoid 4xx "already X" errors that previously blocked the local DB update.
- */
+// Human status changes are local-only: blanc_status is authoritative. The
+// legacy Zenbooker action routes remain below until the Phase 4 cleanup.
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-async function mutateWithActivity(activityActor, activity, work) {
+async function mutateWithActivity(activityActor, activity, work, { client = null } = {}) {
+    if (client) {
+        const result = await work(client);
+        const activityEvent = typeof activity === 'function' ? activity(result) : activity;
+        if (activityActor && activityEvent) {
+            await logJobActivity({
+                ...activityEvent,
+                actor: activityActor,
+            }, { client });
+        }
+        return result;
+    }
     if (!activityActor) return work(db);
     return withTransaction(async (client) => {
         const result = await work(client);
@@ -166,9 +134,9 @@ function rowToJob(row) {
 }
 
 /** Fetch tags for a single job */
-async function getTagsForJob(jobId, companyId) {
+async function getTagsForJob(jobId, companyId, queryable = db) {
     if (!companyId) throw new Error('getTagsForJob requires companyId');
-    const { rows } = await db.query(`
+    const { rows } = await queryable.query(`
         SELECT t.id, t.name, t.color, t.is_active
         FROM job_tag_assignments jta
         JOIN jobs j ON j.id = jta.job_id AND j.company_id = $2
@@ -735,7 +703,7 @@ async function enqueueZbJobSync(companyId, jobId, parts = {}) {
     );
 }
 
-async function getJobById(id, companyId = null, providerScope = null) {
+async function getJobById(id, companyId = null, providerScope = null, { client = null, forUpdate = false } = {}) {
     const conditions = ['j.id = $1'];
     const params = [id];
     if (companyId) {
@@ -749,7 +717,8 @@ async function getJobById(id, companyId = null, providerScope = null) {
         params.push(JSON.stringify([providerScope.userId]));
         conditions.push(`j.assigned_provider_user_ids @> $${params.length}::jsonb`);
     }
-    const { rows } = await db.query(
+    const queryable = client || db;
+    const { rows } = await queryable.query(
         `SELECT j.*, l.serial_id AS lead_serial_id,
                 COALESCE(c.full_name, j.customer_name) AS customer_name,
                 COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
@@ -757,14 +726,15 @@ async function getJobById(id, companyId = null, providerScope = null) {
          FROM jobs j
          LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
          LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
-         WHERE ${conditions.join(' AND ')}`,
+         WHERE ${conditions.join(' AND ')}
+         ${forUpdate ? 'FOR UPDATE OF j' : ''}`,
         params
     );
     if (rows.length === 0) return null;
     const job = rowToJob(rows[0]);
     // Never take the historical ID-only tag path. Legacy unscoped callers get
     // no tag child rows; tenant-aware callers resolve tags through the owned Job.
-    job.tags = companyId ? await getTagsForJob(id, companyId) : [];
+    job.tags = companyId ? await getTagsForJob(id, companyId, queryable) : [];
     return job;
 }
 
@@ -1243,7 +1213,7 @@ function fireRobotCallLeaveHook(jobId, companyId, newStatus) {
     }
 }
 
-function emitJobDomainEvent(companyId, eventType, jobId, payload, activityActor = null) {
+function emitJobDomainEvent(companyId, eventType, jobId, payload, activityActor = null, client = null) {
     const statusPayload = eventType === 'job.status_changed'
         ? {
             job_number: payload.job_number || null,
@@ -1261,23 +1231,31 @@ function emitJobDomainEvent(companyId, eventType, jobId, payload, activityActor 
         actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
         aggregateType: 'job',
         aggregateId: jobId,
+        ...(client ? { client } : {}),
     }).catch(() => {});
 }
 
-async function updateBlancStatus(jobId, newStatus, companyId, activityActor = null) {
+async function updateBlancStatus(jobId, newStatus, companyId, activityActor = null, options = {}) {
     if (!companyId) {
         const err = new Error('updateBlancStatus requires companyId');
         err.code = 'TENANT_CONTEXT_REQUIRED';
         err.httpStatus = 403;
         throw err;
     }
-    const job = await getJobById(jobId, companyId);
+    const { client = null, job: suppliedJob = null, resolvedTransition = null } = options;
+    const job = suppliedJob || await getJobById(jobId, companyId, null, { client, forUpdate: Boolean(client) });
     if (!job) {
         throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
     }
 
     // Try FSM resolution first
-    const result = await fsmService.resolveTransition(companyId, 'job', job.blanc_status, newStatus);
+    const result = resolvedTransition || await fsmService.resolveTransition(
+        companyId,
+        'job',
+        job.blanc_status,
+        newStatus,
+        { queryable: client || db }
+    );
     if (result.valid === true) {
         // FSM approved the transition — proceed with DB update below
     } else if (result.valid === false) {
@@ -1318,64 +1296,42 @@ async function updateBlancStatus(jobId, newStatus, companyId, activityActor = nu
              WHERE id = $3 AND company_id = $4`,
             [newStatus, newStatus === 'Canceled', jobId, companyId],
             jobId
-        )
+        ),
+        { client }
     );
 
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
         job_number: job.job_number,
         from: job.blanc_status,
         to: newStatus,
-    }, activityActor);
-
-    // Outbound sync to Zenbooker — full mapping with no-op guards (§6).
-    // Errors are logged but NOT thrown — local DB is source of truth and must not
-    // be rolled back if ZB sync fails.
-    //
-    // Note: Submitted and Rescheduled intentionally do NOT call ZB. Zenbooker
-    // has no API to un-cancel or un-complete a job (reschedule only updates
-    // start_date + rescheduled flag, not status/canceled). For operator-driven
-    // reopens, Albusto diverges intentionally; the inbound sync preserves the
-    // override (see syncFromZenbooker "operator reopen override").
-    if (job.zenbooker_job_id) {
-        try {
-            if (newStatus === 'Job is Done') {
-                if (job.zb_status !== 'complete') {
-                    await zenbookerClient.markJobComplete(job.zenbooker_job_id);
-                    console.log(`[JobsService] Outbound: job ${jobId} → ${newStatus} (ZB markComplete)`);
-                }
-            } else if (newStatus === 'Canceled') {
-                if (!job.zb_canceled) {
-                    await zenbookerClient.cancelJob(job.zenbooker_job_id);
-                    console.log(`[JobsService] Outbound: job ${jobId} → Canceled (ZB cancel)`);
-                }
-            }
-            // Submitted, Rescheduled, Follow Up with Client, Part arrived — no ZB action
-            // (Part arrived is an Albusto-only operational state, like Waiting for parts)
-        } catch (err) {
-            console.error(`[JobsService] Outbound sync error for ${newStatus}:`, err.response?.data || err.message);
-        }
-    }
+    }, activityActor, client);
 
     // Fail-safe trigger seam (OUTBOUND-PARTS-CALL-001 §B.2 / S13): entering
     // 'Part arrived' fires the idempotent auto-task creation. Fire-and-forget —
     // NEVER awaited, NEVER rolls back or blocks the already-committed transition
     // (mirrors eventService.logEvent discipline). Lazy-require partsCallService to
     // avoid a circular dependency (partsCallService → tasksQueries).
+    const fireAfterCommit = callback => {
+        if (client?.afterCommit) client.afterCommit(callback);
+        else callback();
+    };
     if (newStatus === 'Part arrived' && job.blanc_status !== 'Part arrived') {
-        try {
-            require('./partsCallService')
-                .onPartArrived(jobId, companyId)
-                .catch(err => console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message));
-        } catch (err) {
-            console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message);
-        }
+        fireAfterCommit(() => {
+            try {
+                require('./partsCallService')
+                    .onPartArrived(jobId, companyId)
+                    .catch(err => console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message));
+            } catch (err) {
+                console.warn('[jobsService] onPartArrived hook failed (non-blocking):', err.message);
+            }
+        });
     }
 
     // CANCEL-001 leave-hook (CC-02 S1/S2): the job just left 'Part arrived' — any
     // queued robot call must not survive the exit. companyId can be null on the
     // legacy no-company path → fall back to the job row's own tenant.
     if (job.blanc_status === 'Part arrived' && newStatus !== 'Part arrived') {
-        fireRobotCallLeaveHook(jobId, companyId || job.company_id, newStatus);
+        fireAfterCommit(() => fireRobotCallLeaveHook(jobId, companyId || job.company_id, newStatus));
     }
 
     return { ...job, blanc_status: newStatus, _prev_status: job.blanc_status };
@@ -2044,16 +2000,7 @@ async function getJobTransitions(companyId, currentState, userRoles) {
         return result.actions;
     }
     // Fallback to hardcoded
-    const allowed = ALLOWED_TRANSITIONS[currentState] || [];
-    return allowed.map((target, i) => ({
-        event: `TO_${target.toUpperCase().replace(/ /g, '_')}`,
-        label: target,
-        targetStatusName: target,
-        action: true,
-        confirm: target === 'Canceled',
-        confirmText: target === 'Canceled' ? 'Are you sure you want to cancel this job?' : null,
-        order: (i + 1) * 10,
-    }));
+    return getFallbackJobActions(currentState);
 }
 
 // =============================================================================

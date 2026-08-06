@@ -31,6 +31,7 @@ const { withTransaction } = require('../services/transactionService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 const eventBus = require('../services/eventBus');
+const { notifyOnTheWay, validateEtaMinutes } = require('../services/jobOnTheWayService');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -1009,68 +1010,30 @@ router.post('/:id/eta/notify', requirePermission('messages.send'), async (req, r
 
         // Validate eta_minutes: integer 1–600 (defense-in-depth; UI validates too).
         const eta = req.body?.eta_minutes;
-        if (typeof eta !== 'number' || !Number.isInteger(eta) || eta < 1 || eta > 600) {
+        if (!validateEtaMinutes(eta)) {
             return res.status(400).json({ ok: false, error: 'invalid_eta' });
         }
 
         const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
 
-        // Customer phone (denormalized on the job row). Absent → 422, no side effects.
-        const rawPhone = (job.customer_phone || '').trim();
-        if (!rawPhone) {
-            return res.status(422).json({ ok: false, code: 'NO_PHONE', message: 'No phone number on file for this customer.' });
-        }
-        const customerE164 = toE164(rawPhone);
-        if (!customerE164) {
-            return res.status(422).json({ ok: false, code: 'NO_PHONE', message: 'No phone number on file for this customer.' });
-        }
-
-        // Sending proxy DID. None → 422, no side effects.
-        const proxyE164 = await resolveCompanyProxyE164(companyId);
-        if (!proxyE164) {
-            return res.status(422).json({ ok: false, code: 'NO_PROXY', message: 'No sending number configured for your company.' });
-        }
-
-        // Resolve tech + company name for the SMS template.
-        const techName = (job.assigned_techs?.[0]?.name || '').trim();
-        let companyName = null;
         try {
-            const company = companyId ? await companyQueries.getCompanyById(companyId) : null;
-            companyName = (company?.name || '').trim() || null;
-        } catch (e) {
-            console.warn('[Jobs API] ETA notify: company name lookup failed:', e.message);
-        }
-        const companyLabel = companyName || 'your service team';
-
-        // OW-R5 template. When the tech name is missing, the word "technician"
-        // stays and the name is simply omitted (grammatical single template).
-        const leadIn = techName ? `Your technician ${techName} ` : 'Your technician ';
-        const body = `Hi! ${leadIn}from ${companyLabel} is on the way and should arrive in about ${eta} minutes.`;
-
-        // Send: wallet gate is INSIDE sendMessage. Any throw → status NOT changed.
-        let conversationId;
-        try {
-            const conv = await conversationsService.getOrCreateConversation(customerE164, proxyE164, companyId);
-            conversationId = conv.id;
-            await conversationsService.sendMessage(conv.id, { companyId, body, author: 'agent' });
+            await notifyOnTheWay({
+                job,
+                companyId,
+                etaMinutes: eta,
+                activityActor: jobUserActor(req),
+            });
         } catch (sendErr) {
-            if (sendErr.code === 'WALLET_BLOCKED') {
-                return res.status(sendErr.httpStatus || 402).json({
-                    ok: false, code: 'WALLET_BLOCKED', message: 'Messaging is paused — top up your balance.',
-                });
+            if (sendErr.code === 'invalid_eta') {
+                return res.status(400).json({ ok: false, error: 'invalid_eta' });
             }
-            console.error('[Jobs API] ETA notify send error:', sendErr.message);
-            return res.status(502).json({ ok: false, code: 'SMS_FAILED', message: "Couldn't send the message. Please try again." });
+            return res.status(sendErr.httpStatus || 500).json({
+                ok: false,
+                code: sendErr.code,
+                message: sendErr.message,
+            });
         }
-
-        await logJobActivity({
-            companyId,
-            action: 'job.eta_notified',
-            jobId,
-            actor: jobUserActor(req),
-            summary: { channel: 'sms' },
-        });
 
         // SMS sent (primary success). Advance status best-effort — no SMS rollback.
         try {

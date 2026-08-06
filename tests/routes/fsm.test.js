@@ -15,6 +15,7 @@ const path = require('path');
 // Mock the database before requiring fsmService
 jest.mock('../../backend/src/db/connection', () => ({
   query: jest.fn(),
+  getClient: jest.fn(),
 }));
 
 const fsmService = require('../../backend/src/services/fsmService');
@@ -692,12 +693,16 @@ jest.mock('../../backend/src/services/eventService', () => ({
 jest.mock('../../backend/src/services/eventBus', () => ({
   emit: jest.fn(() => Promise.resolve()),
 }));
+jest.mock('../../backend/src/services/fsmTransitionOps', () => ({
+  runTransitionOp: jest.fn(async () => ({ sent: true })),
+}));
 
 const http = require('http');
 const express = require('express');
 const jobsServiceMock = require('../../backend/src/services/jobsService');
 const eventServiceMock = require('../../backend/src/services/eventService');
 const eventBusMock = require('../../backend/src/services/eventBus');
+const { runTransitionOp: runTransitionOpMock } = require('../../backend/src/services/fsmTransitionOps');
 
 const FSM_COMPANY = '00000000-0000-0000-0000-00000000000a';
 
@@ -736,11 +741,17 @@ function fsmApp({ permissions = [], roleKey = 'provider', scopes = {} } = {}) {
 describe('PF007: FSM route authorization', () => {
   beforeEach(() => {
     db.query.mockReset();
+    db.getClient.mockReset();
+    db.getClient.mockImplementation(async () => ({
+      query: (...args) => db.query(...args),
+      release: jest.fn(),
+    }));
     jobsServiceMock.getJobById.mockReset();
     jobsServiceMock.updateBlancStatus.mockReset();
     jobsServiceMock.cancelJob.mockReset();
     eventServiceMock.logEvent.mockReset();
     eventBusMock.emit.mockClear();
+    runTransitionOpMock.mockClear();
   });
 
   it('POST /:machineKey/apply denies without jobs.edit', async () => {
@@ -788,7 +799,7 @@ describe('PF007: FSM route authorization', () => {
       customer_phone: '+15555550123',
       service_name: 'COD Service',
     });
-    jobsServiceMock.cancelJob.mockResolvedValue({ id: 1, blanc_status: 'Canceled', zb_canceled: true });
+    jobsServiceMock.updateBlancStatus.mockResolvedValue({ id: 1, blanc_status: 'Canceled', zb_canceled: true });
     db.query.mockResolvedValue({ rows: [{ scxml_source: JOB_SCXML, version_number: 1 }] });
 
     const res = await fsmRequest(
@@ -798,12 +809,16 @@ describe('PF007: FSM route authorization', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data.newState).toBe('Canceled');
-    expect(jobsServiceMock.cancelJob).toHaveBeenCalledWith(
+    expect(jobsServiceMock.updateBlancStatus).toHaveBeenCalledWith(
       1,
+      'Canceled',
       FSM_COMPANY,
-      expect.objectContaining({ id: 'u-1', type: 'user' })
+      expect.objectContaining({ id: 'u-1', type: 'user' }),
+      expect.objectContaining({
+        job: expect.objectContaining({ id: 1, blanc_status: 'Submitted' }),
+        resolvedTransition: expect.objectContaining({ targetState: 'Canceled' }),
+      })
     );
-    expect(jobsServiceMock.updateBlancStatus).not.toHaveBeenCalled();
     expect(eventServiceMock.logEvent).toHaveBeenCalledWith(
       FSM_COMPANY,
       'job',
@@ -817,6 +832,80 @@ describe('PF007: FSM route authorization', () => {
     // must not emit a second event (or copy the free-text cancellation reason
     // into a notification-bearing payload).
     expect(eventBusMock.emit).not.toHaveBeenCalled();
+  });
+
+  it('apply updates blanc_status and fires the transition op in one transaction', async () => {
+    const job = {
+      id: 1,
+      blanc_status: 'Submitted',
+      customer_phone: '+15555550123',
+      assigned_techs: [{ name: 'Taylor' }],
+    };
+    jobsServiceMock.getJobById.mockResolvedValue(job);
+    jobsServiceMock.updateBlancStatus.mockResolvedValue({ ...job, blanc_status: 'On the way' });
+    db.query.mockResolvedValue({ rows: [{ scxml_source: JOB_SCXML, version_number: 1 }] });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view', 'jobs.edit', 'messages.send'] }),
+      'POST', '/job/apply', { entityId: 1, event: 'TO_ON_THE_WAY', eta_minutes: 25 }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      previousState: 'Submitted',
+      newState: 'On the way',
+      op: 'notify_on_the_way',
+      fallback: false,
+    });
+    expect(jobsServiceMock.updateBlancStatus).toHaveBeenCalledWith(
+      1,
+      'On the way',
+      FSM_COMPANY,
+      expect.objectContaining({ id: 'u-1', type: 'user' }),
+      expect.objectContaining({
+        client: expect.objectContaining({ query: expect.any(Function) }),
+        job,
+        resolvedTransition: expect.objectContaining({ event: 'TO_ON_THE_WAY' }),
+      })
+    );
+    expect(runTransitionOpMock).toHaveBeenCalledWith(
+      'notify_on_the_way',
+      expect.objectContaining({ companyId: FSM_COMPANY, etaMinutes: 25 })
+    );
+    expect(db.query.mock.calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
+  });
+
+  it('SAB-FSM-BYPASS: rejects a forged out-of-graph event and leaves status unchanged', async () => {
+    jobsServiceMock.getJobById.mockResolvedValue({ id: 1, blanc_status: 'Submitted' });
+    db.query.mockResolvedValue({ rows: [{ scxml_source: JOB_SCXML, version_number: 1 }] });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view', 'jobs.edit', 'jobs.close'] }),
+      'POST', '/job/apply', { entityId: 1, event: 'TO_JOB_DONE' }
+    );
+
+    expect(res.status).toBe(400);
+    expect(jobsServiceMock.updateBlancStatus).not.toHaveBeenCalled();
+    expect(runTransitionOpMock).not.toHaveBeenCalled();
+    expect(db.query.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK');
+  });
+
+  it('applies a hardcoded reachable transition when no graph is published', async () => {
+    jobsServiceMock.getJobById.mockResolvedValue({ id: 1, blanc_status: 'Submitted' });
+    jobsServiceMock.updateBlancStatus.mockResolvedValue({ id: 1, blanc_status: 'Follow Up with Client' });
+    db.query.mockResolvedValue({ rows: [] });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view', 'jobs.edit'] }),
+      'POST', '/job/apply', { entityId: 1, event: 'TO_FOLLOW_UP_WITH_CLIENT' }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      newState: 'Follow Up with Client',
+      fallback: true,
+    });
+    expect(jobsServiceMock.updateBlancStatus).toHaveBeenCalledTimes(1);
   });
 
   it('GET /:machineKey/actions ignores client-supplied role hints', async () => {
