@@ -1,0 +1,646 @@
+'use strict';
+
+/**
+ * ZB-DECOUPLE-001 Phase A / T2.
+ *
+ * Imports one explicitly selected company's live and historical Zenbooker
+ * technician identities into the Albusto-native directory. Dry-run is the
+ * default. Apply mode fetches and validates the complete live roster before it
+ * opens one row-locked transaction; all refusal guards run before data writes.
+ */
+
+const connectionDb = require('../backend/src/db/connection');
+const defaultDirectoryQueries = require('../backend/src/db/technicianDirectoryQueries');
+const defaultMembershipQueries = require('../backend/src/db/membershipQueries');
+const defaultZenbookerClient = require('../backend/src/services/zenbookerClient');
+
+const SOURCE = 'zenbooker';
+const COMPANY_BASE_SENTINEL = '__company__';
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+class BackfillRefusalError extends Error {
+    constructor(code, message) {
+        super(message);
+        this.name = 'BackfillRefusalError';
+        this.code = code;
+    }
+}
+
+function clean(value) {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value).trim();
+    return normalized || null;
+}
+
+function rosterDisplayName(member, externalId) {
+    return clean([member?.first_name, member?.last_name].filter(Boolean).join(' '))
+        || clean(member?.name)
+        || externalId;
+}
+
+function resolveDisplayName({ liveName, jobName, profileName, crmUserName, externalId }) {
+    return clean(liveName)
+        || clean(jobName)
+        || clean(profileName)
+        || clean(crmUserName)
+        || clean(externalId);
+}
+
+function parseArgs(argv) {
+    const parsed = { companyId: null, apply: false, dryRun: false };
+    for (let index = 0; index < argv.length; index += 1) {
+        const arg = argv[index];
+        if (arg === '--apply') parsed.apply = true;
+        else if (arg === '--dry-run') parsed.dryRun = true;
+        else if (arg === '--company-id') {
+            parsed.companyId = argv[index + 1] || null;
+            index += 1;
+        } else if (arg.startsWith('--company-id=')) {
+            parsed.companyId = arg.slice('--company-id='.length);
+        } else {
+            throw new Error(`Unknown argument: ${arg}`);
+        }
+    }
+    if (parsed.apply && parsed.dryRun) {
+        throw new Error('--apply and --dry-run are mutually exclusive');
+    }
+    if (!UUID_SHAPE.test(parsed.companyId || '')) {
+        throw new Error('--company-id <uuid> is required');
+    }
+    parsed.dryRun = !parsed.apply;
+    return parsed;
+}
+
+async function fetchActiveRoster(companyId, zenbookerClient) {
+    let scopedClient;
+    try {
+        scopedClient = await zenbookerClient.getClientForCompany(companyId);
+    } catch (error) {
+        throw new BackfillRefusalError(
+            'NO_COMPANY_SCOPED_CLIENT',
+            `Company-scoped Zenbooker client could not be resolved: ${error.message}`
+        );
+    }
+    if (!scopedClient) {
+        throw new BackfillRefusalError(
+            'NO_COMPANY_SCOPED_CLIENT',
+            'No company-scoped Zenbooker client is configured'
+        );
+    }
+
+    let members;
+    try {
+        members = await zenbookerClient.getTeamMembers(
+            { service_provider: true, deactivated: false },
+            companyId
+        );
+    } catch (error) {
+        throw new BackfillRefusalError(
+            'ROSTER_FETCH_FAILED',
+            `Active Zenbooker roster fetch failed: ${error.message}`
+        );
+    }
+    if (!Array.isArray(members) || members.length === 0) {
+        throw new BackfillRefusalError(
+            'ROSTER_UNEXPECTEDLY_EMPTY',
+            'Active Zenbooker roster was unexpectedly empty'
+        );
+    }
+
+    const seen = new Set();
+    const roster = [];
+    for (const member of members) {
+        const externalId = clean(member?.id);
+        if (!externalId) {
+            throw new BackfillRefusalError(
+                'ROSTER_INCOMPLETE',
+                'Active Zenbooker roster contained a member without an id'
+            );
+        }
+        if (seen.has(externalId)) {
+            throw new BackfillRefusalError(
+                'DUPLICATE_ROSTER_EXTERNAL_ID',
+                `Active Zenbooker roster contained duplicate external id ${externalId}`
+            );
+        }
+        seen.add(externalId);
+        roster.push({
+            externalId,
+            displayName: rosterDisplayName(member, externalId),
+        });
+    }
+    return roster.sort((left, right) => left.externalId.localeCompare(right.externalId));
+}
+
+async function readJobSnapshots(queryable, companyId) {
+    const { rows } = await queryable.query(
+        `WITH snapshots AS (
+            SELECT NULLIF(BTRIM(tech.value->>'id'), '') AS external_id,
+                   NULLIF(BTRIM(tech.value->>'name'), '') AS snapshot_name,
+                   COALESCE(j.updated_at, j.created_at) AS snapshot_at,
+                   j.id AS job_id
+            FROM jobs j
+            CROSS JOIN LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(j.assigned_techs) = 'array'
+                     THEN j.assigned_techs ELSE '[]'::jsonb END
+            ) AS tech(value)
+            WHERE j.company_id = $1
+              AND NULLIF(BTRIM(tech.value->>'id'), '') IS NOT NULL
+        )
+        SELECT external_id,
+               (ARRAY_AGG(snapshot_name ORDER BY snapshot_at DESC, job_id DESC)
+                   FILTER (WHERE snapshot_name IS NOT NULL))[1] AS job_name
+        FROM snapshots
+        GROUP BY external_id
+        ORDER BY external_id`,
+        [companyId]
+    );
+    return rows
+        .map(row => ({ externalId: clean(row.external_id), jobName: clean(row.job_name) }))
+        .filter(row => row.externalId);
+}
+
+async function readConfigExternalIds(queryable, companyId) {
+    const { rows } = await queryable.query(
+        `SELECT external_id
+         FROM (
+            SELECT NULLIF(BTRIM(tech_id), '') AS external_id
+            FROM technician_profiles
+            WHERE company_id = $1 AND NULLIF(BTRIM(tech_id), '') IS NOT NULL
+            UNION
+            SELECT NULLIF(BTRIM(tech_id), '') AS external_id
+            FROM technician_base_locations
+            WHERE company_id = $1
+              AND NULLIF(BTRIM(tech_id), '') IS NOT NULL
+              AND BTRIM(tech_id) <> '__company__'
+            UNION
+            SELECT NULLIF(BTRIM(technician_id), '') AS external_id
+            FROM technician_time_off
+            WHERE company_id = $1 AND NULLIF(BTRIM(technician_id), '') IS NOT NULL
+            UNION
+            SELECT NULLIF(BTRIM(technician_id), '') AS external_id
+            FROM technician_work_schedules
+            WHERE company_id = $1 AND NULLIF(BTRIM(technician_id), '') IS NOT NULL
+            UNION
+            SELECT NULLIF(BTRIM(technician_id), '') AS external_id
+            FROM technician_work_schedule_days
+            WHERE company_id = $1 AND NULLIF(BTRIM(technician_id), '') IS NOT NULL
+            UNION
+            SELECT NULLIF(BTRIM(technician_id), '') AS external_id
+            FROM technician_district_assignments
+            WHERE company_id = $1 AND NULLIF(BTRIM(technician_id), '') IS NOT NULL
+            UNION
+            SELECT NULLIF(BTRIM(technician_id), '') AS external_id
+            FROM technician_radius_assignments
+            WHERE company_id = $1 AND NULLIF(BTRIM(technician_id), '') IS NOT NULL
+            UNION
+            SELECT NULLIF(BTRIM(technician_id), '') AS external_id
+            FROM technician_area_wildcards
+            WHERE company_id = $1 AND NULLIF(BTRIM(technician_id), '') IS NOT NULL
+         ) config_ids
+         WHERE external_id IS NOT NULL
+         ORDER BY external_id`,
+        [companyId]
+    );
+    // The SQL excludes the base sentinel at its source. Keep this defense as
+    // well so a mocked/alternate query adapter cannot accidentally import it.
+    return rows
+        .map(row => clean(row.external_id))
+        .filter(externalId => externalId && externalId !== COMPANY_BASE_SENTINEL);
+}
+
+async function readProfileNames(queryable, companyId) {
+    const { rows } = await queryable.query(
+        `SELECT BTRIM(tech_id) AS external_id, NULLIF(BTRIM(name), '') AS profile_name
+         FROM technician_profiles
+         WHERE company_id = $1
+           AND NULLIF(BTRIM(tech_id), '') IS NOT NULL
+         ORDER BY tech_id`,
+        [companyId]
+    );
+    return new Map(rows
+        .map(row => [clean(row.external_id), clean(row.profile_name)])
+        .filter(([externalId]) => externalId));
+}
+
+async function readTechnicians(queryable, companyId, forUpdate) {
+    const { rows } = await queryable.query(
+        `SELECT id, display_name, active, crm_user_id
+         FROM technicians
+         WHERE company_id = $1
+         ORDER BY id${forUpdate ? '\n         FOR UPDATE' : ''}`,
+        [companyId]
+    );
+    return rows.map(row => ({
+        id: String(row.id),
+        displayName: String(row.display_name),
+        active: row.active === true,
+        crmUserId: row.crm_user_id ? String(row.crm_user_id) : null,
+    }));
+}
+
+async function readZenbookerMappings(queryable, companyId, forUpdate) {
+    const { rows } = await queryable.query(
+        `SELECT e.external_id, e.technician_id
+         FROM technician_external_identities e
+         JOIN technicians t
+           ON t.company_id = e.company_id
+          AND t.id = e.technician_id
+         WHERE e.company_id = $1
+           AND t.company_id = $1
+           AND e.source = $2
+         ORDER BY e.external_id${forUpdate ? '\n         FOR UPDATE OF e' : ''}`,
+        [companyId, SOURCE]
+    );
+    return rows.map(row => ({
+        externalId: String(row.external_id),
+        technicianId: String(row.technician_id),
+    }));
+}
+
+async function readCrmUserNames(queryable, companyId) {
+    const { rows } = await queryable.query(
+        `SELECT u.id, NULLIF(BTRIM(u.full_name), '') AS full_name
+         FROM company_memberships m
+         JOIN crm_users u ON u.id = m.user_id
+         WHERE m.company_id = $1
+         ORDER BY u.id`,
+        [companyId]
+    );
+    return new Map(rows.map(row => [String(row.id), clean(row.full_name)]));
+}
+
+function addToSetMap(map, key, value) {
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key).add(value);
+}
+
+function chooseTechnicianName(entries, existingName) {
+    if (entries.length === 0) return existingName;
+    const ordered = [...entries].sort((left, right) => {
+        if (left.isLive !== right.isLive) return left.isLive ? -1 : 1;
+        return left.externalId.localeCompare(right.externalId);
+    });
+    return ordered[0].displayName;
+}
+
+async function buildPlan({
+    companyId,
+    roster,
+    queryable,
+    directoryQueries,
+    membershipQueries,
+    forUpdate,
+}) {
+    const company = await queryable.query(
+        `SELECT id
+         FROM companies
+         WHERE id = $1${forUpdate ? '\n         FOR UPDATE' : ''}`,
+        [companyId]
+    );
+    if (company.rows.length !== 1) {
+        throw new Error(`Company ${companyId} was not found`);
+    }
+
+    const jobSnapshots = await readJobSnapshots(queryable, companyId);
+    const configExternalIds = await readConfigExternalIds(queryable, companyId);
+    const profileNames = await readProfileNames(queryable, companyId);
+    const technicians = await readTechnicians(queryable, companyId, forUpdate);
+    const mappings = await readZenbookerMappings(queryable, companyId, forUpdate);
+    const crmUserNames = await readCrmUserNames(queryable, companyId);
+
+    const liveByExternal = new Map(roster.map(member => [member.externalId, member.displayName]));
+    const jobNameByExternal = new Map(jobSnapshots.map(row => [row.externalId, row.jobName]));
+    const candidateIds = new Set([
+        ...liveByExternal.keys(),
+        ...jobNameByExternal.keys(),
+        ...configExternalIds,
+    ]);
+    const technicianById = new Map(technicians.map(technician => [technician.id, technician]));
+    const knownMappingByExternal = new Map(mappings.map(mapping => [mapping.externalId, mapping.technicianId]));
+    const externalIdsByTechnician = new Map();
+    for (const mapping of mappings) {
+        if (!technicianById.has(mapping.technicianId)) {
+            throw new Error(`Zenbooker map ${mapping.externalId} points to a missing company technician`);
+        }
+        addToSetMap(externalIdsByTechnician, mapping.technicianId, mapping.externalId);
+    }
+
+    const resolvedByExternal = new Map();
+    for (const externalId of [...candidateIds].sort()) {
+        const technicianId = await directoryQueries.resolveExternalToUuid(
+            companyId,
+            SOURCE,
+            externalId
+        );
+        const known = knownMappingByExternal.get(externalId) || null;
+        if ((technicianId || null) !== known) {
+            throw new Error(`Inconsistent company-scoped mapping for external id ${externalId}`);
+        }
+        resolvedByExternal.set(externalId, technicianId ? String(technicianId) : null);
+    }
+
+    const allExternalIds = new Set([...candidateIds, ...knownMappingByExternal.keys()]);
+    const bridgeUserByExternal = new Map();
+    for (const externalId of [...allExternalIds].sort()) {
+        const userIds = [...new Set((await membershipQueries.resolveProviderUserIds(
+            companyId,
+            [externalId]
+        )).map(String))];
+        if (userIds.length > 1) {
+            throw new BackfillRefusalError(
+                'EXTERNAL_ID_MULTIPLE_MEMBERSHIPS',
+                `Zenbooker external id ${externalId} resolves to multiple active memberships`
+            );
+        }
+        bridgeUserByExternal.set(externalId, userIds[0] || null);
+    }
+
+    const entries = [...candidateIds].sort().map(externalId => {
+        const technicianId = resolvedByExternal.get(externalId) || null;
+        const existing = technicianId ? technicianById.get(technicianId) : null;
+        const bridgeUserId = bridgeUserByExternal.get(externalId) || null;
+        const linkedUserId = bridgeUserId || existing?.crmUserId || null;
+        return {
+            externalId,
+            technicianId,
+            technicianKey: technicianId || `new:${externalId}`,
+            bridgeUserId,
+            isLive: liveByExternal.has(externalId),
+            displayName: resolveDisplayName({
+                liveName: liveByExternal.get(externalId),
+                jobName: jobNameByExternal.get(externalId),
+                profileName: profileNames.get(externalId),
+                crmUserName: linkedUserId ? crmUserNames.get(linkedUserId) : null,
+                externalId,
+            }),
+        };
+    });
+
+    const bridgeUsersByTechnicianKey = new Map();
+    for (const [externalId, userId] of bridgeUserByExternal) {
+        if (!userId) continue;
+        const technicianId = knownMappingByExternal.get(externalId)
+            || resolvedByExternal.get(externalId);
+        const technicianKey = technicianId || `new:${externalId}`;
+        addToSetMap(bridgeUsersByTechnicianKey, technicianKey, userId);
+    }
+    for (const [technicianKey, userIds] of bridgeUsersByTechnicianKey) {
+        if (userIds.size > 1) {
+            throw new BackfillRefusalError(
+                'TECHNICIAN_MULTIPLE_CRM_USERS',
+                `Technician ${technicianKey} resolves to multiple active CRM users`
+            );
+        }
+    }
+
+    // Model the final CRM linkage before writing. This includes native-only
+    // technicians, so a roster import cannot collide with an existing native
+    // link that has no Zenbooker identity.
+    const finalUserByTechnicianKey = new Map(
+        technicians.map(technician => [technician.id, technician.crmUserId])
+    );
+    for (const [technicianKey, userIds] of bridgeUsersByTechnicianKey) {
+        finalUserByTechnicianKey.set(technicianKey, [...userIds][0]);
+    }
+    for (const entry of entries) {
+        if (!finalUserByTechnicianKey.has(entry.technicianKey)) {
+            finalUserByTechnicianKey.set(entry.technicianKey, entry.bridgeUserId || null);
+        }
+    }
+    const technicianKeysByUser = new Map();
+    for (const [technicianKey, userId] of finalUserByTechnicianKey) {
+        if (userId) addToSetMap(technicianKeysByUser, userId, technicianKey);
+    }
+    for (const [userId, technicianKeys] of technicianKeysByUser) {
+        if (technicianKeys.size > 1) {
+            throw new BackfillRefusalError(
+                'CRM_USER_MULTIPLE_TECHNICIANS',
+                `CRM user ${userId} would link to multiple technicians in company ${companyId}`
+            );
+        }
+    }
+
+    const entriesByTechnician = new Map();
+    for (const entry of entries.filter(item => item.technicianId)) {
+        if (!entriesByTechnician.has(entry.technicianId)) entriesByTechnician.set(entry.technicianId, []);
+        entriesByTechnician.get(entry.technicianId).push(entry);
+    }
+
+    const existingUpdates = [];
+    const activeExternalIds = new Set(liveByExternal.keys());
+    for (const [technicianId, externalIds] of externalIdsByTechnician) {
+        const existing = technicianById.get(technicianId);
+        const desiredActive = [...externalIds].some(externalId => activeExternalIds.has(externalId));
+        const relatedEntries = entriesByTechnician.get(technicianId) || [];
+        const desiredName = chooseTechnicianName(relatedEntries, existing.displayName);
+        const desiredCrmUserId = finalUserByTechnicianKey.get(technicianId) || null;
+        if (
+            existing.displayName !== desiredName
+            || existing.active !== desiredActive
+            || existing.crmUserId !== desiredCrmUserId
+        ) {
+            existingUpdates.push({
+                technicianId,
+                previousName: existing.displayName,
+                displayName: desiredName,
+                previousActive: existing.active,
+                active: desiredActive,
+                previousCrmUserId: existing.crmUserId,
+                crmUserId: desiredCrmUserId,
+            });
+        }
+    }
+
+    const creates = entries
+        .filter(entry => !entry.technicianId)
+        .map(entry => ({
+            externalId: entry.externalId,
+            displayName: entry.displayName,
+            active: entry.isLive,
+            crmUserId: finalUserByTechnicianKey.get(entry.technicianKey) || null,
+        }));
+
+    const summary = {
+        create_technicians: creates.length,
+        create_external_identities: creates.length,
+        update_names: existingUpdates.filter(update => update.previousName !== update.displayName).length,
+        activate: existingUpdates.filter(update => !update.previousActive && update.active).length,
+        deactivate: existingUpdates.filter(update => update.previousActive && !update.active).length,
+        change_crm_user_links: existingUpdates.filter(
+            update => update.previousCrmUserId !== update.crmUserId
+        ).length,
+    };
+
+    return {
+        companyId,
+        rosterCount: roster.length,
+        consideredExternalIds: [...candidateIds].sort(),
+        creates,
+        existingUpdates: existingUpdates.sort((left, right) => left.technicianId.localeCompare(right.technicianId)),
+        summary,
+    };
+}
+
+async function applyPlan({ companyId, plan, queryable, directoryQueries }) {
+    let writesPerformed = 0;
+    for (const create of plan.creates) {
+        const technician = await directoryQueries.createTechnician({
+            companyId,
+            displayName: create.displayName,
+            active: create.active,
+            crmUserId: create.crmUserId,
+        });
+        if (!technician?.id) throw new Error(`Failed to create technician for ${create.externalId}`);
+        writesPerformed += 1;
+        const mapping = await directoryQueries.upsertExternalIdentity({
+            companyId,
+            source: SOURCE,
+            externalId: create.externalId,
+            technicianId: technician.id,
+        });
+        if (String(mapping?.technician_id || '') !== String(technician.id)) {
+            throw new Error(`External id ${create.externalId} was concurrently mapped to another technician`);
+        }
+        writesPerformed += 1;
+    }
+
+    for (const update of plan.existingUpdates) {
+        if (update.previousName !== update.displayName || update.previousActive !== update.active) {
+            const result = await queryable.query(
+                `UPDATE technicians
+                 SET display_name = $3,
+                     active = $4
+                 WHERE company_id = $1
+                   AND id = $2
+                   AND (display_name, active) IS DISTINCT FROM ($3::text, $4::boolean)
+                 RETURNING id`,
+                [companyId, update.technicianId, update.displayName, update.active]
+            );
+            if (result.rows.length !== 1) {
+                throw new Error(`Company technician ${update.technicianId} changed during backfill`);
+            }
+            writesPerformed += 1;
+        }
+        if (update.previousCrmUserId !== update.crmUserId) {
+            const linked = await directoryQueries.linkCrmUser({
+                companyId,
+                technicianId: update.technicianId,
+                crmUserId: update.crmUserId,
+            });
+            if (!linked) throw new Error(`Failed to link CRM user for technician ${update.technicianId}`);
+            writesPerformed += 1;
+        }
+    }
+    return writesPerformed;
+}
+
+function reportFor(plan, mode, writesPerformed) {
+    return {
+        mode,
+        company_id: plan.companyId,
+        roster_count: plan.rosterCount,
+        considered_external_ids: plan.consideredExternalIds,
+        summary: plan.summary,
+        deactivate_technician_ids: plan.existingUpdates
+            .filter(update => update.previousActive && !update.active)
+            .map(update => update.technicianId),
+        writes_performed: writesPerformed,
+    };
+}
+
+async function run(argv = process.argv.slice(2), dependencies = {}) {
+    const args = parseArgs(argv);
+    const database = dependencies.db || connectionDb;
+    const directoryQueries = dependencies.directoryQueries || defaultDirectoryQueries;
+    const membershipQueries = dependencies.membershipQueries || defaultMembershipQueries;
+    const zenbookerClient = dependencies.zenbookerClient || defaultZenbookerClient;
+    const output = dependencies.output || (value => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`));
+
+    // Fetch and validate the active set before BEGIN. A missing, failed, empty,
+    // or duplicate roster can therefore never reach a directory write.
+    const roster = await fetchActiveRoster(args.companyId, zenbookerClient);
+
+    let client = null;
+    let transactionOpen = false;
+    let originalConnectionQuery = null;
+    try {
+        const queryable = args.apply ? await database.getClient() : database;
+        client = args.apply ? queryable : null;
+        if (args.apply) {
+            await queryable.query('BEGIN');
+            transactionOpen = true;
+            await queryable.query(
+                'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 240))',
+                [args.companyId]
+            );
+            // T1's required query layer intentionally uses the shared connection
+            // object. Bind it to this one checked-out client for the duration of
+            // apply so its primitives participate in this transaction.
+            if (database === connectionDb) {
+                originalConnectionQuery = connectionDb.query;
+                connectionDb.query = queryable.query.bind(queryable);
+            }
+        }
+
+        const plan = await buildPlan({
+            companyId: args.companyId,
+            roster,
+            queryable,
+            directoryQueries,
+            membershipQueries,
+            forUpdate: args.apply,
+        });
+
+        if (!args.apply) {
+            const report = reportFor(plan, 'dry-run', 0);
+            output(report);
+            return report;
+        }
+
+        const writesPerformed = await applyPlan({
+            companyId: args.companyId,
+            plan,
+            queryable,
+            directoryQueries,
+        });
+        await queryable.query('COMMIT');
+        transactionOpen = false;
+        const report = reportFor(plan, 'apply', writesPerformed);
+        output(report);
+        return report;
+    } catch (error) {
+        if (transactionOpen && client) {
+            try { await client.query('ROLLBACK'); } catch (_) { /* preserve the original error */ }
+        }
+        throw error;
+    } finally {
+        if (originalConnectionQuery) connectionDb.query = originalConnectionQuery;
+        if (client) client.release();
+    }
+}
+
+if (require.main === module) {
+    run()
+        .catch(error => {
+            const code = error.code ? ` [${error.code}]` : '';
+            process.stderr.write(`Native technician backfill refused${code}: ${error.message}\n`);
+            process.exitCode = 1;
+        })
+        .finally(async () => {
+            try { await connectionDb.pool.end(); } catch (_) { /* pool already closed */ }
+        });
+}
+
+module.exports = {
+    BackfillRefusalError,
+    COMPANY_BASE_SENTINEL,
+    SOURCE,
+    applyPlan,
+    buildPlan,
+    fetchActiveRoster,
+    parseArgs,
+    readConfigExternalIds,
+    resolveDisplayName,
+    run,
+};

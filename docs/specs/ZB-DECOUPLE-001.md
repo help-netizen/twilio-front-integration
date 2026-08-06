@@ -166,7 +166,21 @@ git) → green; and removing company scope from the external-map join must fail 
 - Codex L-016 twice (session compacted, drafted-without-applying); T1 code written by Claude
   from the approved design.
 
-### T2..T6 — not started (see Phase A design above).
+### T2 (idempotent backfill CLI) — DONE, commit <pending>
+- `scripts/backfillNativeTechnicians.js` — one company, `--dry-run` default, `--apply` = one
+  row-locked (`FOR UPDATE`) transaction. Live roster → active technicians + external map
+  (reuses T1 queries + the membership bridge); historical `jobs.assigned_techs` ids + config-only
+  keys from the 8 tables → INACTIVE technicians; `__company__` excluded; name precedence
+  live→job→profile→crm→external. Five refusal guards abort before any write; an empty/incomplete
+  ZB fetch never deactivates. No default-company fallback; every query company_id-scoped.
+- Unit test (mocked, no DB), 12/12:
+  `env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/" --runTestsByPath tests/nativeTechnicianBackfill.test.js`
+- Sabotage SAB-T2-NO-WIPE: neuter the empty-roster guard → "roster unexpectedly empty" test red →
+  restore → 12 passed. Proves an empty ZB response can't wipe the active directory.
+- `tests/nativeTechnicianBackfill.db.test.js` written; runs at DEPLOY (skips locally — dev DB not migrated).
+- Built by Codex in a FRESH session (per L-022, not the compacted one) — applied cleanly, no L-016.
+
+### T3..T6 — not started (see Phase A design above).
 
 
 ### Debt surfaced
