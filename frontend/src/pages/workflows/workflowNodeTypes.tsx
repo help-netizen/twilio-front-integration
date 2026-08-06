@@ -259,6 +259,8 @@ export const BipartiteTargetNode = memo(function BipartiteTargetNode({
 // ─── Bipartite Edge (label rendered in HTML overlay, always above SVG paths) ─
 
 export function BipartiteEdge({
+    id,
+    source,
     sourceX,
     sourceY,
     targetX,
@@ -294,10 +296,13 @@ export function BipartiteEdge({
             {label && (
                 <EdgeLabelRenderer>
                     <div
+                        onClick={(e) => { e.stopPropagation(); onEdgeLabelClickCallback?.(id, source); }}
+                        title="Select this transition"
                         style={{
                             position: 'absolute',
                             transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)`,
-                            pointerEvents: 'none',
+                            pointerEvents: 'all', // clickable — selects the edge (label was pass-through)
+                            cursor: 'pointer',
                             fontSize: (labelStyle as any)?.fontSize || 10,
                             fontWeight: (labelStyle as any)?.fontWeight || 500,
                             color: (labelStyle as any)?.fill || 'var(--blanc-ink-2)',
@@ -324,8 +329,17 @@ export function setOnEdgeInsert(cb: ((edgeId: string) => void) | null) {
     onEdgeInsertCallback = cb;
 }
 
+/** Global callback: clicking an edge's LABEL selects that edge (same as clicking the line).
+ *  Set by the builder page. The edge label lives in an HTML overlay separate from the SVG
+ *  path, so React Flow's onEdgeClick never fires for it — we route the click here instead. */
+export let onEdgeLabelClickCallback: ((edgeId: string, edgeSource: string) => void) | null = null;
+export function setOnEdgeLabelClick(cb: ((edgeId: string, edgeSource: string) => void) | null) {
+    onEdgeLabelClickCallback = cb;
+}
+
 export function WorkflowInsertableEdge({
     id,
+    source,
     sourceX,
     sourceY,
     targetX,
@@ -356,7 +370,8 @@ export function WorkflowInsertableEdge({
                     x={labelX}
                     y={labelY - 10}
                     textAnchor="middle"
-                    style={labelStyle as any}
+                    onClick={(e) => { e.stopPropagation(); onEdgeLabelClickCallback?.(id, source); }}
+                    style={{ ...(labelStyle as any), pointerEvents: 'all', cursor: 'pointer' }}
                 >
                     {String(label)}
                 </text>
