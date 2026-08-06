@@ -153,8 +153,8 @@ describe('ZB-DECOUPLE-001 B5 contact-dedup tenant/RBAC red-team', () => {
         if (!DATABASE.ready) return;
 
         for (const migrationName of [
-            '241_contact_identity_foundation.sql',
-            '242_contact_merge_redirects.sql',
+            '242_contact_identity_foundation.sql',
+            '243_contact_merge_redirects.sql',
         ]) {
             const migration = fs.readFileSync(path.join(
                 __dirname,

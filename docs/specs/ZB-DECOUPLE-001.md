@@ -3,6 +3,11 @@
 Status: PLAN APPROVED (2026-08-06). Phase A next. Owner: help@bostonmasters.com (ABC Homes).
 Mode: tandem (Claude lead/design, Codex engineering). This file is the re-entry point.
 
+> ⚠️ **MIGRATION RENUMBER (2026-08-06, at master integration):** master occupied `240` (FSM-JOB-ACTIONS-001),
+> so this feature's migrations shifted +1 at merge time — prose below that says "240 / 241 / 242" now maps to
+> **241** native technician directory, **242** contact identity foundation, **243** contact merge redirects
+> (files renamed accordingly; rollbacks match).
+
 ## Goal (owner's words)
 Zenbooker is no longer needed. Map every coupling and split away safely. Technicians who
 are NOT in Albusto must still render as the provider on the job cards of jobs they did;

@@ -109,7 +109,7 @@ describe('ZB-DECOUPLE-001 B4 bulk contact merge against albusto_test', () => {
     beforeAll(async () => {
         const mergeMigration = fs.readFileSync(path.join(
             __dirname,
-            '../backend/db/migrations/242_contact_merge_redirects.sql'
+            '../backend/db/migrations/243_contact_merge_redirects.sql'
         ), 'utf8');
         await db.query(mergeMigration);
         await db.query(

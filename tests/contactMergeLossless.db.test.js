@@ -10,7 +10,7 @@ jest.setTimeout(60000);
 
 const migration = fs.readFileSync(path.join(
     __dirname,
-    '../backend/db/migrations/242_contact_merge_redirects.sql'
+    '../backend/db/migrations/243_contact_merge_redirects.sql'
 ), 'utf8');
 
 describe('ZB-DECOUPLE-001 B3 lossless contact merge against albusto_test', () => {

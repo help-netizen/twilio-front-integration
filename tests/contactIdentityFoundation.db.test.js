@@ -52,7 +52,7 @@ describe('contact identity foundation against real PostgreSQL', () => {
         // what must inventory both legacy scalar phone slots.
         const migration = fs.readFileSync(path.join(
             __dirname,
-            '../backend/db/migrations/241_contact_identity_foundation.sql'
+            '../backend/db/migrations/242_contact_identity_foundation.sql'
         ), 'utf8');
         await db.query(migration);
 
