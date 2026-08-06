@@ -664,62 +664,6 @@ router.post('/:id/cancel', requirePermission('jobs.close'), async (req, res) => 
     }
 });
 
-// ─── Mark En-route ───────────────────────────────────────────────────────────
-
-router.post('/:id/enroute', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
-    try {
-        const companyId = req.companyFilter?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
-        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const result = await jobsService.markEnroute(
-            parseInt(req.params.id, 10),
-            companyId,
-            jobUserActor(req)
-        );
-        res.json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Jobs API] En-route error:', err.message);
-        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
-    }
-});
-
-// ─── Mark In-Progress ────────────────────────────────────────────────────────
-
-router.post('/:id/start', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
-    try {
-        const companyId = req.companyFilter?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
-        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const result = await jobsService.markInProgress(
-            parseInt(req.params.id, 10),
-            companyId,
-            jobUserActor(req)
-        );
-        res.json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Jobs API] Start error:', err.message);
-        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
-    }
-});
-
-// ─── Mark Complete ───────────────────────────────────────────────────────────
-
-router.post('/:id/complete', requirePermission('jobs.close', 'jobs.done_pending_approval'), async (req, res) => {
-    try {
-        const companyId = req.companyFilter?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
-        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const result = await jobsService.markComplete(
-            parseInt(req.params.id, 10),
-            companyId,
-            jobUserActor(req)
-        );
-        res.json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Jobs API] Complete error:', err.message);
-        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
-    }
-});
 // ─── Reschedule ──────────────────────────────────────────────────────────────
 
 router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) => {

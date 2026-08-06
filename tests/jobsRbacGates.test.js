@@ -1,7 +1,7 @@
 /**
  * RBAC-FSM-FIX-001 — a field provider (has jobs.done_pending_approval, NOT jobs.edit)
- * must be able to Start / En-route / set an operational status / mark Done on THEIR
- * job, but must NOT Cancel (cancel stays jobs.close). Plus the resolver lockout fix:
+ * must be able to apply an FSM-backed status on THEIR job, but must NOT Cancel
+ * (cancel stays jobs.close). Plus the resolver lockout fix:
  * a tenant_admin must never resolve to 0 perms when the role config is missing.
  */
 
@@ -10,13 +10,21 @@ const mockJobs = {
     getJobById: jest.fn(async () => ({ id: 5, blanc_status: 'Scheduled', company_id: 'co', contact_id: null, customer_name: 'C', customer_phone: null, service_name: 'S' })),
     addNote: jest.fn(async () => ({ notes: [] })),
     updateBlancStatus: jest.fn(async (id, status) => ({ id, blanc_status: status })),
-    markInProgress: jest.fn(async () => ({ id: 5, blanc_status: 'In Progress' })),
-    markEnroute: jest.fn(async () => ({ id: 5, blanc_status: 'Enroute' })),
     cancelJob: jest.fn(async () => ({ id: 5, blanc_status: 'Canceled' })),
 };
 jest.mock('../backend/src/services/jobsService', () => mockJobs);
 jest.mock('../backend/src/services/fsmService', () => ({
-    resolveTransition: jest.fn(async (_co, _mk, _cur, event) => ({ valid: true, targetState: event })),
+    // Mirror the real resolveTransition contract (FSM-JOB-ACTIONS-001): the /apply handler
+    // requires a resolved edge with transition.action === true BEFORE it reaches the RBAC
+    // gate. A bare { valid, targetState } would 400 at the graph check and never exercise the
+    // cancel/close guard these tests assert on.
+    resolveTransition: jest.fn(async (_co, _mk, _cur, event) => ({
+        valid: true,
+        targetState: event,
+        event,
+        transition: { action: true, roles: [] },
+        op: null,
+    })),
 }));
 jest.mock('../backend/src/services/eventService', () => ({ logEvent: jest.fn(), actorName: () => 'Tester', describeEvent: jest.fn() }));
 jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn(() => Promise.resolve()) }));
@@ -80,24 +88,18 @@ function appAs(perms) {
 describe('provider FSM gate', () => {
     beforeEach(() => Object.values(mockJobs).forEach(f => f.mockClear()));
 
-    test('provider (no jobs.edit) CAN Start their job', async () => {
-        expect((await request(appAs(PROVIDER)).post('/5/start')).status).toBe(200);
+    test('provider (no jobs.edit) CAN set a non-closing FSM status', async () => {
+        expect((await request(appAs(PROVIDER)).patch('/5/status').send({ blanc_status: 'On the way' })).status).toBe(200);
     });
-    test('provider CAN En-route', async () => {
-        expect((await request(appAs(PROVIDER)).post('/5/enroute')).status).toBe(200);
-    });
-    test('provider CAN set an operational status (In Progress)', async () => {
-        expect((await request(appAs(PROVIDER)).patch('/5/status').send({ blanc_status: 'In Progress' })).status).toBe(200);
-    });
-    test('provider CAN mark Done (pending approval)', async () => {
-        expect((await request(appAs(PROVIDER)).patch('/5/status').send({ blanc_status: 'Job is Done' })).status).toBe(200);
+    test('provider CAN mark the visit completed (pending approval)', async () => {
+        expect((await request(appAs(PROVIDER)).patch('/5/status').send({ blanc_status: 'Visit completed' })).status).toBe(200);
     });
     test('provider CANNOT Cancel (cancel stays jobs.close)', async () => {
         const res = await request(appAs(PROVIDER)).patch('/5/status').send({ blanc_status: 'Canceled', cancel_reason: 'no-show' });
         expect(res.status).toBe(403);
     });
-    test('a view-only user is still blocked from Start', async () => {
-        expect((await request(appAs(['jobs.view'])).post('/5/start')).status).toBe(403);
+    test('a view-only user is still blocked from status changes', async () => {
+        expect((await request(appAs(['jobs.view'])).patch('/5/status').send({ blanc_status: 'On the way' })).status).toBe(403);
     });
     test('a user WITH jobs.close CAN Cancel', async () => {
         const res = await request(appAs(['jobs.edit', 'jobs.close'])).patch('/5/status').send({ blanc_status: 'Canceled', cancel_reason: 'no-show' });
@@ -191,13 +193,22 @@ describe('FSM /apply cancel guard (side-door)', () => {
             .post('/job/apply').send({ entityId: 5, event: 'Canceled', reason: 'no-show' });
         expect(res.status).toBe(200);
     });
-    test('Done via /apply still needs jobs.close OR jobs.done_pending_approval', async () => {
-        const blocked = await request(appFsmAs(['jobs.edit']))
+    test('Done via /apply needs jobs.close — done_pending_approval only gates Visit completed', async () => {
+        // ROLE-JOB-CLOSE-PERMS-001: done_pending_approval unlocks the pending "Visit completed"
+        // step, NOT the final "Job is Done" close, which stays jobs.close. The /apply side-door
+        // must enforce the same split as PATCH /jobs/:id/status.
+        const pendingOnly = await request(appFsmAs(['jobs.edit', 'jobs.done_pending_approval']))
             .post('/job/apply').send({ entityId: 5, event: 'Job is Done' });
-        expect(blocked.status).toBe(403);
-        const ok = await request(appFsmAs(['jobs.edit', 'jobs.done_pending_approval']))
+        expect(pendingOnly.status).toBe(403);
+        const closer = await request(appFsmAs(['jobs.edit', 'jobs.close']))
             .post('/job/apply').send({ entityId: 5, event: 'Job is Done' });
-        expect(ok.status).toBe(200);
+        expect(closer.status).toBe(200);
+    });
+
+    test('Visit completed via /apply is unlocked by done_pending_approval', async () => {
+        const res = await request(appFsmAs(['jobs.edit', 'jobs.done_pending_approval']))
+            .post('/job/apply').send({ entityId: 5, event: 'Visit completed' });
+        expect(res.status).toBe(200);
     });
 });
 

@@ -363,18 +363,6 @@ export async function addJobNote(id: number, text: string, files?: File[]): Prom
     }
 }
 
-export async function markEnroute(id: number): Promise<void> {
-    await jobsRequest(`${JOBS_BASE}/${id}/enroute`, { method: 'POST' });
-}
-
-export async function markInProgress(id: number): Promise<void> {
-    await jobsRequest(`${JOBS_BASE}/${id}/start`, { method: 'POST' });
-}
-
-export async function markComplete(id: number): Promise<void> {
-    await jobsRequest(`${JOBS_BASE}/${id}/complete`, { method: 'POST' });
-}
-
 export async function updateJobTags(id: number, tagIds: number[]): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/tags`, {
         method: 'PATCH',

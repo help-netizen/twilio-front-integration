@@ -1193,8 +1193,8 @@ async function getJobBalanceDue(jobId, companyId) {
  * OUTBOUND-PARTS-CALL-CANCEL-001 (CC-02) — the leave-hook seam, symmetric to the
  * onPartArrived enter-hook below. Fired (fire-and-forget — NEVER awaited into the
  * caller's failure path) after ANY committed write that takes a job OUT of
- * 'Part arrived': updateBlancStatus, cancelJob, markComplete, and the
- * syncFromZenbooker `zb_canceled` false→true flip (the sync cannot exit the
+ * 'Part arrived': updateBlancStatus, cancelJob, and the syncFromZenbooker
+ * `zb_canceled` false→true flip (the sync cannot exit the
  * status via blanc_status — 'Part arrived' ∉ autoStatuses, preserved below).
  * Cancels the queued robot call (pending flip / dialing marker), writes the FR-3
  * job note and stamps the task — all inside
@@ -1759,144 +1759,6 @@ async function cancelJob(jobId, companyId, activityActor = null) {
     return { ...job, blanc_status: 'Canceled', zb_canceled: true };
 }
 
-async function markEnroute(jobId, companyId, activityActor = null) {
-    if (!companyId) {
-        const err = new Error('markEnroute requires companyId');
-        err.code = 'TENANT_CONTEXT_REQUIRED';
-        err.httpStatus = 403;
-        throw err;
-    }
-    const job = await getJobById(jobId, companyId);
-    if (!job) {
-        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
-    }
-
-    // Pre-check: skip ZB call if already en-route
-    if (job.zenbooker_job_id && job.zb_status !== 'en-route') {
-        try {
-            await zenbookerClient.markJobEnroute(job.zenbooker_job_id);
-        } catch (e) {
-            await forceSyncOnZbError(job, 'enroute', e);
-        }
-    }
-    await mutateWithActivity(
-        activityActor,
-        {
-            companyId,
-            action: 'job.status_changed',
-            jobId,
-            summary: { status: 'en-route' },
-        },
-        client => updateOwnedJob(
-            client,
-            `UPDATE jobs SET zb_status = 'en-route', updated_at = NOW()
-             WHERE id = $1 AND company_id = $2`,
-            [jobId, companyId],
-            jobId
-        )
-    );
-    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
-        job_number: job.job_number,
-        from: job.zb_status,
-        to: 'en-route',
-    }, activityActor);
-    return { ...job, zb_status: 'en-route' };
-}
-
-async function markInProgress(jobId, companyId, activityActor = null) {
-    if (!companyId) {
-        const err = new Error('markInProgress requires companyId');
-        err.code = 'TENANT_CONTEXT_REQUIRED';
-        err.httpStatus = 403;
-        throw err;
-    }
-    const job = await getJobById(jobId, companyId);
-    if (!job) {
-        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
-    }
-
-    // Pre-check: skip ZB call if already in-progress
-    if (job.zenbooker_job_id && job.zb_status !== 'in-progress') {
-        try {
-            await zenbookerClient.markJobInProgress(job.zenbooker_job_id);
-        } catch (e) {
-            await forceSyncOnZbError(job, 'start', e);
-        }
-    }
-    await mutateWithActivity(
-        activityActor,
-        {
-            companyId,
-            action: 'job.status_changed',
-            jobId,
-            summary: { status: 'in-progress' },
-        },
-        client => updateOwnedJob(
-            client,
-            `UPDATE jobs SET zb_status = 'in-progress', updated_at = NOW()
-             WHERE id = $1 AND company_id = $2`,
-            [jobId, companyId],
-            jobId
-        )
-    );
-    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
-        job_number: job.job_number,
-        from: job.zb_status,
-        to: 'in-progress',
-    }, activityActor);
-    return { ...job, zb_status: 'in-progress' };
-}
-
-async function markComplete(jobId, companyId, activityActor = null) {
-    if (!companyId) {
-        const err = new Error('markComplete requires companyId');
-        err.code = 'TENANT_CONTEXT_REQUIRED';
-        err.httpStatus = 403;
-        throw err;
-    }
-    const job = await getJobById(jobId, companyId);
-    if (!job) {
-        throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
-    }
-
-    // Pre-check: skip ZB call if already complete
-    if (job.zenbooker_job_id && job.zb_status !== 'complete') {
-        try {
-            await zenbookerClient.markJobComplete(job.zenbooker_job_id);
-        } catch (e) {
-            await forceSyncOnZbError(job, 'complete', e);
-        }
-    }
-    await mutateWithActivity(
-        activityActor,
-        {
-            companyId,
-            action: 'job.status_changed',
-            jobId,
-            summary: { status: 'Visit completed' },
-        },
-        client => updateOwnedJob(
-            client,
-            `UPDATE jobs
-             SET zb_status = 'complete', blanc_status = 'Visit completed', updated_at = NOW()
-             WHERE id = $1 AND company_id = $2`,
-            [jobId, companyId],
-            jobId
-        )
-    );
-    await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
-        job_number: job.job_number,
-        from: job.blanc_status,
-        to: 'Visit completed',
-    }, activityActor);
-    // CANCEL-001 leave-hook (CC-02 S2): direct blanc_status writer, same as
-    // cancelJob above — a completed visit ends the robot-call plan.
-    if (job.blanc_status === 'Part arrived') {
-        fireRobotCallLeaveHook(jobId, job.company_id, 'Visit completed');
-    }
-    return { ...job, zb_status: 'complete', blanc_status: 'Visit completed' };
-}
-
 // =============================================================================
 // Job Tags
 // =============================================================================
@@ -2129,9 +1991,6 @@ module.exports = {
     mergeNotes,
     addNote,
     cancelJob,
-    markEnroute,
-    markInProgress,
-    markComplete,
     BLANC_STATUSES,
     ALLOWED_TRANSITIONS,
     zbJobToColumns,

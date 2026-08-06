@@ -369,9 +369,6 @@ export function SchedulePage() {
                         onClose={handleCloseJobDetail}
                         onBlancStatusChange={jobDetail.handleBlancStatusChange}
                         onAddNote={jobDetail.handleAddNote}
-                        onMarkEnroute={jobDetail.handleMarkEnroute}
-                        onMarkInProgress={jobDetail.handleMarkInProgress}
-                        onMarkComplete={jobDetail.handleMarkComplete}
                         onCancel={jobDetail.handleCancel}
                         navigate={navigate}
                         allTags={jobDetail.allTags}

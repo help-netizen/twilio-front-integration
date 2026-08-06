@@ -15,15 +15,30 @@ jest.mock('../backend/src/services/eventService', () => ({
 }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
     userActor: jest.fn(id => ({ id, type: 'user', label: null, source: 'crm' })),
+    logJobActivity: jest.fn(async () => {}),
 }));
-jest.mock('../backend/src/services/fsmTransitionOps', () => ({
-    runTransitionOp: jest.fn(async () => ({ sent: true })),
+jest.mock('../backend/src/services/conversationsService', () => ({
+    getOrCreateConversation: jest.fn(),
+    sendMessage: jest.fn(),
 }));
+jest.mock('../backend/src/db/companyQueries', () => ({
+    getCompanyById: jest.fn(),
+}));
+jest.mock('../backend/src/services/messagingHelper', () => ({
+    resolveCompanyProxyE164: jest.fn(),
+}));
+jest.mock('../backend/src/services/fsmTransitionOps', () => {
+    const actual = jest.requireActual('../backend/src/services/fsmTransitionOps');
+    return { runTransitionOp: jest.fn(actual.runTransitionOp) };
+});
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
 
 const db = require('../backend/src/db/connection');
 const fsmService = require('../backend/src/services/fsmService');
 const jobsService = require('../backend/src/services/jobsService');
+const conversationsService = require('../backend/src/services/conversationsService');
+const companyQueries = require('../backend/src/db/companyQueries');
+const { resolveCompanyProxyE164 } = require('../backend/src/services/messagingHelper');
 const { runTransitionOp } = require('../backend/src/services/fsmTransitionOps');
 const { applyTransitionHandler } = require('../backend/src/routes/fsm');
 
@@ -76,6 +91,10 @@ describe('FSM apply handler', () => {
         db.getClient.mockResolvedValue(client);
         jobsService.getJobById.mockResolvedValue(JOB);
         jobsService.updateBlancStatus.mockResolvedValue({ ...JOB, blanc_status: 'On the way' });
+        resolveCompanyProxyE164.mockResolvedValue('+16175550000');
+        companyQueries.getCompanyById.mockResolvedValue({ name: 'ABC Homes' });
+        conversationsService.getOrCreateConversation.mockResolvedValue({ id: 'conversation-1' });
+        conversationsService.sendMessage.mockResolvedValue({ id: 'message-1' });
     });
 
     test('updates status and fires notify_on_the_way before the transaction commits', async () => {
@@ -113,6 +132,62 @@ describe('FSM apply handler', () => {
             'notify_on_the_way',
             expect.objectContaining({ client, companyId: COMPANY, etaMinutes: 20 })
         );
+        expect(conversationsService.sendMessage).toHaveBeenCalledWith('conversation-1', {
+            companyId: COMPANY,
+            body: 'Hi! Your technician Taylor from ABC Homes is on the way and should arrive in about 20 minutes.',
+            author: 'agent',
+        });
+        expect(client.query.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN', 'COMMIT']);
+    });
+
+    test.each([
+        {
+            label: 'Start-equivalent',
+            from: 'On the way',
+            event: 'TO_VISIT_COMPLETED',
+            target: 'Visit completed',
+            permissions: ['jobs.edit', 'jobs.done_pending_approval'],
+        },
+        {
+            label: 'Complete-equivalent',
+            from: 'Visit completed',
+            event: 'TO_JOB_DONE',
+            target: 'Job is Done',
+            permissions: ['jobs.edit', 'jobs.close'],
+        },
+    ])('$label forward action changes blanc_status to $target', async ({ from, event, target, permissions }) => {
+        const currentJob = { ...JOB, blanc_status: from };
+        const transition = {
+            event,
+            targetStatusName: target,
+            action: true,
+            roles: [],
+            op: null,
+        };
+        jobsService.getJobById.mockResolvedValue(currentJob);
+        jobsService.updateBlancStatus.mockResolvedValue({ ...currentJob, blanc_status: target });
+        fsmService.resolveTransition.mockResolvedValue({
+            valid: true,
+            targetState: target,
+            event,
+            transition,
+            op: null,
+        });
+        const res = response();
+
+        await applyTransitionHandler(request({ entityId: 5, event }, permissions), res);
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.data).toMatchObject({ previousState: from, newState: target, op: null });
+        expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(
+            5,
+            target,
+            COMPANY,
+            expect.objectContaining({ id: 'crm-user', type: 'user' }),
+            expect.objectContaining({ client, job: currentJob, resolvedTransition: expect.objectContaining({ transition }) })
+        );
+        expect(runTransitionOp).not.toHaveBeenCalled();
+        expect(conversationsService.sendMessage).not.toHaveBeenCalled();
         expect(client.query.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN', 'COMMIT']);
     });
 

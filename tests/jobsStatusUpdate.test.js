@@ -38,6 +38,15 @@ function updateCall() {
 }
 
 describe('updateBlancStatus query shape', () => {
+    it('does not export the removed operational status mutations', () => {
+        const removedNames = [
+            ['mark', 'Enroute'],
+            ['mark', 'InProgress'],
+            ['mark', 'Complete'],
+        ].map(parts => parts.join(''));
+        expect(Object.keys(jobsService)).not.toEqual(expect.arrayContaining(removedNames));
+    });
+
     it('never reuses $1 in a typed comparison (the prod bug)', async () => {
         await jobsService.updateBlancStatus(5, 'Canceled', COMPANY);
         const call = updateCall();

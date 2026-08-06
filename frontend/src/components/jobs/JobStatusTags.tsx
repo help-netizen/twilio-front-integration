@@ -20,12 +20,7 @@ interface JobOpsSectionProps {
     job: LocalJob;
     allTags: JobTag[];
     onTagsChange: (jobId: number, tagIds: number[]) => void;
-    // Legacy hardcoded-status handlers — the buttons are now FSM-driven (FSM-JOB-ACTIONS-001);
-    // only onCancel (the reason dialog) and onNotified are still consumed. The others remain in
-    // the props for the parent's sake until the Phase 4 cleanup removes them.
-    onMarkEnroute: (id: number) => void;
-    onMarkInProgress: (id: number) => void;
-    onMarkComplete: (id: number) => void;
+    /** Cancel opens the reason dialog (a terminal action kept outside the FSM button row). */
     onCancel: (id: number) => void;
     /** Refresh the job after the "On the way" notification (afterMutation). */
     onNotified?: (id: number) => void;

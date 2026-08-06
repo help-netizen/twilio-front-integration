@@ -27,9 +27,6 @@ export interface JobDetailPanelProps {
     onClose: () => void;
     onBlancStatusChange: (id: number, s: string) => void;
     onAddNote?: (files?: File[]) => void;
-    onMarkEnroute: (id: number) => void;
-    onMarkInProgress: (id: number) => void;
-    onMarkComplete: (id: number) => void;
     onCancel: (id: number, reason: string) => Promise<boolean> | boolean;
     navigate: (path: string) => void;
     allTags: JobTag[];
@@ -45,7 +42,7 @@ export interface JobDetailPanelProps {
 export function JobDetailPanel({
     job, contactInfo, detailLoading,
     onClose: _onClose, onBlancStatusChange,
-    onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
+    onCancel,
     navigate, allTags, onTagsChange, onJobUpdated, onNotified, onCopy,
 }: JobDetailPanelProps) {
     const [cancelOpen, setCancelOpen] = useState(false);
@@ -79,7 +76,7 @@ export function JobDetailPanel({
         if (!open) setCancelReason('');
     };
 
-    const opsProps = { job, allTags, onTagsChange, onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel: requestCancel, onNotified };
+    const opsProps = { job, allTags, onTagsChange, onCancel: requestCancel, onNotified };
 
     return (
         <div className="flex flex-col md:flex-row h-full overflow-hidden">

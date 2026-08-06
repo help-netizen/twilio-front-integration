@@ -247,7 +247,7 @@ describe('CANCEL-001 leave-hooks (TC-CC-07 updateBlancStatus)', () => {
     });
 });
 
-describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + markComplete direct writers)', () => {
+describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + FSM status writer)', () => {
     test('cancelJob on a Part-arrived job → cancel with newStatus Canceled', async () => {
         seedJob({ fromStatus: 'Part arrived' }); // zenbooker_job_id null → no ZB client call
         const out = await jobsService.cancelJob(50, COMPANY);
@@ -258,9 +258,9 @@ describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + markComplete direct write
         );
     });
 
-    test('markComplete on a Part-arrived job → cancel with newStatus Visit completed', async () => {
+    test('FSM status update on a Part-arrived job → cancel with newStatus Visit completed', async () => {
         seedJob({ fromStatus: 'Part arrived' });
-        const out = await jobsService.markComplete(50, COMPANY);
+        const out = await jobsService.updateBlancStatus(50, 'Visit completed', COMPANY);
         expect(out.blanc_status).toBe('Visit completed');
         expect(mockCancelScheduledRobotCalls).toHaveBeenCalledTimes(1);
         expect(mockCancelScheduledRobotCalls).toHaveBeenCalledWith(
@@ -268,11 +268,11 @@ describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + markComplete direct write
         );
     });
 
-    test('job in Submitted → neither direct writer fires the hook', async () => {
+    test('job in Submitted → neither retained writer fires the hook', async () => {
         seedJob({ fromStatus: 'Submitted' });
         await jobsService.cancelJob(50, COMPANY);
         seedJob({ fromStatus: 'Submitted' });
-        await jobsService.markComplete(50, COMPANY);
+        await jobsService.updateBlancStatus(50, 'On the way', COMPANY);
         expect(mockCancelScheduledRobotCalls).not.toHaveBeenCalled();
     });
 

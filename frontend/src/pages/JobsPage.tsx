@@ -70,9 +70,6 @@ export function JobsPage() {
                         onClose={page.handleCloseDetail}
                         onBlancStatusChange={page.handleBlancStatusChange}
                         onAddNote={page.handleAddNote}
-                        onMarkEnroute={page.handleMarkEnroute}
-                        onMarkInProgress={page.handleMarkInProgress}
-                        onMarkComplete={page.handleMarkComplete}
                         onCancel={page.handleCancel}
                         navigate={page.navigate}
                         allTags={page.allTags}
