@@ -104,6 +104,69 @@ describe('native technician roster mode against real PostgreSQL', () => {
         }
     });
 
+    databaseTest('native A roster excludes B despite identical display name and external id', async () => {
+        const companyA = randomUUID();
+        const companyB = randomUUID();
+        const technicianA = randomUUID();
+        const technicianB = randomUUID();
+        const suffix = randomUUID();
+        const sharedExternalId = `zb-roster-collision-${suffix}`;
+        const getTeamMembers = jest.spyOn(zenbookerClient, 'getTeamMembers')
+            .mockRejectedValue(new Error('forced Zenbooker outage'));
+
+        process.env.TECHNICIAN_DIRECTORY_MODE = 'native';
+        process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS = companyA;
+        try {
+            await db.query(
+                `INSERT INTO companies (id, name, slug, status, timezone)
+                 VALUES ($1, 'Native collision A', $3, 'active', 'America/New_York'),
+                        ($2, 'Native collision B', $4, 'active', 'America/New_York')`,
+                [
+                    companyA,
+                    companyB,
+                    `native-collision-a-${suffix}`,
+                    `native-collision-b-${suffix}`,
+                ]
+            );
+            await db.query(
+                `INSERT INTO technicians (id, company_id, display_name, active)
+                 VALUES ($1, $2, 'Identical Provider', TRUE),
+                        ($3, $4, 'Identical Provider', TRUE)`,
+                [technicianA, companyA, technicianB, companyB]
+            );
+            await db.query(
+                `INSERT INTO technician_external_identities
+                    (company_id, source, external_id, technician_id)
+                 VALUES ($1, 'zenbooker', $3, $4),
+                        ($2, 'zenbooker', $3, $5)`,
+                [companyA, companyB, sharedExternalId, technicianA, technicianB]
+            );
+
+            const roster = await rosterService.listActive(companyA);
+
+            expect(roster).toEqual([{
+                id: sharedExternalId,
+                name: 'Identical Provider',
+                active: true,
+                technician_uuid: technicianA,
+            }]);
+            expect(roster.map(technician => technician.technician_uuid)).not.toContain(technicianB);
+            expect(getTeamMembers).not.toHaveBeenCalled();
+        } finally {
+            getTeamMembers.mockRestore();
+            delete process.env.TECHNICIAN_DIRECTORY_MODE;
+            delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
+            await db.query(
+                'DELETE FROM technicians WHERE company_id = ANY($1::uuid[])',
+                [[companyA, companyB]]
+            ).catch(() => {});
+            await db.query(
+                'DELETE FROM companies WHERE id = ANY($1::uuid[])',
+                [[companyA, companyB]]
+            ).catch(() => {});
+        }
+    });
+
     databaseTest('native technician assignment resolves to crm_users.id without crossing the auth planes', async () => {
         const companyId = randomUUID();
         const foreignCompanyId = randomUUID();
