@@ -91,3 +91,16 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
   session, not the implementer) must re-audit — the author who wrote the theater cannot see it. Caught
   on INSPECTOR-AGENT-001: the red-team found a spoofable prompt fence and a falsely-green DB suite that
   the implementer's own "21 sabotage passed" had missed.
+
+- **L-022 Session-compaction → L-016 thrash; recover by writing it yourself + a fresh session.**
+  On a long tandem run (ZB-DECOUPLE-001 Phase A/T1), Codex's session hit context compaction
+  MID-TASK and drafted-without-applying — twice, on consecutive resumes (`git status` empty both
+  times, log ends at `{"outcome":"allow"}` with no apply_patch, and the printed session id changed,
+  the tell-tale of a compaction/new-rollout). Resuming the SAME degraded session again just
+  re-compacts and produces nothing. Recovery: (a) after ANY Codex turn, `git status --short` — empty
+  when files were expected = stalled, do not trust exit 0; (b) if it re-stalls once, STOP resuming
+  that session — write the deliverable yourself from the already-approved design (the design/map
+  MUST live in a committed durable spec so nothing is lost to the compaction), and start T-next in a
+  FRESH `codex exec` (not resume). Deterministic, already-reviewed artifacts (migration SQL) are the
+  cheapest to hand-write; validate them independently (e.g. a rolled-back apply against the real
+  schema) rather than trusting the stalled session's claims.
