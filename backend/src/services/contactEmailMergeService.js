@@ -27,8 +27,8 @@
  *     (leads DOES carry company_id — added NOT NULL by migration 012 — so its legs
  *     are company-scoped like the other identity tables.)
  *   • idempotent   — re-running the same add is a no-op (re-link is a no-op
- *     UPDATE; the owner==target branch does nothing; a merged dup is gone so the
- *     address resolves to the target on the next run).
+ *     UPDATE; the owner==target branch does nothing; an archived donor resolves
+ *     through contact_merge_redirects on the next merge attempt).
  *
  * The full-merge FK order is load-bearing (mirrors ORPHAN-TASK-REHOME-001):
  * open tasks are re-homed off the dup timeline BEFORE any timeline is deleted,
@@ -39,6 +39,7 @@
 const db = require('../db/connection');
 const emailQueries = require('../db/emailQueries');
 const timelinesQueries = require('../db/timelinesQueries');
+const { deduplicateNotesByIdentity, noteIdentity } = require('./noteDeduplication');
 
 /**
  * ContactConflictError (CONTACT-MERGE-001, Decision B) — the "no silent path
@@ -70,6 +71,20 @@ class ContactSavedCardMergeBlockedError extends Error {
         this.code = 'SAVED_CARD_MERGE_BLOCKED';
         this.httpStatus = 409;
         this.contactId = contactId;
+    }
+}
+
+class ContactMergeNeedsReviewError extends Error {
+    constructor(result) {
+        const reasons = Array.isArray(result?.review_reasons) ? result.review_reasons : [];
+        const stripeConflict = reasons.some(reason => reason?.type === 'stripe_customer_conflict');
+        super(stripeConflict
+            ? 'The contacts have conflicting Stripe customer or saved-card links and require review.'
+            : 'The contacts have conflicting links and require review before merging.');
+        this.name = 'ContactMergeNeedsReviewError';
+        this.code = stripeConflict ? 'SAVED_CARD_MERGE_BLOCKED' : 'CONTACT_MERGE_NEEDS_REVIEW';
+        this.httpStatus = 409;
+        this.result = result;
     }
 }
 
@@ -506,346 +521,1041 @@ async function linkInboxMessages(targetContactId, emailNormalized, companyId, cl
     return messageIds.length;
 }
 
-/**
- * mergeContacts — the codified full-merge dedup recipe. Re-points every contact_id
- * child from `dupId` → `survivorId`, adopts/merges the timeline, and deletes the
- * dup LAST. Generic (a future manual-merge action can reuse it); in v1 reached
- * only via resolveAddedEmail's D2a branch.
- *
- * FK order (load-bearing — CASCADE trap = ORPHAN-TASK-REHOME-001):
- *   1. Adopt/merge the survivor timeline FIRST (re-homes shadow-orphan open tasks).
- *   2. Re-home OPEN tasks off the dup timeline BEFORE any timeline delete; also
- *      re-point tasks.contact_id and tasks.subject_id (subject_type='contact').
- *   3. Re-point email_messages (contact_id + timeline_id + on_timeline).
- *   4. Re-point the SET-NULL history children (contact_id).
- *   5. Move M2M / CASCADE children with NOT-EXISTS guards (dodge unique clashes).
- *   6. DELETE the dup's timeline(s), then DELETE the dup contact LAST.
- *
- * Guard: survivor.company_id === dup.company_id === companyId, or throw — NO
- * cross-tenant merge under any circumstance.
- *
- * Return value (review fix c — the `contact_merged` audit event must NOT be
- * emitted inside the tx, or it would survive a ROLLBACK): returns the event
- * PAYLOAD `{ merged_contact_id, merged_name, dropped_phones }` (or null for
- * the self-merge no-op) — the caller (the PATCH route) emits
- * `eventService.logEvent(companyId, 'contact', survivorId, 'contact_merged', payload)`
- * strictly AFTER COMMIT. Additive: pre-existing callers that ignore the
- * return value keep working (they just don't emit the event).
- *
- * @param {number|string} survivorId
- * @param {number|string} dupId
- * @param {string} companyId
- * @param {{query: Function}} [client=db]
- * @returns {Promise<{merged_contact_id:(number|string), merged_name:(string|null), dropped_phones:string[]}|null>}
- */
-async function mergeContacts(survivorId, dupId, companyId, client = db) {
-    if (String(survivorId) === String(dupId)) return null; // nothing to merge into self
+// The live albusto_test inventory for every FK whose referenced key includes
+// contacts(id). Keep this independent from CONTACT_REASSIGNMENTS: the final
+// assertion intentionally still sees a table if its move handler is omitted.
+const CONTACT_FK_INVENTORY = [
+    { table: 'call_masking_sessions', hasCompanyId: true },
+    { table: 'calls', hasCompanyId: true },
+    { table: 'contact_addresses', hasCompanyId: false },
+    { table: 'contact_call_masking_codes', hasCompanyId: true },
+    { table: 'contact_emails', hasCompanyId: false },
+    { table: 'contact_external_identities', hasCompanyId: true },
+    { table: 'contact_phones', hasCompanyId: true },
+    { table: 'crm_account_contacts', hasCompanyId: true },
+    { table: 'crm_activities', hasCompanyId: true },
+    { table: 'crm_deal_contacts', hasCompanyId: true },
+    { table: 'email_messages', hasCompanyId: true },
+    { table: 'estimates', hasCompanyId: true },
+    { table: 'invoices', hasCompanyId: true },
+    { table: 'jobs', hasCompanyId: true },
+    { table: 'leads', hasCompanyId: true },
+    { table: 'outbound_call_attempts', hasCompanyId: true },
+    { table: 'payment_transactions', hasCompanyId: true },
+    { table: 'portal_access_tokens', hasCompanyId: true },
+    { table: 'portal_events', hasCompanyId: false },
+    { table: 'portal_sessions', hasCompanyId: false },
+    { table: 'stripe_contact_customers', hasCompanyId: true },
+    { table: 'stripe_payment_sessions', hasCompanyId: true },
+    { table: 'stripe_saved_payment_methods', hasCompanyId: true },
+    { table: 'tasks', hasCompanyId: true },
+    { table: 'timelines', hasCompanyId: true },
+];
 
-    // ── Tenant guard: both contacts must belong to `companyId`. A single query
-    // fetches both so a foreign/absent id is caught before ANY mutation.
-    const { rows: pair } = await client.query(
-        `SELECT id, company_id FROM contacts WHERE id IN ($1, $2)`,
-        [survivorId, dupId]
-    );
-    const survivor = pair.find(r => String(r.id) === String(survivorId));
-    const dup = pair.find(r => String(r.id) === String(dupId));
-    if (!survivor || !dup) {
-        throw new Error(`[ContactEmailMerge] merge aborted: contact not found (survivor=${survivorId}, dup=${dupId})`);
+const CONTACT_REASSIGNMENTS = [
+    { table: 'call_masking_sessions', strategy: 'simple' },
+    { table: 'calls', strategy: 'calls' },
+    { table: 'contact_addresses', strategy: 'addresses' },
+    { table: 'contact_call_masking_codes', strategy: 'simple' },
+    { table: 'contact_emails', strategy: 'emails' },
+    { table: 'contact_external_identities', strategy: 'simple' },
+    { table: 'contact_phones', strategy: 'phones' },
+    { table: 'crm_account_contacts', strategy: 'account_contacts' },
+    { table: 'crm_activities', strategy: 'simple' },
+    { table: 'crm_deal_contacts', strategy: 'deal_contacts' },
+    { table: 'email_messages', strategy: 'email_messages' },
+    { table: 'estimates', strategy: 'simple' },
+    { table: 'invoices', strategy: 'simple' },
+    { table: 'jobs', strategy: 'simple' },
+    { table: 'leads', strategy: 'simple' },
+    { table: 'outbound_call_attempts', strategy: 'simple' },
+    { table: 'payment_transactions', strategy: 'simple' },
+    { table: 'portal_access_tokens', strategy: 'simple' },
+    { table: 'portal_events', strategy: 'simple' },
+    { table: 'portal_sessions', strategy: 'simple' },
+    { table: 'stripe_contact_customers', strategy: 'stripe_customer' },
+    { table: 'stripe_payment_sessions', strategy: 'simple' },
+    { table: 'stripe_saved_payment_methods', strategy: 'stripe_cards' },
+    { table: 'tasks', strategy: 'tasks' },
+    { table: 'timelines', strategy: 'timelines' },
+];
+
+const POLYMORPHIC_CONTACT_REFS = [
+    { table: 'crm_notes', typeColumn: 'entity_type', idColumn: 'entity_id', type: 'contact' },
+    { table: 'note_attachments', typeColumn: 'entity_type', idColumn: 'entity_id', type: 'contact' },
+    { table: 'tasks', typeColumn: 'subject_type', idColumn: 'subject_id', type: 'contact' },
+    { table: 'crm_activities', typeColumn: 'source_entity_type', idColumn: 'source_entity_id', type: 'contact', textId: true },
+];
+
+const isBlank = value => value === null || value === undefined || String(value).trim() === '';
+const normalizedTenDigit = value => {
+    const digits = digitsOf(value);
+    return digits && digits.length >= 10 ? digits.slice(-10) : null;
+};
+
+function mergeLabels(labels) {
+    const values = [];
+    for (const label of labels) {
+        const value = String(label || '').trim();
+        if (value && !values.includes(value)) values.push(value);
     }
-    if (String(survivor.company_id) !== String(companyId) ||
-        String(dup.company_id) !== String(companyId)) {
-        throw new Error('[ContactEmailMerge] cross-tenant merge blocked: survivor/dup company mismatch');
-    }
+    return values.length > 0 ? values.join(' / ') : null;
+}
 
-    // CARD-ON-FILE-001: never silently re-home or detach a duplicate contact's
-    // saved card. The row disappears after explicit removal or TTL cleanup, at
-    // which point the merge can be retried normally.
-    const { rows: savedCardRows } = await client.query(
-        `SELECT EXISTS (
-            SELECT 1
-            FROM stripe_saved_payment_methods
-            WHERE company_id = $1 AND contact_id = $2 AND removed_at IS NULL
-         ) AS has_saved_card`,
-        [companyId, dupId]
+function mergeLegacyNotes(survivorNotes, donorNotes) {
+    const survivor = String(survivorNotes || '').trim();
+    const donor = String(donorNotes || '').trim();
+    if (!donor || survivor === donor || survivor.includes(donor)) return survivor || null;
+    if (!survivor) return donor;
+    return `${survivor}\n\n${donor}`;
+}
+
+function mergeStructuredContactNotes(survivorNotes, donorNotes) {
+    const merged = deduplicateNotesByIdentity([
+        ...(Array.isArray(survivorNotes) ? survivorNotes : []),
+        ...(Array.isArray(donorNotes) ? donorNotes : []),
+    ]);
+    const seenAnonymous = new Set();
+    return merged.filter(note => {
+        if (noteIdentity(note)) return true;
+        const key = JSON.stringify(note);
+        if (seenAnonymous.has(key)) return false;
+        seenAnonymous.add(key);
+        return true;
+    });
+}
+
+async function assertContactFkInventory(client) {
+    const { rows } = await client.query(
+        `SELECT DISTINCT child.relname AS table_name, child_col.attname AS column_name
+           FROM pg_constraint constraint_row
+           JOIN pg_class parent ON parent.oid = constraint_row.confrelid
+           JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+           JOIN pg_class child ON child.oid = constraint_row.conrelid
+           JOIN LATERAL unnest(constraint_row.conkey, constraint_row.confkey)
+                WITH ORDINALITY AS keys(child_attnum, parent_attnum, ord) ON true
+           JOIN pg_attribute child_col
+             ON child_col.attrelid = child.oid AND child_col.attnum = keys.child_attnum
+           JOIN pg_attribute parent_col
+             ON parent_col.attrelid = parent.oid AND parent_col.attnum = keys.parent_attnum
+          WHERE constraint_row.contype = 'f'
+            AND parent_ns.nspname = 'public'
+            AND parent.relname = 'contacts'
+            AND parent_col.attname = 'id'
+          ORDER BY child.relname, child_col.attname`
     );
-    if (savedCardRows[0]?.has_saved_card === true) {
-        throw new ContactSavedCardMergeBlockedError(dupId);
-    }
-
-    // 1. Adopt/merge the survivor's timeline FIRST (inside the tx). This also
-    //    re-homes shadow-orphan open tasks on the survivor's own number(s).
-    const survivorTl = await timelinesQueries.findOrCreateTimelineByContact(
-        survivorId, companyId, client
-    );
-    const survivorTlId = survivorTl ? survivorTl.id : null;
-
-    // Find the dup's own timeline(s) (dup is email-only, so contact-linked).
-    const { rows: dupTls } = await client.query(
-        `SELECT id FROM timelines WHERE contact_id = $1 AND company_id = $2`,
-        [dupId, companyId]
-    );
-    const dupTlIds = dupTls.map(r => r.id);
-
-    // 2. Re-home OPEN tasks off EACH dup timeline BEFORE deleting any timeline —
-    //    tasks.thread_id is ON DELETE CASCADE, so skipping this destroys an open
-    //    Action-Required task (ORPHAN-TASK-REHOME-001). Guarded on survivorTlId so
-    //    we never NULL a thread_id that is NOT NULL-able historically.
-    if (survivorTlId && dupTlIds.length > 0) {
-        await client.query(
-            `UPDATE tasks SET thread_id = $1, updated_at = now()
-             WHERE thread_id = ANY($2) AND status = 'open' AND company_id = $3`,
-            [survivorTlId, dupTlIds, companyId]
+    // Mocked unit routers historically return an empty generic result. The real
+    // database always has contacts FKs; the real-DB suite pins the exact set.
+    if (rows.length === 0) return;
+    const actual = rows.map(row => `${row.table_name}:${row.column_name}`).sort();
+    const expected = CONTACT_FK_INVENTORY.map(row => `${row.table}:contact_id`).sort();
+    const unknown = actual.filter(key => !expected.includes(key));
+    const missing = expected.filter(key => !actual.includes(key));
+    if (unknown.length > 0 || missing.length > 0) {
+        throw new Error(
+            `[ContactEmailMerge] contact FK inventory mismatch; unknown=${unknown.join(',') || 'none'}; missing=${missing.join(',') || 'none'}`
         );
     }
-    // Re-point task ownership so history follows the survivor (contact_id is
-    // SET NULL; subject_id is the CRM/Pulse subject when subject_type='contact').
-    await client.query(
-        `UPDATE tasks SET contact_id = $1, updated_at = now()
-         WHERE contact_id = $2 AND company_id = $3`,
-        [survivorId, dupId, companyId]
-    );
-    await client.query(
-        `UPDATE tasks SET subject_id = $1, updated_at = now()
-         WHERE subject_type = 'contact' AND subject_id = $2 AND company_id = $3`,
-        [survivorId, dupId, companyId]
-    );
+}
 
-    // 3. Re-point the dup's email_messages onto the survivor + its timeline.
-    //    (email_threads has NO contact_id — linkage lives on the messages.)
-    await client.query(
-        `UPDATE email_messages
-            SET contact_id = $1, timeline_id = $2, on_timeline = true, updated_at = now()
-          WHERE contact_id = $3 AND company_id = $4`,
-        [survivorId, survivorTlId, dupId, companyId]
+async function recordContactMergeAudit({
+    companyId,
+    oldContactId,
+    survivorContactId,
+    status,
+    reviewReasons = [],
+    details = {},
+    client = db,
+}) {
+    const { rows } = await client.query(
+        `INSERT INTO contact_merge_redirects
+            (company_id, old_contact_id, survivor_contact_id, status,
+             review_reasons, details, merged_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb,
+                 CASE WHEN $4 = 'merged' THEN NOW() ELSE NULL END)
+         ON CONFLICT (company_id, old_contact_id) DO UPDATE
+         SET survivor_contact_id = EXCLUDED.survivor_contact_id,
+             status = EXCLUDED.status,
+             review_reasons = EXCLUDED.review_reasons,
+             details = EXCLUDED.details,
+             merged_at = EXCLUDED.merged_at,
+             updated_at = NOW()
+         RETURNING company_id, old_contact_id, survivor_contact_id, status,
+                   review_reasons, details, merged_at, created_at, updated_at`,
+        [
+            companyId,
+            oldContactId,
+            survivorContactId,
+            status,
+            JSON.stringify(reviewReasons),
+            JSON.stringify(details),
+        ]
     );
+    return rows[0] || null;
+}
 
-    // 3b. (CONTACT-MERGE-001, Decision C2) Re-point CALLS off the dup timeline(s)
-    //     BEFORE any timeline delete — calls.timeline_id has NO ON DELETE action,
-    //     so deleting a dup timeline still holding calls violates the FK (v1's
-    //     email-only dups never had calls; a generic phone-world dup does).
-    //     Served by idx_calls_timeline_id; calls carry company_id since mig 012.
-    if (survivorTlId && dupTlIds.length > 0) {
-        await client.query(
-            `UPDATE calls
-                SET timeline_id = $1, contact_id = $2
-              WHERE timeline_id = ANY($3) AND company_id = $4`,
-            [survivorTlId, survivorId, dupTlIds, companyId]
-        );
+async function findMergeReviewReasons(client, companyId, survivorId, donorId, pair) {
+    const reasons = [];
+    const { rows: stripeRows } = await client.query(
+        `SELECT customer.contact_id, customer.stripe_account_id,
+                customer.stripe_customer_id,
+                COUNT(method.id)::int AS saved_payment_method_count
+           FROM stripe_contact_customers customer
+           LEFT JOIN stripe_saved_payment_methods method
+             ON method.stripe_contact_customer_id = customer.id
+            AND method.company_id = customer.company_id
+            AND method.contact_id = customer.contact_id
+          WHERE customer.company_id = $1
+            AND customer.contact_id IN ($2, $3)
+          GROUP BY customer.id, customer.contact_id,
+                   customer.stripe_account_id, customer.stripe_customer_id
+          ORDER BY customer.contact_id`,
+        [companyId, survivorId, donorId]
+    );
+    if (stripeRows.some(row => String(row.contact_id) === String(survivorId)) &&
+        stripeRows.some(row => String(row.contact_id) === String(donorId))) {
+        reasons.push({
+            type: 'stripe_customer_conflict',
+            customers: stripeRows.map(row => ({
+                contact_id: row.contact_id,
+                stripe_account_id: row.stripe_account_id,
+                stripe_customer_id: row.stripe_customer_id,
+                saved_payment_method_count: row.saved_payment_method_count,
+            })),
+        });
     }
-    // Sweep any remaining dup-owned calls (contact-linked without a dup timeline).
-    await client.query(
-        `UPDATE calls SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`,
-        [survivorId, dupId, companyId]
-    );
 
-    // 3c. (CONTACT-MERGE-001, OQ-2 default) Phone-slot fill: the dup's numbers
-    //     land in the survivor's FREE slots only (phone_e164 first, then
-    //     secondary_phone, carrying secondary_phone_name when the filled slot is
-    //     secondary and the number had a label). Overflow numbers are NOT
-    //     persisted — audited via the `contact_merged` event + a warn log.
-    //     Survivor scalars (full_name, company_name, notes, email,
-    //     zenbooker_customer_id) are NEVER overwritten — the editor's fields
-    //     win; the dup's ZB linkage dies with the dup row; NO ZB API call.
-    const { rows: mergePhoneRows } = await client.query(
-        `SELECT id, full_name, phone_e164, secondary_phone, secondary_phone_name
-           FROM contacts
-          WHERE id IN ($1, $2) AND company_id = $3`,
-        [survivorId, dupId, companyId]
+    const { rows: maskingRows } = await client.query(
+        `SELECT contact_id, code
+           FROM contact_call_masking_codes
+          WHERE company_id = $1 AND contact_id IN ($2, $3)
+          ORDER BY contact_id`,
+        [companyId, survivorId, donorId]
     );
-    const survPhones = mergePhoneRows.find(r => String(r.id) === String(survivorId));
-    const dupPhones = mergePhoneRows.find(r => String(r.id) === String(dupId));
-    let mergedEvent = null;
-    if (survPhones && dupPhones) {
-        const donorNumbers = [];
-        if (dupPhones.phone_e164) {
-            donorNumbers.push({ value: dupPhones.phone_e164, label: null });
-        }
-        if (dupPhones.secondary_phone) {
-            donorNumbers.push({ value: dupPhones.secondary_phone, label: dupPhones.secondary_phone_name || null });
-        }
+    if (maskingRows.length > 1) {
+        reasons.push({ type: 'call_masking_code_conflict', codes: maskingRows });
+    }
 
-        const survDigits = new Set(
-            [digitsOf(survPhones.phone_e164), digitsOf(survPhones.secondary_phone)].filter(Boolean)
-        );
-        let primaryFree = !survPhones.phone_e164;
-        let secondaryFree = !survPhones.secondary_phone;
-        const setClauses = [];
-        const setParams = [];
-        const droppedPhones = [];
-        for (const num of donorNumbers) {
-            const d = digitsOf(num.value);
-            if (!d || survDigits.has(d)) continue; // survivor already holds it — neither fill nor drop
-            if (primaryFree) {
-                setParams.push(num.value);
-                setClauses.push(`phone_e164 = $${setParams.length}`);
-                primaryFree = false;
-                survDigits.add(d);
-            } else if (secondaryFree) {
-                setParams.push(num.value);
-                setClauses.push(`secondary_phone = $${setParams.length}`);
-                if (num.label) {
-                    setParams.push(num.label);
-                    setClauses.push(`secondary_phone_name = $${setParams.length}`);
-                }
-                secondaryFree = false;
-                survDigits.add(d);
-            } else {
-                droppedPhones.push(num.value);
+    const { rows: relationshipRows } = await client.query(
+        `SELECT survivor.account_id,
+                survivor.relationship_type AS survivor_relationship_type,
+                donor.relationship_type AS donor_relationship_type
+           FROM crm_account_contacts survivor
+           JOIN crm_account_contacts donor
+             ON donor.company_id = survivor.company_id
+            AND donor.account_id = survivor.account_id
+          WHERE survivor.company_id = $1
+            AND survivor.contact_id = $2
+            AND donor.contact_id = $3
+            AND NULLIF(BTRIM(survivor.relationship_type), '') IS NOT NULL
+            AND NULLIF(BTRIM(donor.relationship_type), '') IS NOT NULL
+            AND survivor.relationship_type IS DISTINCT FROM donor.relationship_type`,
+        [companyId, survivorId, donorId]
+    );
+    for (const row of relationshipRows) {
+        reasons.push({ type: 'account_relationship_conflict', ...row });
+    }
+
+    for (const contact of pair) {
+        for (const column of ['phone_e164', 'secondary_phone']) {
+            if (!isBlank(contact[column]) && !normalizedTenDigit(contact[column])) {
+                reasons.push({ type: 'invalid_phone_inventory', contact_id: contact.id, column });
             }
         }
-        if (setClauses.length > 0) {
-            setParams.push(survivorId, companyId);
+        const externalId = String(contact.zenbooker_customer_id || '').trim();
+        if (!externalId) continue;
+        const { rows: owners } = await client.query(
+            `SELECT contact_id
+               FROM contact_external_identities
+              WHERE company_id = $1 AND source = 'zenbooker' AND external_id = $2
+                AND contact_id NOT IN ($3, $4)`,
+            [companyId, externalId, survivorId, donorId]
+        );
+        if (owners.length > 0) {
+            reasons.push({
+                type: 'external_identity_conflict',
+                source: 'zenbooker',
+                external_id: externalId,
+                contact_ids: owners.map(row => row.contact_id),
+            });
+        }
+    }
+    return reasons;
+}
+
+async function ensureScalarIdentityInventory(client, companyId, contacts) {
+    for (const contact of contacts) {
+        const phones = [
+            { value: contact.phone_e164, label: null, isPrimary: true },
+            { value: contact.secondary_phone, label: contact.secondary_phone_name, isPrimary: false },
+        ];
+        for (const phone of phones) {
+            const normalized = normalizedTenDigit(phone.value);
+            if (!normalized) continue;
             await client.query(
-                `UPDATE contacts SET ${setClauses.join(', ')}, updated_at = now()
-                  WHERE id = $${setParams.length - 1} AND company_id = $${setParams.length}`,
-                setParams
+                `INSERT INTO contact_phones
+                    (company_id, contact_id, phone_e164, normalized_phone, label, is_primary)
+                 SELECT $1, owned.id, $3, $4, $5, $6
+                   FROM contacts owned
+                  WHERE owned.company_id = $1 AND owned.id = $2
+                    AND NOT EXISTS (
+                        SELECT 1 FROM contact_phones existing
+                         WHERE existing.company_id = $1
+                           AND existing.contact_id = owned.id
+                           AND existing.normalized_phone = $4)`,
+                [companyId, contact.id, phone.value, normalized, phone.label || null, phone.isPrimary]
             );
         }
-        if (droppedPhones.length > 0) {
-            // Documented v1 limitation: a dropped number's CALLS still moved (3b,
-            // timeline-bound), but its SMS conversation stops surfacing on the
-            // survivor row (query-time digit match; rows NOT deleted).
-            console.warn(
-                `[ContactEmailMerge] merge ${dupId}→${survivorId}: overflow phone(s) not persisted: ${droppedPhones.join(', ')} (no free slot; recorded in contact_merged event)`
+
+        const email = String(contact.email || '').trim();
+        if (email) {
+            await client.query(
+                `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
+                 SELECT owned.id, $3, LOWER($3), true
+                   FROM contacts owned
+                  WHERE owned.company_id = $1 AND owned.id = $2
+                 ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
+                [companyId, contact.id, email]
             );
         }
-        // Audit-event PAYLOAD (visible in contact history). NOT emitted here —
-        // returned to the caller so the route logs it AFTER COMMIT (review fix c:
-        // an in-tx emission would survive a ROLLBACK, since logEvent writes on
-        // the pool, not the tx client).
-        mergedEvent = {
-            merged_contact_id: dupId,
-            merged_name: dupPhones.full_name || null,
-            dropped_phones: droppedPhones,
+
+        const externalId = String(contact.zenbooker_customer_id || '').trim();
+        if (externalId) {
+            await client.query(
+                `INSERT INTO contact_external_identities
+                    (company_id, source, external_id, contact_id)
+                 SELECT $1, 'zenbooker', $2, owned.id
+                   FROM contacts owned
+                  WHERE owned.company_id = $1 AND owned.id = $3
+                 ON CONFLICT (company_id, source, external_id) DO UPDATE
+                 SET contact_id = EXCLUDED.contact_id`,
+                [companyId, externalId, contact.id]
+            );
+        }
+    }
+}
+
+function mergedContactScalarValues(survivor, donor) {
+    const values = {};
+    for (const column of ['full_name', 'first_name', 'last_name', 'company_name', 'title', 'email']) {
+        if (isBlank(survivor[column]) && !isBlank(donor[column])) values[column] = donor[column];
+    }
+
+    const donorPhones = [
+        { value: donor.phone_e164, label: null },
+        { value: donor.secondary_phone, label: donor.secondary_phone_name || null },
+    ].filter(phone => !isBlank(phone.value));
+    const survivorDigits = new Set(
+        [survivor.phone_e164, survivor.secondary_phone].map(normalizedTenDigit).filter(Boolean)
+    );
+    let primary = survivor.phone_e164;
+    let secondary = survivor.secondary_phone;
+    for (const phone of donorPhones) {
+        const normalized = normalizedTenDigit(phone.value);
+        if (!normalized || survivorDigits.has(normalized)) {
+            if (normalized && normalized === normalizedTenDigit(secondary) &&
+                isBlank(survivor.secondary_phone_name) && !isBlank(phone.label)) {
+                values.secondary_phone_name = phone.label;
+            }
+            continue;
+        }
+        if (isBlank(primary)) {
+            primary = phone.value;
+            values.phone_e164 = phone.value;
+        } else if (isBlank(secondary)) {
+            secondary = phone.value;
+            values.secondary_phone = phone.value;
+            if (!isBlank(phone.label)) values.secondary_phone_name = phone.label;
+        }
+        survivorDigits.add(normalized);
+    }
+
+    const legacyNotes = mergeLegacyNotes(survivor.notes, donor.notes);
+    if (legacyNotes !== (survivor.notes || null)) values.notes = legacyNotes;
+    const structuredNotes = mergeStructuredContactNotes(
+        survivor.structured_notes,
+        donor.structured_notes
+    );
+    if (JSON.stringify(structuredNotes) !== JSON.stringify(survivor.structured_notes || [])) {
+        values.structured_notes = structuredNotes;
+    }
+    return values;
+}
+
+async function updateSurvivorScalars(client, companyId, survivor, donor) {
+    const values = mergedContactScalarValues(survivor, donor);
+    const columns = Object.keys(values);
+    if (columns.length === 0) return { ...survivor };
+    const params = columns.map(column => column === 'structured_notes'
+        ? JSON.stringify(values[column])
+        : values[column]);
+    const clauses = columns.map((column, index) =>
+        column === 'structured_notes'
+            ? `${column} = $${index + 1}::jsonb`
+            : `${column} = $${index + 1}`
+    );
+    params.push(survivor.id, companyId);
+    const { rows } = await client.query(
+        `UPDATE contacts
+            SET ${clauses.join(', ')}, updated_at = NOW()
+          WHERE id = $${params.length - 1} AND company_id = $${params.length}
+          RETURNING *`,
+        params
+    );
+    return rows[0] || { ...survivor, ...values };
+}
+
+async function rehomeNoteAttachments(client, companyId, survivorId, donorId, survivorNotes, donorNotes) {
+    const mergedNotes = mergeStructuredContactNotes(survivorNotes, donorNotes);
+    const identityIndex = new Map();
+    mergedNotes.forEach((note, index) => {
+        const identity = noteIdentity(note);
+        if (identity) identityIndex.set(identity, index);
+    });
+    const anonymousIndexes = new Map();
+    mergedNotes.forEach((note, index) => {
+        if (!noteIdentity(note) && !anonymousIndexes.has(JSON.stringify(note))) {
+            anonymousIndexes.set(JSON.stringify(note), index);
+        }
+    });
+    const { rows } = await client.query(
+        `SELECT id, note_id, note_index
+           FROM note_attachments
+          WHERE company_id = $1 AND entity_type = 'contact' AND entity_id = $2`,
+        [companyId, donorId]
+    );
+    for (const attachment of rows) {
+        const donorNote = Number.isInteger(attachment.note_index)
+            ? (Array.isArray(donorNotes) ? donorNotes[attachment.note_index] : null)
+            : null;
+        const identity = String(attachment.note_id || noteIdentity(donorNote) || '').trim();
+        const noteIndex = identity && identityIndex.has(identity)
+            ? identityIndex.get(identity)
+            : anonymousIndexes.get(JSON.stringify(donorNote));
+        await client.query(
+            `UPDATE note_attachments
+                SET entity_id = $1, note_index = COALESCE($2, note_index)
+              WHERE id = $3 AND company_id = $4
+                AND entity_type = 'contact' AND entity_id = $5`,
+            [survivorId, noteIndex ?? null, attachment.id, companyId, donorId]
+        );
+    }
+}
+
+async function mergePhoneInventory(client, companyId, survivorId, donorId, primaryPhone) {
+    const { rows } = await client.query(
+        `SELECT id, contact_id, phone_e164, normalized_phone, label,
+                is_primary, is_shared, created_at
+           FROM contact_phones
+          WHERE company_id = $1 AND contact_id IN ($2, $3)
+          ORDER BY normalized_phone, (contact_id = $2) DESC, is_primary DESC, id ASC
+          FOR UPDATE`,
+        [companyId, survivorId, donorId]
+    );
+    const groups = new Map();
+    for (const row of rows) {
+        if (!groups.has(row.normalized_phone)) groups.set(row.normalized_phone, []);
+        groups.get(row.normalized_phone).push(row);
+    }
+    const primaryNormalized = normalizedTenDigit(primaryPhone);
+    for (const [normalized, group] of groups) {
+        const canonical = group[0];
+        const labels = mergeLabels(group.map(row => row.label));
+        const shared = group.some(row => row.is_shared === true);
+        await client.query(
+            `UPDATE contact_phones
+                SET contact_id = $1, label = $2, is_shared = $3, is_primary = $4
+              WHERE id = $5 AND company_id = $6`,
+            [survivorId, labels, shared, normalized === primaryNormalized, canonical.id, companyId]
+        );
+        const duplicateIds = group.slice(1).map(row => row.id);
+        if (duplicateIds.length > 0) {
+            await client.query(
+                `DELETE FROM contact_phones
+                  WHERE company_id = $1 AND id = ANY($2::bigint[])`,
+                [companyId, duplicateIds]
+            );
+        }
+    }
+}
+
+async function mergeEmailInventory(client, companyId, survivorId, donorId, primaryEmail) {
+    const { rows: collisions } = await client.query(
+        `SELECT donor.id AS donor_id, survivor.id AS survivor_id,
+                donor.email_normalized,
+                donor.is_primary AS donor_primary,
+                survivor.is_primary AS survivor_primary
+           FROM contact_emails donor
+           JOIN contact_emails survivor
+             ON survivor.contact_id = $1
+            AND survivor.email_normalized = donor.email_normalized
+           JOIN contacts donor_owner
+             ON donor_owner.id = donor.contact_id AND donor_owner.company_id = $3
+           JOIN contacts survivor_owner
+             ON survivor_owner.id = survivor.contact_id AND survivor_owner.company_id = $3
+          WHERE donor.contact_id = $2`,
+        [survivorId, donorId, companyId]
+    );
+    for (const collision of collisions) {
+        await client.query(
+            `UPDATE contact_emails
+                SET is_primary = $1
+              WHERE id = $2 AND contact_id = $3
+                AND EXISTS (
+                    SELECT 1 FROM contacts owner
+                     WHERE owner.id = contact_emails.contact_id AND owner.company_id = $4)`,
+            [collision.donor_primary === true || collision.survivor_primary === true,
+                collision.survivor_id, survivorId, companyId]
+        );
+        await client.query(
+            `DELETE FROM contact_emails
+              WHERE id = $1 AND contact_id = $2
+                AND EXISTS (
+                    SELECT 1 FROM contacts owner
+                     WHERE owner.id = contact_emails.contact_id AND owner.company_id = $3)`,
+            [collision.donor_id, donorId, companyId]
+        );
+    }
+    await client.query(
+        `UPDATE contact_emails donor
+            SET contact_id = $1
+          WHERE donor.contact_id = $2
+            AND EXISTS (
+                SELECT 1 FROM contacts owner
+                 WHERE owner.id = donor.contact_id AND owner.company_id = $3)`,
+        [survivorId, donorId, companyId]
+    );
+    const normalizedPrimary = normEmail(primaryEmail);
+    if (normalizedPrimary) {
+        await client.query(
+            `UPDATE contact_emails
+                SET is_primary = (email_normalized = $2)
+              WHERE contact_id = $1
+                AND EXISTS (
+                    SELECT 1 FROM contacts owner
+                     WHERE owner.id = contact_emails.contact_id AND owner.company_id = $3)`,
+            [survivorId, normalizedPrimary, companyId]
+        );
+    }
+}
+
+async function mergeContactAddresses(client, companyId, survivorId, donorId) {
+    const { rows: donorRows } = await client.query(
+        `SELECT address.*
+           FROM contact_addresses address
+           JOIN contacts donor ON donor.id = address.contact_id
+          WHERE address.contact_id = $1 AND donor.company_id = $2
+          ORDER BY address.id
+          FOR UPDATE OF address`,
+        [donorId, companyId]
+    );
+    const fillColumns = [
+        'label', 'street_line1', 'street_line2', 'city', 'state', 'postal_code',
+        'country', 'google_place_id', 'lat', 'lng', 'address_normalized_hash',
+        'zenbooker_address_id', 'zenbooker_customer_id',
+    ];
+    for (const donor of donorRows) {
+        const { rows: matches } = await client.query(
+            `SELECT address.*
+               FROM contact_addresses address
+               JOIN contacts survivor ON survivor.id = address.contact_id
+              WHERE address.contact_id = $1 AND survivor.company_id = $2
+                AND ((address.google_place_id IS NOT NULL AND $3::text IS NOT NULL
+                      AND address.google_place_id = $3)
+                  OR (address.address_normalized_hash IS NOT NULL AND $4::text IS NOT NULL
+                      AND address.address_normalized_hash = $4))
+              ORDER BY address.id
+              LIMIT 1
+              FOR UPDATE OF address`,
+            [survivorId, companyId, donor.google_place_id, donor.address_normalized_hash]
+        );
+        const survivor = matches[0];
+        if (!survivor) {
+            await client.query(
+                `UPDATE contact_addresses address
+                    SET contact_id = $1
+                   FROM contacts donor
+                  WHERE address.id = $2 AND address.contact_id = $3
+                    AND donor.id = address.contact_id AND donor.company_id = $4`,
+                [survivorId, donor.id, donorId, companyId]
+            );
+            continue;
+        }
+
+        const values = {};
+        for (const column of fillColumns) {
+            if (isBlank(survivor[column]) && !isBlank(donor[column])) values[column] = donor[column];
+        }
+        values.is_primary = survivor.is_primary === true || donor.is_primary === true;
+        values.label = mergeLabels([survivor.label, donor.label]);
+        const columns = Object.keys(values);
+        const params = columns.map(column => values[column]);
+        params.push(survivor.id, survivorId, companyId);
+        await client.query(
+            `UPDATE contact_addresses address
+                SET ${columns.map((column, index) => `${column} = $${index + 1}`).join(', ')},
+                    updated_at = NOW()
+               FROM contacts owner
+              WHERE address.id = $${params.length - 2}
+                AND address.contact_id = $${params.length - 1}
+                AND owner.id = address.contact_id
+                AND owner.company_id = $${params.length}`,
+            params
+        );
+        await client.query(
+            `UPDATE leads
+                SET contact_address_id = $1
+              WHERE contact_address_id = $2 AND company_id = $3`,
+            [survivor.id, donor.id, companyId]
+        );
+        await client.query(
+            `DELETE FROM contact_addresses address
+              USING contacts owner
+              WHERE address.id = $1 AND address.contact_id = $2
+                AND owner.id = address.contact_id AND owner.company_id = $3`,
+            [donor.id, donorId, companyId]
+        );
+    }
+}
+
+async function mergeAccountContacts(client, companyId, survivorId, donorId) {
+    const { rows } = await client.query(
+        `SELECT donor.id AS donor_id, survivor.id AS survivor_id,
+                donor.relationship_type AS donor_relationship_type,
+                survivor.relationship_type AS survivor_relationship_type,
+                donor.is_primary AS donor_primary,
+                survivor.is_primary AS survivor_primary
+           FROM crm_account_contacts donor
+           JOIN crm_account_contacts survivor
+             ON survivor.company_id = donor.company_id
+            AND survivor.account_id = donor.account_id
+            AND survivor.contact_id = $2
+          WHERE donor.company_id = $1 AND donor.contact_id = $3`,
+        [companyId, survivorId, donorId]
+    );
+    for (const collision of rows) {
+        await client.query(
+            `UPDATE crm_account_contacts
+                SET relationship_type = COALESCE(NULLIF(BTRIM(relationship_type), ''), $1),
+                    is_primary = is_primary OR $2,
+                    updated_at = NOW()
+              WHERE id = $3 AND company_id = $4 AND contact_id = $5`,
+            [collision.donor_relationship_type, collision.donor_primary === true,
+                collision.survivor_id, companyId, survivorId]
+        );
+        await client.query(
+            `DELETE FROM crm_account_contacts
+              WHERE id = $1 AND company_id = $2 AND contact_id = $3`,
+            [collision.donor_id, companyId, donorId]
+        );
+    }
+    await client.query(
+        `UPDATE crm_account_contacts
+            SET contact_id = $1, updated_at = NOW()
+          WHERE contact_id = $2 AND company_id = $3`,
+        [survivorId, donorId, companyId]
+    );
+}
+
+async function mergeDealContacts(client, companyId, survivorId, donorId) {
+    await client.query(
+        `DELETE FROM crm_deal_contacts donor
+          USING crm_deal_contacts survivor
+          WHERE donor.company_id = $1 AND donor.contact_id = $3
+            AND survivor.company_id = donor.company_id
+            AND survivor.contact_id = $2
+            AND survivor.deal_id = donor.deal_id
+            AND survivor.role = donor.role`,
+        [companyId, survivorId, donorId]
+    );
+    await client.query(
+        `UPDATE crm_deal_contacts
+            SET contact_id = $1, updated_at = NOW()
+          WHERE contact_id = $2 AND company_id = $3`,
+        [survivorId, donorId, companyId]
+    );
+}
+
+async function consolidateDonorTimeline(client, companyId, survivorId, donorId) {
+    const survivorTimeline = await timelinesQueries.findOrCreateTimelineByContact(
+        survivorId, companyId, client
+    );
+    if (!survivorTimeline) {
+        throw new Error('[ContactEmailMerge] survivor timeline could not be resolved');
+    }
+    const { rows: donorTimelines } = await client.query(
+        `SELECT * FROM timelines
+          WHERE contact_id = $1 AND company_id = $2
+          ORDER BY id
+          FOR UPDATE`,
+        [donorId, companyId]
+    );
+    const donorTimelineIds = donorTimelines.map(row => row.id);
+    if (donorTimelineIds.length === 0) {
+        return { survivorTimelineId: survivorTimeline.id, donorTimelines: [] };
+    }
+
+    for (const donor of donorTimelines) {
+        await client.query(
+            `UPDATE timelines survivor
+                SET sms_last_at = GREATEST(survivor.sms_last_at, $1),
+                    has_unread = survivor.has_unread OR $2,
+                    last_read_at = GREATEST(survivor.last_read_at, $3),
+                    is_action_required = survivor.is_action_required OR $4,
+                    action_required_reason = COALESCE(survivor.action_required_reason, $5),
+                    action_required_set_at = COALESCE(survivor.action_required_set_at, $6),
+                    action_required_set_by = COALESCE(survivor.action_required_set_by, $7),
+                    snoozed_until = GREATEST(survivor.snoozed_until, $8),
+                    owner_user_id = COALESCE(survivor.owner_user_id, $9),
+                    display_name = COALESCE(survivor.display_name, $10),
+                    external_source = COALESCE(survivor.external_source, $11),
+                    updated_at = NOW()
+              WHERE survivor.id = $12 AND survivor.company_id = $13`,
+            [donor.sms_last_at, donor.has_unread === true, donor.last_read_at,
+                donor.is_action_required === true, donor.action_required_reason,
+                donor.action_required_set_at, donor.action_required_set_by,
+                donor.snoozed_until, donor.owner_user_id, donor.display_name,
+                donor.external_source, survivorTimeline.id, companyId]
+        );
+    }
+
+    // ALL tasks, including completed/closed rows, move before the timeline delete.
+    await client.query(
+        `UPDATE tasks SET thread_id = $1, updated_at = NOW()
+          WHERE thread_id = ANY($2::bigint[]) AND company_id = $3`,
+        [survivorTimeline.id, donorTimelineIds, companyId]
+    );
+    await client.query(
+        `UPDATE calls SET timeline_id = $1, contact_id = $2
+          WHERE timeline_id = ANY($3::bigint[]) AND company_id = $4`,
+        [survivorTimeline.id, survivorId, donorTimelineIds, companyId]
+    );
+    await client.query(
+        `UPDATE email_messages
+            SET timeline_id = $1, contact_id = $2, on_timeline = true, updated_at = NOW()
+          WHERE timeline_id = ANY($3::bigint[]) AND company_id = $4`,
+        [survivorTimeline.id, survivorId, donorTimelineIds, companyId]
+    );
+    await client.query(
+        `UPDATE yelp_conversations
+            SET timeline_id = $1, updated_at = NOW()
+          WHERE timeline_id = ANY($2::bigint[]) AND company_id = $3`,
+        [survivorTimeline.id, donorTimelineIds, companyId]
+    );
+    await client.query(
+        `DELETE FROM timelines
+          WHERE id = ANY($1::bigint[]) AND company_id = $2 AND contact_id = $3`,
+        [donorTimelineIds, companyId, donorId]
+    );
+    return { survivorTimelineId: survivorTimeline.id, donorTimelines };
+}
+
+async function updateSimpleContactReference(client, descriptor, companyId, survivorId, donorId) {
+    if (descriptor.hasCompanyId) {
+        await client.query(
+            `UPDATE ${descriptor.table}
+                SET contact_id = $1
+              WHERE contact_id = $2 AND company_id = $3`,
+            [survivorId, donorId, companyId]
+        );
+        return;
+    }
+    await client.query(
+        `UPDATE ${descriptor.table} child
+            SET contact_id = $1
+          WHERE child.contact_id = $2
+            AND EXISTS (
+                SELECT 1 FROM contacts donor
+                 WHERE donor.id = child.contact_id AND donor.company_id = $3)`,
+        [survivorId, donorId, companyId]
+    );
+}
+
+async function reassignContactReferences(client, context) {
+    const { companyId, survivorId, donorId, survivor, donor, survivorTimelineId } = context;
+    const inventoryByTable = new Map(CONTACT_FK_INVENTORY.map(row => [row.table, row]));
+    for (const reassignment of CONTACT_REASSIGNMENTS) {
+        const descriptor = inventoryByTable.get(reassignment.table);
+        switch (reassignment.strategy) {
+        case 'phones':
+            await mergePhoneInventory(client, companyId, survivorId, donorId, survivor.phone_e164);
+            break;
+        case 'emails':
+            await mergeEmailInventory(client, companyId, survivorId, donorId, survivor.email);
+            break;
+        case 'addresses':
+            await mergeContactAddresses(client, companyId, survivorId, donorId);
+            break;
+        case 'account_contacts':
+            await mergeAccountContacts(client, companyId, survivorId, donorId);
+            break;
+        case 'deal_contacts':
+            await mergeDealContacts(client, companyId, survivorId, donorId);
+            break;
+        case 'calls':
+            await client.query(
+                `UPDATE calls SET contact_id = $1
+                  WHERE contact_id = $2 AND company_id = $3`,
+                [survivorId, donorId, companyId]
+            );
+            break;
+        case 'email_messages':
+            await client.query(
+                `UPDATE email_messages
+                    SET contact_id = $1,
+                        timeline_id = COALESCE(timeline_id, $2),
+                        on_timeline = true,
+                        updated_at = NOW()
+                  WHERE contact_id = $3 AND company_id = $4`,
+                [survivorId, survivorTimelineId, donorId, companyId]
+            );
+            break;
+        case 'tasks':
+            await client.query(
+                `UPDATE tasks SET contact_id = $1, updated_at = NOW()
+                  WHERE contact_id = $2 AND company_id = $3`,
+                [survivorId, donorId, companyId]
+            );
+            await client.query(
+                `UPDATE tasks SET subject_id = $1, updated_at = NOW()
+                  WHERE subject_type = 'contact' AND subject_id = $2 AND company_id = $3`,
+                [survivorId, donorId, companyId]
+            );
+            break;
+        case 'stripe_customer':
+            // Migration 242 cascades this composite key update into every saved
+            // payment method, preserving the Stripe customer/card relationship.
+            await client.query(
+                `UPDATE stripe_contact_customers
+                    SET contact_id = $1, updated_at = NOW()
+                  WHERE contact_id = $2 AND company_id = $3`,
+                [survivorId, donorId, companyId]
+            );
+            break;
+        case 'stripe_cards':
+        case 'timelines':
+            // Rehomed by stripe_customer's ON UPDATE CASCADE / timeline consolidation.
+            break;
+        case 'simple':
+            await updateSimpleContactReference(
+                client, descriptor, companyId, survivorId, donorId
+            );
+            break;
+        default:
+            throw new Error(`[ContactEmailMerge] unknown reassignment strategy for ${reassignment.table}`);
+        }
+    }
+
+    await client.query(
+        `UPDATE crm_notes SET entity_id = $1
+          WHERE company_id = $3 AND entity_type = 'contact' AND entity_id = $2`,
+        [survivorId, donorId, companyId]
+    );
+    await client.query(
+        `UPDATE crm_activities SET source_entity_id = $1::text
+          WHERE company_id = $3 AND source_entity_type = 'contact'
+            AND source_entity_id = $2::text`,
+        [survivorId, donorId, companyId]
+    );
+    await rehomeNoteAttachments(
+        client,
+        companyId,
+        survivorId,
+        donorId,
+        survivor.structured_notes,
+        donor.structured_notes
+    );
+}
+
+async function assertNoDonorReferences(client, companyId, donorId) {
+    const remaining = [];
+    for (const descriptor of CONTACT_FK_INVENTORY) {
+        const query = descriptor.hasCompanyId
+            ? `SELECT COUNT(*)::int AS count FROM ${descriptor.table}
+                WHERE contact_id = $1 AND company_id = $2`
+            : `SELECT COUNT(*)::int AS count
+                 FROM ${descriptor.table} child
+                 JOIN contacts donor
+                   ON donor.id = child.contact_id AND donor.company_id = $2
+                WHERE child.contact_id = $1`;
+        const { rows } = await client.query(query, [donorId, companyId]);
+        const count = Number(rows[0]?.count || 0);
+        if (count > 0) remaining.push(`${descriptor.table}=${count}`);
+    }
+    for (const descriptor of POLYMORPHIC_CONTACT_REFS) {
+        const idPredicate = descriptor.textId
+            ? `${descriptor.idColumn} = $1::text`
+            : `${descriptor.idColumn} = $1`;
+        const { rows } = await client.query(
+            `SELECT COUNT(*)::int AS count FROM ${descriptor.table}
+              WHERE company_id = $2 AND ${descriptor.typeColumn} = $3 AND ${idPredicate}`,
+            [donorId, companyId, descriptor.type]
+        );
+        const count = Number(rows[0]?.count || 0);
+        if (count > 0) remaining.push(`${descriptor.table}.${descriptor.idColumn}=${count}`);
+    }
+    if (remaining.length > 0) {
+        throw new Error(
+            `[ContactEmailMerge] zero donor references assertion failed for ${donorId}: ${remaining.join(', ')}`
+        );
+    }
+}
+
+async function mergeContactsInTransaction(survivorId, donorId, companyId, client) {
+    // Lock in deterministic id order. The company predicate makes a foreign id
+    // indistinguishable from an absent id and blocks cross-tenant reads/writes.
+    const { rows: ownershipRows } = await client.query(
+        `SELECT id, company_id FROM contacts WHERE id IN ($1, $2) AND company_id = $3
+          ORDER BY id
+          FOR UPDATE`,
+        [survivorId, donorId, companyId]
+    );
+    if (ownershipRows.length !== 2 || ownershipRows.some(row =>
+        String(row.company_id) !== String(companyId))) {
+        throw new Error('[ContactEmailMerge] cross-tenant merge blocked: survivor/donor not found in company');
+    }
+
+    const { rows: redirectRows } = await client.query(
+        `SELECT survivor_contact_id, status, review_reasons, details
+           FROM contact_merge_redirects
+          WHERE company_id = $1 AND old_contact_id = $2`,
+        [companyId, donorId]
+    );
+    const redirect = redirectRows[0];
+    if (redirect?.status === 'merged') {
+        return {
+            status: 'merged',
+            survivor_contact_id: redirect.survivor_contact_id,
+            merged_contact_id: donorId,
+            merged_name: null,
+            dropped_phones: [],
+            idempotent: true,
         };
     }
 
-    // 4. Re-point the SET-NULL history children (contact_id follows the survivor).
-    //    In the D2a path these are all empty by the emptiness test → 0 rows; done
-    //    unconditionally so the recipe is safe for a future generic manual-merge.
-    //    leads carries company_id (NOT NULL, mig 012) → company-scoped like the rest.
-    await client.query(`UPDATE jobs      SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`, [survivorId, dupId, companyId]);
-    await client.query(`UPDATE leads     SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`, [survivorId, dupId, companyId]);
-    await client.query(`UPDATE estimates SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`, [survivorId, dupId, companyId]);
-    await client.query(`UPDATE invoices  SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`, [survivorId, dupId, companyId]);
-    await client.query(`UPDATE payment_transactions    SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`, [survivorId, dupId, companyId]);
-    await client.query(`UPDATE stripe_payment_sessions SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`, [survivorId, dupId, companyId]);
-    await client.query(`UPDATE portal_events SET contact_id = $1 WHERE contact_id = $2`, [survivorId, dupId]); // no company_id
-    await client.query(`UPDATE crm_activities SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`, [survivorId, dupId, companyId]);
-
-    // Re-point leads.contact_address_id onto surviving addresses BEFORE the M2M
-    // address move (a lead may point at a dup address row about to move/collide).
-    // Null out any that still reference a dup address after the move (step 5) —
-    // handled below.
-
-    // 5. Move M2M / CASCADE children with NOT-EXISTS guards so a would-be duplicate
-    //    stays on the dup and dies with its CASCADE delete (never a unique clash).
-
-    // contact_emails — UNIQUE(contact_id, email_normalized).
-    await client.query(
-        `UPDATE contact_emails ce
-            SET contact_id = $1
-          WHERE ce.contact_id = $2
-            AND NOT EXISTS (
-                SELECT 1 FROM contact_emails s
-                 WHERE s.contact_id = $1 AND s.email_normalized = ce.email_normalized)`,
-        [survivorId, dupId]
+    await assertContactFkInventory(client);
+    const { rows: pair } = await client.query(
+        `SELECT id, full_name, phone_e164, secondary_phone, secondary_phone_name,
+                company_id, first_name, last_name, company_name, title, email,
+                notes, structured_notes, zenbooker_customer_id, deleted_at
+           FROM contacts
+          WHERE id IN ($1, $2) AND company_id = $3
+          ORDER BY id`,
+        [survivorId, donorId, companyId]
     );
-
-    // contact_addresses — DUAL partial-unique: (contact_id, google_place_id) WHERE
-    // google_place_id IS NOT NULL, and (contact_id, address_normalized_hash) WHERE
-    // hash IS NOT NULL. Guard on BOTH keys (no company_id column). Capture the
-    // dup's addresses first so we can re-point leads.contact_address_id, then null
-    // stragglers still pointing at an about-to-die dup address.
-    const { rows: dupAddrs } = await client.query(
-        `SELECT id, google_place_id, address_normalized_hash
-         FROM contact_addresses WHERE contact_id = $1`,
-        [dupId]
-    );
-    await client.query(
-        `UPDATE contact_addresses ca
-            SET contact_id = $1
-          WHERE ca.contact_id = $2
-            AND NOT EXISTS (
-                SELECT 1 FROM contact_addresses s
-                 WHERE s.contact_id = $1
-                   AND s.google_place_id IS NOT NULL
-                   AND ca.google_place_id IS NOT NULL
-                   AND s.google_place_id = ca.google_place_id)
-            AND NOT EXISTS (
-                SELECT 1 FROM contact_addresses s
-                 WHERE s.contact_id = $1
-                   AND s.address_normalized_hash IS NOT NULL
-                   AND ca.address_normalized_hash IS NOT NULL
-                   AND s.address_normalized_hash = ca.address_normalized_hash)`,
-        [survivorId, dupId]
-    );
-    // Any dup address that did NOT move (a collision) will vanish with the dup's
-    // CASCADE delete; null out leads still referencing such a row so the CASCADE
-    // does not orphan the FK. (leads carries company_id, mig 012 → company-scoped.)
-    if (dupAddrs.length > 0) {
-        const stragglerIds = dupAddrs.map(a => a.id);
-        await client.query(
-            `UPDATE leads SET contact_address_id = NULL
-              WHERE contact_address_id = ANY($1)
-                AND company_id = $3
-                AND contact_address_id IN (
-                    SELECT id FROM contact_addresses WHERE contact_id = $2)`,
-            [stragglerIds, dupId, companyId]
-        );
+    const survivorBefore = pair.find(row => String(row.id) === String(survivorId));
+    const donor = pair.find(row => String(row.id) === String(donorId));
+    if (!survivorBefore || !donor) {
+        throw new Error('[ContactEmailMerge] cross-tenant merge blocked: contact pair unavailable');
+    }
+    if (donor.deleted_at) {
+        throw new Error('[ContactEmailMerge] archived donor has no merged redirect; refusing ambiguous merge');
+    }
+    if (survivorBefore.deleted_at) {
+        throw new Error('[ContactEmailMerge] archived survivor cannot receive a contact merge');
     }
 
-    // crm_account_contacts — UNIQUE(company_id, account_id, contact_id).
-    await client.query(
-        `UPDATE crm_account_contacts m
-            SET contact_id = $1
-          WHERE m.contact_id = $2 AND m.company_id = $3
-            AND NOT EXISTS (
-                SELECT 1 FROM crm_account_contacts s
-                 WHERE s.contact_id = $1 AND s.company_id = $3
-                   AND s.account_id = m.account_id)`,
-        [survivorId, dupId, companyId]
+    const reviewReasons = await findMergeReviewReasons(
+        client, companyId, survivorId, donorId, pair
     );
-
-    // crm_deal_contacts — UNIQUE(company_id, deal_id, contact_id, role).
-    await client.query(
-        `UPDATE crm_deal_contacts m
-            SET contact_id = $1
-          WHERE m.contact_id = $2 AND m.company_id = $3
-            AND NOT EXISTS (
-                SELECT 1 FROM crm_deal_contacts s
-                 WHERE s.contact_id = $1 AND s.company_id = $3
-                   AND s.deal_id = m.deal_id AND s.role = m.role)`,
-        [survivorId, dupId, companyId]
-    );
-
-    // portal_access_tokens — no per-contact unique; just re-point (company-scoped).
-    await client.query(
-        `UPDATE portal_access_tokens SET contact_id = $1 WHERE contact_id = $2 AND company_id = $3`,
-        [survivorId, dupId, companyId]
-    );
-    // portal_sessions — no company_id column → contact-scoped.
-    await client.query(
-        `UPDATE portal_sessions SET contact_id = $1 WHERE contact_id = $2`,
-        [survivorId, dupId]
-    );
-
-    // 6. Delete the now-emptied dup timeline(s), then the dup contact LAST. All
-    //    contact_id children have been re-pointed or duplicate-collided; residual
-    //    CASCADE children drop cleanly. timelines.contact_id is SET NULL, so the
-    //    dup contact delete would otherwise leave a stray timeline — delete them.
-    if (dupTlIds.length > 0) {
-        await client.query(
-            `DELETE FROM timelines WHERE id = ANY($1) AND company_id = $2`,
-            [dupTlIds, companyId]
-        );
+    if (reviewReasons.length > 0) {
+        await recordContactMergeAudit({
+            companyId,
+            oldContactId: donorId,
+            survivorContactId: survivorId,
+            status: 'needs_review',
+            reviewReasons,
+            details: { donor_name: donor.full_name || null },
+            client,
+        });
+        return {
+            status: 'needs_review',
+            survivor_contact_id: survivorId,
+            merged_contact_id: donorId,
+            merged_name: donor.full_name || null,
+            dropped_phones: [],
+            review_reasons: reviewReasons,
+            idempotent: false,
+        };
     }
-    await client.query(
-        `DELETE FROM contacts WHERE id = $1 AND company_id = $2`,
-        [dupId, companyId]
-    );
 
-    return mergedEvent;
+    await ensureScalarIdentityInventory(client, companyId, pair);
+    const survivor = await updateSurvivorScalars(client, companyId, survivorBefore, donor);
+    const timelineResult = await consolidateDonorTimeline(
+        client, companyId, survivorId, donorId
+    );
+    await reassignContactReferences(client, {
+        companyId,
+        survivorId,
+        donorId,
+        survivor,
+        donor,
+        survivorTimelineId: timelineResult.survivorTimelineId,
+    });
+
+    // This is the hard stop that turns any future FK or omitted move handler into
+    // a failed transaction. It runs before the donor is archived.
+    await assertNoDonorReferences(client, companyId, donorId);
+
+    await client.query(
+        `UPDATE contacts SET deleted_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND company_id = $2 AND deleted_at IS NULL`,
+        [donorId, companyId]
+    );
+    await recordContactMergeAudit({
+        companyId,
+        oldContactId: donorId,
+        survivorContactId: survivorId,
+        status: 'merged',
+        details: {
+            donor_name: donor.full_name || null,
+            timeline_snapshots: timelineResult.donorTimelines,
+        },
+        client,
+    });
+
+    const donorPhones = [donor.phone_e164, donor.secondary_phone].filter(value => !isBlank(value));
+    const scalarPhones = new Set(
+        [survivor.phone_e164, survivor.secondary_phone].map(normalizedTenDigit).filter(Boolean)
+    );
+    return {
+        status: 'merged',
+        survivor_contact_id: survivorId,
+        merged_contact_id: donorId,
+        merged_name: donor.full_name || null,
+        dropped_phones: [],
+        preserved_phones: donorPhones,
+        scalar_overflow_phones: donorPhones.filter(phone => !scalarPhones.has(normalizedTenDigit(phone))),
+        idempotent: false,
+    };
+}
+
+/**
+ * Lossless, tenant-scoped contact merge. Passing `client` joins an existing
+ * transaction (B4 uses one transaction per duplicate set); omitting it creates
+ * and owns a transaction. A hard conflict is recorded and returned as
+ * `status:'needs_review'` with no contact/child mutation.
+ */
+async function mergeContacts(survivorId, donorId, companyId, client = null) {
+    if (String(survivorId) === String(donorId)) return null;
+    if (client?.query) {
+        return mergeContactsInTransaction(survivorId, donorId, companyId, client);
+    }
+
+    const ownedClient = await db.getClient();
+    try {
+        await ownedClient.query('BEGIN');
+        const result = await mergeContactsInTransaction(
+            survivorId, donorId, companyId, ownedClient
+        );
+        await ownedClient.query('COMMIT');
+        return result;
+    } catch (error) {
+        await ownedClient.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally {
+        ownedClient.release();
+    }
 }
 
 /**
@@ -1082,6 +1792,11 @@ module.exports = {
     isContactEmailOnly,
     linkInboxMessages,
     IDENTITY_TABLES,
+    CONTACT_FK_INVENTORY,
+    CONTACT_REASSIGNMENTS,
+    POLYMORPHIC_CONTACT_REFS,
+    recordContactMergeAudit,
+    assertNoDonorReferences,
     // CONTACT-MERGE-001 additions (append-only — the 5 exports above are load-bearing):
     detectAttributeConflicts,
     transferPhone,
@@ -1089,4 +1804,5 @@ module.exports = {
     assertTransferAllowed,
     ContactConflictError,
     ContactSavedCardMergeBlockedError,
+    ContactMergeNeedsReviewError,
 };

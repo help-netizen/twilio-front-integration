@@ -225,7 +225,13 @@ function mergeRouter({ survivorCo = A, dupCo = A } = {}) {
         if (/SELECT id, company_id FROM contacts WHERE id IN/i.test(sql)) {
             return P({ rows: [{ id: 10, company_id: survivorCo }, { id: 77, company_id: dupCo }] });
         }
-        if (/FROM timelines WHERE contact_id = \$1 AND company_id = \$2/i.test(sql)) {
+        if (/SELECT id, full_name, phone_e164, secondary_phone, secondary_phone_name/i.test(sql)) {
+            return P({ rows: [
+                { id: 10, company_id: survivorCo, full_name: 'Survivor', structured_notes: [] },
+                { id: 77, company_id: dupCo, full_name: 'Donor', structured_notes: [] },
+            ] });
+        }
+        if (/FROM timelines\s+WHERE contact_id = \$1 AND company_id = \$2/i.test(sql)) {
             return P({ rows: [{ id: 801 }] }); // dup timeline
         }
         if (/SELECT id, google_place_id, address_normalized_hash/i.test(sql)) {
@@ -236,37 +242,36 @@ function mergeRouter({ survivorCo = A, dupCo = A } = {}) {
 }
 
 describe('mergeContacts — FK order + tenant guard', () => {
-    // TC-CEM-U08 — open-task re-home BEFORE any timeline delete; email_messages
-    // re-point before timeline delete; contact delete LAST.
-    it('U08: re-homes open tasks off dupTl before any DELETE timelines, and deletes the contact LAST', async () => {
+    // TC-CEM-U08 — ALL task history is re-homed before the donor timeline is
+    // deleted; the contact is archived, never hard-deleted.
+    it('U08: re-homes all timeline tasks/messages before deleting dupTl, then soft-archives the contact', async () => {
         timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: 720 }); // survivorTl
         const client = mkClient(mergeRouter());
 
         await svc.mergeContacts(10, 77, A, client);
 
         const idx = (re) => client.calls.findIndex(c => re.test(c.sql));
-        const openTaskRehome = client.calls.find(c =>
-            /UPDATE tasks SET thread_id = \$1/i.test(c.sql) && /status = 'open'/i.test(c.sql));
-        expect(openTaskRehome).toBeTruthy();
-        expect(openTaskRehome.params).toEqual([720, [801], A]); // survivorTl, [dupTl], company
+        const taskRehome = client.calls.find(c =>
+            /UPDATE tasks SET thread_id = \$1/i.test(c.sql));
+        expect(taskRehome).toBeTruthy();
+        expect(taskRehome.sql).not.toMatch(/status = 'open'/i);
+        expect(taskRehome.params).toEqual([720, [801], A]);
 
-        const orderOpenTask = openTaskRehome.order;
-        const orderMsgRepoint = idx(/UPDATE email_messages\s+SET contact_id = \$1, timeline_id = \$2, on_timeline = true/i);
+        const orderTask = taskRehome.order;
+        const orderMsgRepoint = idx(/UPDATE email_messages[\s\S]+timeline_id = \$1, contact_id = \$2/i);
         const orderTlDelete = idx(/DELETE FROM timelines/i);
-        const orderContactDelete = idx(/DELETE FROM contacts/i);
+        const orderContactArchive = idx(/UPDATE contacts SET deleted_at = NOW\(\)/i);
 
-        // Open-task re-home BEFORE the timeline delete (the CASCADE trap).
-        expect(orderOpenTask).toBeLessThan(orderTlDelete);
+        expect(orderTask).toBeLessThan(orderTlDelete);
         // email_messages re-point BEFORE the timeline delete too.
         expect(orderMsgRepoint).toBeGreaterThanOrEqual(0);
         expect(orderMsgRepoint).toBeLessThan(orderTlDelete);
-        // Contact delete is the LAST mutation.
-        expect(orderContactDelete).toBe(client.calls.length - 1);
-        expect(orderTlDelete).toBeLessThan(orderContactDelete);
+        expect(orderTlDelete).toBeLessThan(orderContactArchive);
+        expect(idx(/DELETE FROM contacts/i)).toBe(-1);
 
         // The email_messages re-point carries the survivor + survivor timeline + dup + company.
         const msg = client.calls.find(c => /UPDATE email_messages/i.test(c.sql));
-        expect(msg.params).toEqual([10, 720, 77, A]);
+        expect(msg.params).toEqual([720, 10, [801], A]);
 
         // tasks.contact_id and tasks.subject_id re-pointed too.
         expect(client.calls.some(c =>
@@ -292,49 +297,52 @@ describe('mergeContacts — FK order + tenant guard', () => {
         expect(client.query).not.toHaveBeenCalled();
     });
 
-    it('CARD-ON-FILE blocks and preserves a duplicate that still has a saved card', async () => {
+    it('two Stripe customer/card planes quarantine the donor before any child mutation', async () => {
         const client = mkClient(sql => {
             if (/SELECT id, company_id FROM contacts WHERE id IN/i.test(sql)) {
                 return P({ rows: [{ id: 10, company_id: A }, { id: 77, company_id: A }] });
             }
-            if (/FROM stripe_saved_payment_methods/i.test(sql)) {
-                return P({ rows: [{ has_saved_card: true }] });
+            if (/SELECT id, full_name, phone_e164, secondary_phone, secondary_phone_name/i.test(sql)) {
+                return P({ rows: [
+                    { id: 10, company_id: A, full_name: 'Survivor', structured_notes: [] },
+                    { id: 77, company_id: A, full_name: 'Donor', structured_notes: [] },
+                ] });
+            }
+            if (/FROM stripe_contact_customers customer/i.test(sql)) {
+                return P({ rows: [
+                    { contact_id: 10, stripe_account_id: 'acct-a', stripe_customer_id: 'cus-a', saved_payment_method_count: 0 },
+                    { contact_id: 77, stripe_account_id: 'acct-b', stripe_customer_id: 'cus-b', saved_payment_method_count: 1 },
+                ] });
             }
             return P({ rows: [], rowCount: 0 });
         });
 
-        await expect(svc.mergeContacts(10, 77, A, client)).rejects.toMatchObject({
-            code: 'SAVED_CARD_MERGE_BLOCKED',
-            httpStatus: 409,
-            contactId: 77,
+        await expect(svc.mergeContacts(10, 77, A, client)).resolves.toMatchObject({
+            status: 'needs_review',
+            survivor_contact_id: 10,
+            merged_contact_id: 77,
         });
         expect(timelinesQueries.findOrCreateTimelineByContact).not.toHaveBeenCalled();
-        expect(client.calls.some(call => /UPDATE|DELETE/i.test(call.sql))).toBe(false);
+        expect(client.calls.some(call => /^\s*(UPDATE|DELETE)\b/i.test(call.sql))).toBe(false);
+        expect(client.calls.some(call => /INSERT INTO contact_merge_redirects/i.test(call.sql))).toBe(true);
     });
 
-    // TC-CEM-U09 — M2M children moved with NOT-EXISTS guards.
-    it('U09: contact_emails / crm_account_contacts / crm_deal_contacts moves carry NOT EXISTS guards', async () => {
+    // TC-CEM-U09 — collidable M2M children have explicit identity-merge legs.
+    it('U09: email/account/deal/address collisions are resolved before donor re-pointing', async () => {
         timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: 720 });
         const client = mkClient(mergeRouter());
 
         await svc.mergeContacts(10, 77, A, client);
 
-        const emailsMove = client.calls.find(c => /UPDATE contact_emails/i.test(c.sql));
-        expect(emailsMove.sql).toMatch(/NOT EXISTS/i);
-        expect(emailsMove.sql).toMatch(/email_normalized/i);
+        expect(client.calls.some(c => /FROM contact_emails donor[\s\S]+JOIN contact_emails survivor/i.test(c.sql))).toBe(true);
 
         const acctMove = client.calls.find(c => /UPDATE crm_account_contacts/i.test(c.sql));
-        expect(acctMove.sql).toMatch(/NOT EXISTS/i);
-        expect(acctMove.sql).toMatch(/account_id/i);
+        expect(acctMove.sql).toMatch(/contact_id = \$1/i);
 
         const dealMove = client.calls.find(c => /UPDATE crm_deal_contacts/i.test(c.sql));
-        expect(dealMove.sql).toMatch(/NOT EXISTS/i);
-        expect(dealMove.sql).toMatch(/deal_id/i);
+        expect(dealMove.sql).toMatch(/contact_id = \$1/i);
 
-        const addrMove = client.calls.find(c => /UPDATE contact_addresses/i.test(c.sql));
-        expect(addrMove.sql).toMatch(/NOT EXISTS/i);
-        // dual partial-unique keys both guarded.
-        expect(addrMove.sql).toMatch(/google_place_id/i);
-        expect(addrMove.sql).toMatch(/address_normalized_hash/i);
+        const addrRead = client.calls.find(c => /FROM contact_addresses address[\s\S]+JOIN contacts donor/i.test(c.sql));
+        expect(addrRead).toBeTruthy();
     });
 });

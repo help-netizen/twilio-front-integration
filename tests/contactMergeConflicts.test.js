@@ -449,7 +449,7 @@ function mergeRouter({ survivorRow, dupRow } = {}) {
         if (/SELECT id, full_name, phone_e164, secondary_phone, secondary_phone_name/i.test(sql)) {
             return P({ rows: [survivorRow, dupRow].filter(Boolean) }); // 3c pair read
         }
-        if (/FROM timelines WHERE contact_id = \$1 AND company_id = \$2/i.test(sql)) {
+        if (/FROM timelines\s+WHERE contact_id = \$1 AND company_id = \$2/i.test(sql)) {
             return P({ rows: [{ id: 801 }] }); // dup timeline
         }
         if (/SELECT id, google_place_id, address_normalized_hash/i.test(sql)) {
@@ -471,7 +471,7 @@ const dupRow = (over = {}) => ({
 // ─── TC-CM-U07 — mergeContacts extended call order (3b before timeline delete) ─
 
 describe('mergeContacts — 3b calls re-point + extended FK order', () => {
-    it('U07: task re-home → email re-point → 3b calls re-point → timeline DELETE → contact DELETE LAST; B3 guards intact', async () => {
+    it('U07: all-task/email/call re-home precedes timeline DELETE; donor is archived, never hard-deleted', async () => {
         timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: 720 });
         const client = mkClient(mergeRouter({
             survivorRow: survRow(),
@@ -481,13 +481,13 @@ describe('mergeContacts — 3b calls re-point + extended FK order', () => {
         await svc.mergeContacts(10, 77, A, client);
 
         const idx = (re) => client.calls.findIndex(c => re.test(c.sql));
-        const orderOpenTask = client.calls.find(c =>
-            /UPDATE tasks SET thread_id = \$1/i.test(c.sql) && /status = 'open'/i.test(c.sql)).order;
+        const taskRehome = client.calls.find(c => /UPDATE tasks SET thread_id = \$1/i.test(c.sql));
+        const orderTask = taskRehome.order;
         const orderMsgRepoint = idx(/UPDATE email_messages/i);
-        const orderCallsTl = idx(/UPDATE calls\s+SET timeline_id = \$1, contact_id = \$2\s+WHERE timeline_id = ANY\(\$3\)/i);
-        const orderCallsSweep = idx(/UPDATE calls SET contact_id = \$1 WHERE contact_id = \$2 AND company_id = \$3/i);
+        const orderCallsTl = idx(/UPDATE calls\s+SET timeline_id = \$1, contact_id = \$2\s+WHERE timeline_id = ANY\(\$3::bigint\[\]\)/i);
+        const orderCallsSweep = idx(/UPDATE calls SET contact_id = \$1\s+WHERE contact_id = \$2 AND company_id = \$3/i);
         const orderTlDelete = idx(/DELETE FROM timelines/i);
-        const orderContactDelete = idx(/DELETE FROM contacts/i);
+        const orderContactArchive = idx(/UPDATE contacts SET deleted_at = NOW\(\)/i);
 
         // 3b exists and carries the survivor timeline + survivor + dup timelines + company.
         const callsTl = client.calls[orderCallsTl];
@@ -496,19 +496,18 @@ describe('mergeContacts — 3b calls re-point + extended FK order', () => {
         const callsSweep = client.calls[orderCallsSweep];
         expect(callsSweep.params).toEqual([10, 77, A]);
 
-        // THE FK-trap order: task re-home → email re-point → calls re-point →
-        // timeline delete → contact delete LAST.
-        expect(orderOpenTask).toBeLessThan(orderMsgRepoint);
-        expect(orderMsgRepoint).toBeLessThan(orderCallsTl);
+        // ALL statuses move; no open-only filter may return.
+        expect(taskRehome.sql).not.toMatch(/status = 'open'/i);
+        expect(orderTask).toBeLessThan(orderCallsTl);
+        expect(orderMsgRepoint).toBeLessThan(orderTlDelete);
         expect(orderCallsTl).toBeLessThan(orderTlDelete);
-        expect(orderCallsSweep).toBeLessThan(orderTlDelete);
-        expect(orderTlDelete).toBeLessThan(orderContactDelete);
-        expect(orderContactDelete).toBe(client.calls.length - 1);
+        expect(orderCallsSweep).toBeGreaterThan(orderTlDelete);
+        expect(orderTlDelete).toBeLessThan(orderContactArchive);
+        expect(idx(/DELETE FROM contacts/i)).toBe(-1);
 
-        // B3 regression: tenant guard ran first; NOT-EXISTS M2M guards intact.
+        // B3 regression: tenant guard ran first and phone identities are inventoried.
         expect(client.calls[0].sql).toMatch(/SELECT id, company_id FROM contacts WHERE id IN/i);
-        const emailsMove = client.calls.find(c => /UPDATE contact_emails/i.test(c.sql));
-        expect(emailsMove.sql).toMatch(/NOT EXISTS/i);
+        expect(client.calls.some(c => /INSERT INTO contact_phones/i.test(c.sql))).toBe(true);
     });
 
     it('U07b: cross-tenant guard still throws BEFORE any mutation (B3 not weakened)', async () => {
@@ -519,7 +518,7 @@ describe('mergeContacts — 3b calls re-point + extended FK order', () => {
             return P({ rows: [], rowCount: 0 });
         });
         await expect(svc.mergeContacts(10, 77, A, client)).rejects.toThrow(/cross-tenant/i);
-        expect(client.calls.some(c => /UPDATE|DELETE/i.test(c.sql))).toBe(false);
+        expect(client.calls.some(c => /^\s*(UPDATE|DELETE|INSERT)\b/i.test(c.sql))).toBe(false);
     });
 });
 
@@ -533,7 +532,7 @@ describe('mergeContacts — 3c phone-slot fill (OQ-2)', () => {
         const client = mkClient(mergeRouter({ survivorRow: survivor, dupRow: dup }));
         const mergedEvent = await svc.mergeContacts(10, 77, A, client);
         const slotFill = client.calls.find(c =>
-            /UPDATE contacts SET/i.test(c.sql) && /phone/i.test(c.sql) && !/DELETE/i.test(c.sql));
+            /UPDATE contacts\s+SET/i.test(c.sql) && /phone/i.test(c.sql) && !/deleted_at/i.test(c.sql));
         return { client, slotFill, mergedEvent };
     }
 
@@ -553,15 +552,15 @@ describe('mergeContacts — 3c phone-slot fill (OQ-2)', () => {
         // (it would survive a ROLLBACK — logEvent writes on the pool). The
         // payload is RETURNED; the route emits it strictly after COMMIT.
         expect(eventService.logEvent).not.toHaveBeenCalled();
-        expect(mergedEvent).toEqual(
-            { merged_contact_id: 77, merged_name: 'CM1 Dup', dropped_phones: [] });
-        // No ZB API leg anywhere in the merge.
-        expect(client.calls.some(c => /zenbooker/i.test(c.sql))).toBe(false);
+        expect(mergedEvent).toMatchObject({
+            status: 'merged', merged_contact_id: 77, merged_name: 'CM1 Dup',
+            dropped_phones: [], preserved_phones: ['+19997770001', '+19997770002'],
+        });
+        // Legacy ZB ids are preserved in the native identity map; no API client is invoked.
+        expect(client.calls.some(c => /team_members|zenbooker\.com/i.test(c.sql))).toBe(false);
     });
 
-    it('U08b: survivor 1 phone, dup 2 → one fills the secondary slot, one dropped (event payload + warn)', async () => {
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        try {
+    it('U08b: survivor 1 phone, dup 2 → one fills scalar secondary; overflow remains in contact_phones', async () => {
             const { slotFill, mergedEvent } = await runMerge(
                 survRow({ phone_e164: '+19997770009' }),
                 dupRow({ phone_e164: '+19997770001', secondary_phone: '+19997770002', secondary_phone_name: 'Wife' })
@@ -573,31 +572,28 @@ describe('mergeContacts — 3c phone-slot fill (OQ-2)', () => {
             expect(slotFill.sql).not.toMatch(/secondary_phone_name =/);
             expect(slotFill.params).toEqual(['+19997770001', 10, A]);
             expect(eventService.logEvent).not.toHaveBeenCalled(); // review fix c
-            expect(mergedEvent).toEqual(
-                { merged_contact_id: 77, merged_name: 'CM1 Dup', dropped_phones: ['+19997770002'] });
-            expect(warnSpy).toHaveBeenCalled();
-        } finally {
-            warnSpy.mockRestore();
-        }
+            expect(mergedEvent).toMatchObject({
+                status: 'merged', merged_contact_id: 77, dropped_phones: [],
+                preserved_phones: ['+19997770001', '+19997770002'],
+                scalar_overflow_phones: ['+19997770002'],
+            });
     });
 
-    it('U08c: survivor 2 phones, dup 2 → nothing fills (no slot overwritten), both dropped into the event payload', async () => {
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        try {
+    it('U08c: survivor 2 phones, dup 2 → scalars untouched; both overflow phones stay inventoried', async () => {
             const { client, slotFill, mergedEvent } = await runMerge(
                 survRow({ phone_e164: '+19997770008', secondary_phone: '+19997770009' }),
                 dupRow({ phone_e164: '+19997770001', secondary_phone: '+19997770002' })
             );
-            expect(slotFill).toBeUndefined(); // overflow is NOT persisted
+            expect(slotFill).toBeUndefined();
             expect(eventService.logEvent).not.toHaveBeenCalled(); // review fix c
-            expect(mergedEvent).toEqual(
-                { merged_contact_id: 77, merged_name: 'CM1 Dup', dropped_phones: ['+19997770001', '+19997770002'] });
+            expect(mergedEvent).toMatchObject({
+                status: 'merged', merged_contact_id: 77, dropped_phones: [],
+                preserved_phones: ['+19997770001', '+19997770002'],
+                scalar_overflow_phones: ['+19997770001', '+19997770002'],
+            });
             // Survivor scalar UPDATE never appeared at all.
             expect(client.calls.some(c =>
                 /UPDATE contacts SET/i.test(c.sql) && FORBIDDEN_SCALARS.test(c.sql))).toBe(false);
-        } finally {
-            warnSpy.mockRestore();
-        }
     });
 });
 

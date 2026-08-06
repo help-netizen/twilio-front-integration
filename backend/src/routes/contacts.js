@@ -651,6 +651,9 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
                     const mergedEvent = await contactEmailMergeService.mergeContacts(
                         id, ownerId, companyId, client
                     );
+                    if (mergedEvent?.status === 'needs_review') {
+                        throw new contactEmailMergeService.ContactMergeNeedsReviewError(mergedEvent);
+                    }
                     if (mergedEvent) mergedEvents.push(mergedEvent);
                 } else {
                     // FR-3 re-check at EXECUTION time — a stale-allowed transfer
@@ -745,6 +748,22 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
             await client.query('COMMIT');
         } catch (txErr) {
             await client.query('ROLLBACK').catch(() => {});
+            if (txErr?.name === 'ContactMergeNeedsReviewError') {
+                const result = txErr.result;
+                await contactEmailMergeService.recordContactMergeAudit({
+                    companyId,
+                    oldContactId: result.merged_contact_id,
+                    survivorContactId: result.survivor_contact_id,
+                    status: 'needs_review',
+                    reviewReasons: result.review_reasons,
+                    details: { donor_name: result.merged_name || null },
+                });
+                return res.status(409).json(errorResponse(
+                    txErr.code,
+                    txErr.message,
+                    reqId
+                ));
+            }
             if (txErr?.name === 'ContactSavedCardMergeBlockedError') {
                 return res.status(409).json(errorResponse(
                     'SAVED_CARD_MERGE_BLOCKED',

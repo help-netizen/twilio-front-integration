@@ -80,15 +80,25 @@ jest.mock('../backend/src/services/contactEmailMergeService', () => {
             this.attributes = attributes;
         }
     }
+    class ContactMergeNeedsReviewError extends Error {
+        constructor(result) {
+            super('The contacts have conflicting Stripe customer or saved-card links and require review.');
+            this.name = 'ContactMergeNeedsReviewError';
+            this.code = 'SAVED_CARD_MERGE_BLOCKED';
+            this.result = result;
+        }
+    }
     return {
         detectAttributeConflicts: jest.fn(async () => []),
         resolveAddedEmail: jest.fn(async () => {}),
         linkInboxMessages: jest.fn(async () => 0), // step-5 D3 supplement (CM1-T5)
         mergeContacts: jest.fn(async () => null),
+        recordContactMergeAudit: jest.fn(async () => ({})),
         transferPhone: jest.fn(async () => {}),
         transferEmail: jest.fn(async () => {}),
         assertTransferAllowed: jest.fn(async () => {}),
         ContactConflictError,
+        ContactMergeNeedsReviewError,
     };
 });
 jest.mock('../backend/src/services/timelineMergeService', () => ({
@@ -192,6 +202,7 @@ beforeEach(() => {
     mergeSvc.detectAttributeConflicts.mockResolvedValue([]);
     mergeSvc.resolveAddedEmail.mockResolvedValue(undefined);
     mergeSvc.mergeContacts.mockResolvedValue(null);
+    mergeSvc.recordContactMergeAudit.mockResolvedValue({});
     mergeSvc.transferPhone.mockResolvedValue(undefined);
     mergeSvc.transferEmail.mockResolvedValue(undefined);
     mergeSvc.assertTransferAllowed.mockResolvedValue(undefined);
@@ -278,6 +289,39 @@ describe('TC-CM-U12: strict echo — mismatch → fresh 409; non-matching resolu
         expect(mergeSvc.mergeContacts).toHaveBeenCalledWith(5, 77, COMPANY_A, mockClient);
         expect(clientSql()).toContain('COMMIT');
         expect(clientSql()).not.toContain('ROLLBACK');
+    });
+
+    it('(a-review) a merge quarantine rolls back the PATCH, persists needs-review audit, and returns 409', async () => {
+        const quarantine = {
+            status: 'needs_review',
+            survivor_contact_id: 5,
+            merged_contact_id: 77,
+            merged_name: 'Stripe donor',
+            review_reasons: [{ type: 'stripe_customer_conflict' }],
+        };
+        mergeSvc.detectAttributeConflicts.mockResolvedValue([phoneConflict()]);
+        mergeSvc.mergeContacts.mockResolvedValue(quarantine);
+
+        const res = await request(makeApp())
+            .patch('/api/contacts/5')
+            .send({
+                phone_e164: P22,
+                resolutions: [{ owner_contact_id: 77, action: 'merge', attributes: [{ kind: 'phone', value: P22 }] }],
+            });
+
+        expect(res.status).toBe(409);
+        expect(res.body.error.code).toBe('SAVED_CARD_MERGE_BLOCKED');
+        expect(clientSql()).toContain('ROLLBACK');
+        expect(clientSql()).not.toContain('COMMIT');
+        expect(mergeSvc.recordContactMergeAudit).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            oldContactId: 77,
+            survivorContactId: 5,
+            status: 'needs_review',
+            reviewReasons: quarantine.review_reasons,
+            details: { donor_name: 'Stripe donor' },
+        });
+        expect(eventService.logEvent).not.toHaveBeenCalled();
     });
 
     it('(b) echoed attribute set DIFFERS (extra email) → fresh 409, nothing executed', async () => {
