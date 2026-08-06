@@ -208,11 +208,14 @@ Per decision #5: this is a PURE RE-KEY — config values are Albusto-master, nev
 compared against ZB. The sabotage `SAB-A-ZONE-UUID-PARITY` proves read-by-uuid == read-by-zb-id
 yields the same eligible set (flip the ZONE-STRICT empty branch + drop company scope).
 
-**Prerequisite for T3's DB parity test:** a fully-migrated test DB (the local dev DB
-`twilio_calls` is missing company_memberships / mig-239 / work_schedule_days). Fastest path:
-`pg_dump --schema-only` from prod (has everything through mig 239) into a local `albusto_test`,
-apply migration 240, run the `.db` tests against it via DATABASE_URL. Set this up BEFORE T3 so
-the parity control is real, not vacuously green.
+**Migrated test DB — BUILT (2026-08-06).** Local `albusto_test` on localhost:5432 holds the full
+prod schema (307 tables, incl. mig-239 `technician_area_wildcards`) + migration 240 (2 new tables,
+8 `technician_uuid` cols, 8 native FKs). Run any `.db` test against it:
+`DATABASE_URL=postgresql://localhost/albusto_test env -u NODE_USE_SYSTEM_CA node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/" --runTestsByPath <file>`
+T2's `nativeTechnicianBackfill.db.test.js` now PASSES here (retro-closes T2's deferred DB check).
+Rebuild recipe (no local psql client; use node `pg`): create db `albusto_test`; `ssh deploy@prod
+'docker exec albusto-postgres-1 pg_dump -U albusto -d albusto --schema-only --no-owner --no-privileges'`
+→ strip lines matching `^\\` and `transaction_timeout` (PG17→PG15 portability) → load via node → apply mig 240.
 
 
 ### Debt surfaced
