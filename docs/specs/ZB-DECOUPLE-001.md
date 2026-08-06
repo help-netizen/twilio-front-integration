@@ -19,6 +19,18 @@ contacts. The owner will own the job-sync migration; payments may need migrating
    gaps + a source-vs-ledger count/amount reconciliation), then `zb_payments` freezes as
    immutable history and new payments are Albusto-native. No P2, no faked native origin.
 4. **Sequence = Phase A (technician identity) first.**
+5. **Scope rule (owner, 2026-08-06): touch ONLY what Albusto lacks as a class, or what is
+   SYNC-FED from ZB.** Anything Albusto already owns natively AND is entered in Albusto (not
+   synced) is left as-is — no migration, no reconcile, no compare-against-ZB.
+   - Provider time-off, service zones/districts/radii, and work schedules ARE native Albusto
+     features with the correct data (owner-entered, Albusto is master). Phase A only RE-KEYS
+     their 8 tables (ZB-id → native uuid); VALUES are never migrated or compared against ZB.
+   - What DOES get a native replacement: the technician DIRECTORY/identity — Albusto has no
+     native technician-directory class today and the active roster + display name are live-fed
+     from ZB `/team_members`. That is exactly what Phase A builds.
+   - `compare` mode's against-ZB check therefore narrows to ROSTER IDENTITY only (active set +
+     display name). `SAB-A-ZONE-UUID-PARITY` proves re-key INVARIANCE (read-by-uuid ==
+     read-by-zb-id on the same Albusto config), not native-vs-ZB.
 
 ## Current-state map (Codex discovery, file:line)
 ### The crux — technician roster is 100% live from ZB
@@ -181,6 +193,26 @@ git) → green; and removing company scope from the external-map join must fail 
 - Built by Codex in a FRESH session (per L-022, not the compacted one) — applied cleanly, no L-016.
 
 ### T3..T6 — not started (see Phase A design above).
+
+## NEXT (re-entry for a fresh session)
+State: T1 + T2 done, gated, committed (migration 240 + query layer + backfill CLI + tests).
+Nothing deployed; ZB untouched; dual-read defaults `legacy`.
+
+**T3 = re-key the 8 config tables to native uuid + service dual-read/write.** Two parts:
+(a) fold the §3.3 parallel-column backfill (`SET technician_uuid FROM the map`) into the
+    backfill CLI's apply transaction — idempotent; T2 did NOT do this yet.
+(b) make technicianServiceArea / slotEngine.buildTechnicians / roster / routes/technicians /
+    availability / timeOff / baseLocations / workSchedule services read `technician_uuid`
+    first (legacy TEXT via the map when null) and dual-write both keys.
+Per decision #5: this is a PURE RE-KEY — config values are Albusto-master, never migrated or
+compared against ZB. The sabotage `SAB-A-ZONE-UUID-PARITY` proves read-by-uuid == read-by-zb-id
+yields the same eligible set (flip the ZONE-STRICT empty branch + drop company scope).
+
+**Prerequisite for T3's DB parity test:** a fully-migrated test DB (the local dev DB
+`twilio_calls` is missing company_memberships / mig-239 / work_schedule_days). Fastest path:
+`pg_dump --schema-only` from prod (has everything through mig 239) into a local `albusto_test`,
+apply migration 240, run the `.db` tests against it via DATABASE_URL. Set this up BEFORE T3 so
+the parity control is real, not vacuously green.
 
 
 ### Debt surfaced
