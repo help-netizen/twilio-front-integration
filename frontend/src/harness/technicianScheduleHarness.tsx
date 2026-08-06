@@ -81,7 +81,9 @@ let currentServiceAreas: TechnicianServiceAreas = {
     ],
     district_assignments: [],
     radius_assignments: ['11111111-1111-4111-8111-111111111111'],
-    wildcard_in_active_mode: true,
+    wildcard_in_active_mode: false,
+    serves_all_territory: false,
+    unassigned_in_active_mode: true,
 };
 
 function effectiveCustomWeek(days: TechnicianScheduleDay[]): TechnicianScheduleDay[] {

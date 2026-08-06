@@ -86,6 +86,10 @@ export interface TechnicianServiceAreas {
     district_assignments: string[];
     radius_assignments: string[];
     wildcard_in_active_mode: boolean;
+    /** ZONE-STRICT-001: the explicit company-wide mark. */
+    serves_all_territory: boolean;
+    /** Nothing assigned in the active mode — with no mark, this technician is NOT offered. */
+    unassigned_in_active_mode: boolean;
 }
 
 export interface UpdateTechnicianSchedule {
@@ -138,6 +142,15 @@ export const techniciansApi = {
         return technicianRequest<TechnicianServiceAreas>(
             `/api/settings/technicians/${encodeURIComponent(techId)}/service-areas/${mode}`,
             { method: 'PUT', body: JSON.stringify({ assignments }) },
+        );
+    },
+    setServesAllTerritory: async (
+        techId: string,
+        servesAll: boolean,
+    ): Promise<TechnicianServiceAreas> => {
+        return technicianRequest<TechnicianServiceAreas>(
+            `/api/settings/technicians/${encodeURIComponent(techId)}/serves-all-territory`,
+            { method: 'PUT', body: JSON.stringify({ serves_all_territory: servesAll }) },
         );
     },
     uploadPhoto: async (techId: string, file: File, name?: string): Promise<{ tech_id: string; has_photo: boolean }> => {

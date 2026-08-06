@@ -4,6 +4,7 @@ import { Loader2, MapPinned } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
+import { Switch } from '../ui/switch';
 import {
     techniciansApi,
     type TechnicianServiceAreas,
@@ -23,10 +24,10 @@ export function technicianServiceAreaSummary(value: TechnicianServiceAreas): str
         })
         : value.district_assignments.map(id =>
             value.districts.find(item => item.id === id)?.name || id || 'Uncategorized ZIPs');
+    if (value.serves_all_territory) return 'Whole territory';
     if (active.length === 0) {
-        return value.active_mode === 'radius'
-            ? 'All radii (wildcard)'
-            : 'All districts (wildcard)';
+        // ZONE-STRICT-001: an empty list is no longer "everywhere" — it is nowhere.
+        return value.active_mode === 'radius' ? 'No radii — not offered' : 'No districts — not offered';
     }
     return active.length === 1 ? active[0] : `${active[0]} +${active.length - 1}`;
 }
@@ -57,6 +58,7 @@ export function TechnicianServiceAreasEditor({
     const [districtAssignments, setDistrictAssignments] = useState(value.district_assignments);
     const [radiusAssignments, setRadiusAssignments] = useState(value.radius_assignments);
     const [saving, setSaving] = useState(false);
+    const [savingScope, setSavingScope] = useState(false);
 
     useEffect(() => {
         setDistrictAssignments(value.district_assignments);
@@ -130,9 +132,43 @@ export function TechnicianServiceAreasEditor({
                 ))}
             </div>
 
+            {/* ZONE-STRICT-001 — working everywhere is now stated, not inferred from
+                an empty list. Off by default, so a technician nobody zoned is simply
+                not offered instead of being offered across the whole map. */}
+            <label
+                className="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-xl px-3.5 py-3"
+                style={{ border: '1px solid var(--blanc-line)' }}
+            >
+                <span className="min-w-0">
+                    <span className="block text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
+                        Works across the whole territory
+                    </span>
+                    <span className="mt-0.5 block text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                        Offered for every ZIP the company covers, whatever is selected below.
+                    </span>
+                </span>
+                <Switch
+                    checked={value.serves_all_territory}
+                    disabled={savingScope}
+                    onCheckedChange={async next => {
+                        setSavingScope(true);
+                        try {
+                            const updated = await techniciansApi.setServesAllTerritory(technicianId, next);
+                            onSaved(updated);
+                            await queryClient.invalidateQueries({ queryKey: ['service-territory-assignments'] });
+                            toast.success(next ? 'Now serving the whole territory' : 'Limited to the selected areas');
+                        } catch (error) {
+                            toast.error(error instanceof Error ? error.message : 'Failed to save');
+                        } finally {
+                            setSavingScope(false);
+                        }
+                    }}
+                />
+            </label>
+
             {targets.length === 0 ? (
                 <p className="py-3 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
-                    No {mode} are configured yet. This technician remains a wildcard in this mode.
+                    No {mode} are configured yet, so nothing can be assigned in this mode.
                 </p>
             ) : (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -154,14 +190,14 @@ export function TechnicianServiceAreasEditor({
                 </div>
             )}
 
-            {selected.length === 0 && (
+            {selected.length === 0 && !value.serves_all_territory && (
                 <div
                     className="flex gap-2 rounded-xl px-3.5 py-3 text-sm"
                     style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}
                 >
                     <MapPinned className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
-                        No assignments means wildcard: this technician receives requests from every {mode === 'districts' ? 'district' : 'radius'} whenever this mode is active.
+                        With nothing selected, this technician is not offered any {mode === 'districts' ? 'district' : 'radius'} while this mode is active. Pick areas, or turn on the whole-territory switch above.
                     </span>
                 </div>
             )}

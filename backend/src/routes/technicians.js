@@ -90,8 +90,28 @@ router.get('/:techId/settings', requirePermission('tenant.company.manage'), asyn
     }
 });
 
+// PUT /api/settings/technicians/:techId/serves-all-territory — the explicit
+// company-wide mark (ZONE-STRICT-001). Empty assignments no longer imply it, so
+// working everywhere has to be stated here.
+router.put('/:techId/serves-all-territory', requirePermission('tenant.company.manage'), async (req, res) => {
+    try {
+        const tenantId = companyId(req);
+        const updatedBy = req.user?.crmUser?.id || null;
+        const data = await serviceAreaService.setTechnicianServesAllTerritory(
+            tenantId,
+            req.params.techId,
+            req.body?.serves_all_territory,
+            updatedBy
+        );
+        res.json({ ok: true, data });
+    } catch (err) {
+        sendError(res, err, 'serves-all-territory update');
+    }
+});
+
 // PUT /api/settings/technicians/:techId/service-areas/:mode — replace only
-// this technician's selected district or radius map. Empty means wildcard.
+// this technician's selected district or radius map. Empty means NOT offered
+// (ZONE-STRICT-001) unless the technician is marked company-wide above.
 router.put('/:techId/service-areas/:mode', requirePermission('tenant.company.manage'), async (req, res) => {
     try {
         const tenantId = companyId(req);

@@ -33,7 +33,9 @@ const value: TechnicianServiceAreas = {
     radii: [{ id: '11111111-1111-4111-8111-111111111111', zip: '02135', radius_miles: 25 }],
     district_assignments: [],
     radius_assignments: ['11111111-1111-4111-8111-111111111111'],
-    wildcard_in_active_mode: true,
+    wildcard_in_active_mode: false,
+    serves_all_territory: false,
+    unassigned_in_active_mode: true,
 };
 
 function markup(data = value) {
@@ -45,21 +47,37 @@ function markup(data = value) {
 }
 
 describe('technician service-area editor', () => {
-    it('shows both independent modes, active status, district targets, and wildcard meaning', () => {
+    it('shows both independent modes, active status, district targets, and what an empty set means', () => {
         const html = markup();
         expect(html).toContain('Districts');
         expect(html).toContain('Radii');
         expect(html).toContain('Active mode');
         expect(html).toContain('North');
-        expect(html).toContain('No assignments means wildcard');
+        // ZONE-STRICT-001: this used to read "No assignments means wildcard".
+        expect(html).toContain('Works across the whole territory');
+        expect(html).toContain('is not offered any district');
         expect(serviceAreaModeStatus('list', 'radii')).toBe('Saved for later');
     });
 
-    it('retains inactive-mode selections and summarizes active wildcard without starvation', () => {
+    it('retains inactive-mode selections and says an empty active set is NOT offered', () => {
         expect(value.radius_assignments).toHaveLength(1);
-        expect(technicianServiceAreaSummary(value)).toBe('All districts (wildcard)');
+        expect(technicianServiceAreaSummary(value)).toBe('No districts — not offered');
+        expect(technicianServiceAreaSummary({ ...value, serves_all_territory: true })).toBe('Whole territory');
         expect(toggleServiceArea(['North'], 'South')).toEqual(['North', 'South']);
         expect(toggleServiceArea(['North', 'South'], 'North')).toEqual(['South']);
+    });
+
+    it('writes the whole-territory mark through its own endpoint', async () => {
+        authedFetch.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: vi.fn(async () => ({ ok: true, data: { ...value, serves_all_territory: true } })),
+        });
+        await techniciansApi.setServesAllTerritory('tech-1', true);
+        expect(authedFetch).toHaveBeenCalledWith(
+            '/api/settings/technicians/tech-1/serves-all-territory',
+            expect.objectContaining({ method: 'PUT', body: JSON.stringify({ serves_all_territory: true }) }),
+        );
     });
 
     it('writes only the selected technician mode and accepts an empty wildcard set', async () => {
