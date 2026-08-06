@@ -401,6 +401,34 @@ loosely; no company-scoped contact identity/phone dedup. Existing `mergeContacts
 - **B5 — tenancy/RBAC red-team + tests** on albusto_test (dup round-trips, survivor rule, household
   exclusion, cross-tenant fence, reversibility of archive).
 
+### Phase B STATUS — CODE-COMPLETE (B1–B5 done, gated, committed; nothing deployed)
+- **B1 ✓** `3f594c2f` — mig 241 (contact_external_identities + contact_phones inventory + contacts.deleted_at)
+  + contactIdentityQueries; non-unique phone index (unique claim deferred to post-merge). 16/16.
+- **B2 ✓** `ce3e85c9` — contactResolverService wired into hourly sync + webhooks + job→contact; advisory-locked,
+  ordered match (identity→non-shared phone→survivor-if-multi→email→create), never-steal; removed the blind
+  overwrite. Root cause fixed. 15 .db + 36 unit + architect probe (same phone → one contact).
+- **B3 ✓** `944208fa` — lossless merge: 25 FK tables + polymorphic rehomed from a data-driven inventory;
+  runtime drift guard (pg_constraint vs inventory → throw) + zero-donor-reference assertion; donor SOFT-delete;
+  Stripe/masking conflicts quarantined; old_id→survivor redirect (mig 242); idempotent. 114 tests.
+- **B4 ✓** `f959c229` — scripts/bulkMergeContacts.js dry-run|apply; frozen survivor rule; household guard
+  (name-divergent same-phone → skip); dry-run write-free; exactly-one-mode required (can't apply by default);
+  per-set txn + fingerprint revalidation; never hard-deletes. Fixture 7→5, rerun no-op, tenant fence.
+- **B5 ✓** `91a35f4d` — attack-only tenant red-team (contactDedupTenantIsolation.db.test.js). FINDING (fixed):
+  assertNoDonorReferences filtered by the referencing row's company_id → a cross-tenant reference could be
+  archived/orphaned; guard is now tenant-exhaustive (throws → refuses merge). 74/74 Phase B regression.
+
+### Phase B GO-LIVE RUNBOOK (owner-gated; nothing runs on prod without «да»)
+1. Backup prod DB. Deploy the code (B1–B5) + apply migrations **241 & 242** (renumber at master integration —
+   my branch reused 240 for the native tech dir; master's 240 = FSM-JOB-ACTIONS-001).
+2. Backfill contact_phones is inside mig 241 (idempotent). Confirm the dup-count query on prod
+   (expect ~57 sets / ~84 extra rows).
+3. **DRY-RUN** the pilot company: `node scripts/bulkMergeContacts.js --company-id <ABC Homes uuid> --dry-run`
+   → owner reviews the plan file (survivors, donors, household + quarantine buckets). Mark any real household
+   numbers `is_shared` before apply.
+4. **PAUSE ZB contact import** (a live ZB writer can resurrect a donor), then `--apply` for that company.
+5. Rollback lever: donors are soft-deleted (contacts.deleted_at) + redirected — reversible; migrations 241/242
+   have rollbacks. B2 keeps new dups from returning.
+
 ## Open owner items (non-blocking)
 - ZB raw/receipt/link retention period (default: keep as provenance indefinitely until asked).
 - Imported-payment UI label: "Zenbooker" vs "Legacy import" (default: keep "Zenbooker").
