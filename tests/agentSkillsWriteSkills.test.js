@@ -50,6 +50,8 @@ const jobsService = require('../backend/src/services/jobsService');
 const scheduleService = require('../backend/src/services/scheduleService');
 const eventService = require('../backend/src/services/eventService');
 const { runSkill } = require(AGENT);
+const agentSkillsMcpRegistry = require('../backend/src/services/agentSkillsMcpRegistry');
+const agentSkillsRegistry = require('../backend/src/services/agentSkills/registry');
 
 const L2JOB = { id: 7, contact_id: CONTACT, blanc_status: 'Submitted', zb_canceled: false, zenbooker_job_id: 'zb_7' };
 const SLOT = { date: '2026-07-10', start: '10:00', end: '12:00' };
@@ -237,5 +239,97 @@ describe('cancelAppointment (L2 write, retention-gated) — G5 / AR-5', () => {
         jobsService.getJobById.mockResolvedValue(L2JOB);
         const out = await runSkill('cancelAppointment', CO, {}, { jobId: 7, reason: 'timing', retentionAttempted: true });
         expect(out.speak).toMatch(/no cancellation fee/i);
+    });
+});
+
+describe('ZB-DECOUPLE-001 MCP compatibility contract', () => {
+    test('ChatGPT Job schemas retain the four Zenbooker compatibility fields', () => {
+        const listJobProperties = agentSkillsMcpRegistry.getTool('svc.list_jobs')
+            .outputSchema.properties.results.items.properties;
+        const getJobProperties = agentSkillsMcpRegistry.getTool('svc.get_job')
+            .outputSchema.properties;
+
+        for (const properties of [listJobProperties, getJobProperties]) {
+            expect(properties.zenbooker_job_id.type).toEqual(['string', 'null']);
+            expect(properties.zb_status.type).toEqual(['string', 'null']);
+            expect(properties.zb_rescheduled.type).toBe('boolean');
+            expect(properties.zb_canceled.type).toBe('boolean');
+        }
+    });
+
+    test('appointment MCP tools retain names, schemas, skill mapping, and permissions', () => {
+        const reschedule = agentSkillsMcpRegistry.getTool('svc.reschedule_appointment');
+        const cancel = agentSkillsMcpRegistry.getTool('svc.cancel_appointment');
+
+        expect(reschedule).toMatchObject({
+            name: 'svc.reschedule_appointment',
+            skill: 'rescheduleAppointment',
+            kind: 'write',
+            requiredLevel: 'L1',
+            requiresConfirmation: true,
+            requiredPermission: 'jobs.edit',
+            requiredPermissions: ['jobs.edit'],
+            frameworkWritePermission: 'service.crm.write',
+        });
+        expect(reschedule.outputSchema).toBeUndefined();
+        expect(reschedule.inputSchema).toEqual({
+            type: 'object',
+            additionalProperties: true,
+            required: ['contact_id', 'job_id', 'new_preferred_slot'],
+            properties: {
+                phone: { type: 'string' },
+                name: { type: 'string' },
+                zip: { type: 'string' },
+                street: { type: 'string' },
+                contact_id: { type: 'string' },
+                job_id: { type: 'string' },
+                new_preferred_slot: {
+                    type: 'object',
+                    additionalProperties: true,
+                    required: ['date', 'start', 'end'],
+                    properties: {
+                        date: { type: 'string' },
+                        start: { type: 'string' },
+                        end: { type: 'string' },
+                    },
+                },
+            },
+        });
+
+        expect(cancel).toMatchObject({
+            name: 'svc.cancel_appointment',
+            skill: 'cancelAppointment',
+            kind: 'write',
+            requiredLevel: 'L1',
+            requiresConfirmation: true,
+            requiredPermission: 'jobs.close',
+            requiredPermissions: ['jobs.close'],
+            frameworkWritePermission: 'service.crm.write',
+        });
+        expect(cancel.outputSchema).toBeUndefined();
+        expect(cancel.inputSchema).toEqual({
+            type: 'object',
+            additionalProperties: true,
+            required: ['contact_id', 'job_id', 'reason', 'retention_attempted'],
+            properties: {
+                phone: { type: 'string' },
+                name: { type: 'string' },
+                zip: { type: 'string' },
+                street: { type: 'string' },
+                contact_id: { type: 'string' },
+                job_id: { type: 'string' },
+                reason: { type: 'string' },
+                retention_attempted: { type: 'boolean' },
+            },
+        });
+
+        expect(agentSkillsMcpRegistry.skillFor(reschedule.name)).toBe('rescheduleAppointment');
+        expect(agentSkillsMcpRegistry.skillFor(cancel.name)).toBe('cancelAppointment');
+        expect(agentSkillsRegistry.getSkill('rescheduleAppointment')).toMatchObject({
+            name: 'rescheduleAppointment', kind: 'write', requiredLevel: 'L1',
+        });
+        expect(agentSkillsRegistry.getSkill('cancelAppointment')).toMatchObject({
+            name: 'cancelAppointment', kind: 'write', requiredLevel: 'L1',
+        });
     });
 });

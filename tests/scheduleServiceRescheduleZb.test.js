@@ -23,15 +23,21 @@ jest.mock('../backend/src/db/scheduleQueries', () => ({
     rescheduleJob: jest.fn(async () => ({ id: 7 })),
     rescheduleLead: jest.fn(async () => ({ id: 8 })),
     rescheduleTask: jest.fn(async () => ({ id: 9 })),
+    reassignJob: jest.fn(async () => ({ id: 7 })),
     getDispatchSettings: jest.fn(async () => null),
 }));
 jest.mock('../backend/src/services/jobsService', () => ({
     getJobById: jest.fn(),
+    resolveAssignedProviderUserIds: jest.fn(async () => '[]'),
     syncFromZenbooker: jest.fn(async () => {}),
 }));
 jest.mock('../backend/src/services/zenbookerClient', () => ({
     rescheduleJob: jest.fn(async () => ({})),
+    assignProviders: jest.fn(async () => ({})),
     getJob: jest.fn(async () => ({ id: 'zb_7', status: 'scheduled' })),
+}));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    resolveCompatibilityIdsToExternal: jest.fn(async (_companyId, _source, ids) => ids),
 }));
 jest.mock('../backend/src/services/eventBus', () => ({
     emit: jest.fn(async () => ({})),
@@ -49,6 +55,7 @@ jest.mock('../backend/src/db/routeQueries', () => ({
 const scheduleQueries = require('../backend/src/db/scheduleQueries');
 const jobsService = require('../backend/src/services/jobsService');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
+const technicianDirectoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const eventBus = require('../backend/src/services/eventBus');
 const scheduleService = require('../backend/src/services/scheduleService');
 
@@ -117,5 +124,35 @@ describe('rescheduleItem ZB write-through seam (AR-4)', () => {
         scheduleQueries.rescheduleJob.mockResolvedValueOnce(null);
         await expect(scheduleService.rescheduleItem(CO, 'job', 7, START, END)).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
         expect(zenbookerClient.rescheduleJob).not.toHaveBeenCalled();
+    });
+});
+
+describe('reassignItem Zenbooker technician identity boundary', () => {
+    test('native-only technician stays local and its UUID is never emitted to a ZB assignment push', async () => {
+        const technicianUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        const crmUserId = '11111111-1111-4111-8111-111111111111';
+        jobsService.getJobById.mockResolvedValue({
+            id: 7,
+            zenbooker_job_id: 'zb_7',
+            assigned_techs: [{ id: 'zb-old', name: 'Previous provider' }],
+            assigned_provider_user_ids: [],
+        });
+        jobsService.resolveAssignedProviderUserIds.mockResolvedValue(JSON.stringify([crmUserId]));
+        technicianDirectoryQueries.resolveCompatibilityIdsToExternal
+            .mockImplementation(async (_companyId, _source, ids) =>
+                ids.includes(technicianUuid) ? [] : ids);
+
+        await scheduleService.reassignItem(CO, 'job', 7, [
+            { id: technicianUuid, name: 'Native only' },
+        ]);
+
+        expect(scheduleQueries.reassignJob).toHaveBeenCalledWith(
+            CO,
+            7,
+            [{ id: technicianUuid, name: 'Native only' }],
+            JSON.stringify([crmUserId])
+        );
+        expect(zenbookerClient.assignProviders).not.toHaveBeenCalled();
+        expect(JSON.stringify(zenbookerClient.assignProviders.mock.calls)).not.toContain(technicianUuid);
     });
 });

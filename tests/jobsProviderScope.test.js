@@ -3,11 +3,26 @@
  * Provider assigned-only visibility for the Jobs API.
  */
 
-jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+jest.mock('../backend/src/db/connection', () => {
+    const query = jest.fn();
+    return {
+        query,
+        getClient: jest.fn(async () => ({
+            query: jest.fn((sql, params) => /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)
+                ? Promise.resolve({ rows: [], rowCount: 0 })
+                : query(sql, params)),
+            release: jest.fn(),
+        })),
+    };
+});
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({
     logEvent: jest.fn(), actorName: jest.fn(() => 'Test'), getEntityHistory: jest.fn(async () => []),
+}));
+jest.mock('../backend/src/services/jobActivityService', () => ({
+    logJobActivity: jest.fn(async () => ({})),
+    userActor: id => ({ id, type: 'user', label: null, source: 'crm' }),
 }));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1024, MAX_FILES_PER_NOTE: 5, getAttachmentsForEntity: jest.fn(async () => []),

@@ -13,6 +13,7 @@
  * external_id); resolve* always filter on company_id).
  */
 const db = require('./connection');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function createTechnician({ companyId, displayName, active = true, crmUserId = null }) {
     const { rows } = await db.query(
@@ -70,6 +71,37 @@ async function resolveUuidToExternal(companyId, source, technicianUuid) {
     return rows[0] ? rows[0].external_id : null;
 }
 
+/**
+ * Resolve roster compatibility ids before an outbound provider call. Legacy ZB
+ * ids pass through unchanged; native UUIDs must have a company-scoped external
+ * identity or they are omitted. This keeps a native-only technician UUID from
+ * ever being mistaken for a Zenbooker team-member id.
+ */
+async function resolveCompatibilityIdsToExternal(companyId, source, compatibilityIds) {
+    if (!Array.isArray(compatibilityIds) || compatibilityIds.length === 0) return [];
+    const ids = [...new Set(compatibilityIds.map(value => String(value)).filter(Boolean))];
+    const nativeIds = ids.filter(id => UUID_RE.test(id)).map(id => id.toLowerCase());
+    if (nativeIds.length === 0) return ids;
+    if (!companyId) return ids.filter(id => !UUID_RE.test(id));
+
+    const { rows } = await db.query(
+        `SELECT technician_id, external_id
+         FROM technician_external_identities
+         WHERE company_id = $1
+           AND source = $2
+           AND technician_id = ANY($3::uuid[])`,
+        [companyId, source, nativeIds]
+    );
+    const externalByUuid = new Map(rows.map(row => [
+        String(row.technician_id).toLowerCase(),
+        String(row.external_id),
+    ]));
+    const resolved = ids.map(id => UUID_RE.test(id)
+        ? externalByUuid.get(id.toLowerCase()) || null
+        : id).filter(Boolean);
+    return [...new Set(resolved)];
+}
+
 async function listActiveTechnicians(companyId) {
     const { rows } = await db.query(
         `SELECT t.id, t.display_name, t.active, t.crm_user_id,
@@ -124,6 +156,7 @@ module.exports = {
     upsertExternalIdentity,
     resolveExternalToUuid,
     resolveUuidToExternal,
+    resolveCompatibilityIdsToExternal,
     listActiveTechnicians,
     findActiveTechnicianByCrmUserId,
     linkCrmUser,

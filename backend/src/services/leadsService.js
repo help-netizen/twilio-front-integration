@@ -7,6 +7,7 @@
 
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
+const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const fsmService = require('./fsmService');
 const eventBus = require('./eventBus');
 const { logJobActivity } = require('./jobActivityService');
@@ -1273,11 +1274,23 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
     if (!zenbookerJobId && overrides.zb_job_payload) {
         const zbPayload = { ...overrides.zb_job_payload };
 
-        // Zenbooker API rejects the request if assigned_providers is provided
-        // alongside assignment_method: 'auto'.
-        // We must remove assignment_method to pre-assign successfully.
-        if (zbPayload.assigned_providers && zbPayload.assigned_providers.length > 0) {
+        const requestedProviders = Array.isArray(zbPayload.assigned_providers)
+            ? zbPayload.assigned_providers
+            : [];
+        let zenbookerProviders = [];
+        try {
+            zenbookerProviders = await technicianDirectoryQueries
+                .resolveCompatibilityIdsToExternal(companyId, 'zenbooker', requestedProviders);
+        } catch (err) {
+            console.warn('[ConvertLead] Technician external-id lookup failed; using ZB auto-assignment:', err.message);
+        }
+        if (zenbookerProviders.length > 0) {
+            zbPayload.assigned_providers = zenbookerProviders;
+            // Zenbooker rejects assigned_providers alongside assignment_method:auto.
             delete zbPayload.assignment_method;
+        } else {
+            delete zbPayload.assigned_providers;
+            if (requestedProviders.length > 0) zbPayload.assignment_method = 'auto';
         }
 
         // Frontend sent full booking payload — create ZB job directly

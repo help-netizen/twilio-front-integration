@@ -19,6 +19,7 @@
 const express = require('express');
 const router = express.Router();
 const zenbookerClient = require('../../services/zenbookerClient');
+const technicianDirectoryQueries = require('../../db/technicianDirectoryQueries');
 
 // ─── GET / — List jobs ────────────────────────────────────────────────────────
 
@@ -105,8 +106,31 @@ router.post('/:id/assign', async (req, res) => {
             });
         }
         const payload = {};
-        if (Array.isArray(assign) && assign.length > 0) payload.assign = assign;
-        if (Array.isArray(unassign) && unassign.length > 0) payload.unassign = unassign;
+        const companyId = req.companyFilter?.company_id;
+        const safeAssign = await technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
+            companyId,
+            'zenbooker',
+            Array.isArray(assign) ? assign : []
+        );
+        const safeUnassign = await technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
+            companyId,
+            'zenbooker',
+            Array.isArray(unassign) ? unassign : []
+        );
+        if (Array.isArray(assign) && assign.length > 0 && safeAssign.length === 0) {
+            return res.json({
+                ok: true,
+                data: { skipped: true, reason: 'no_zenbooker_team_member_id' },
+            });
+        }
+        if (safeAssign.length > 0) payload.assign = safeAssign;
+        if (safeUnassign.length > 0) payload.unassign = safeUnassign;
+        if (!payload.assign && !payload.unassign) {
+            return res.json({
+                ok: true,
+                data: { skipped: true, reason: 'no_zenbooker_team_member_id' },
+            });
+        }
         if (notify !== undefined) payload.notify = Boolean(notify);
 
         const data = await zenbookerClient.assignProviders(req.params.id, payload);

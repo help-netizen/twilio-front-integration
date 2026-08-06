@@ -20,6 +20,7 @@ const { logJobActivity } = require('./jobActivityService');
 const { withTransaction } = require('./transactionService');
 const { deduplicateNotesByIdentity } = require('./noteDeduplication');
 const membershipQueries = require('../db/membershipQueries');
+const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const jobFinanceQueries = require('../db/jobFinanceQueries');
 const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 const {
@@ -277,8 +278,8 @@ async function refreshCompanyProviderMirror(companyId) {
          FROM (
              SELECT j2.id AS job_id,
                     COALESCE(
-                        jsonb_agg(DISTINCT to_jsonb(m.user_id::text))
-                            FILTER (WHERE m.user_id IS NOT NULL),
+                        jsonb_agg(DISTINCT to_jsonb(COALESCE(legacy_m.user_id, native_m.user_id)::text))
+                            FILTER (WHERE COALESCE(legacy_m.user_id, native_m.user_id) IS NOT NULL),
                         '[]'::jsonb
                     ) AS user_ids
              FROM jobs j2
@@ -288,10 +289,21 @@ async function refreshCompanyProviderMirror(companyId) {
              ) AS tech(value) ON TRUE
              LEFT JOIN company_user_profiles p
                  ON p.zenbooker_team_member_id = tech.value->>'id'
-             LEFT JOIN company_memberships m
-                 ON m.id = p.membership_id
-                AND m.company_id = j2.company_id
-                AND m.status = 'active'
+             LEFT JOIN company_memberships legacy_m
+                 ON legacy_m.id = p.membership_id
+                AND legacy_m.company_id = j2.company_id
+                AND legacy_m.status = 'active'
+             LEFT JOIN technician_external_identities e
+                 ON e.company_id = j2.company_id
+                AND e.source = 'zenbooker'
+                AND e.external_id = tech.value->>'id'
+             LEFT JOIN technicians t
+                 ON t.company_id = j2.company_id
+                AND (t.id::text = tech.value->>'id' OR t.id = e.technician_id)
+             LEFT JOIN company_memberships native_m
+                 ON native_m.company_id = j2.company_id
+                AND native_m.user_id = t.crm_user_id
+                AND native_m.status = 'active'
              WHERE j2.company_id = $1
              GROUP BY j2.id
          ) sub
@@ -579,9 +591,21 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
         sms_notifications: true,
         email_notifications: true,
     };
+    let zenbookerTechIds = [];
     if (slot.tech_id) {
+        try {
+            zenbookerTechIds = await technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
+                companyId,
+                'zenbooker',
+                [slot.tech_id]
+            );
+        } catch (err) {
+            console.warn('[CreateDirectJob] Technician external-id lookup failed; using ZB auto-assignment:', err.message);
+        }
+    }
+    if (zenbookerTechIds.length > 0) {
         // ZB rejects assigned_providers + assignment_method:'auto' together.
-        zbPayload.assigned_providers = [slot.tech_id];
+        zbPayload.assigned_providers = zenbookerTechIds;
     } else {
         zbPayload.assignment_method = 'auto';
     }

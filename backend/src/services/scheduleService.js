@@ -6,6 +6,7 @@
  */
 
 const scheduleQueries = require('../db/scheduleQueries');
+const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const { logJobActivity } = require('./jobActivityService');
 const { withTransaction } = require('./transactionService');
 const eventBus = require('./eventBus');
@@ -400,7 +401,8 @@ async function reassignItem(
 
     // Capture the job's current providers + ZB linkage BEFORE the write so we can
     // push the assign/unassign diff to Zenbooker (fixes the bug where a card
-    // reassignment never reached ZB). assigned_techs ids ARE ZB team-member ids.
+    // reassignment never reached ZB). assigned_techs ids are compatibility ids:
+    // legacy ZB ids or native technician UUIDs.
     // Also resolve the NEW providers to internal user ids so the visibility mirror
     // (assigned_provider_user_ids) is refreshed → an assigned provider sees the job
     // on their own schedule immediately.
@@ -474,9 +476,33 @@ async function reassignItem(
     // Push the assignment change to Zenbooker. Best-effort: a ZB failure is logged
     // but never rolls back the local reassignment.
     if (entityType === 'job' && zbJobId) {
-        const newTechIds = list.map(t => t.id);
-        const assign = newTechIds.filter(id => !oldTechIds.includes(id));
-        const unassign = oldTechIds.filter(id => !newTechIds.includes(id));
+        let oldZenbookerIds = null;
+        let newZenbookerIds = null;
+        try {
+            [oldZenbookerIds, newZenbookerIds] = await Promise.all([
+                technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
+                    companyId,
+                    'zenbooker',
+                    oldTechIds
+                ),
+                technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
+                    companyId,
+                    'zenbooker',
+                    list.map(t => t.id)
+                ),
+            ]);
+        } catch (err) {
+            console.error('[Schedule] ZB technician identity lookup failed (non-fatal):', err.message);
+        }
+        // A requested native-only assignee has no ZB identity. Keep the local
+        // reassignment authoritative and make the ZB assignment side-effect a no-op.
+        const unresolvedAssignment = list.length > 0 && newZenbookerIds?.length === 0;
+        const assign = unresolvedAssignment || !newZenbookerIds || !oldZenbookerIds
+            ? []
+            : newZenbookerIds.filter(id => !oldZenbookerIds.includes(id));
+        const unassign = unresolvedAssignment || !newZenbookerIds || !oldZenbookerIds
+            ? []
+            : oldZenbookerIds.filter(id => !newZenbookerIds.includes(id));
         if (assign.length || unassign.length) {
             try {
                 const zenbookerClient = require('./zenbookerClient');

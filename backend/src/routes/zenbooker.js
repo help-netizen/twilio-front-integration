@@ -7,6 +7,7 @@ const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const zenbookerClient = require('../services/zenbookerClient');
+const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 
 // GET /api/zenbooker/service-area-check?postal_code=02101  OR  ?address=Boston+MA
 router.get('/service-area-check', async (req, res) => {
@@ -106,7 +107,25 @@ router.get('/services', async (req, res) => {
 // POST /api/zenbooker/jobs  — create job with direct payload
 router.post('/jobs', requirePermission('jobs.create', 'leads.convert'), async (req, res) => {
     try {
-        const data = await zenbookerClient.createJob(req.body);
+        const payload = { ...req.body };
+        const requestedProviders = Array.isArray(payload.assigned_providers)
+            ? payload.assigned_providers
+            : [];
+        if (requestedProviders.length > 0) {
+            const externalIds = await technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
+                req.companyFilter?.company_id,
+                'zenbooker',
+                requestedProviders
+            );
+            if (externalIds.length > 0) {
+                payload.assigned_providers = externalIds;
+                delete payload.assignment_method;
+            } else {
+                delete payload.assigned_providers;
+                payload.assignment_method = 'auto';
+            }
+        }
+        const data = await zenbookerClient.createJob(payload);
         res.status(201).json({ ok: true, data });
     } catch (err) {
         console.error('[Zenbooker] create-job error:', err.response?.data || err.message);

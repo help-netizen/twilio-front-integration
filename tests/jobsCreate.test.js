@@ -201,7 +201,7 @@ describe('POST /api/jobs/sync — coalesced Zenbooker activity', () => {
 // suite above. jest.isolateModules gives each test a fresh require graph.
 
 describe('jobsService.createDirectJob', () => {
-    function loadService({ dbQuery, resolveContact, createJob, getJob }) {
+    function loadService({ dbQuery, resolveContact, createJob, getJob, resolveExternalIds }) {
         let svc;
         jest.isolateModules(() => {
             jest.doMock('../backend/src/db/connection', () => ({
@@ -216,6 +216,10 @@ describe('jobsService.createDirectJob', () => {
                 findTerritoryByPostalCode: jest.fn().mockResolvedValue('terr_01'),
                 createJob: createJob || jest.fn(),
                 getJob: getJob || jest.fn(),
+            }));
+            jest.doMock('../backend/src/db/technicianDirectoryQueries', () => ({
+                resolveCompatibilityIdsToExternal: resolveExternalIds
+                    || jest.fn(async (_companyId, _source, ids) => ids),
             }));
             jest.doMock('../backend/src/services/fsmService', () => ({}));
             jest.doMock('../backend/src/services/eventService', () => ({}));
@@ -376,5 +380,46 @@ describe('jobsService.createDirectJob', () => {
         const payload = createJobZb.mock.calls[0][0];
         expect(payload.assigned_providers).toEqual(['prov-7']);
         expect(payload.assignment_method).toBeUndefined();
+    });
+
+    test('native-only tech UUID is never included in the mocked Zenbooker create payload', async () => {
+        const nativeOnlyUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        const createJobZb = jest.fn().mockResolvedValue({ job_id: 'zb-556' });
+        const getJob = jest.fn().mockResolvedValue({ job_number: 'JN-2', status: 'scheduled' });
+        const resolveExternalIds = jest.fn().mockResolvedValue([]);
+        const dbQuery = jest.fn((sql) =>
+            /INSERT INTO jobs/.test(sql)
+                ? Promise.resolve({ rows: [{ id: 89, blanc_status: 'Submitted' }] })
+                : Promise.resolve({ rows: [] })
+        );
+        const resolveContact = jest.fn().mockResolvedValue({ contact_id: 9, status: 'created' });
+        const svc = loadService({
+            dbQuery,
+            resolveContact,
+            createJob: createJobZb,
+            getJob,
+            resolveExternalIds,
+        });
+
+        await svc.createDirectJob(COMPANY, {
+            contact: { name: 'Native', phone: '+16175550000' },
+            address: { postal_code: '01721' },
+            slot: {
+                start: '2026-07-01T14:00:00Z',
+                end: '2026-07-01T16:00:00Z',
+                tech_id: nativeOnlyUuid,
+            },
+            job_type: 'Repair',
+        });
+
+        expect(resolveExternalIds).toHaveBeenCalledWith(
+            COMPANY,
+            'zenbooker',
+            [nativeOnlyUuid]
+        );
+        const payload = createJobZb.mock.calls[0][0];
+        expect(payload.assigned_providers).toBeUndefined();
+        expect(payload.assignment_method).toBe('auto');
+        expect(JSON.stringify(payload)).not.toContain(nativeOnlyUuid);
     });
 });

@@ -191,15 +191,18 @@ async function getMembershipWithProfile(userId, companyId) {
 }
 
 /**
- * Resolve external Zenbooker team member ids to internal crm_users.id
- * through the provider bridge, strictly inside one company.
+ * Resolve assignment-compatible technician ids to internal crm_users.id,
+ * strictly inside one company. Legacy Zenbooker ids use the existing profile
+ * bridge; native technician UUIDs (and mapped external ids) use the native
+ * directory's crm_user_id link. The returned authorization plane remains
+ * crm_users.id only.
  *
  * The bridge (company_user_profiles.zenbooker_team_member_id) is only an
  * integration mapping: unmapped external ids resolve to nothing and must not
  * grant visibility to any CRM user.
  *
  * @param {string} companyId - tenant company id (required)
- * @param {string[]} externalIds - Zenbooker team member ids
+ * @param {string[]} externalIds - roster compatibility ids
  * @returns {Promise<string[]>} sorted unique crm_users.id values
  */
 async function resolveProviderUserIds(companyId, externalIds) {
@@ -208,11 +211,22 @@ async function resolveProviderUserIds(companyId, externalIds) {
     if (ids.length === 0) return [];
     const { rows } = await db.query(
         `SELECT DISTINCT m.user_id
-         FROM company_user_profiles p
-         JOIN company_memberships m ON m.id = p.membership_id
+         FROM company_memberships m
+         LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+         LEFT JOIN technicians t
+           ON t.company_id = m.company_id
+          AND t.crm_user_id = m.user_id
+         LEFT JOIN technician_external_identities e
+           ON e.company_id = t.company_id
+          AND e.source = 'zenbooker'
+          AND e.technician_id = t.id
          WHERE m.company_id = $1
            AND m.status = 'active'
-           AND p.zenbooker_team_member_id = ANY($2::text[])`,
+           AND (
+                p.zenbooker_team_member_id = ANY($2::text[])
+                OR t.id::text = ANY($2::text[])
+                OR e.external_id = ANY($2::text[])
+           )`,
         [companyId, ids]
     );
     return rows.map(r => String(r.user_id)).sort();

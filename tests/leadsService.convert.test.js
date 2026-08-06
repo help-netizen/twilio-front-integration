@@ -16,6 +16,9 @@ jest.mock('../backend/src/services/zenbookerClient', () => ({
     createJobFromLead: jest.fn(),
     getJob: jest.fn(),
 }));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    resolveCompatibilityIdsToExternal: jest.fn(async (_companyId, _source, ids) => ids),
+}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
@@ -27,6 +30,7 @@ jest.mock('../backend/src/services/leadContactActivityService', () => ({
 
 const db = require('../backend/src/db/connection');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
+const technicianDirectoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const leadsService = require('../backend/src/services/leadsService');
 
 function makeLeadRow(overrides = {}) {
@@ -258,5 +262,29 @@ describe('leadsService.convertLead idempotency', () => {
         expect(zenbookerClient.createJob).not.toHaveBeenCalled();
         expect(zenbookerClient.getJob).not.toHaveBeenCalled();
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO jobs'))).toBe(false);
+    });
+
+    it('never sends a native-only technician UUID in the Zenbooker booking payload', async () => {
+        const nativeOnlyUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        mockClaimNewJob();
+        technicianDirectoryQueries.resolveCompatibilityIdsToExternal.mockResolvedValueOnce([]);
+
+        await leadsService.convertLead('ABC123', {
+            zb_job_payload: {
+                territory_id: 'territory-1',
+                timeslot: { start: '2026-06-08T13:00:00Z', end: '2026-06-08T15:00:00Z' },
+                assigned_providers: [nativeOnlyUuid],
+            },
+        }, 'company-1');
+
+        expect(technicianDirectoryQueries.resolveCompatibilityIdsToExternal).toHaveBeenCalledWith(
+            'company-1',
+            'zenbooker',
+            [nativeOnlyUuid]
+        );
+        const payload = zenbookerClient.createJob.mock.calls[0][0];
+        expect(payload.assigned_providers).toBeUndefined();
+        expect(payload.assignment_method).toBe('auto');
+        expect(JSON.stringify(payload)).not.toContain(nativeOnlyUuid);
     });
 });

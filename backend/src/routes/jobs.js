@@ -22,6 +22,7 @@ const rateMeService = require('../services/rateMeService');
 const { closePermissionError } = require('../services/jobTransitionPerms');
 const companyQueries = require('../db/companyQueries');
 const rateMeQueries = require('../db/rateMeQueries');
+const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
 const { resolveCompanyProxyE164 } = require('../services/messagingHelper');
@@ -785,29 +786,38 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
             // 3. Reassign technician: unassign old + assign new
             if (tech_id) {
                 try {
-                    // Unassign all current providers first
-                    const oldTechIds = currentTechs
-                        .map(t => t.id)
-                        .filter(id => id && id !== tech_id);
-                    const payload = { assign: [tech_id], notify: false };
-                    if (oldTechIds.length > 0) {
-                        payload.unassign = oldTechIds;
-                    }
-                    await zenbookerClient.assignProviders(zbJobId, payload);
-                    console.log(`[Jobs API] Reassigned ZB job ${zbJobId}: unassign=[${oldTechIds}] assign=[${tech_id}]`);
-
-                    // Immediately fetch updated job from ZB to get new assigned_providers
-                    try {
-                        const freshJob = await zenbookerClient.getJob(zbJobId);
-                        if (freshJob?.assigned_providers?.length > 0) {
-                            freshAssignedProviders = freshJob.assigned_providers;
-                            freshProviderMirror = await jobsService.resolveAssignedProviderUserIds(
+                    const [externalTechId] = await technicianDirectoryQueries
+                        .resolveCompatibilityIdsToExternal(companyId, 'zenbooker', [tech_id]);
+                    if (!externalTechId) {
+                        console.log(`[Jobs API] Skipped ZB reassignment for native-only technician ${tech_id}`);
+                    } else {
+                        // Unassign all current ZB providers first. Native-only
+                        // compatibility UUIDs are omitted by the resolver.
+                        const oldTechIds = await technicianDirectoryQueries
+                            .resolveCompatibilityIdsToExternal(
                                 companyId,
-                                freshJob.assigned_providers
+                                'zenbooker',
+                                currentTechs.map(t => t.id)
                             );
+                        const unassign = oldTechIds.filter(id => id !== externalTechId);
+                        const payload = { assign: [externalTechId], notify: false };
+                        if (unassign.length > 0) payload.unassign = unassign;
+                        await zenbookerClient.assignProviders(zbJobId, payload);
+                        console.log(`[Jobs API] Reassigned ZB job ${zbJobId}: unassign=[${unassign}] assign=[${externalTechId}]`);
+
+                        // Immediately fetch updated job from ZB to get new assigned_providers
+                        try {
+                            const freshJob = await zenbookerClient.getJob(zbJobId);
+                            if (freshJob?.assigned_providers?.length > 0) {
+                                freshAssignedProviders = freshJob.assigned_providers;
+                                freshProviderMirror = await jobsService.resolveAssignedProviderUserIds(
+                                    companyId,
+                                    freshJob.assigned_providers
+                                );
+                            }
+                        } catch (fetchErr) {
+                            console.warn(`[Jobs API] Could not immediately sync techs:`, fetchErr.message);
                         }
-                    } catch (fetchErr) {
-                        console.warn(`[Jobs API] Could not immediately sync techs:`, fetchErr.message);
                     }
                 } catch (assignErr) {
                     console.warn(`[Jobs API] ZB assign error (non-fatal):`, assignErr.response?.data || assignErr.message);

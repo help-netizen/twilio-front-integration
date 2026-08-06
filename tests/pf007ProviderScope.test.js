@@ -17,8 +17,13 @@ jest.mock('../backend/src/services/eventService', () => ({}));
 
 const db = require('../backend/src/db/connection');
 const membershipQueries = require('../backend/src/db/membershipQueries');
+const technicianDirectoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const jobsService = require('../backend/src/services/jobsService');
 const jobSyncService = require('../backend/src/services/jobSyncService');
+
+const NATIVE_TECH = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const NATIVE_ONLY = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const CRM_USER = '11111111-1111-4111-8111-111111111111';
 
 beforeEach(() => {
     db.query.mockReset();
@@ -44,8 +49,40 @@ describe('membershipQueries.resolveProviderUserIds', () => {
         const [sql, params] = db.query.mock.calls[0];
         expect(sql).toContain('m.company_id = $1');
         expect(sql).toContain("m.status = 'active'");
+        expect(sql).toContain('t.crm_user_id = m.user_id');
+        expect(sql).toContain('e.company_id = t.company_id');
         expect(params).toEqual(['company-1', ['zb-1', 'zb-2']]);
         expect(out).toEqual(['uuid-a', 'uuid-b']); // sorted unique
+    });
+
+    it('maps a native technician UUID to its CRM user authorization id', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{ user_id: CRM_USER }] });
+
+        const out = await membershipQueries.resolveProviderUserIds('company-1', [NATIVE_TECH]);
+
+        expect(out).toEqual([CRM_USER]);
+        expect(out).not.toContain(NATIVE_TECH);
+        expect(db.query.mock.calls[0][1]).toEqual(['company-1', [NATIVE_TECH]]);
+    });
+});
+
+describe('technicianDirectoryQueries.resolveCompatibilityIdsToExternal', () => {
+    it('passes legacy ids through, resolves mapped UUIDs, and drops native-only UUIDs', async () => {
+        db.query.mockResolvedValueOnce({
+            rows: [{ technician_id: NATIVE_TECH, external_id: 'zb-mapped' }],
+        });
+
+        const out = await technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
+            'company-1',
+            'zenbooker',
+            [NATIVE_TECH, NATIVE_ONLY, 'zb-legacy']
+        );
+
+        expect(out).toEqual(['zb-mapped', 'zb-legacy']);
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain('company_id = $1');
+        expect(sql).toContain('source = $2');
+        expect(params).toEqual(['company-1', 'zenbooker', [NATIVE_TECH, NATIVE_ONLY]]);
     });
 });
 
@@ -76,6 +113,33 @@ describe('jobsService.resolveAssignedProviderUserIds', () => {
         db.query.mockResolvedValueOnce({ rows: [] });
         const out = await jobsService.resolveAssignedProviderUserIds('c1', [{ id: 'unknown-zb' }]);
         expect(out).toBe('[]');
+    });
+
+    it('stores CRM user ids, never native technician UUIDs, in the job auth mirror', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{ user_id: CRM_USER }] });
+
+        const out = await jobsService.resolveAssignedProviderUserIds(
+            'company-1',
+            [{ id: NATIVE_TECH, name: 'Native technician' }]
+        );
+
+        expect(JSON.parse(out)).toEqual([CRM_USER]);
+        expect(JSON.parse(out)).not.toContain(NATIVE_TECH);
+    });
+});
+
+describe('jobsService.refreshCompanyProviderMirror', () => {
+    it('refreshes only the CRM auth mirror and resolves native ids company-scoped', async () => {
+        db.query.mockResolvedValueOnce({ rowCount: 0 });
+
+        await jobsService.refreshCompanyProviderMirror('company-1');
+
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain('SET assigned_provider_user_ids = sub.user_ids');
+        expect(sql).not.toMatch(/SET\s+assigned_techs/);
+        expect(sql).toContain('e.company_id = j2.company_id');
+        expect(sql).toContain('native_m.user_id = t.crm_user_id');
+        expect(params).toEqual(['company-1']);
     });
 });
 
