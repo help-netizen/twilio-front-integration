@@ -218,6 +218,28 @@ in lockstep); __company__ never resolved as a technician. Verified albusto_test:
 suites), three real-DB re-key round-trips 11/11. Sabotage SAB-T3B2-TIME-OFF: drop company scope on
 the map join → cross-tenant test red → restore.
 
+### T3b-3 (gap-closure) + T3b-4 (CRITICAL empty-directory fix) — DONE, commit 1a10e79f
+Surfaced by the 2026-08-06 completeness audit (below).
+- **T3b-3 gap-closure:** `technician_profiles` (the 8th config table) was schema-provisioned by mig 240
+  but its service was legacy-key-only → now uuid-first read + dual-write like the other 7.
+  `technicianBaseLocationsService.list()` read the roster via a direct `getTeamMembers` → now routed
+  through the mode-aware `technicianRosterService.listActive`.
+- **T3b-4 CRITICAL:** the uuid-first re-key was NOT a superset of legacy — on an EMPTY native directory
+  (pre-backfill = current prod) it (a) THREW "Technician identity not found" on every technician config
+  WRITE (base/schedule/time-off/profile/service-area) and (b) DROPPED legacy rows on READ (company-wide
+  reads gated on `resolved uuid IS NOT NULL`; filtered reads resolved the legacy id to null → []). This
+  would have broken all technician scheduling on deploy. Root cause: the re-key assumed every technician
+  resolves to a uuid; false before backfill. All mocked/.db tests seeded an identity first, so none
+  caught it. **Fix:** `resolveTechnicianIdentity` never throws for a non-empty legacy id (unmapped → 
+  `technician_uuid: null`, legacy-only write); reads use a company-scoped TEXT match key
+  `COALESCE(technician_uuid::text, e.technician_id::text, tech_id)`; company-wide reads keep unmapped
+  legacy rows. Applied uniformly across all 5 re-keyed modules.
+Verified albusto_test: `baseLocationStructured` green; new `technicianRekeyEmptyDirectory.db.test.js`
+proves write→read round-trips for a legacy id with ZERO identity across every surface + tenant fence +
+backfill-transition parity; independent architect probe (empty-dir round-trip + tenant fence) green;
+full 97-suite blast-radius clean (the only reds are 10 pre-existing seed-dependent suites that fail
+identically on the pre-ZB-DECOUPLE base commit). Sabotage: re-add the throw → empty-dir test reds → restore.
+
 ### T4 (native roster + mode switch) — DONE, commit 6fe52fee
 `TECHNICIAN_DIRECTORY_MODE=legacy|compare|native` (default legacy) + `TECHNICIAN_DIRECTORY_COMPANY_IDS`
 allowlist, fail-closed (parse error / unknown company → legacy). Roster: `native` = `listActiveTechnicians`
@@ -302,6 +324,35 @@ Rebuild recipe (no local psql client; use node `pg`): create db `albusto_test`; 
 'docker exec albusto-postgres-1 pg_dump -U albusto -d albusto --schema-only --no-owner --no-privileges'`
 → strip lines matching `^\\` and `transaction_timeout` (PG17→PG15 portability) → load via node → apply mig 240.
 
+
+## Phase A completeness audit (2026-08-06) — findings, fixes, deferred
+An adversarial gap-audit + a 97-suite import-based blast-radius run + real-DB probing were run before
+declaring Phase A done. Net: Phase A backend is complete and safe; the audit caught one would-be
+prod-breaker (fixed in T3b-4) and a set of genuinely later-phase items (recorded here so nothing is lost).
+
+**Fixed now:** T3b-3 (profiles re-key + base-locations roster adapter), T3b-4 (CRITICAL empty-directory
+degradation — see above), the `baseLocationStructured` stale mock, and the hard-coded ZB key removed from
+`scripts/search_part_numbers.js` (owner rotates the live secret; it remains in git history).
+
+**Deferred — remaining before a full native cutover (NOT Phase A blockers; mostly frontend / later phase):**
+1. **Frontend roster still bypasses the mode switch** — `/api/zenbooker/team-members` (routes/zenbooker.js)
+   and the hooks `useProviders.ts` / `useScheduleData.ts` / `CustomTimeModal.tsx` fetch the ZB roster
+   directly. In native mode the backend serves native, but these UI surfaces would still hit ZB. Last-mile
+   cutover wiring (Phase C / frontend).
+2. **createFromSlot input validation** — `/schedule/items/from-slot` writes a client `assignee_id` /
+   `assigned_provider_user_ids` straight to the authz mirror without resolving through the crm_users plane.
+   Pre-existing (Phase A did not touch it); harden before native cutover so a native uuid cannot be injected.
+3. **Admin re-link doesn't update the native map** — routes/users.js bridge edits update the legacy
+   `company_user_profiles` bridge but not `technicians.crm_user_id` / the external map (only the backfill CLI
+   calls `linkCrmUser`). Phase C native-maintenance.
+4. **Native directory is import-only** — no production route to create/rename/activate/link a native
+   technician; seeded solely by the backfill CLI. Phase C.
+5. **Cutover invariants are procedural** — `native` mode activates without code-enforcing a successful
+   backfill/compare. Fail-closed to legacy on errors; harden if desired.
+6. **ZB client stays on the global (master) account** (zenbookerClient.js getClient) and logs full ZB
+   create payloads (PII). OUT OF SCOPE per owner ("fix all marketplace tenant-isolation EXCEPT Zenbooker");
+   belongs to Phase E/F.
+7. Mig 239 rollback missing (below); `zbJobsSyncCron` remains a pre-existing stub.
 
 ### Debt surfaced
 - mig 239 (`technician_area_wildcards`, shipped 2026-08-05) has no `rollback_239_*.sql` — add
