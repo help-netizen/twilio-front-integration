@@ -19,9 +19,13 @@ function invalidTechnicianIdentityError() {
 }
 
 async function resolveTechnicianIdentity(companyId, techId, { required = true } = {}) {
-    const id = String(techId);
+    const id = techId == null ? '' : String(techId).trim();
+    if (!id) {
+        if (!required) return null;
+        throw invalidTechnicianIdentityError();
+    }
     if (id === COMPANY_BASE_ID) {
-        return { externalId: id, technicianUuid: null };
+        return { externalId: id, technicianUuid: null, publicId: id };
     }
     if (UUID_RE.test(id)) {
         const technicianUuid = id.toLowerCase();
@@ -30,18 +34,18 @@ async function resolveTechnicianIdentity(companyId, techId, { required = true } 
             'zenbooker',
             technicianUuid
         );
-        return { externalId: externalId || technicianUuid, technicianUuid };
+        return { externalId: externalId || technicianUuid, technicianUuid, publicId: id };
     }
     const technicianUuid = await directoryQueries.resolveExternalToUuid(
         companyId,
         'zenbooker',
         id
     );
-    if (!technicianUuid) {
-        if (!required) return null;
-        throw invalidTechnicianIdentityError();
-    }
-    return { externalId: id, technicianUuid: String(technicianUuid).toLowerCase() };
+    return {
+        externalId: id,
+        technicianUuid: technicianUuid ? String(technicianUuid).toLowerCase() : null,
+        publicId: id,
+    };
 }
 
 let schemaReady = false;
@@ -77,7 +81,7 @@ async function listByCompany(companyId) {
                 END AS tech_id,
                 b.lat, b.lng, b.label, b.address,
                 b.street, b.apt, b.city, b.state, b.zip,
-                b.created_at, b.updated_at
+                b.created_at, b.updated_at, b.technician_uuid
          FROM base_locations b
          LEFT JOIN technician_external_identities e
           ON b.technician_uuid IS NULL
@@ -94,10 +98,6 @@ async function listByCompany(companyId) {
              ORDER BY mapped.created_at ASC, mapped.external_id ASC
              LIMIT 1
          ) public_identity ON TRUE
-         WHERE (
-                b.tech_id = '__company__'
-                OR COALESCE(b.technician_uuid, e.technician_id) IS NOT NULL
-           )
          ORDER BY tech_id`,
         [companyId]
     );
@@ -123,7 +123,7 @@ async function upsert(companyId, techId, { lat, lng, label, address, street, apt
                  updated_at = NOW()
              WHERE b.company_id = $1
                AND (
-                    ($3::uuid IS NULL AND b.tech_id = $2)
+                    ($3::uuid IS NULL AND b.technician_uuid IS NULL AND b.tech_id = $2)
                     OR b.technician_uuid = $3::uuid
                     OR (
                         b.technician_uuid IS NULL
@@ -186,7 +186,7 @@ async function remove(companyId, techId) {
         `DELETE FROM technician_base_locations b
          WHERE b.company_id = $1
            AND (
-                ($3::uuid IS NULL AND b.tech_id = $2)
+                ($3::uuid IS NULL AND b.technician_uuid IS NULL AND b.tech_id = $2)
                 OR b.technician_uuid = $3::uuid
                 OR (
                     b.technician_uuid IS NULL

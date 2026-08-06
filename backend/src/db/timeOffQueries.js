@@ -30,7 +30,11 @@ function invalidTechnicianIdentityError() {
 }
 
 async function resolveTechnicianIdentity(companyId, technicianId, { required = true } = {}) {
-    const id = String(technicianId);
+    const id = technicianId == null ? '' : String(technicianId).trim();
+    if (!id) {
+        if (!required) return null;
+        throw invalidTechnicianIdentityError();
+    }
     if (UUID_RE.test(id)) {
         const technicianUuid = id.toLowerCase();
         const externalId = await directoryQueries.resolveUuidToExternal(
@@ -38,18 +42,18 @@ async function resolveTechnicianIdentity(companyId, technicianId, { required = t
             'zenbooker',
             technicianUuid
         );
-        return { externalId: externalId || technicianUuid, technicianUuid };
+        return { externalId: externalId || technicianUuid, technicianUuid, publicId: id };
     }
     const technicianUuid = await directoryQueries.resolveExternalToUuid(
         companyId,
         'zenbooker',
         id
     );
-    if (!technicianUuid) {
-        if (!required) return null;
-        throw invalidTechnicianIdentityError();
-    }
-    return { externalId: id, technicianUuid: String(technicianUuid).toLowerCase() };
+    return {
+        externalId: id,
+        technicianUuid: technicianUuid ? String(technicianUuid).toLowerCase() : null,
+        publicId: id,
+    };
 }
 
 /**
@@ -67,7 +71,7 @@ async function resolveTechnicianIdentity(companyId, technicianId, { required = t
  */
 async function listRange(companyId, { from, to, technicianId } = {}) {
     const params = [companyId, from, to];
-    let technicianUuid = null;
+    let technicianMatchKey = null;
     if (technicianId) {
         const identity = await resolveTechnicianIdentity(
             companyId,
@@ -75,12 +79,17 @@ async function listRange(companyId, { from, to, technicianId } = {}) {
             { required: false }
         );
         if (!identity) return [];
-        technicianUuid = identity.technicianUuid;
-        params.push(technicianUuid);
+        technicianMatchKey = identity.technicianUuid || identity.externalId;
+        params.push(technicianMatchKey);
     }
     let sql = `WITH resolved AS (
              SELECT t.*,
-                    COALESCE(t.technician_uuid, e.technician_id) AS resolved_technician_uuid
+                    COALESCE(t.technician_uuid, e.technician_id) AS resolved_technician_uuid,
+                    COALESCE(
+                        t.technician_uuid::text,
+                        e.technician_id::text,
+                        t.technician_id
+                    ) AS resolved_match_key
              FROM technician_time_off t
              LEFT JOIN technician_external_identities e
                ON t.technician_uuid IS NULL
@@ -104,11 +113,10 @@ async function listRange(companyId, { from, to, technicianId } = {}) {
                AND mapped.technician_id = r.resolved_technician_uuid
              ORDER BY mapped.created_at ASC, mapped.external_id ASC
              LIMIT 1
-         ) public_identity ON TRUE
-         WHERE r.resolved_technician_uuid IS NOT NULL`;
-    if (technicianUuid) {
+         ) public_identity ON TRUE`;
+    if (technicianMatchKey) {
         sql += `
-           AND r.resolved_technician_uuid = $4::uuid`;
+         WHERE r.resolved_match_key = $4::text`;
     }
     sql += `
          ORDER BY r.starts_at ASC, r.id ASC`;

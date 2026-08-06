@@ -41,7 +41,11 @@ async function listTargets(companyId) {
 async function listValidAssignments(companyId) {
     const [districtResult, radiusResult] = await Promise.all([
         db.query(
-            `SELECT COALESCE(a.technician_uuid, e.technician_id) AS technician_id,
+            `SELECT COALESCE(
+                        a.technician_uuid::text,
+                        e.technician_id::text,
+                        a.technician_id
+                    ) AS technician_id,
                     a.district_name
              FROM technician_district_assignments a
              LEFT JOIN technician_external_identities e
@@ -50,7 +54,6 @@ async function listValidAssignments(companyId) {
               AND e.source = 'zenbooker'
               AND e.external_id = a.technician_id
              WHERE a.company_id = $1
-               AND COALESCE(a.technician_uuid, e.technician_id) IS NOT NULL
                AND EXISTS (
                     SELECT 1
                     FROM service_territories st
@@ -61,7 +64,11 @@ async function listValidAssignments(companyId) {
             [companyId]
         ),
         db.query(
-            `SELECT COALESCE(a.technician_uuid, e.technician_id) AS technician_id,
+            `SELECT COALESCE(
+                        a.technician_uuid::text,
+                        e.technician_id::text,
+                        a.technician_id
+                    ) AS technician_id,
                     a.radius_id
              FROM technician_radius_assignments a
              LEFT JOIN technician_external_identities e
@@ -73,7 +80,6 @@ async function listValidAssignments(companyId) {
                ON r.company_id = a.company_id
               AND r.id = a.radius_id
              WHERE a.company_id = $1
-               AND COALESCE(a.technician_uuid, e.technician_id) IS NOT NULL
              ORDER BY a.technician_id, a.radius_id`,
             [companyId]
         ),
@@ -99,7 +105,8 @@ function invalidTechnicianIdentityError(message = 'Technician identity not found
 }
 
 async function resolveTechnicianIdentity(companyId, technicianId) {
-    const id = String(technicianId);
+    const id = technicianId == null ? '' : String(technicianId).trim();
+    if (!id) throw invalidTechnicianIdentityError();
     if (UUID_RE.test(id)) {
         const technicianUuid = id.toLowerCase();
         const externalId = await directoryQueries.resolveUuidToExternal(
@@ -107,28 +114,32 @@ async function resolveTechnicianIdentity(companyId, technicianId) {
             'zenbooker',
             technicianUuid
         );
-        return { externalId: externalId || technicianUuid, technicianUuid };
+        return { externalId: externalId || technicianUuid, technicianUuid, publicId: id };
     }
     const technicianUuid = await directoryQueries.resolveExternalToUuid(
         companyId,
         'zenbooker',
         id
     );
-    if (!technicianUuid) throw invalidTechnicianIdentityError();
-    return { externalId: id, technicianUuid: String(technicianUuid).toLowerCase() };
+    return {
+        externalId: id,
+        technicianUuid: technicianUuid ? String(technicianUuid).toLowerCase() : null,
+        publicId: id,
+    };
 }
 
 async function resolveTechnicianIdentities(companyId, technicianIds) {
     const identities = await Promise.all(
         uniqueStrings(technicianIds).map(id => resolveTechnicianIdentity(companyId, id))
     );
-    const byUuid = new Map();
+    const byMatchKey = new Map();
     for (const identity of identities) {
-        if (!byUuid.has(identity.technicianUuid)) {
-            byUuid.set(identity.technicianUuid, identity);
+        const matchKey = identity.technicianUuid || identity.externalId;
+        if (!byMatchKey.has(matchKey)) {
+            byMatchKey.set(matchKey, identity);
         }
     }
-    return Array.from(byUuid.values());
+    return Array.from(byMatchKey.values());
 }
 
 async function assertDistricts(client, companyId, districtNames) {
@@ -170,7 +181,8 @@ async function replaceTechnicianDistricts(companyId, technicianId, districtNames
             `DELETE FROM technician_district_assignments a
              WHERE a.company_id = $1
                AND (
-                    a.technician_uuid = $2::uuid
+                    ($3::uuid IS NULL AND a.technician_uuid IS NULL AND a.technician_id = $2)
+                    OR a.technician_uuid = $3::uuid
                     OR (
                         a.technician_uuid IS NULL
                         AND EXISTS (
@@ -179,11 +191,11 @@ async function replaceTechnicianDistricts(companyId, technicianId, districtNames
                             WHERE e.company_id = a.company_id
                               AND e.source = 'zenbooker'
                               AND e.external_id = a.technician_id
-                              AND e.technician_id = $2::uuid
+                              AND e.technician_id = $3::uuid
                         )
                     )
                )`,
-            [companyId, identity.technicianUuid]
+            [companyId, identity.externalId, identity.technicianUuid]
         );
         if (targets.length > 0) {
             await client.query(
@@ -213,7 +225,8 @@ async function replaceTechnicianRadii(companyId, technicianId, radiusIds, create
             `DELETE FROM technician_radius_assignments a
              WHERE a.company_id = $1
                AND (
-                    a.technician_uuid = $2::uuid
+                    ($3::uuid IS NULL AND a.technician_uuid IS NULL AND a.technician_id = $2)
+                    OR a.technician_uuid = $3::uuid
                     OR (
                         a.technician_uuid IS NULL
                         AND EXISTS (
@@ -222,11 +235,11 @@ async function replaceTechnicianRadii(companyId, technicianId, radiusIds, create
                             WHERE e.company_id = a.company_id
                               AND e.source = 'zenbooker'
                               AND e.external_id = a.technician_id
-                              AND e.technician_id = $2::uuid
+                              AND e.technician_id = $3::uuid
                         )
                     )
                )`,
-            [companyId, identity.technicianUuid]
+            [companyId, identity.externalId, identity.technicianUuid]
         );
         if (targets.length > 0) {
             await client.query(
@@ -324,15 +337,18 @@ async function replaceRadiusTechnicians(companyId, radiusId, technicianIds, crea
  */
 async function listWildcardTechnicians(companyId) {
     const { rows } = await db.query(
-        `SELECT COALESCE(w.technician_uuid, e.technician_id) AS technician_id
+        `SELECT COALESCE(
+                    w.technician_uuid::text,
+                    e.technician_id::text,
+                    w.technician_id
+                ) AS technician_id
          FROM technician_area_wildcards w
          LEFT JOIN technician_external_identities e
            ON w.technician_uuid IS NULL
           AND e.company_id = w.company_id
           AND e.source = 'zenbooker'
           AND e.external_id = w.technician_id
-         WHERE w.company_id = $1
-           AND COALESCE(w.technician_uuid, e.technician_id) IS NOT NULL`,
+         WHERE w.company_id = $1`,
         [companyId]
     );
     return rows.map(row => String(row.technician_id));
@@ -359,7 +375,8 @@ async function setWildcardTechnician(companyId, technicianId, servesAll, created
         `DELETE FROM technician_area_wildcards w
          WHERE w.company_id = $1
            AND (
-                w.technician_uuid = $2::uuid
+                ($3::uuid IS NULL AND w.technician_uuid IS NULL AND w.technician_id = $2)
+                OR w.technician_uuid = $3::uuid
                 OR (
                     w.technician_uuid IS NULL
                     AND EXISTS (
@@ -368,11 +385,11 @@ async function setWildcardTechnician(companyId, technicianId, servesAll, created
                         WHERE e.company_id = w.company_id
                           AND e.source = 'zenbooker'
                           AND e.external_id = w.technician_id
-                          AND e.technician_id = $2::uuid
+                          AND e.technician_id = $3::uuid
                     )
                 )
            )`,
-        [companyId, identity.technicianUuid]
+        [companyId, identity.externalId, identity.technicianUuid]
     );
 }
 

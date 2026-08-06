@@ -5,7 +5,7 @@
  * or by geocoding an address.
  */
 const queries = require('../db/technicianBaseLocationQueries');
-const zenbookerClient = require('./zenbookerClient');
+const technicianRosterService = require('./technicianRosterService');
 const googlePlacesService = require('./googlePlacesService');
 
 function isFiniteNum(n) {
@@ -41,8 +41,8 @@ function composeAddress({ street, apt, city, state, zip }) {
 }
 
 /**
- * Roster of service-provider technicians (from Zenbooker), LEFT-merged with stored
- * base locations. If Zenbooker is unavailable, degrade to just the stored rows.
+ * Roster of service-provider technicians, LEFT-merged with stored base locations.
+ * If the mode-aware roster is unavailable, degrade to just the stored rows.
  * Shape: [{ tech_id, name, lat, lng, label, address, has_base }]
  */
 async function list(companyId) {
@@ -51,12 +51,13 @@ async function list(companyId) {
 
     let members = null;
     try {
-        members = await zenbookerClient.getTeamMembers(
-            { service_provider: true, deactivated: false },
-            companyId
-        );
+        const roster = await technicianRosterService.listActive(companyId);
+        members = Array.isArray(roster) ? roster.map(member => ({
+            id: member.tech_id ?? member.id,
+            name: member.name || null,
+        })) : null;
     } catch (err) {
-        console.warn('[TechBaseLocations] Zenbooker roster unavailable:', err.message);
+        console.warn('[TechBaseLocations] Technician roster unavailable:', err.message);
         members = null;
     }
 
@@ -84,10 +85,9 @@ async function list(companyId) {
         const storageId = identity?.externalId || techId;
         seen.add(storageId);
         const base = byId.get(storageId);
-        const name = [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.name || null;
         return {
             tech_id: techId,
-            name,
+            name: m.name,
             lat: base ? base.lat : null,
             lng: base ? base.lng : null,
             label: base ? (base.label || null) : null,

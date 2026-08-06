@@ -7,7 +7,7 @@ const directoryQueries = require('./technicianDirectoryQueries');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const SELECT_COLUMNS = `s.resolved_technician_uuid AS technician_id,
+const SELECT_COLUMNS = `s.resolved_match_key AS technician_id,
         s.inherits_company_schedule,
         s.created_by, s.updated_by, s.created_at, s.updated_at,
         d.day_of_week, d.is_working, d.work_start_time, d.work_end_time`;
@@ -20,7 +20,11 @@ function invalidTechnicianIdentityError() {
 }
 
 async function resolveTechnicianIdentity(companyId, technicianId, { required = true } = {}) {
-    const publicId = String(technicianId);
+    const publicId = technicianId == null ? '' : String(technicianId).trim();
+    if (!publicId) {
+        if (!required) return null;
+        throw invalidTechnicianIdentityError();
+    }
     if (UUID_RE.test(publicId)) {
         const technicianUuid = publicId.toLowerCase();
         const externalId = await directoryQueries.resolveUuidToExternal(
@@ -39,14 +43,10 @@ async function resolveTechnicianIdentity(companyId, technicianId, { required = t
         'zenbooker',
         publicId
     );
-    if (!technicianUuid) {
-        if (!required) return null;
-        throw invalidTechnicianIdentityError();
-    }
     return {
         publicId,
         externalId: publicId,
-        technicianUuid: String(technicianUuid).toLowerCase(),
+        technicianUuid: technicianUuid ? String(technicianUuid).toLowerCase() : null,
     };
 }
 
@@ -57,13 +57,20 @@ async function listByTechnicianIds(companyId, technicianIds) {
         ids.map(id => resolveTechnicianIdentity(companyId, id, { required: false }))
     )).filter(Boolean);
     if (identities.length === 0) return [];
-    const publicIdByUuid = new Map(
-        identities.map(identity => [identity.technicianUuid, identity.publicId])
+    const publicIdByMatchKey = new Map(
+        identities.map(identity => [
+            identity.technicianUuid || identity.externalId,
+            identity.publicId,
+        ])
     );
     const { rows } = await db.query(
         `WITH resolved_schedules AS (
              SELECT s.*,
-                    COALESCE(s.technician_uuid, e.technician_id) AS resolved_technician_uuid
+                    COALESCE(
+                        s.technician_uuid::text,
+                        e.technician_id::text,
+                        s.technician_id
+                    ) AS resolved_match_key
              FROM technician_work_schedules s
              LEFT JOIN technician_external_identities e
                ON s.technician_uuid IS NULL
@@ -73,7 +80,11 @@ async function listByTechnicianIds(companyId, technicianIds) {
              WHERE s.company_id = $1
          ), resolved_days AS (
              SELECT d.*,
-                    COALESCE(d.technician_uuid, e.technician_id) AS resolved_technician_uuid
+                    COALESCE(
+                        d.technician_uuid::text,
+                        e.technician_id::text,
+                        d.technician_id
+                    ) AS resolved_match_key
              FROM technician_work_schedule_days d
              LEFT JOIN technician_external_identities e
                ON d.technician_uuid IS NULL
@@ -86,14 +97,17 @@ async function listByTechnicianIds(companyId, technicianIds) {
          FROM resolved_schedules s
          LEFT JOIN resolved_days d
            ON d.company_id = s.company_id
-          AND d.resolved_technician_uuid = s.resolved_technician_uuid
-         WHERE s.resolved_technician_uuid = ANY($2::uuid[])
-         ORDER BY s.resolved_technician_uuid, d.day_of_week`,
-        [companyId, identities.map(identity => identity.technicianUuid)]
+          AND d.resolved_match_key = s.resolved_match_key
+         WHERE s.resolved_match_key = ANY($2::text[])
+         ORDER BY s.resolved_match_key, d.day_of_week`,
+        [
+            companyId,
+            identities.map(identity => identity.technicianUuid || identity.externalId),
+        ]
     );
     return rows.map(row => ({
         ...row,
-        technician_id: publicIdByUuid.get(String(row.technician_id)) || String(row.technician_id),
+        technician_id: publicIdByMatchKey.get(String(row.technician_id)) || String(row.technician_id),
     }));
 }
 
@@ -112,13 +126,14 @@ async function replace(companyId, technicianId, { inheritsCompanySchedule, days,
         await client.query('BEGIN');
         let parent = await client.query(
             `UPDATE technician_work_schedules s
-             SET technician_uuid = $2::uuid,
-                 inherits_company_schedule = $3,
-                 updated_by = $4,
+             SET technician_uuid = $3::uuid,
+                 inherits_company_schedule = $4,
+                 updated_by = $5,
                  updated_at = NOW()
              WHERE s.company_id = $1
                AND (
-                    s.technician_uuid = $2::uuid
+                    ($3::uuid IS NULL AND s.technician_uuid IS NULL AND s.technician_id = $2)
+                    OR s.technician_uuid = $3::uuid
                     OR (
                         s.technician_uuid IS NULL
                         AND EXISTS (
@@ -127,13 +142,14 @@ async function replace(companyId, technicianId, { inheritsCompanySchedule, days,
                             WHERE e.company_id = s.company_id
                               AND e.source = 'zenbooker'
                               AND e.external_id = s.technician_id
-                              AND e.technician_id = $2::uuid
+                              AND e.technician_id = $3::uuid
                         )
                     )
                )
              RETURNING s.technician_id`,
             [
                 companyId,
+                identity.externalId,
                 identity.technicianUuid,
                 Boolean(inheritsCompanySchedule),
                 updatedBy || null,
@@ -166,10 +182,11 @@ async function replace(companyId, technicianId, { inheritsCompanySchedule, days,
 
         await client.query(
             `UPDATE technician_work_schedule_days d
-             SET technician_uuid = $2::uuid
+             SET technician_uuid = $3::uuid
              WHERE d.company_id = $1
                AND (
-                    d.technician_uuid = $2::uuid
+                    ($3::uuid IS NULL AND d.technician_uuid IS NULL AND d.technician_id = $2)
+                    OR d.technician_uuid = $3::uuid
                     OR (
                         d.technician_uuid IS NULL
                         AND EXISTS (
@@ -178,19 +195,33 @@ async function replace(companyId, technicianId, { inheritsCompanySchedule, days,
                             WHERE e.company_id = d.company_id
                               AND e.source = 'zenbooker'
                               AND e.external_id = d.technician_id
-                              AND e.technician_id = $2::uuid
+                              AND e.technician_id = $3::uuid
                         )
                     )
                )`,
-            [companyId, identity.technicianUuid]
+            [companyId, identity.externalId, identity.technicianUuid]
         );
 
         if (!inheritsCompanySchedule) {
             await client.query(
                 `DELETE FROM technician_work_schedule_days d
                  WHERE d.company_id = $1
-                   AND d.technician_uuid = $2::uuid`,
-                [companyId, identity.technicianUuid]
+                   AND (
+                        ($3::uuid IS NULL AND d.technician_uuid IS NULL AND d.technician_id = $2)
+                        OR d.technician_uuid = $3::uuid
+                        OR (
+                            d.technician_uuid IS NULL
+                            AND EXISTS (
+                                SELECT 1
+                                FROM technician_external_identities e
+                                WHERE e.company_id = d.company_id
+                                  AND e.source = 'zenbooker'
+                                  AND e.external_id = d.technician_id
+                                  AND e.technician_id = $3::uuid
+                            )
+                        )
+                   )`,
+                [companyId, identity.externalId, identity.technicianUuid]
             );
 
             const params = [companyId, identity.externalId, identity.technicianUuid];

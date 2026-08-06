@@ -60,7 +60,7 @@ describe('technicianWorkScheduleQueries', () => {
     it('scopes schedule reads by company and active technician ids', async () => {
         await queries.listByTechnicianIds(COMPANY, ['tech-1', 'tech-2']);
         expect(db.query).toHaveBeenCalledWith(
-            expect.stringMatching(/COALESCE\(s\.technician_uuid, e\.technician_id\)[\s\S]*LEFT JOIN technician_external_identities e[\s\S]*e\.company_id = s\.company_id[\s\S]*WHERE s\.company_id = \$1[\s\S]*s\.resolved_technician_uuid = ANY\(\$2::uuid\[\]\)/),
+            expect.stringMatching(/COALESCE\([\s\S]*s\.technician_uuid::text,[\s\S]*e\.technician_id::text,[\s\S]*s\.technician_id[\s\S]*\) AS resolved_match_key[\s\S]*LEFT JOIN technician_external_identities e[\s\S]*e\.company_id = s\.company_id[\s\S]*WHERE s\.company_id = \$1[\s\S]*s\.resolved_match_key = ANY\(\$2::text\[\]\)/),
             [COMPANY, [TECH_UUID_1, TECH_UUID_2]]
         );
     });

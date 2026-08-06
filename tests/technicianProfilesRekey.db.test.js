@@ -1,0 +1,195 @@
+'use strict';
+
+jest.mock('../backend/src/services/storageService', () => ({
+    generateStorageKey: jest.fn(),
+    uploadFile: jest.fn(),
+    deleteFile: jest.fn(),
+    getPresignedUrl: jest.fn(),
+}));
+
+const { randomUUID } = require('crypto');
+const db = require('../backend/src/db/connection');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
+const storageService = require('../backend/src/services/storageService');
+const service = require('../backend/src/services/technicianProfilesService');
+
+jest.setTimeout(60000);
+
+describe('technician profile native UUID re-key (real PostgreSQL)', () => {
+    const companyA = randomUUID();
+    const companyB = randomUUID();
+    const suffix = randomUUID();
+    const sharedExternal = `zb-profile-shared-${suffix}`;
+    const writeExternal = `zb-profile-write-${suffix}`;
+    let legacyTechnician;
+    let foreignTechnician;
+    let writeTechnician;
+    let nativeOnlyTechnician;
+
+    function displayValues(profile) {
+        return profile && {
+            name: profile.name,
+            has_photo: profile.has_photo,
+            photo_storage_key: profile.photo_storage_key,
+        };
+    }
+
+    beforeAll(async () => {
+        await db.query(
+            `INSERT INTO companies (id, name, slug, status, timezone)
+             VALUES ($1, 'Profile rekey DB A', $3, 'active', 'America/New_York'),
+                    ($2, 'Profile rekey DB B', $4, 'active', 'America/New_York')`,
+            [companyA, companyB, `profile-rekey-a-${suffix}`, `profile-rekey-b-${suffix}`]
+        );
+        legacyTechnician = await directoryQueries.createTechnician({
+            companyId: companyA,
+            displayName: 'Legacy Profile Tech',
+        });
+        foreignTechnician = await directoryQueries.createTechnician({
+            companyId: companyB,
+            displayName: 'Foreign Profile Tech',
+        });
+        writeTechnician = await directoryQueries.createTechnician({
+            companyId: companyA,
+            displayName: 'Write Profile Tech',
+        });
+        nativeOnlyTechnician = await directoryQueries.createTechnician({
+            companyId: companyA,
+            displayName: 'Native-only Profile Tech',
+        });
+        await Promise.all([
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyA,
+                source: 'zenbooker',
+                externalId: sharedExternal,
+                technicianId: legacyTechnician.id,
+            }),
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyB,
+                source: 'zenbooker',
+                externalId: sharedExternal,
+                technicianId: foreignTechnician.id,
+            }),
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyA,
+                source: 'zenbooker',
+                externalId: writeExternal,
+                technicianId: writeTechnician.id,
+            }),
+        ]);
+        await db.query(
+            `INSERT INTO technician_profiles
+                (company_id, tech_id, technician_uuid, name, photo_storage_key)
+             VALUES ($1, $3, NULL, 'Local legacy profile', 'profiles/local-old.jpg'),
+                    ($2, $3, NULL, 'Foreign legacy profile', 'profiles/foreign-old.jpg'),
+                    ($1, $4, NULL, 'Write legacy profile', 'profiles/write-old.jpg')`,
+            [companyA, companyB, sharedExternal, writeExternal]
+        );
+        storageService.generateStorageKey.mockImplementation(
+            (_companyId, _entity, techId) => `profiles/${techId}-${suffix}.jpg`
+        );
+        storageService.uploadFile.mockResolvedValue();
+        storageService.deleteFile.mockResolvedValue();
+    });
+
+    test('read-by-uuid and read-by-ZB-id return the same legacy profile', async () => {
+        const viaUuid = await service.listProfiles(companyA, [legacyTechnician.id]);
+        const viaExternal = await service.listProfiles(companyA, [sharedExternal]);
+        expect(viaUuid).toHaveLength(1);
+        expect(viaExternal).toHaveLength(1);
+        expect(displayValues(viaUuid[0])).toEqual(displayValues(viaExternal[0]));
+        expect(displayValues(viaUuid[0])).toMatchObject({
+            name: 'Local legacy profile',
+            has_photo: true,
+        });
+
+        const oneViaUuid = await service.getProfile(companyA, legacyTechnician.id);
+        const oneViaExternal = await service.getProfile(companyA, sharedExternal);
+        expect(displayValues(oneViaUuid)).toEqual(displayValues(oneViaExternal));
+        expect(oneViaUuid.photo_storage_key).toBe('profiles/local-old.jpg');
+    });
+
+    test('same ZB id and a foreign UUID never cross the company-scoped identity join', async () => {
+        await expect(service.listProfiles(companyA, [foreignTechnician.id])).resolves.toEqual([]);
+        await expect(service.getProfile(companyA, foreignTechnician.id)).resolves.toBeNull();
+
+        const local = await service.getProfile(companyA, sharedExternal);
+        const foreign = await service.getProfile(companyB, sharedExternal);
+        expect(local.name).toBe('Local legacy profile');
+        expect(foreign.name).toBe('Foreign legacy profile');
+    });
+
+    test('upload by UUID dual-writes the native UUID onto an existing legacy row', async () => {
+        await service.uploadPhoto(companyA, writeTechnician.id, {
+            name: 'Updated write profile',
+            file: {
+                originalname: 'photo.jpg',
+                mimetype: 'image/jpeg',
+                buffer: Buffer.from('profile-photo'),
+            },
+        });
+
+        const stored = (await db.query(
+            `SELECT tech_id, technician_uuid, name, photo_storage_key
+             FROM technician_profiles
+             WHERE company_id = $1 AND tech_id = $2`,
+            [companyA, writeExternal]
+        )).rows[0];
+        expect(stored).toEqual({
+            tech_id: writeExternal,
+            technician_uuid: writeTechnician.id,
+            name: 'Updated write profile',
+            photo_storage_key: `profiles/${writeExternal}-${suffix}.jpg`,
+        });
+        expect(storageService.uploadFile).toHaveBeenCalled();
+        expect(storageService.deleteFile).toHaveBeenCalledWith('profiles/write-old.jpg');
+    });
+
+    test('a native-only technician reads and writes by UUID without a ZB identity', async () => {
+        await service.uploadPhoto(companyA, nativeOnlyTechnician.id, {
+            name: 'Native-only profile',
+            file: {
+                originalname: 'native.png',
+                mimetype: 'image/png',
+                buffer: Buffer.from('native-profile-photo'),
+            },
+        });
+
+        const stored = (await db.query(
+            `SELECT tech_id, technician_uuid, name
+             FROM technician_profiles
+             WHERE company_id = $1 AND technician_uuid = $2`,
+            [companyA, nativeOnlyTechnician.id]
+        )).rows[0];
+        expect(stored).toEqual({
+            tech_id: nativeOnlyTechnician.id,
+            technician_uuid: nativeOnlyTechnician.id,
+            name: 'Native-only profile',
+        });
+        await expect(service.getProfile(companyA, nativeOnlyTechnician.id))
+            .resolves.toMatchObject({ name: 'Native-only profile' });
+    });
+
+    test('missing profile reads degrade to empty/null without throwing', async () => {
+        const missingUuid = randomUUID();
+        await expect(service.listProfiles(companyA, [missingUuid, 'unmapped-zb-id']))
+            .resolves.toEqual([]);
+        await expect(service.getProfile(companyA, missingUuid)).resolves.toBeNull();
+        await expect(service.getProfile(companyA, 'unmapped-zb-id')).resolves.toBeNull();
+    });
+
+    afterAll(async () => {
+        for (const companyId of [companyA, companyB]) {
+            await db.query(
+                'DELETE FROM technician_profiles WHERE company_id = $1',
+                [companyId]
+            ).catch(() => {});
+            await db.query('DELETE FROM technicians WHERE company_id = $1', [companyId]).catch(() => {});
+        }
+        await db.query(
+            'DELETE FROM companies WHERE id = ANY($1::uuid[])',
+            [[companyA, companyB]]
+        ).catch(() => {});
+        try { await db.pool.end(); } catch (_) { /* already closed */ }
+    });
+});

@@ -7,7 +7,44 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../db/connection');
+const directoryQueries = require('../db/technicianDirectoryQueries');
 const storageService = require('./storageService');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function invalidTechnicianIdentityError() {
+    const error = new Error('Technician identity not found');
+    error.code = 'TECHNICIAN_IDENTITY_NOT_FOUND';
+    error.httpStatus = 404;
+    return error;
+}
+
+async function resolveTechnicianIdentity(companyId, techId, { required = true } = {}) {
+    const id = techId == null ? '' : String(techId).trim();
+    if (!id) {
+        if (!required) return null;
+        throw invalidTechnicianIdentityError();
+    }
+    if (UUID_RE.test(id)) {
+        const technicianUuid = id.toLowerCase();
+        const externalId = await directoryQueries.resolveUuidToExternal(
+            companyId,
+            'zenbooker',
+            technicianUuid
+        );
+        return { externalId: externalId || technicianUuid, technicianUuid, publicId: id };
+    }
+    const technicianUuid = await directoryQueries.resolveExternalToUuid(
+        companyId,
+        'zenbooker',
+        id
+    );
+    return {
+        externalId: id,
+        technicianUuid: technicianUuid ? String(technicianUuid).toLowerCase() : null,
+        publicId: id,
+    };
+}
 
 let schemaReady = false;
 async function ensureSchema() {
@@ -22,45 +59,132 @@ async function listProfiles(companyId, technicianIds) {
     await ensureSchema();
     const ids = Array.from(new Set((technicianIds || []).map(String).filter(Boolean)));
     if (ids.length === 0) return [];
+    const identities = (await Promise.all(ids.map(async id => ({
+        publicId: id,
+        identity: await resolveTechnicianIdentity(companyId, id, { required: false }),
+    })))).filter(item => item.identity);
+    if (identities.length === 0) return [];
+    const publicIdByMatchKey = new Map(identities.map(item => [
+        item.identity.technicianUuid || item.identity.externalId,
+        item.publicId,
+    ]));
     const { rows } = await db.query(
-        `SELECT tech_id, name, (photo_storage_key IS NOT NULL) AS has_photo
-         FROM technician_profiles
-         WHERE company_id = $1
-           AND tech_id = ANY($2::text[])
-         ORDER BY tech_id`,
-        [companyId, ids]
+        `WITH resolved_profiles AS (
+             SELECT p.*,
+                    COALESCE(
+                        p.technician_uuid::text,
+                        e.technician_id::text,
+                        p.tech_id
+                    ) AS resolved_match_key
+             FROM technician_profiles p
+             LEFT JOIN technician_external_identities e
+               ON p.technician_uuid IS NULL
+              AND e.company_id = p.company_id
+              AND e.source = 'zenbooker'
+              AND e.external_id = p.tech_id
+             WHERE p.company_id = $1
+         )
+         SELECT resolved_match_key AS tech_id, name,
+                (photo_storage_key IS NOT NULL) AS has_photo
+         FROM resolved_profiles
+         WHERE resolved_match_key = ANY($2::text[])
+         ORDER BY resolved_match_key`,
+        [
+            companyId,
+            identities.map(item => item.identity.technicianUuid || item.identity.externalId),
+        ]
     );
-    return rows;
+    return rows.map(row => ({
+        ...row,
+        tech_id: publicIdByMatchKey.get(String(row.tech_id)) || String(row.tech_id),
+    }));
 }
 
 async function getProfile(companyId, techId) {
     await ensureSchema();
+    const identity = await resolveTechnicianIdentity(companyId, techId, { required: false });
+    if (!identity) return null;
     const { rows } = await db.query(
-        `SELECT tech_id, name, photo_storage_key FROM technician_profiles WHERE company_id = $1 AND tech_id = $2`,
-        [companyId, techId]
+        `WITH resolved_profiles AS (
+             SELECT p.*,
+                    COALESCE(
+                        p.technician_uuid::text,
+                        e.technician_id::text,
+                        p.tech_id
+                    ) AS resolved_match_key
+             FROM technician_profiles p
+             LEFT JOIN technician_external_identities e
+               ON p.technician_uuid IS NULL
+              AND e.company_id = p.company_id
+              AND e.source = 'zenbooker'
+              AND e.external_id = p.tech_id
+             WHERE p.company_id = $1
+         )
+         SELECT resolved_match_key AS tech_id, name, photo_storage_key
+         FROM resolved_profiles
+         WHERE resolved_match_key = $2::text
+         LIMIT 1`,
+        [companyId, identity.technicianUuid || identity.externalId]
     );
-    return rows[0] || null;
+    return rows[0] ? { ...rows[0], tech_id: String(techId) } : null;
 }
 
 /** Upload (or replace) a technician photo. Deletes the previous object if any. */
 async function uploadPhoto(companyId, techId, { name, file }) {
     await ensureSchema();
-    const prev = await getProfile(companyId, techId);
-    const storageKey = storageService.generateStorageKey(companyId, 'technician', techId, file.originalname || 'photo.jpg');
+    const identity = await resolveTechnicianIdentity(companyId, techId);
+    const prev = await getProfile(companyId, identity.publicId);
+    const storageKey = storageService.generateStorageKey(
+        companyId,
+        'technician',
+        identity.externalId,
+        file.originalname || 'photo.jpg'
+    );
     await storageService.uploadFile(file.buffer, file.mimetype, storageKey);
     await db.query(
-        `INSERT INTO technician_profiles (company_id, tech_id, name, photo_storage_key)
-         VALUES ($1,$2,$3,$4)
+        `WITH updated AS (
+             UPDATE technician_profiles p
+             SET technician_uuid = $3::uuid,
+                 name = COALESCE($4, p.name),
+                 photo_storage_key = $5,
+                 updated_at = NOW()
+             WHERE p.company_id = $1
+               AND (
+                    p.technician_uuid = $3::uuid
+                    OR (
+                        p.technician_uuid IS NULL
+                        AND (
+                            p.tech_id = $2
+                            OR EXISTS (
+                                SELECT 1
+                                FROM technician_external_identities e
+                                WHERE e.company_id = p.company_id
+                                  AND e.source = 'zenbooker'
+                                  AND e.external_id = p.tech_id
+                                  AND e.technician_id = $3::uuid
+                            )
+                        )
+                    )
+               )
+             RETURNING p.id
+         )
+         INSERT INTO technician_profiles
+            (company_id, tech_id, technician_uuid, name, photo_storage_key)
+         SELECT $1, $2, $3::uuid, $4, $5
+         WHERE NOT EXISTS (SELECT 1 FROM updated)
          ON CONFLICT (company_id, tech_id) DO UPDATE SET
-            name = COALESCE($3, technician_profiles.name),
+            technician_uuid = EXCLUDED.technician_uuid,
+            name = COALESCE(EXCLUDED.name, technician_profiles.name),
             photo_storage_key = EXCLUDED.photo_storage_key,
-            updated_at = NOW()`,
-        [companyId, techId, name || null, storageKey]
+            updated_at = NOW()
+         WHERE technician_profiles.technician_uuid IS NULL
+            OR technician_profiles.technician_uuid = EXCLUDED.technician_uuid`,
+        [companyId, identity.externalId, identity.technicianUuid, name || null, storageKey]
     );
     if (prev?.photo_storage_key && prev.photo_storage_key !== storageKey) {
         try { await storageService.deleteFile(prev.photo_storage_key); } catch (e) { /* best-effort */ }
     }
-    return { tech_id: techId, has_photo: true };
+    return { tech_id: String(techId), has_photo: true };
 }
 
 /**
@@ -85,4 +209,10 @@ async function getTechnicianForInvoice(companyId, invoice) {
     return { name: profile?.name || tech.name || null, photo_url };
 }
 
-module.exports = { listProfiles, getProfile, uploadPhoto, getTechnicianForInvoice };
+module.exports = {
+    listProfiles,
+    getProfile,
+    uploadPhoto,
+    getTechnicianForInvoice,
+    resolveTechnicianIdentity,
+};

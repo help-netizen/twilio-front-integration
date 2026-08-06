@@ -65,7 +65,7 @@ describe('technicianServiceAreaQueries', () => {
         const districtRead = db.query.mock.calls.find(([sql]) =>
             /FROM technician_district_assignments/.test(sql));
         expect(districtRead[0]).toMatch(/EXISTS[\s\S]*service_territories/);
-        expect(districtRead[0]).toMatch(/COALESCE\(a\.technician_uuid, e\.technician_id\)/);
+        expect(districtRead[0]).toMatch(/COALESCE\([\s\S]*a\.technician_uuid::text,[\s\S]*e\.technician_id::text,[\s\S]*a\.technician_id[\s\S]*\) AS technician_id/);
         expect(districtRead[0]).toMatch(/e\.company_id = a\.company_id/);
     });
 

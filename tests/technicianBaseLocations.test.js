@@ -13,6 +13,7 @@ jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
     resolveExternalToUuid: jest.fn(),
     resolveUuidToExternal: jest.fn(),
+    listActiveTechnicians: jest.fn(),
 }));
 
 const express = require('express');
@@ -48,11 +49,82 @@ beforeEach(() => {
     db.query.mockReset();
     zenbookerClient.getTeamMembers.mockReset();
     googlePlacesService.geocodeAddress.mockReset();
+    delete process.env.TECHNICIAN_DIRECTORY_MODE;
+    delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
     directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
     directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
+    directoryQueries.listActiveTechnicians.mockReset().mockResolvedValue([]);
     // schema bootstrap + default empty result
     db.query.mockResolvedValue({ rows: [] });
     zenbookerClient.getTeamMembers.mockResolvedValue([]);
+});
+
+afterAll(() => {
+    delete process.env.TECHNICIAN_DIRECTORY_MODE;
+    delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
+});
+
+describe('mode-aware roster merge', () => {
+    it('native mode lists a native-only technician without calling Zenbooker', async () => {
+        process.env.TECHNICIAN_DIRECTORY_MODE = 'native';
+        process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS = COMPANY_A;
+        directoryQueries.listActiveTechnicians.mockResolvedValue([{
+            id: TECH_UUID,
+            display_name: 'Native Technician',
+            active: true,
+            zenbooker_external_id: null,
+        }]);
+        db.query.mockImplementation(async sql => {
+            if (/FROM technician_base_locations/.test(String(sql))) {
+                return { rows: [{
+                    tech_id: TECH_UUID,
+                    lat: 42.36,
+                    lng: -71.06,
+                    label: 'Native home',
+                    address: '1 Native Way',
+                }] };
+            }
+            return { rows: [] };
+        });
+
+        await expect(svc.list(COMPANY_A)).resolves.toEqual([expect.objectContaining({
+            tech_id: TECH_UUID,
+            name: 'Native Technician',
+            label: 'Native home',
+            has_base: true,
+        })]);
+        expect(directoryQueries.listActiveTechnicians).toHaveBeenCalledWith(COMPANY_A);
+        expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
+    });
+
+    it('a roster failure still surfaces stored bases only', async () => {
+        db.query.mockImplementation(async sql => {
+            if (/FROM technician_base_locations/.test(String(sql))) {
+                return { rows: [{
+                    tech_id: 'stored-tech',
+                    lat: 42.37,
+                    lng: -71.07,
+                    label: 'Stored home',
+                    address: '2 Stored Way',
+                }] };
+            }
+            return { rows: [] };
+        });
+        zenbookerClient.getTeamMembers.mockRejectedValue(new Error('forced roster outage'));
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await expect(svc.list(COMPANY_A)).resolves.toEqual([expect.objectContaining({
+            tech_id: 'stored-tech',
+            name: null,
+            label: 'Stored home',
+            has_base: true,
+        })]);
+        expect(warn).toHaveBeenCalledWith(
+            '[TechBaseLocations] Technician roster unavailable:',
+            'The active Zenbooker technician roster is unavailable'
+        );
+        warn.mockRestore();
+    });
 });
 
 describe('route auth', () => {

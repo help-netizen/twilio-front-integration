@@ -355,7 +355,7 @@ describe('GET /api/schedule/time-off', () => {
         const res = await request(viewer()).get(`/api/schedule/time-off?from=${FROM}&to=${TO}&technician_id=1234567`);
         expect(res.status).toBe(200);
         const [sql, params] = selectCalls()[0];
-        expect(String(sql)).toMatch(/resolved_technician_uuid = \$4::uuid/);
+        expect(String(sql)).toMatch(/resolved_match_key = \$4::text/);
         expect(params).toEqual([COMPANY, FROM, TO, TECH_UUID]);
     });
 
@@ -375,7 +375,7 @@ describe('GET /api/schedule/time-off', () => {
 
         expect(membershipQueries.getZenbookerTeamMemberIdForUser).toHaveBeenCalledWith(COMPANY, PROVIDER_USER);
         const [sql, params] = selectCalls()[0];
-        expect(String(sql)).toMatch(/resolved_technician_uuid = \$4::uuid/);
+        expect(String(sql)).toMatch(/resolved_match_key = \$4::text/);
         expect(params[3]).toBe(TECH_UUID); // own canonical id wins
         const allParams = db.query.mock.calls.flatMap(([, p]) => p || []);
         expect(allParams).not.toContain('7654321'); // foreign id never reaches SQL

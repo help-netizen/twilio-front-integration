@@ -43,7 +43,7 @@ function normalizeAssignments(mode, values) {
 function assignmentMap(rows, key) {
     const map = new Map();
     for (const row of rows || []) {
-        const technicianId = normalizeUuid(row.technician_id);
+        const technicianId = row.technician_id == null ? '' : String(row.technician_id);
         if (!technicianId) continue;
         if (!map.has(technicianId)) map.set(technicianId, []);
         const assignment = String(row[key]);
@@ -71,6 +71,7 @@ async function normalizeRoster(companyId, roster) {
         return {
             public_id: publicId,
             technician_uuid: technicianUuid,
+            match_key: technicianUuid || publicId,
             name: technician.name || publicId,
         };
     }));
@@ -84,35 +85,33 @@ async function getAssignmentState(companyId, rosterOverride) {
         rosterOverride ? Promise.resolve(rosterOverride) : rosterService.listActive(companyId),
         queries.listWildcardTechnicians(companyId),
     ]);
-    const servesAll = new Set((wildcardIds || []).map(normalizeUuid).filter(Boolean));
+    const servesAll = new Set((wildcardIds || []).map(String));
     const activeMode = settings?.active_mode === 'radius' ? 'radius' : 'list';
     const normalizedRoster = await normalizeRoster(companyId, roster);
     const technicians = normalizedRoster.map(technician => ({
         id: technician.public_id,
         name: technician.name,
     }));
-    const activeIds = new Set(
-        normalizedRoster.map(technician => technician.technician_uuid).filter(Boolean)
+    const activeMatchKeys = new Set(
+        normalizedRoster.map(technician => technician.match_key)
     );
     const validDistricts = new Set(targets.districts.map(district => String(district.id)));
     const validRadii = new Set(targets.radii.map(radius => String(radius.id)));
     const districtsByTech = assignmentMap(
-        assignments.districts.filter(row => activeIds.has(normalizeUuid(row.technician_id))
+        assignments.districts.filter(row => activeMatchKeys.has(String(row.technician_id))
             && validDistricts.has(String(row.district_name))),
         'district_name'
     );
     const radiiByTech = assignmentMap(
-        assignments.radii.filter(row => activeIds.has(normalizeUuid(row.technician_id))
+        assignments.radii.filter(row => activeMatchKeys.has(String(row.technician_id))
             && validRadii.has(String(row.radius_id))),
         'radius_id'
     );
     const technicianAssignments = normalizedRoster.map(technician => {
-        const districtNames = districtsByTech.get(technician.technician_uuid) || [];
-        const radiusIds = radiiByTech.get(technician.technician_uuid) || [];
+        const districtNames = districtsByTech.get(technician.match_key) || [];
+        const radiusIds = radiiByTech.get(technician.match_key) || [];
         const activeAssignments = activeMode === 'radius' ? radiusIds : districtNames;
-        const servesAllTerritory = technician.technician_uuid
-            ? servesAll.has(technician.technician_uuid)
-            : false;
+        const servesAllTerritory = servesAll.has(technician.match_key);
         return {
             technician_id: technician.public_id,
             technician_name: technician.name,
