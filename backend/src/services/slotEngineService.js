@@ -341,12 +341,16 @@ async function getRecommendations(companyId, input = {}) {
             },
         };
     }
+    // ZONE-STRICT-001: "we do not cover this address" and "the scheduler is
+    // broken" are different answers and the caller deserves the right one. Both
+    // used to arrive as a bare `unavailable`, so every agent narrated a genuine
+    // coverage gap as a technical fault and promised a callback.
     if (!areaEligibility.target_resolved) {
         const active = allTechnicians.filter(technician => technician.active);
         return {
             recommendations: [],
             summary: null,
-            engine_status: 'unavailable',
+            engine_status: 'out_of_area',
             coverage: {
                 technicians_total: active.length,
                 technicians_with_base: active.filter(technician => technician.base).length,
@@ -354,6 +358,23 @@ async function getRecommendations(companyId, input = {}) {
         };
     }
     const areaEligibleTechnicians = areaEligibility.technicians;
+    const activeRoster = allTechnicians.filter(technician => technician.active);
+    if (areaEligibleTechnicians.length === 0 && activeRoster.length > 0) {
+        // The address IS in the territory and there ARE technicians, but none is
+        // assigned to its district — which strict zoning makes possible where the
+        // old wildcard quietly covered it. An empty roster is a different thing
+        // entirely and keeps the ordinary path.
+        const active = activeRoster;
+        return {
+            recommendations: [],
+            summary: null,
+            engine_status: 'no_provider_for_area',
+            coverage: {
+                technicians_total: active.length,
+                technicians_with_base: active.filter(technician => technician.base).length,
+            },
+        };
+    }
 
     // TECHSLOT-001 §3: optional single-technician scope. The engine ranks across
     // whatever `technicians` array it is handed, so one-tech = a one-element array

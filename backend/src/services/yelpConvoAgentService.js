@@ -797,9 +797,14 @@ async function runTurnInner(companyId, conv, inbound, deps) {
                     offeredSlots = result.slots;
                     offeredThisTurn = true;
                 } else {
-                    // Engine down / no availability → warm call-fallback (never fabricate).
+                    // ZONE-STRICT-001: a coverage gap used to be filed as 'engine_down',
+                    // so a customer we simply don't serve looked like a broken system to
+                    // whoever picked the conversation up. Carry the real cause through.
+                    const cause = (result && (result.reason === 'out_of_area' || result.reason === 'no_provider_for_area'))
+                        ? result.reason
+                        : 'engine_down';
                     patch.phase = 'handoff_call';
-                    return finish(await doCallFallback(companyId, conv, inbound, 'engine_down', collected, patch));
+                    return finish(await doCallFallback(companyId, conv, inbound, cause, collected, patch));
                 }
             }
             continue;

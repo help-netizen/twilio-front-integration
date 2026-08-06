@@ -143,7 +143,9 @@ test('unresolved target returns no smart suggestions and never calls the engine'
     const result = await slotEngineService.getRecommendations(COMPANY, {
         new_job: { lat: 42.36, lng: -71.06 },
     });
-    expect(result).toMatchObject({ recommendations: [], engine_status: 'unavailable' });
+    // ZONE-STRICT-001: an unresolvable ZIP is now named as a coverage answer,
+    // not reported as a broken scheduler.
+    expect(result).toMatchObject({ recommendations: [], engine_status: 'out_of_area' });
     expect(global.fetch).not.toHaveBeenCalled();
     expect(availabilityService.buildUnavailability).not.toHaveBeenCalled();
 });
@@ -154,5 +156,18 @@ test('area-assignment read failure fails smart ranking closed', async () => {
         new_job: { lat: 42.36, lng: -71.06 },
     });
     expect(result).toMatchObject({ recommendations: [], engine_status: 'unavailable' });
+    expect(global.fetch).not.toHaveBeenCalled();
+});
+
+// ZONE-STRICT-001 — "nobody covers this district" is its own answer.
+test('an in-territory address with no assigned technician is named, not reported as a fault', async () => {
+    serviceAreaService.filterEligibleTechnicians.mockResolvedValue({
+        active_mode: 'list', target_resolved: true, no_targets: false, target_ids: ['Connecticut'],
+        matches: [], technicians: [],
+    });
+    const result = await slotEngineService.getRecommendations(COMPANY, {
+        new_job: { lat: 42.35, lng: -71.09, job_type: 'service_call' },
+    });
+    expect(result).toMatchObject({ recommendations: [], engine_status: 'no_provider_for_area' });
     expect(global.fetch).not.toHaveBeenCalled();
 });

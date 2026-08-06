@@ -43,6 +43,14 @@ const { normalizeZip } = require('../../../utils/zip');
 
 const SLOT_FALLBACK = { available: false, slots: [], fallback: true };
 
+// ZONE-STRICT-001 — "we don't cover you" is an ANSWER, not a fault. It used to
+// arrive as the same `fallback:true` the agents read as "the engine is down",
+// so a customer outside the service area was promised a callback instead of
+// being told the truth. `fallback:false` keeps the agent off the engine-down
+// script; `reason` tells it which sentence to say.
+const OUT_OF_AREA = { available: false, slots: [], fallback: false, reason: 'out_of_area' };
+const NO_PROVIDER_FOR_AREA = { available: false, slots: [], fallback: false, reason: 'no_provider_for_area' };
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -190,6 +198,8 @@ async function run(companyId, _verifiedContext, input = {}) {
             companyId,
             { new_job: newJob },
         );
+        if (engine_status === 'out_of_area') return { ...OUT_OF_AREA };
+        if (engine_status === 'no_provider_for_area') return { ...NO_PROVIDER_FOR_AREA };
         if (engine_status !== 'ok' || !Array.isArray(recommendations) || recommendations.length === 0) {
             return { ...SLOT_FALLBACK };
         }

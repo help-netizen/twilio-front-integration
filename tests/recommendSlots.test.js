@@ -237,3 +237,30 @@ describe('TECHSLOT-001 §4 — technicianId / targetDay / targetTime', () => {
         expect(out.slots[0]).toMatchObject({ start: '16:00', end: '18:00' });
     });
 });
+
+// ZONE-STRICT-001 — a coverage answer must not look like a broken scheduler.
+describe('TC-RSK-030: coverage gaps are named, not disguised as an engine fault', () => {
+    it('an unresolvable ZIP returns out_of_area with fallback FALSE', async () => {
+        slotEngineService.getRecommendations.mockResolvedValue({
+            recommendations: [], summary: null, engine_status: 'out_of_area',
+        });
+        const out = await recommendSlots.run(COMPANY, {}, { zip: '90210' });
+        expect(out).toEqual({ available: false, slots: [], fallback: false, reason: 'out_of_area' });
+    });
+
+    it('an in-territory address with no assigned technician returns no_provider_for_area', async () => {
+        slotEngineService.getRecommendations.mockResolvedValue({
+            recommendations: [], summary: null, engine_status: 'no_provider_for_area',
+        });
+        const out = await recommendSlots.run(COMPANY, {}, { zip: '02135' });
+        expect(out).toEqual({ available: false, slots: [], fallback: false, reason: 'no_provider_for_area' });
+    });
+
+    it('a genuine engine fault still says fallback:true, with no reason', async () => {
+        slotEngineService.getRecommendations.mockResolvedValue({
+            recommendations: [], summary: null, engine_status: 'unavailable',
+        });
+        const out = await recommendSlots.run(COMPANY, {}, { zip: '02135' });
+        expect(out).toEqual({ available: false, slots: [], fallback: true });
+    });
+});
