@@ -5,11 +5,18 @@ jest.mock('../backend/src/db/connection', () => ({
     query: jest.fn(),
     getClient: jest.fn(),
 }));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    resolveExternalToUuid: jest.fn(),
+    resolveUuidToExternal: jest.fn(),
+}));
 
 const db = require('../backend/src/db/connection');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const queries = require('../backend/src/db/technicianWorkScheduleQueries');
 
 const COMPANY = '00000000-0000-0000-0000-00000000000a';
+const TECH_UUID_1 = '11111111-1111-4111-8111-111111111111';
+const TECH_UUID_2 = '22222222-2222-4222-8222-222222222222';
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 
 describe('migration 183 recurring technician schedules', () => {
@@ -34,15 +41,27 @@ describe('technicianWorkScheduleQueries', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         db.query.mockResolvedValue({ rows: [] });
-        client = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() };
+        directoryQueries.resolveExternalToUuid.mockImplementation(async (_companyId, _source, id) => ({
+            'tech-1': TECH_UUID_1,
+            'tech-2': TECH_UUID_2,
+        })[id] || null);
+        directoryQueries.resolveUuidToExternal.mockResolvedValue(null);
+        client = {
+            query: jest.fn().mockImplementation(async sql => ({
+                rows: /INSERT INTO technician_work_schedules/.test(sql)
+                    ? [{ technician_id: 'tech-1' }]
+                    : [],
+            })),
+            release: jest.fn(),
+        };
         db.getClient.mockResolvedValue(client);
     });
 
     it('scopes schedule reads by company and active technician ids', async () => {
         await queries.listByTechnicianIds(COMPANY, ['tech-1', 'tech-2']);
         expect(db.query).toHaveBeenCalledWith(
-            expect.stringMatching(/WHERE s\.company_id = \$1[\s\S]*s\.technician_id = ANY\(\$2::text\[\]\)/),
-            [COMPANY, ['tech-1', 'tech-2']]
+            expect.stringMatching(/COALESCE\(s\.technician_uuid, e\.technician_id\)[\s\S]*LEFT JOIN technician_external_identities e[\s\S]*e\.company_id = s\.company_id[\s\S]*WHERE s\.company_id = \$1[\s\S]*s\.resolved_technician_uuid = ANY\(\$2::uuid\[\]\)/),
+            [COMPANY, [TECH_UUID_1, TECH_UUID_2]]
         );
     });
 
@@ -67,7 +86,7 @@ describe('technicianWorkScheduleQueries', () => {
             'COMMIT',
         ]));
         const insertDays = client.query.mock.calls.find(call => /INSERT INTO technician_work_schedule_days/.test(call[0]));
-        expect(insertDays[1]).toHaveLength(30); // company + tech + 7×4 day values
+        expect(insertDays[1]).toHaveLength(31); // company + external id + UUID + 7×4 day values
         expect(client.release).toHaveBeenCalledTimes(1);
     });
 
