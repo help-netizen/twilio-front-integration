@@ -203,13 +203,22 @@ git) → green; and removing company scope from the external-map join must fail 
   re-repoints 8 → db test red (Expected 0, Received 8) → restore → green.
 - Codex fresh session; applied cleanly.
 
-### T3b..T6 — not started (see Phase A design above).
-**T3b (NEXT) = service dual-read/write.** Make technicianServiceArea / slotEngine.buildTechnicians /
-technicianRoster / routes/technicians / availability / timeOff / baseLocations / workSchedule read
-`technician_uuid` first (legacy TEXT via the map when null) and dual-write both keys. This is the
-big/risky one (touches yesterday's ZONE-STRICT). Its control is `SAB-A-ZONE-UUID-PARITY` as a REAL
-`.db` test against `albusto_test`: same Albusto config read via uuid == via zb-id → same eligible
-set (flip the ZONE-STRICT empty branch + drop company scope to prove it bites).
+### T3b-1 (service-area/zone re-key) — DONE, commit 55b15cf5
+technicianServiceArea{Service,Queries} read district/radius/wildcard by `technician_uuid` first,
+fallback to legacy TEXT via the map (COALESCE + company-scoped LEFT JOIN); roster id normalized to
+canonical uuid (accepts uuid or ZB id); writes dual-key. ZONE-STRICT semantics byte-preserved.
+Verified albusto_test: unit 14/14, regression 52/52 (routes+slot-proxy+recommendSlots), migration
+5/5. Crown-jewel `SAB-A-ZONE-UUID-PARITY` (real .db, 2 tests): same config via uuid == via ZB-id →
+same eligible set ({A,C}/{C}/never), list+radius, per-company. Sabotage: flip ZONE-STRICT empty
+branch → both parity tests red → restore.
+
+### T3b-2 (base-locations/time-off/work-schedule re-key) — DONE, commit 142f4ea2
+The three remaining config query layers read uuid-first/fallback + dual-write (work_schedule_days
+in lockstep); __company__ never resolved as a technician. Verified albusto_test: unit 82/82 (5
+suites), three real-DB re-key round-trips 11/11. Sabotage SAB-T3B2-TIME-OFF: drop company scope on
+the map join → cross-tenant test red → restore.
+
+### T4 (native roster + mode switch) — IN PROGRESS. T5, T6 — not started.
 
 ## NEXT (re-entry for a fresh session)
 State: T1 + T2 done, gated, committed (migration 240 + query layer + backfill CLI + tests).
