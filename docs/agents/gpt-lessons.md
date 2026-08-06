@@ -104,3 +104,17 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
   FRESH `codex exec` (not resume). Deterministic, already-reviewed artifacts (migration SQL) are the
   cheapest to hand-write; validate them independently (e.g. a rolled-back apply against the real
   schema) rather than trusting the stalled session's claims.
+
+## L-023 — gate sweep must cover EVERY sibling test of a changed module, not just the new one
+
+When a task re-keys / rewrites a query module, mocked unit tests elsewhere that assert the OLD
+SQL shape (or the OLD call contract) go stale silently — they are a real regression the moment the
+production query changes, even though the task never edited them. In ZB-DECOUPLE T3b-2 the uuid-first
+rewrite of `technicianWorkScheduleQueries` broke `technicianWorkScheduleMigration.test.js` (asserted
+`= ANY($2::text[])` + a bare mock that the new identity-resolution path rejects), and my per-task
+verify regex only ran the NEW `*Rekey.db.test.js`, so it slipped through to the final full sweep.
+Rule: when gating a change to `<module>Queries.js`/`<module>Service.js`, run EVERY sibling suite that
+imports it — `git grep -l "require.*<module>" tests/` — not just the task's own new test. The new
+`.db` test proving the new contract does NOT absolve the old mocked tests that assert the superseded
+one; either update or delete them in the SAME task. A green new-test next to an unrun stale sibling
+is a false ACCEPT.
