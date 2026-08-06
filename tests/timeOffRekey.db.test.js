@@ -1,0 +1,153 @@
+'use strict';
+
+const { randomUUID } = require('crypto');
+const db = require('../backend/src/db/connection');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
+const service = require('../backend/src/services/timeOffService');
+
+jest.setTimeout(60000);
+
+describe('technician time-off native UUID re-key (real PostgreSQL)', () => {
+    const companyA = randomUUID();
+    const companyB = randomUUID();
+    const suffix = randomUUID();
+    const nativeExternal = `zb-off-native-${suffix}`;
+    const sharedExternal = `zb-off-shared-${suffix}`;
+    const from = '2035-01-01T00:00:00.000Z';
+    const to = '2037-01-01T00:00:00.000Z';
+    let nativeTechnician;
+    let legacyTechnician;
+    let foreignTechnician;
+
+    async function read(companyId, technicianId) {
+        return service.listTimeOff(companyId, { from, to, technicianId });
+    }
+
+    beforeAll(async () => {
+        await db.query(
+            `INSERT INTO companies (id, name, slug, status, timezone)
+             VALUES ($1, 'Time off rekey DB A', $3, 'active', 'America/New_York'),
+                    ($2, 'Time off rekey DB B', $4, 'active', 'America/New_York')`,
+            [companyA, companyB, `off-rekey-a-${suffix}`, `off-rekey-b-${suffix}`]
+        );
+        nativeTechnician = await directoryQueries.createTechnician({
+            companyId: companyA,
+            displayName: 'Native Time Off Tech',
+        });
+        legacyTechnician = await directoryQueries.createTechnician({
+            companyId: companyA,
+            displayName: 'Legacy Time Off Tech',
+        });
+        foreignTechnician = await directoryQueries.createTechnician({
+            companyId: companyB,
+            displayName: 'Foreign Time Off Tech',
+        });
+        await Promise.all([
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyA,
+                source: 'zenbooker',
+                externalId: nativeExternal,
+                technicianId: nativeTechnician.id,
+            }),
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyA,
+                source: 'zenbooker',
+                externalId: sharedExternal,
+                technicianId: legacyTechnician.id,
+            }),
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyB,
+                source: 'zenbooker',
+                externalId: sharedExternal,
+                technicianId: foreignTechnician.id,
+            }),
+        ]);
+
+        await service.createTimeOff(companyA, {
+            target: 'technician',
+            technician_id: String(nativeTechnician.id),
+            technician_name: 'Native Time Off Tech',
+            starts_at: '2036-04-01T13:00:00.000Z',
+            ends_at: '2036-04-01T17:00:00.000Z',
+            note: 'Native block',
+        });
+        await db.query(
+            `INSERT INTO technician_time_off
+                (company_id, technician_id, technician_uuid, technician_name,
+                 starts_at, ends_at, note, source)
+             VALUES ($1, $2, NULL, 'Legacy Time Off Tech',
+                        '2036-05-01T13:00:00.000Z', '2036-05-01T17:00:00.000Z',
+                        'Legacy block', 'individual'),
+                    ($3, $2, NULL, 'Foreign Time Off Tech',
+                        '2036-05-01T13:00:00.000Z', '2036-05-01T17:00:00.000Z',
+                        'Foreign block', 'individual')`,
+            [companyA, sharedExternal, companyB]
+        );
+    });
+
+    test('native write dual-writes and UUID/ZB reads are byte-identical', async () => {
+        const stored = (await db.query(
+            `SELECT technician_id, technician_uuid
+             FROM technician_time_off
+             WHERE company_id = $1 AND note = 'Native block'`,
+            [companyA]
+        )).rows[0];
+        expect(stored).toEqual({
+            technician_id: nativeExternal,
+            technician_uuid: nativeTechnician.id,
+        });
+        expect(await read(companyA, nativeTechnician.id)).toEqual(
+            await read(companyA, nativeExternal)
+        );
+    });
+
+    test('legacy NULL-UUID row reads identically by UUID and ZB id', async () => {
+        const viaUuid = await read(companyA, legacyTechnician.id);
+        const viaExternal = await read(companyA, sharedExternal);
+        expect(viaUuid).toEqual(viaExternal);
+        expect(viaUuid).toHaveLength(1);
+        expect(viaUuid[0]).toMatchObject({
+            technician_id: sharedExternal,
+            note: 'Legacy block',
+        });
+    });
+
+    test('repeated reads are idempotent and never rewrite the legacy TEXT row', async () => {
+        const first = await read(companyA, sharedExternal);
+        const second = await read(companyA, sharedExternal);
+        expect(second).toEqual(first);
+        const stored = (await db.query(
+            `SELECT technician_id, technician_uuid
+             FROM technician_time_off
+             WHERE company_id = $1 AND note = 'Legacy block'`,
+            [companyA]
+        )).rows;
+        expect(stored).toEqual([{ technician_id: sharedExternal, technician_uuid: null }]);
+    });
+
+    test('same ZB id in two companies never crosses (SAB-T3B2-TIME-OFF control)', async () => {
+        const local = await read(companyA, sharedExternal);
+        const foreign = await read(companyB, sharedExternal);
+        expect(local.map(row => row.note)).toEqual(['Legacy block']);
+        expect(foreign.map(row => row.note)).toEqual(['Foreign block']);
+
+        const localUnfiltered = await service.listTimeOff(companyA, { from, to });
+        expect(localUnfiltered.map(row => row.note).sort()).toEqual([
+            'Legacy block',
+            'Native block',
+        ]);
+        expect(JSON.stringify(localUnfiltered)).not.toContain('Foreign block');
+    });
+
+    afterAll(async () => {
+        for (const companyId of [companyA, companyB]) {
+            await db.query('DELETE FROM technician_time_off WHERE company_id = $1', [companyId]).catch(() => {});
+            await db.query('DELETE FROM technicians WHERE company_id = $1', [companyId]).catch(() => {});
+        }
+        await db.query(
+            'DELETE FROM companies WHERE id = ANY($1::uuid[])',
+            [[companyA, companyB]]
+        ).catch(() => {});
+        try { await db.pool.end(); } catch (_) { /* already closed */ }
+    });
+});

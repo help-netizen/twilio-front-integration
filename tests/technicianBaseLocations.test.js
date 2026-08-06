@@ -10,6 +10,10 @@
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    resolveExternalToUuid: jest.fn(),
+    resolveUuidToExternal: jest.fn(),
+}));
 
 const express = require('express');
 const request = require('supertest');
@@ -17,12 +21,14 @@ const request = require('supertest');
 const db = require('../backend/src/db/connection');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const googlePlacesService = require('../backend/src/services/googlePlacesService');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const queries = require('../backend/src/db/technicianBaseLocationQueries');
 const svc = require('../backend/src/services/technicianBaseLocationsService');
 const router = require('../backend/src/routes/technicianBaseLocations');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const COMPANY_B = '00000000-0000-0000-0000-00000000000b';
+const TECH_UUID = '11111111-1111-4111-8111-111111111111';
 
 // Build an app whose auth context is fully controllable per-test.
 function appWith({ permissions = [], companyId = COMPANY_A } = {}) {
@@ -42,6 +48,8 @@ beforeEach(() => {
     db.query.mockReset();
     zenbookerClient.getTeamMembers.mockReset();
     googlePlacesService.geocodeAddress.mockReset();
+    directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
+    directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
     // schema bootstrap + default empty result
     db.query.mockResolvedValue({ rows: [] });
     zenbookerClient.getTeamMembers.mockResolvedValue([]);
@@ -87,7 +95,7 @@ describe('company isolation', () => {
             .delete('/tech_owned_by_A');
         expect(res.status).toBe(404);
         const delCall = db.query.mock.calls.find(c => /DELETE FROM technician_base_locations/.test(String(c[0])));
-        expect(delCall[1]).toEqual([COMPANY_B, 'tech_owned_by_A']);
+        expect(delCall[1]).toEqual([COMPANY_B, 'tech_owned_by_A', TECH_UUID]);
     });
 
     it('DELETE returns ok:true when a row is removed', async () => {
@@ -108,6 +116,7 @@ describe('queries are company-scoped', () => {
         const call = db.query.mock.calls.find(c => /INSERT INTO technician_base_locations/.test(String(c[0])));
         expect(call[1][0]).toBe(COMPANY_A);
         expect(call[1][1]).toBe('t');
+        expect(call[1][2]).toBe(TECH_UUID);
         expect(String(call[0])).toMatch(/ON CONFLICT \(company_id, tech_id\)/);
     });
 
@@ -115,8 +124,9 @@ describe('queries are company-scoped', () => {
         db.query.mockResolvedValue({ rows: [{ tech_id: 't' }] });
         await queries.remove(COMPANY_A, 't');
         const call = db.query.mock.calls.find(c => /DELETE FROM technician_base_locations/.test(String(c[0])));
-        expect(String(call[0])).toMatch(/WHERE company_id = \$1 AND tech_id = \$2/);
-        expect(call[1]).toEqual([COMPANY_A, 't']);
+        expect(String(call[0])).toMatch(/b\.company_id = \$1/);
+        expect(String(call[0])).toMatch(/b\.technician_uuid = \$3::uuid/);
+        expect(call[1]).toEqual([COMPANY_A, 't', TECH_UUID]);
     });
 });
 
@@ -126,7 +136,7 @@ describe('geocode-on-upsert (service)', () => {
         await svc.upsert(COMPANY_A, 't', { lat: 42.1, lng: -71.2, label: 'Home' });
         expect(googlePlacesService.geocodeAddress).not.toHaveBeenCalled();
         const ins = db.query.mock.calls.find(c => /INSERT INTO technician_base_locations/.test(String(c[0])));
-        expect(ins[1].slice(0, 5)).toEqual([COMPANY_A, 't', 42.1, -71.2, 'Home']);
+        expect(ins[1].slice(0, 6)).toEqual([COMPANY_A, 't', TECH_UUID, 42.1, -71.2, 'Home']);
     });
 
     it('address → success: geocodes and stores normalized address', async () => {
@@ -137,9 +147,9 @@ describe('geocode-on-upsert (service)', () => {
         await svc.upsert(COMPANY_A, 't', { address: '1 main st' });
         expect(googlePlacesService.geocodeAddress).toHaveBeenCalledWith('1 main st');
         const ins = db.query.mock.calls.find(c => /INSERT INTO technician_base_locations/.test(String(c[0])));
-        expect(ins[1][2]).toBe(42.36);
-        expect(ins[1][3]).toBe(-71.06);
-        expect(ins[1][5]).toBe('1 Main St, Boston, MA');
+        expect(ins[1][3]).toBe(42.36);
+        expect(ins[1][4]).toBe(-71.06);
+        expect(ins[1][6]).toBe('1 Main St, Boston, MA');
     });
 
     it('address → failed: throws 422 GEOCODE_FAILED, no write', async () => {

@@ -27,6 +27,10 @@ jest.mock('../backend/src/services/scheduleService', () => ({
 jest.mock('../backend/src/db/membershipQueries', () => ({
     getZenbookerTeamMemberIdForUser: jest.fn(),
 }));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    resolveExternalToUuid: jest.fn(),
+    resolveUuidToExternal: jest.fn(),
+}));
 
 const express = require('express');
 const request = require('supertest');
@@ -34,11 +38,13 @@ const request = require('supertest');
 const db = require('../backend/src/db/connection');
 const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const membershipQueries = require('../backend/src/db/membershipQueries');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const scheduleRouter = require('../backend/src/routes/schedule');
 
 const COMPANY = '00000000-0000-0000-0000-00000000000a';
 const PROVIDER_USER = 'provider-user-9';
 const ROW_ID = '11111111-1111-4111-8111-111111111111';
+const TECH_UUID = '22222222-2222-4222-8222-222222222222';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const future = (days) => new Date(Date.now() + days * DAY_MS).toISOString();
@@ -52,8 +58,9 @@ let deleteRowCount;
 function rowsFromInsertParams(params) {
     const [companyId, ...rest] = params;
     const rows = [];
-    for (let i = 0; i < rest.length; i += 8) {
-        const [technician_id, technician_name, starts_at, ends_at, note, source, batch_id, created_by] = rest.slice(i, i + 8);
+    for (let i = 0; i < rest.length; i += 9) {
+        const [technician_id, technician_uuid, technician_name, starts_at, ends_at, note, source, batch_id, created_by] = rest.slice(i, i + 9);
+        void technician_uuid;
         rows.push({
             id: `row-${rows.length + 1}`,
             company_id: companyId,
@@ -67,10 +74,15 @@ function rowsFromInsertParams(params) {
 const timeOffQueryCalls = (re) => db.query.mock.calls.filter(([sql]) => re.test(String(sql)));
 const insertCalls = () => timeOffQueryCalls(/INSERT INTO technician_time_off/i);
 const deleteCalls = () => timeOffQueryCalls(/DELETE FROM technician_time_off/i);
-const selectCalls = () => timeOffQueryCalls(/FROM technician_time_off/i).filter(([sql]) => /^\s*SELECT/i.test(String(sql)));
+const selectCalls = () => timeOffQueryCalls(/FROM technician_time_off/i)
+    .filter(([sql]) => !/^\s*(?:INSERT|DELETE)/i.test(String(sql)));
 const anyTimeOffTableCalls = () => timeOffQueryCalls(/technician_time_off/i);
 
-function appWith({ permissions = [], scopes = undefined, crmUser = { id: 'user-1' } } = {}) {
+function appWith({
+    permissions = [],
+    scopes = { job_visibility: 'all' },
+    crmUser = { id: 'user-1' },
+} = {}) {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -103,6 +115,8 @@ beforeEach(() => {
     deleteRowCount = 1;
     zenbookerClient.getTeamMembers.mockReset();
     membershipQueries.getZenbookerTeamMemberIdForUser.mockReset().mockResolvedValue(null);
+    directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
+    directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
     db.query.mockReset().mockImplementation(async (sql, params) => {
         const s = String(sql);
         if (/INSERT INTO technician_time_off/i.test(s)) return { rows: rowsFromInsertParams(params) };
@@ -141,6 +155,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
         expect(params).toEqual([
             COMPANY,            // req.companyFilter.company_id
             '1234567',          // ZB TEXT id as-is (INV-7)
+            TECH_UUID,           // canonical native technician UUID
             'John Smith',       // client snapshot — ZB never called
             starts_at, ends_at,
             'vacation',
@@ -161,11 +176,11 @@ describe('POST /api/schedule/time-off (individual)', () => {
         expect(res.status).toBe(201);
         expect(insertCalls()).toHaveLength(1);
         const [, params] = insertCalls()[0];
-        expect(params[8]).toBeNull();      // created_by
+        expect(params[9]).toBeNull();      // created_by
         expect(params).not.toContain('kc');
     });
 
-    it('TC-DO-08: arbitrary technician_id accepted (no roster check), ZB not called', async () => {
+    it('TC-DO-08: mapped technician identity is accepted without a roster call', async () => {
         const res = await request(dispatcher()).post('/api/schedule/time-off').send({
             target: 'technician', technician_id: 'no-such-tech-999',
             starts_at: future(1), ends_at: future(2),
@@ -340,8 +355,8 @@ describe('GET /api/schedule/time-off', () => {
         const res = await request(viewer()).get(`/api/schedule/time-off?from=${FROM}&to=${TO}&technician_id=1234567`);
         expect(res.status).toBe(200);
         const [sql, params] = selectCalls()[0];
-        expect(String(sql)).toMatch(/technician_id = \$4/);
-        expect(params).toEqual([COMPANY, FROM, TO, '1234567']);
+        expect(String(sql)).toMatch(/resolved_technician_uuid = \$4::uuid/);
+        expect(params).toEqual([COMPANY, FROM, TO, TECH_UUID]);
     });
 
     it('TC-DO-13: provider (assigned_only, bridge exists) → forced onto OWN ZB id, foreign param ignored', async () => {
@@ -360,8 +375,8 @@ describe('GET /api/schedule/time-off', () => {
 
         expect(membershipQueries.getZenbookerTeamMemberIdForUser).toHaveBeenCalledWith(COMPANY, PROVIDER_USER);
         const [sql, params] = selectCalls()[0];
-        expect(String(sql)).toMatch(/technician_id = \$4/);
-        expect(params[3]).toBe('1234567'); // own id wins
+        expect(String(sql)).toMatch(/resolved_technician_uuid = \$4::uuid/);
+        expect(params[3]).toBe(TECH_UUID); // own canonical id wins
         const allParams = db.query.mock.calls.flatMap(([, p]) => p || []);
         expect(allParams).not.toContain('7654321'); // foreign id never reaches SQL
     });

@@ -15,9 +15,42 @@
  */
 
 const db = require('./connection');
+const directoryQueries = require('./technicianDirectoryQueries');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const RETURN_COLUMNS = `id, company_id, technician_id, technician_name,
         starts_at, ends_at, note, source, batch_id, created_by, created_at`;
+
+function invalidTechnicianIdentityError() {
+    const error = new Error('Technician identity not found');
+    error.code = 'TECHNICIAN_IDENTITY_NOT_FOUND';
+    error.httpStatus = 404;
+    return error;
+}
+
+async function resolveTechnicianIdentity(companyId, technicianId, { required = true } = {}) {
+    const id = String(technicianId);
+    if (UUID_RE.test(id)) {
+        const technicianUuid = id.toLowerCase();
+        const externalId = await directoryQueries.resolveUuidToExternal(
+            companyId,
+            'zenbooker',
+            technicianUuid
+        );
+        return { externalId: externalId || technicianUuid, technicianUuid };
+    }
+    const technicianUuid = await directoryQueries.resolveExternalToUuid(
+        companyId,
+        'zenbooker',
+        id
+    );
+    if (!technicianUuid) {
+        if (!required) return null;
+        throw invalidTechnicianIdentityError();
+    }
+    return { externalId: id, technicianUuid: String(technicianUuid).toLowerCase() };
+}
 
 /**
  * List time-off records overlapping the half-open range [from, to),
@@ -34,18 +67,51 @@ const RETURN_COLUMNS = `id, company_id, technician_id, technician_name,
  */
 async function listRange(companyId, { from, to, technicianId } = {}) {
     const params = [companyId, from, to];
-    let sql = `SELECT ${RETURN_COLUMNS}
-         FROM technician_time_off
-         WHERE company_id = $1
-           AND starts_at < $3
-           AND ends_at > $2`;
+    let technicianUuid = null;
     if (technicianId) {
-        params.push(String(technicianId));
+        const identity = await resolveTechnicianIdentity(
+            companyId,
+            technicianId,
+            { required: false }
+        );
+        if (!identity) return [];
+        technicianUuid = identity.technicianUuid;
+        params.push(technicianUuid);
+    }
+    let sql = `WITH resolved AS (
+             SELECT t.*,
+                    COALESCE(t.technician_uuid, e.technician_id) AS resolved_technician_uuid
+             FROM technician_time_off t
+             LEFT JOIN technician_external_identities e
+               ON t.technician_uuid IS NULL
+              AND e.company_id = t.company_id
+              AND e.source = 'zenbooker'
+              AND e.external_id = t.technician_id
+             WHERE t.company_id = $1
+               AND t.starts_at < $3
+               AND t.ends_at > $2
+         )
+         SELECT r.id, r.company_id,
+                COALESCE(public_identity.external_id, r.technician_id) AS technician_id,
+                r.technician_name, r.starts_at, r.ends_at, r.note, r.source,
+                r.batch_id, r.created_by, r.created_at
+         FROM resolved r
+         LEFT JOIN LATERAL (
+             SELECT mapped.external_id
+             FROM technician_external_identities mapped
+             WHERE mapped.company_id = r.company_id
+               AND mapped.source = 'zenbooker'
+               AND mapped.technician_id = r.resolved_technician_uuid
+             ORDER BY mapped.created_at ASC, mapped.external_id ASC
+             LIMIT 1
+         ) public_identity ON TRUE
+         WHERE r.resolved_technician_uuid IS NOT NULL`;
+    if (technicianUuid) {
         sql += `
-           AND technician_id = $4`;
+           AND r.resolved_technician_uuid = $4::uuid`;
     }
     sql += `
-         ORDER BY starts_at ASC, id ASC`;
+         ORDER BY r.starts_at ASC, r.id ASC`;
     const { rows } = await db.query(sql, params);
     return rows;
 }
@@ -73,14 +139,17 @@ async function listOverlappingRange(companyId, fromUtc, toUtc) {
  * @returns {Promise<Object>} the created row
  */
 async function insertOne(companyId, row) {
+    const identity = await resolveTechnicianIdentity(companyId, row.technicianId);
     const { rows } = await db.query(
         `INSERT INTO technician_time_off
-            (company_id, technician_id, technician_name, starts_at, ends_at, note, source, batch_id, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (company_id, technician_id, technician_uuid, technician_name,
+             starts_at, ends_at, note, source, batch_id, created_by)
+         VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
          RETURNING ${RETURN_COLUMNS}`,
         [
             companyId,
-            String(row.technicianId),
+            identity.externalId,
+            identity.technicianUuid,
             row.technicianName ?? null,
             row.startsAt,
             row.endsAt,
@@ -103,11 +172,15 @@ async function insertOne(companyId, row) {
  */
 async function insertMany(companyId, timeOffRows) {
     if (!Array.isArray(timeOffRows) || timeOffRows.length === 0) return [];
+    const identities = await Promise.all(
+        timeOffRows.map(row => resolveTechnicianIdentity(companyId, row.technicianId))
+    );
     const params = [companyId];
-    const tuples = timeOffRows.map(row => {
+    const tuples = timeOffRows.map((row, index) => {
         const base = params.length;
         params.push(
-            String(row.technicianId),
+            identities[index].externalId,
+            identities[index].technicianUuid,
             row.technicianName ?? null,
             row.startsAt,
             row.endsAt,
@@ -116,11 +189,12 @@ async function insertMany(companyId, timeOffRows) {
             row.batchId ?? null,
             row.createdBy ?? null
         );
-        return `($1, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`;
+        return `($1, $${base + 1}, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`;
     });
     const { rows } = await db.query(
         `INSERT INTO technician_time_off
-            (company_id, technician_id, technician_name, starts_at, ends_at, note, source, batch_id, created_by)
+            (company_id, technician_id, technician_uuid, technician_name,
+             starts_at, ends_at, note, source, batch_id, created_by)
          VALUES ${tuples.join(', ')}
          RETURNING ${RETURN_COLUMNS}`,
         params
@@ -151,4 +225,5 @@ module.exports = {
     insertOne,
     insertMany,
     deleteById,
+    resolveTechnicianIdentity,
 };

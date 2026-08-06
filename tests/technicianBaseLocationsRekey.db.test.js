@@ -1,0 +1,185 @@
+'use strict';
+
+jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
+jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
+
+const { randomUUID } = require('crypto');
+const db = require('../backend/src/db/connection');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
+const zenbookerClient = require('../backend/src/services/zenbookerClient');
+const service = require('../backend/src/services/technicianBaseLocationsService');
+
+jest.setTimeout(60000);
+
+describe('technician base-location native UUID re-key (real PostgreSQL)', () => {
+    const companyA = randomUUID();
+    const companyB = randomUUID();
+    const suffix = randomUUID();
+    const nativeExternal = `zb-base-native-${suffix}`;
+    const sharedExternal = `zb-base-shared-${suffix}`;
+    let nativeTechnician;
+    let legacyTechnician;
+    let foreignTechnician;
+
+    async function listWithId(companyId, id, name = 'Technician') {
+        zenbookerClient.getTeamMembers.mockResolvedValue([{ id, name }]);
+        return service.list(companyId);
+    }
+
+    function baseFor(rows, id) {
+        return rows.find(row => row.tech_id === String(id));
+    }
+
+    function baseValues(row) {
+        return {
+            lat: row.lat,
+            lng: row.lng,
+            label: row.label,
+            address: row.address,
+            has_base: row.has_base,
+        };
+    }
+
+    beforeAll(async () => {
+        await db.query(
+            `INSERT INTO companies (id, name, slug, status, timezone)
+             VALUES ($1, 'Base rekey DB A', $3, 'active', 'America/New_York'),
+                    ($2, 'Base rekey DB B', $4, 'active', 'America/New_York')`,
+            [companyA, companyB, `base-rekey-a-${suffix}`, `base-rekey-b-${suffix}`]
+        );
+        nativeTechnician = await directoryQueries.createTechnician({
+            companyId: companyA,
+            displayName: 'Native Base Tech',
+        });
+        legacyTechnician = await directoryQueries.createTechnician({
+            companyId: companyA,
+            displayName: 'Legacy Base Tech',
+        });
+        foreignTechnician = await directoryQueries.createTechnician({
+            companyId: companyB,
+            displayName: 'Foreign Base Tech',
+        });
+        await Promise.all([
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyA,
+                source: 'zenbooker',
+                externalId: nativeExternal,
+                technicianId: nativeTechnician.id,
+            }),
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyA,
+                source: 'zenbooker',
+                externalId: sharedExternal,
+                technicianId: legacyTechnician.id,
+            }),
+            directoryQueries.upsertExternalIdentity({
+                companyId: companyB,
+                source: 'zenbooker',
+                externalId: sharedExternal,
+                technicianId: foreignTechnician.id,
+            }),
+        ]);
+
+        await service.upsert(companyA, String(nativeTechnician.id), {
+            lat: 42.361,
+            lng: -71.061,
+            label: 'Native home',
+            address: '1 Native Way',
+        });
+        await db.query(
+            `INSERT INTO technician_base_locations
+                (company_id, tech_id, technician_uuid, lat, lng, label, address)
+             VALUES ($1, $2, NULL, 42.372, -71.072, 'Legacy home', '2 Legacy Way'),
+                    ($3, $2, NULL, 40.700, -74.000, 'Foreign home', '3 Foreign Way'),
+                    ($1, '__company__', NULL, 42.350, -71.050, 'Company base', '4 Company Way')`,
+            [companyA, sharedExternal, companyB]
+        );
+    });
+
+    test('native write dual-writes and UUID/ZB reads return the same base values', async () => {
+        const stored = (await db.query(
+            `SELECT tech_id, technician_uuid
+             FROM technician_base_locations
+             WHERE company_id = $1 AND technician_uuid = $2`,
+            [companyA, nativeTechnician.id]
+        )).rows;
+        expect(stored).toEqual([{
+            tech_id: nativeExternal,
+            technician_uuid: nativeTechnician.id,
+        }]);
+
+        const viaUuid = baseFor(await listWithId(companyA, nativeTechnician.id), nativeTechnician.id);
+        const viaExternal = baseFor(await listWithId(companyA, nativeExternal), nativeExternal);
+        expect(baseValues(viaUuid)).toEqual(baseValues(viaExternal));
+        expect(baseValues(viaUuid)).toMatchObject({ label: 'Native home', has_base: true });
+    });
+
+    test('legacy NULL-UUID row dual-reads identically without rewriting its TEXT key', async () => {
+        const viaUuid = baseFor(await listWithId(companyA, legacyTechnician.id), legacyTechnician.id);
+        const viaExternal = baseFor(await listWithId(companyA, sharedExternal), sharedExternal);
+        expect(baseValues(viaUuid)).toEqual(baseValues(viaExternal));
+        expect(baseValues(viaUuid)).toMatchObject({ label: 'Legacy home', has_base: true });
+
+        const legacy = (await db.query(
+            `SELECT tech_id, technician_uuid
+             FROM technician_base_locations
+             WHERE company_id = $1 AND tech_id = $2`,
+            [companyA, sharedExternal]
+        )).rows[0];
+        expect(legacy).toEqual({ tech_id: sharedExternal, technician_uuid: null });
+    });
+
+    test('rerun is idempotent and the company sentinel remains outside UUID resolution', async () => {
+        await service.upsert(companyA, nativeExternal, {
+            lat: 42.361,
+            lng: -71.061,
+            label: 'Native home',
+            address: '1 Native Way',
+        });
+        const rows = (await db.query(
+            `SELECT tech_id, technician_uuid
+             FROM technician_base_locations
+             WHERE company_id = $1
+             ORDER BY tech_id`,
+            [companyA]
+        )).rows;
+        expect(rows.filter(row => row.technician_uuid === nativeTechnician.id)).toHaveLength(1);
+        expect(rows.find(row => row.tech_id === '__company__')).toEqual({
+            tech_id: '__company__',
+            technician_uuid: null,
+        });
+    });
+
+    test('same ZB id in two companies never crosses (SAB-T3B2-BASE control)', async () => {
+        zenbookerClient.getTeamMembers.mockRejectedValue(new Error('forced roster outage'));
+        const local = await service.list(companyA);
+        expect(local.filter(row => row.tech_id === sharedExternal)).toHaveLength(1);
+        expect(baseFor(local, sharedExternal)).toMatchObject({
+            lat: 42.372,
+            label: 'Legacy home',
+        });
+        expect(JSON.stringify(local)).not.toContain('Foreign home');
+
+        const foreign = await service.list(companyB);
+        expect(baseFor(foreign, sharedExternal)).toMatchObject({
+            lat: 40.7,
+            label: 'Foreign home',
+        });
+        expect(JSON.stringify(foreign)).not.toContain('Legacy home');
+    });
+
+    afterAll(async () => {
+        for (const companyId of [companyA, companyB]) {
+            await db.query(
+                'DELETE FROM technician_base_locations WHERE company_id = $1',
+                [companyId]
+            ).catch(() => {});
+            await db.query('DELETE FROM technicians WHERE company_id = $1', [companyId]).catch(() => {});
+        }
+        await db.query(
+            'DELETE FROM companies WHERE id = ANY($1::uuid[])',
+            [[companyA, companyB]]
+        ).catch(() => {});
+        try { await db.pool.end(); } catch (_) { /* already closed */ }
+    });
+});
