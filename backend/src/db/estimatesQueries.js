@@ -245,12 +245,16 @@ async function nextEstimateSequence(companyId, { jobId, leadId }, client = null)
     const query = queryFor(client);
     const params = [companyId];
     let clause = '';
-    if (jobId) {
-        params.push(jobId);
-        clause = 'job_id = $2';
-    } else {
+    if (leadId) {
+        // The estimate number is keyed on the LEAD ("ESTIMATE L-<leadSerial>-<seq>"), so the
+        // sequence must count every estimate for that lead across ALL of its jobs. Scoping by
+        // job_id instead let a repeat customer's second job restart the sequence at 1 and collide
+        // on uq_estimates_number_company — the save failed silently (buttons flicker, nothing saves).
         params.push(leadId);
-        clause = 'lead_id = $2 AND job_id IS NULL';
+        clause = 'lead_id = $2';
+    } else {
+        params.push(jobId);
+        clause = 'job_id = $2 AND lead_id IS NULL';
     }
 
     const { rows } = await query(

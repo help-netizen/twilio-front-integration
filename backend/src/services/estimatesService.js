@@ -173,7 +173,9 @@ async function resolveContext(companyId, data = {}, client = null) {
 
         const sequence = await estimatesQueries.nextEstimateSequence(
             companyId,
-            { jobId: job.id },
+            // Scope the sequence to the lead when the job has one, so it matches the lead-keyed
+            // number and stays unique across all of the customer's jobs.
+            { jobId: job.id, leadId: job.lead_id || null },
             client
         );
         return {
@@ -891,7 +893,11 @@ async function linkJob(companyId, userId, id, jobId, client = null, activityActo
     const job = await estimatesQueries.getJobContext(companyId, jobId, client);
     if (!job) throw new EstimatesServiceError('VALIDATION', 'Job not found', 400);
 
-    const sequence = await estimatesQueries.nextEstimateSequence(companyId, { jobId: job.id }, client);
+    const sequence = await estimatesQueries.nextEstimateSequence(
+        companyId,
+        { jobId: job.id, leadId: estimate.lead_id || job.lead_id || null },
+        client,
+    );
     const updated = await estimatesQueries.updateEstimate(id, companyId, {
         job_id: job.id,
         lead_id: estimate.lead_id || job.lead_id || null,
