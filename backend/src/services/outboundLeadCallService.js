@@ -24,6 +24,8 @@ const leadsService = require('./leadsService');
 const marketplaceService = require('./marketplaceService');
 const outboundLeadCallSettingsService = require('./outboundLeadCallSettingsService');
 const agentCallWindowService = require('./agentCallWindowService');
+const territoryService = require('./territoryService');
+const { normalizeZip } = require('../utils/zip');
 const outboundCallCancellationService = require('./outboundCallCancellationService');
 const { aiActor } = require('./leadContactActivityService');
 const eventBus = require('./eventBus');
@@ -186,6 +188,44 @@ async function onLeadCreated({ leadId, companyId }) {
                 console.warn('[outboundLeadCall] no-phone trace append failed:', err.message);
             }
             return skip(leadId, companyId, 'no_phone');
+        }
+
+        // 4b. Service area (ZONE-STRICT-001, owner decision 2026-08-05). Sara checks
+        // the ZIP in conversation before offering anything; the outbound robot never
+        // did, so it dialled people we cannot serve and then promised a callback it
+        // could not keep. A lead with no ZIP still gets called — there is nothing to
+        // check, and the agent can ask. A lookup failure also lets the call through:
+        // never lose a callable lead to a transient territory-table error.
+        const leadZip = normalizeZip(lead.PostalCode);
+        if (leadZip) {
+            let outsideTerritory = false;
+            try {
+                const territory = await territoryService.isZipInTerritory(companyId, leadZip);
+                outsideTerritory = territory && territory.inside === false;
+            } catch (err) {
+                console.warn('[outboundLeadCall] territory check failed, dialling anyway:', err.message);
+            }
+            if (outsideTerritory) {
+                const trace = `[AI Phone] ${new Date().toISOString()} — Outbound call skipped — ZIP ${leadZip} is outside the service area.`;
+                try {
+                    await db.query(
+                        `UPDATE leads
+                         SET comments = COALESCE(NULLIF(comments, '') || E'\\n\\n', '') || $2
+                         WHERE uuid = $1 AND company_id = $3`,
+                        [lead.UUID, trace, companyId]
+                    );
+                } catch (err) {
+                    console.warn('[outboundLeadCall] out-of-area trace append failed:', err.message);
+                }
+                await createLeadCallTask(
+                    companyId,
+                    lead,
+                    { lead_uuid: lead.UUID, phone, attempt_no: 0 },
+                    'out_of_area',
+                    { zip: leadZip }
+                );
+                return skip(leadId, companyId, 'out_of_area');
+            }
         }
 
         // 5. Goal achieved at birth (e.g. Sara's own createLead with a hold).
@@ -621,6 +661,14 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
             description = `Sara reached the customer on this ${sourceLabel} lead but they didn't pick a time.`
                 + (extra.summary ? `\n\nCall summary: ${extra.summary}` : '')
                 + `\n\nPlease follow up personally.`;
+        } else if (kind === 'out_of_area') {
+            // ZONE-STRICT-001: no call was placed at all — the address is outside
+            // the territory, so there is nothing for the robot to offer. A human
+            // decides whether to make an exception or turn the lead down.
+            title = `${name} is outside the service area — no call placed`;
+            description = `This ${sourceLabel} lead's ZIP${extra.zip ? ` (${extra.zip})` : ''} is not in the company's service territory, `
+                + `so the automated call was not made and no appointment can be offered.`
+                + `\n\nPlease decide whether to serve this address as an exception, or let the customer know we don't cover it.`;
         } else {
             // exhausted — per-attempt log lines from the chain.
             let lines = '';

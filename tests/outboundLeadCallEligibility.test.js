@@ -307,3 +307,54 @@ describe('TC-OLC-019: sabotage — the source-gate detector can go red', () => {
         expect(insertCalls()).toHaveLength(0);
     });
 });
+
+// ── ZONE-STRICT-001 (owner decision 2026-08-05) ───────────────────────────────
+// Sara checks the ZIP in conversation before offering anything; the outbound
+// robot never did. It dialled people we cannot serve and then, when the slot
+// engine returned nothing, promised a callback it could not keep.
+describe('TC-OLC-020: the outbound robot checks the service area before dialling', () => {
+    const territoryService = require('../backend/src/services/territoryService');
+
+    it('a ZIP outside the territory is not dialled — trace, dispatcher task, no INSERT', async () => {
+        getLeadByIdSpy.mockResolvedValue({ ...LEAD, PostalCode: '90210' });
+        const spy = jest.spyOn(territoryService, 'isZipInTerritory').mockResolvedValue({ inside: false });
+
+        await svc.onLeadCreated({ leadId: 1, companyId: 'co-1' });
+
+        expect(spy).toHaveBeenCalledWith('co-1', '90210');
+        expect(insertCalls()).toHaveLength(0);
+        const trace = traceCalls();
+        expect(trace).toHaveLength(1);
+        expect(trace[0][1][1]).toContain('outside the service area');
+        spy.mockRestore();
+    });
+
+    it('a ZIP inside the territory dials as before', async () => {
+        getLeadByIdSpy.mockResolvedValue({ ...LEAD, PostalCode: '02135' });
+        const spy = jest.spyOn(territoryService, 'isZipInTerritory').mockResolvedValue({ inside: true });
+
+        await svc.onLeadCreated({ leadId: 1, companyId: 'co-1' });
+
+        expect(insertCalls()).toHaveLength(1);
+        spy.mockRestore();
+    });
+
+    it('no ZIP on the lead still dials — there is nothing to check and the agent can ask', async () => {
+        const spy = jest.spyOn(territoryService, 'isZipInTerritory');
+        await svc.onLeadCreated({ leadId: 1, companyId: 'co-1' }); // LEAD has no PostalCode
+        expect(spy).not.toHaveBeenCalled();
+        expect(insertCalls()).toHaveLength(1);
+        spy.mockRestore();
+    });
+
+    it('a territory lookup failure lets the call through — never lose a lead to a table error', async () => {
+        getLeadByIdSpy.mockResolvedValue({ ...LEAD, PostalCode: '02135' });
+        const spy = jest.spyOn(territoryService, 'isZipInTerritory')
+            .mockRejectedValue(new Error('territory table down'));
+
+        await svc.onLeadCreated({ leadId: 1, companyId: 'co-1' });
+
+        expect(insertCalls()).toHaveLength(1);
+        spy.mockRestore();
+    });
+});
