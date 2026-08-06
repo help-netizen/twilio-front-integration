@@ -1,0 +1,113 @@
+# ZB-DECOUPLE-001 — Detach Albusto from Zenbooker
+
+Status: PLAN APPROVED (2026-08-06). Phase A next. Owner: help@bostonmasters.com (ABC Homes).
+Mode: tandem (Claude lead/design, Codex engineering). This file is the re-entry point.
+
+## Goal (owner's words)
+Zenbooker is no longer needed. Map every coupling and split away safely. Technicians who
+are NOT in Albusto must still render as the provider on the job cards of jobs they did;
+technicians and their schedules must not break; finally remove the ZB-caused duplicate
+contacts. The owner will own the job-sync migration; payments may need migrating.
+
+## Owner decisions (frozen 2026-08-06 — verbatim intent)
+1. **Booking master = Albusto native.** Build a native service catalog + territories +
+   local job creation (Phase C). ZB is not replaced by another provider.
+2. **Contact dedup = safe / manual-on-conflict.** Auto-merge ONLY when a normalized phone
+   OR email is owned by exactly one contact, or on exact ZB id. Phone↔email conflict and
+   shared household numbers go to a manual review queue. Never auto-merge on name alone.
+3. **Payments = freeze as imported history.** One final reconciled import (fix the Full-sync
+   gaps + a source-vs-ledger count/amount reconciliation), then `zb_payments` freezes as
+   immutable history and new payments are Albusto-native. No P2, no faked native origin.
+4. **Sequence = Phase A (technician identity) first.**
+
+## Current-state map (Codex discovery, file:line)
+### The crux — technician roster is 100% live from ZB
+- `technicianRosterService.listActive` calls ZB `/team_members` on EVERY request, no cache:
+  `backend/src/services/technicianRosterService.js:40-75`, `backend/src/services/zenbookerClient.js:613-638`.
+- Cutting it empties: slot engine (`slotEngineService.js:124-149,318-388`), `recommendSlots`
+  (→ voice/outbound/yelp "unavailable"), tech settings (`routes/technicians.js:34-142`),
+  **service-area settings** (`technicianServiceAreaService.js:52-95,197-251` — the ZONE-STRICT
+  work), availability (`technicianAvailabilityService.js:173-188`), company-wide time-off
+  (`timeOffService.js:153-181`), provider picker (`JobTechnicianControl.tsx:44-59`).
+
+### Job-card provider display does NOT break (owner constraint 1 already met)
+- Name is denormalized into `jobs.assigned_techs[]`, not a live roster join
+  (`jobsService.js:118-165,182-221`; `JobMobileCard.tsx:99-117`; `jobHelpers.tsx:177-180`).
+  A ZB-only/deactivated tech still renders today and after cutoff. Empty-provider sync keeps
+  the existing snapshot (`jobsService.js:1541-1547`).
+
+### Identity planes
+- Albusto UUID: `crm_users.id`, `company_memberships.user_id`, `jobs.assigned_provider_user_ids[]`.
+- ZB TEXT: `company_user_profiles.zenbooker_team_member_id` (the bridge),
+  `jobs.assigned_techs[].id`, `technician_profiles.tech_id`, `technician_base_locations.tech_id`,
+  `technician_time_off.technician_id`, `technician_work_schedules.technician_id`,
+  district/radius assignments, `technician_area_wildcards` (mig 239).
+- Bridge (company-scoped): `membershipQueries.js:193-247`. ZB id format `1777…x394…`.
+
+### Contacts & the duplicate cause
+- Two disagreeing matchers: hourly sync `upsertFromZenbooker` conflicts ONLY on
+  `zenbooker_customer_id` (`contactsService.js:338-400`); webhook matcher = ZB id → exact
+  first+last+phone → +email → create (`zenbookerSyncService.js:492-570`). Ordinary deduper is
+  name-first (`contactDedupeService.js:52-158,222-251`). Result: same-phone-different-name → dup.
+- Prod: 3637 contacts, 3525 (97%) ZB-sourced; 57 duplicate phone sets / 84 extra rows.
+
+### Payments — Full sync gaps (owner's suspicion confirmed)
+- Route `POST /api/zenbooker/payments/sync` → `syncFullHistory`
+  (`routes/zenbooker/payments.js:17-70`, `zenbookerPaymentsSyncService.js:606-710`).
+- Gaps: cursor in React state only (reload → restart at 0); swallowed projection/reconcile
+  errors; per-row commits (crash = partial page); NO source-vs-ledger reconciliation; refunds
+  staged without adjustment; `parseFloat||null` turns $0 → null; no explicit sort.
+- Native ledger `payment_transactions` already holds the 1430 zb rows as
+  `external_source='zenbooker'`. They can stay as immutable imports after cutoff.
+
+### Config, workers, security
+- Env: `ZENBOOKER_API_KEY/_BASE_URL/_TIMEOUT_MS/_DEFAULT_COMPANY_ID` (`zenbookerClient.js:23-39`);
+  per-company `companies.zenbooker_api_key`/`zenbooker_webhook_key`; `FEATURE_ZENBOOKER_SYNC`.
+- Workers/crons: hourly contact cron (`reconcile.cron:15-17`), job webhooks
+  (`integrations-zenbooker.js:34-229`), queued `zb_job_sync` worker (`workers/agentHandlers.js:114-180`),
+  5s delayed assignment re-fetch, manual payment sync. Startup job cron is a stub (`zbJobsSyncCron.js`).
+- ⚠️ SECURITY: hard-coded ZB credential fallback in `scripts/search_part_numbers.js:9` — rotate + remove.
+- ⚠️ TENANCY: older `getClient()` methods are unscoped and can hit the default ZB account from a
+  tenant route (`zenbookerClient.js:118-280,356-580`). Harden or gate during transition.
+
+### MCP parity
+- reschedule/cancel appointment skills push to ZB via `scheduleService`
+  (`agentSkills/skills/{reschedule,cancel}Appointment.js`); MCP job schema exposes
+  `zenbooker_job_id/zb_status/zb_rescheduled/zb_canceled` (`agentSkillsMcpRegistry.js:994-1004`).
+- Keep signatures + fields nullable ≥1 release; make shared job/schedule services do native ops
+  before disabling ZB branches. No new MCP permission needed for decoupling itself.
+
+## Phased plan (each phase leaves the system working)
+- **Phase 0 — safety:** rotate the hard-coded credential; add integration mode live|read_only|off;
+  baseline counts (done). Rollback: mode → live.
+- **Phase A — technician identity Albusto-native (NEXT):** native `technicians` directory
+  (uuid, company_id, name, active, optional crm_user_id) + external-identity map
+  (company_id, source, external_id); import live roster + every distinct historical
+  `assigned_techs` id as an inactive technician; repoint schedules/zones/bases/time-off/mig239
+  to the native uuid via the map; roster/slots/settings read native; dual-read compare before
+  switch. De-risks the biggest hard failure. Rollback: adapter back to ZB read, native data kept.
+- **Phase B — contact dedup + native authority:** preview pipeline, external-id mapping table,
+  fix merge to preserve external ids + phone overflow, deterministic batches (safe policy above),
+  ZB import → link/fill-empty only → read-only → stop.
+- **Phase C — booking/job ops native (booking master = Albusto):** native service catalog +
+  territory, slots on native data only, job create local-first, remove ZB from
+  reschedule/assign/cancel/complete/note. Owner owns the job-sync migration.
+- **Phase D — payment freeze:** durable checkpoint, final reconciled import + count/amount
+  reconciliation, refund policy, mark cutoff, `zb_payments` frozen, new payments native.
+- **Phase E — freeze/disable ZB:** read-only → verify → disable crons/webhooks/workers/buttons →
+  revoke creds after a monitoring window.
+- **Phase F — remove ZB code:** keep provenance columns; drop schema later, separately reviewed.
+
+## Tenancy & Roles
+Every native technician read/write is `company_id`-scoped (canon). The technician directory and
+external-id map carry `company_id`; the ZB→native bridge stays company-scoped. Provider-scope
+authz continues to key on `jobs.assigned_provider_user_ids` (Albusto UUID). Settings writes
+require `tenant.company.manage` as today.
+
+## Verification
+(To be filled per phase as it ships — each with exact run command + sabotage control.)
+Phase A acceptance and tests: see the Phase A section once designed.
+
+## Open owner items (non-blocking)
+- ZB raw/receipt/link retention period (default: keep as provenance indefinitely until asked).
+- Imported-payment UI label: "Zenbooker" vs "Legacy import" (default: keep "Zenbooker").
