@@ -118,3 +118,16 @@ imports it — `git grep -l "require.*<module>" tests/` — not just the task's 
 `.db` test proving the new contract does NOT absolve the old mocked tests that assert the superseded
 one; either update or delete them in the SAME task. A green new-test next to an unrun stale sibling
 is a false ACCEPT.
+
+## L-024 — a safety guard on a destructive op must not be scoped by the actor's tenant filter
+
+ZB-DECOUPLE B5: the contact-merge "zero donor references before archive" guard filtered child-row
+checks by `company_id = <merge company>`. That is the natural tenant-scoping instinct — but this guard
+exists to prove NOTHING still points at the donor before it is (soft-)deleted. A row owned by ANOTHER
+company that references the donor (contact_id FKs are not company-composite, and ZB had cross-tenant
+contact leaks historically) slipped past the company filter → the donor was archived → that reference
+orphaned. Rule: tenant-scope the WRITES (reassignment can only move this company's rows), but make the
+pre-destruction "no references remain" ASSERTION exhaustive — key it on the target's globally-unique id
+alone, so a stray cross-tenant reference makes the guard THROW and refuse the op (surfacing the anomaly)
+rather than silently destroying. A red-team suite that seeds the anomalous cross-tenant reference is what
+catches this; per-task same-company tests never will.
