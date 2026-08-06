@@ -18,6 +18,8 @@ function defaultState(overrides = {}) {
     return {
         jobs: [],
         configIds: [],
+        repointPreview: 0,
+        repointUpdateCounts: {},
         profiles: [],
         technicians: [],
         mappings: [],
@@ -32,12 +34,19 @@ function makeDependencies({ roster = [{ id: 'zb-live', name: 'Live Tech' }], sta
         if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
         if (/FROM companies/.test(sql)) return { rows: [{ id: params[0] }] };
         if (/WITH snapshots AS/.test(sql)) return { rows: state.jobs };
+        if (/AS repoint_rows/.test(sql)) {
+            return { rows: [{ repoint_rows: state.repointPreview }] };
+        }
         if (/FROM \(\s*SELECT NULLIF\(BTRIM\(tech_id\)/s.test(sql)) {
             return { rows: state.configIds.map(external_id => ({ external_id })) };
         }
         if (/FROM technician_profiles\s+WHERE company_id/.test(sql)) return { rows: state.profiles };
         if (/FROM technicians\s+WHERE company_id/.test(sql)) return { rows: state.technicians };
-        if (/FROM technician_external_identities e/.test(sql)) return { rows: state.mappings };
+        const repointTable = sql.match(/^UPDATE (technician_[a-z_]+) t/);
+        if (repointTable) {
+            return { rows: [], rowCount: state.repointUpdateCounts[repointTable[1]] || 0 };
+        }
+        if (/^\s*SELECT e\.external_id, e\.technician_id/.test(sql)) return { rows: state.mappings };
         if (/FROM company_memberships m/.test(sql)) return { rows: state.crmUsers };
         if (/UPDATE technicians/.test(sql)) return { rows: [{ id: params[1] }] };
         throw new Error(`Unexpected SQL in test: ${sql}`);
@@ -74,11 +83,14 @@ function makeDependencies({ roster = [{ id: 'zb-live', name: 'Live Tech' }], sta
     };
 }
 
-function expectNoDataWrites(deps) {
+function expectNoDataWrites(deps, { allowNoopRepoint = false } = {}) {
     expect(deps.directoryQueries.createTechnician).not.toHaveBeenCalled();
     expect(deps.directoryQueries.upsertExternalIdentity).not.toHaveBeenCalled();
     expect(deps.directoryQueries.linkCrmUser).not.toHaveBeenCalled();
-    const dataWrites = deps.query.mock.calls.filter(([sql]) => /^(?:\s*)(?:INSERT|UPDATE|DELETE)\b/i.test(sql));
+    const dataWrites = deps.query.mock.calls.filter(([sql]) => {
+        if (!/^(?:\s*)(?:INSERT|UPDATE|DELETE)\b/i.test(sql)) return false;
+        return !(allowNoopRepoint && /^UPDATE technician_[a-z_]+ t/.test(sql));
+    });
     expect(dataWrites).toEqual([]);
 }
 
@@ -105,10 +117,11 @@ describe('argument and name resolution', () => {
 });
 
 test('dry-run reports the plan and performs zero writes', async () => {
-    const deps = makeDependencies();
+    const deps = makeDependencies({ state: defaultState({ repointPreview: 11 }) });
     const result = await run(['--company-id', COMPANY], deps);
     expect(result).toMatchObject({
         mode: 'dry-run',
+        repoint_rows: 11,
         writes_performed: 0,
         summary: { create_technicians: 1, create_external_identities: 1 },
     });
@@ -117,6 +130,44 @@ test('dry-run reports the plan and performs zero writes', async () => {
         COMPANY
     );
     expectNoDataWrites(deps);
+    expect(deps.query.mock.calls.every(([sql]) => /^\s*(?:SELECT|WITH)\b/.test(sql))).toBe(true);
+    const [previewSql, previewParams] = deps.query.mock.calls.find(([sql]) => /AS repoint_rows/.test(sql));
+    expect(previewSql.match(/SELECT COUNT\(\*\)::bigint AS row_count/g)).toHaveLength(8);
+    expect(previewSql).toMatch(/FROM technician_base_locations[\s\S]*tech_id <> '__company__'/);
+    expect(previewParams).toEqual([COMPANY]);
+});
+
+test('apply repoints all eight config tables and includes affected rows in the total', async () => {
+    const state = defaultState({
+        repointUpdateCounts: {
+            technician_profiles: 1,
+            technician_base_locations: 2,
+            technician_time_off: 3,
+            technician_work_schedules: 4,
+            technician_work_schedule_days: 5,
+            technician_district_assignments: 6,
+            technician_radius_assignments: 7,
+            technician_area_wildcards: 8,
+        },
+    });
+    const deps = makeDependencies({ state });
+    const result = await run(['--company-id', COMPANY, '--apply'], deps);
+    const repointUpdates = deps.query.mock.calls.filter(([sql]) => /^UPDATE technician_[a-z_]+ t/.test(sql));
+
+    expect(repointUpdates).toHaveLength(8);
+    expect(result.repoint_rows).toBe(36);
+    expect(result.writes_performed).toBe(38);
+    for (const [sql, params] of repointUpdates) {
+        expect(sql).toMatch(/WHERE t\.company_id = \$1/);
+        expect(sql).toMatch(/e\.company_id = t\.company_id/);
+        expect(sql).toMatch(/e\.source = 'zenbooker'/);
+        expect(sql).toMatch(/e\.external_id = t\.(?:tech_id|technician_id)/);
+        expect(sql).toMatch(/t\.technician_uuid IS DISTINCT FROM e\.technician_id/);
+        expect(params).toEqual([COMPANY]);
+    }
+    expect(repointUpdates.find(([sql]) => /UPDATE technician_base_locations/.test(sql))[0])
+        .toMatch(/t\.tech_id <> '__company__'/);
+    expect(deps.client.query).toHaveBeenCalledWith('COMMIT');
 });
 
 describe('refusal guards abort before writes', () => {
@@ -227,7 +278,11 @@ test('rerun resolves existing UUIDs and is a zero-write no-op', async () => {
         change_crm_user_links: 0,
     });
     expect(result.writes_performed).toBe(0);
-    expectNoDataWrites(deps);
+    expect(result.repoint_rows).toBe(0);
+    expectNoDataWrites(deps, { allowNoopRepoint: true });
+    const repointUpdates = deps.query.mock.calls.filter(([sql]) => /^UPDATE technician_[a-z_]+ t/.test(sql));
+    expect(repointUpdates).toHaveLength(8);
+    expect(repointUpdates.every(([sql]) => /IS DISTINCT FROM e\.technician_id/.test(sql))).toBe(true);
     expect(deps.client.query.mock.calls.filter(([sql]) => sql === 'BEGIN')).toHaveLength(1);
     expect(deps.client.query.mock.calls.filter(([sql]) => sql === 'COMMIT')).toHaveLength(1);
 });

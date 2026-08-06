@@ -81,6 +81,7 @@ describe('native technician backfill real PostgreSQL round-trip', () => {
         const historyExternal = `zb-history-${suffix}`;
         const configExternal = `zb-config-${suffix}`;
         const sharedExternal = `zb-shared-${suffix}`;
+        const radiusId = randomUUID();
         let foreignTechnicianId;
 
         const zenbookerClient = {
@@ -114,8 +115,50 @@ describe('native technician backfill real PostgreSQL round-trip', () => {
             );
             await db.query(
                 `INSERT INTO technician_base_locations (company_id, tech_id, lat, lng)
-                 VALUES ($1, '__company__', 42.0, -71.0)`,
-                [companyA]
+                 VALUES ($1, $2, 42.1, -71.1),
+                        ($1, '__company__', 42.0, -71.0)`,
+                [companyA, configExternal]
+            );
+            await db.query(
+                `INSERT INTO technician_time_off
+                    (company_id, technician_id, technician_name, starts_at, ends_at)
+                 VALUES ($1, $2, 'Config Profile Provider', '2030-01-01T12:00:00Z', '2030-01-01T13:00:00Z')`,
+                [companyA, configExternal]
+            );
+            await db.query(
+                `INSERT INTO technician_work_schedules
+                    (company_id, technician_id, inherits_company_schedule)
+                 VALUES ($1, $2, FALSE)`,
+                [companyA, configExternal]
+            );
+            await db.query(
+                `INSERT INTO technician_work_schedule_days
+                    (company_id, technician_id, day_of_week, is_working, work_start_time, work_end_time)
+                 VALUES ($1, $2, 1, TRUE, '09:00', '17:00')`,
+                [companyA, configExternal]
+            );
+            await db.query(
+                `INSERT INTO technician_district_assignments
+                    (company_id, technician_id, district_name)
+                 VALUES ($1, $2, 'North')`,
+                [companyA, configExternal]
+            );
+            await db.query(
+                `INSERT INTO territory_radii
+                    (id, company_id, zip, lat, lon, radius_miles)
+                 VALUES ($1, $2, '02108', 42.357, -71.064, 25)`,
+                [radiusId, companyA]
+            );
+            await db.query(
+                `INSERT INTO technician_radius_assignments
+                    (company_id, technician_id, radius_id)
+                 VALUES ($1, $2, $3)`,
+                [companyA, configExternal, radiusId]
+            );
+            await db.query(
+                `INSERT INTO technician_area_wildcards (company_id, technician_id)
+                 VALUES ($1, $2)`,
+                [companyA, configExternal]
             );
 
             const foreign = await directoryQueries.createTechnician({
@@ -130,15 +173,27 @@ describe('native technician backfill real PostgreSQL round-trip', () => {
                 externalId: sharedExternal,
                 technicianId: foreign.id,
             });
+            await db.query(
+                `INSERT INTO technician_profiles (company_id, tech_id, name)
+                 VALUES ($1, $2, 'Foreign Shared Config')`,
+                [companyB, sharedExternal]
+            );
             const foreignBefore = JSON.stringify((await db.query(
-                `SELECT to_jsonb(t) AS snapshot
+                `SELECT jsonb_build_object(
+                            'technician', to_jsonb(t),
+                            'config', to_jsonb(p)
+                        ) AS snapshot
                  FROM technicians t
+                 JOIN technician_profiles p
+                   ON p.company_id = t.company_id
+                  AND p.tech_id = $3
                  WHERE t.company_id = $1 AND t.id = $2`,
-                [companyB, foreign.id]
+                [companyB, foreign.id, sharedExternal]
             )).rows[0].snapshot);
 
             const first = await run(['--company-id', companyA, '--apply'], dependencies);
             expect(first.summary.create_technicians).toBe(4);
+            expect(first.repoint_rows).toBe(8);
             const firstRows = (await db.query(
                 `SELECT e.external_id, t.id, t.display_name, t.active
                  FROM technician_external_identities e
@@ -157,7 +212,43 @@ describe('native technician backfill real PostgreSQL round-trip', () => {
             expect(firstRows.some(row => row.external_id === '__company__')).toBe(false);
 
             const uuidByExternal = new Map(firstRows.map(row => [row.external_id, String(row.id)]));
+            const configRows = (await db.query(
+                `SELECT 'profiles' AS config_table, tech_id AS external_id, technician_uuid
+                 FROM technician_profiles WHERE company_id = $1
+                 UNION ALL
+                 SELECT 'base_locations', tech_id, technician_uuid
+                 FROM technician_base_locations WHERE company_id = $1
+                 UNION ALL
+                 SELECT 'time_off', technician_id, technician_uuid
+                 FROM technician_time_off WHERE company_id = $1
+                 UNION ALL
+                 SELECT 'work_schedules', technician_id, technician_uuid
+                 FROM technician_work_schedules WHERE company_id = $1
+                 UNION ALL
+                 SELECT 'work_schedule_days', technician_id, technician_uuid
+                 FROM technician_work_schedule_days WHERE company_id = $1
+                 UNION ALL
+                 SELECT 'district_assignments', technician_id, technician_uuid
+                 FROM technician_district_assignments WHERE company_id = $1
+                 UNION ALL
+                 SELECT 'radius_assignments', technician_id, technician_uuid
+                 FROM technician_radius_assignments WHERE company_id = $1
+                 UNION ALL
+                 SELECT 'area_wildcards', technician_id, technician_uuid
+                 FROM technician_area_wildcards WHERE company_id = $1
+                 ORDER BY config_table, external_id`,
+                [companyA]
+            )).rows;
+            expect(configRows).toHaveLength(9);
+            expect(configRows.filter(row => row.external_id !== '__company__')).toHaveLength(8);
+            expect(configRows
+                .filter(row => row.external_id !== '__company__')
+                .every(row => String(row.technician_uuid) === uuidByExternal.get(configExternal)))
+                .toBe(true);
+            expect(configRows.find(row => row.external_id === '__company__').technician_uuid).toBeNull();
+
             const second = await run(['--company-id', companyA, '--apply'], dependencies);
+            expect(second.repoint_rows).toBe(0);
             expect(second.writes_performed).toBe(0);
             const secondRows = (await db.query(
                 `SELECT e.external_id, t.id
@@ -170,17 +261,31 @@ describe('native technician backfill real PostgreSQL round-trip', () => {
             expect(new Map(secondRows.map(row => [row.external_id, String(row.id)]))).toEqual(uuidByExternal);
 
             const foreignAfter = JSON.stringify((await db.query(
-                `SELECT to_jsonb(t) AS snapshot
+                `SELECT jsonb_build_object(
+                            'technician', to_jsonb(t),
+                            'config', to_jsonb(p)
+                        ) AS snapshot
                  FROM technicians t
+                 JOIN technician_profiles p
+                   ON p.company_id = t.company_id
+                  AND p.tech_id = $3
                  WHERE t.company_id = $1 AND t.id = $2`,
-                [companyB, foreign.id]
+                [companyB, foreign.id, sharedExternal]
             )).rows[0].snapshot);
             expect(foreignAfter).toBe(foreignBefore);
         } finally {
             await db.query('DELETE FROM jobs WHERE company_id = $1', [companyA]).catch(() => {});
+            await db.query('DELETE FROM technician_work_schedule_days WHERE company_id = $1', [companyA]).catch(() => {});
+            await db.query('DELETE FROM technician_work_schedules WHERE company_id = $1', [companyA]).catch(() => {});
+            await db.query('DELETE FROM technician_time_off WHERE company_id = $1', [companyA]).catch(() => {});
+            await db.query('DELETE FROM technician_district_assignments WHERE company_id = $1', [companyA]).catch(() => {});
+            await db.query('DELETE FROM technician_radius_assignments WHERE company_id = $1', [companyA]).catch(() => {});
+            await db.query('DELETE FROM technician_area_wildcards WHERE company_id = $1', [companyA]).catch(() => {});
             await db.query('DELETE FROM technician_profiles WHERE company_id = $1', [companyA]).catch(() => {});
             await db.query('DELETE FROM technician_base_locations WHERE company_id = $1', [companyA]).catch(() => {});
+            await db.query('DELETE FROM territory_radii WHERE company_id = $1', [companyA]).catch(() => {});
             if (foreignTechnicianId) {
+                await db.query('DELETE FROM technician_profiles WHERE company_id = $1', [companyB]).catch(() => {});
                 await db.query('DELETE FROM technicians WHERE company_id = $1 AND id = $2', [companyB, foreignTechnicianId]).catch(() => {});
             }
             await db.query('DELETE FROM technicians WHERE company_id = $1', [companyA]).catch(() => {});

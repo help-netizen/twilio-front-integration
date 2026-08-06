@@ -192,7 +192,24 @@ git) → green; and removing company scope from the external-map join must fail 
 - `tests/nativeTechnicianBackfill.db.test.js` written; runs at DEPLOY (skips locally — dev DB not migrated).
 - Built by Codex in a FRESH session (per L-022, not the compacted one) — applied cleanly, no L-016.
 
-### T3..T6 — not started (see Phase A design above).
+### T3a (§3.3 config re-key backfill) — DONE, commit <pending>
+- Backfill CLI now populates `technician_uuid` on all 8 config tables from the external map,
+  inside the SAME apply transaction after identities exist; idempotent (`IS DISTINCT FROM`),
+  `__company__` base row excluded (stays NULL). `repoint_rows` in the report; dry-run previews
+  it read-only. Pure re-key of Albusto-master config (decision #5) — values untouched.
+- Unit 13/13 (mocked). Real-DB test against `albusto_test` 1/1: after --apply every non-sentinel
+  config row = the mapped uuid, `__company__` NULL, second --apply repoints 0, foreign tenant
+  unchanged. Sabotage SAB-T3A-IDEMPOTENT: drop the `IS DISTINCT FROM` guard → second apply
+  re-repoints 8 → db test red (Expected 0, Received 8) → restore → green.
+- Codex fresh session; applied cleanly.
+
+### T3b..T6 — not started (see Phase A design above).
+**T3b (NEXT) = service dual-read/write.** Make technicianServiceArea / slotEngine.buildTechnicians /
+technicianRoster / routes/technicians / availability / timeOff / baseLocations / workSchedule read
+`technician_uuid` first (legacy TEXT via the map when null) and dual-write both keys. This is the
+big/risky one (touches yesterday's ZONE-STRICT). Its control is `SAB-A-ZONE-UUID-PARITY` as a REAL
+`.db` test against `albusto_test`: same Albusto config read via uuid == via zb-id → same eligible
+set (flip the ZONE-STRICT empty branch + drop company scope to prove it bites).
 
 ## NEXT (re-entry for a fresh session)
 State: T1 + T2 done, gated, committed (migration 240 + query layer + backfill CLI + tests).

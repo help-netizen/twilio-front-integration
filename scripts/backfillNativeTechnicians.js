@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * ZB-DECOUPLE-001 Phase A / T2.
+ * ZB-DECOUPLE-001 Phase A / T2 + T3a.
  *
  * Imports one explicitly selected company's live and historical Zenbooker
  * technician identities into the Albusto-native directory. Dry-run is the
@@ -17,6 +17,16 @@ const defaultZenbookerClient = require('../backend/src/services/zenbookerClient'
 const SOURCE = 'zenbooker';
 const COMPANY_BASE_SENTINEL = '__company__';
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CONFIG_REPOINT_TARGETS = [
+    { table: 'technician_profiles', keyColumn: 'tech_id' },
+    { table: 'technician_base_locations', keyColumn: 'tech_id', excludeCompanyBase: true },
+    { table: 'technician_time_off', keyColumn: 'technician_id' },
+    { table: 'technician_work_schedules', keyColumn: 'technician_id' },
+    { table: 'technician_work_schedule_days', keyColumn: 'technician_id' },
+    { table: 'technician_district_assignments', keyColumn: 'technician_id' },
+    { table: 'technician_radius_assignments', keyColumn: 'technician_id' },
+    { table: 'technician_area_wildcards', keyColumn: 'technician_id' },
+];
 
 class BackfillRefusalError extends Error {
     constructor(code, message) {
@@ -535,7 +545,43 @@ async function applyPlan({ companyId, plan, queryable, directoryQueries }) {
     return writesPerformed;
 }
 
-function reportFor(plan, mode, writesPerformed) {
+async function previewConfigRepointRows(queryable, companyId) {
+    const counts = CONFIG_REPOINT_TARGETS.map(({ table, excludeCompanyBase }) => `
+            SELECT COUNT(*)::bigint AS row_count
+            FROM ${table}
+            WHERE company_id = $1
+              AND technician_uuid IS NULL${excludeCompanyBase ? `
+              AND tech_id <> '${COMPANY_BASE_SENTINEL}'` : ''}`);
+    const { rows } = await queryable.query(
+        `SELECT COALESCE(SUM(row_count), 0)::bigint AS repoint_rows
+         FROM (${counts.join('\n            UNION ALL')}
+         ) config_rows`,
+        [companyId]
+    );
+    return Number(rows[0]?.repoint_rows || 0);
+}
+
+async function repointConfigRows(queryable, companyId) {
+    let repointRows = 0;
+    for (const { table, keyColumn, excludeCompanyBase } of CONFIG_REPOINT_TARGETS) {
+        const result = await queryable.query(
+            `UPDATE ${table} t
+             SET technician_uuid = e.technician_id
+             FROM technician_external_identities e
+             WHERE t.company_id = $1
+               AND e.company_id = t.company_id
+               AND e.source = 'zenbooker'
+               AND e.external_id = t.${keyColumn}
+               AND t.technician_uuid IS DISTINCT FROM e.technician_id${excludeCompanyBase ? `
+               AND t.tech_id <> '${COMPANY_BASE_SENTINEL}'` : ''}`,
+            [companyId]
+        );
+        repointRows += Number(result.rowCount || 0);
+    }
+    return repointRows;
+}
+
+function reportFor(plan, mode, writesPerformed, repointRows = 0) {
     return {
         mode,
         company_id: plan.companyId,
@@ -545,6 +591,7 @@ function reportFor(plan, mode, writesPerformed) {
         deactivate_technician_ids: plan.existingUpdates
             .filter(update => update.previousActive && !update.active)
             .map(update => update.technicianId),
+        repoint_rows: repointRows,
         writes_performed: writesPerformed,
     };
 }
@@ -593,20 +640,23 @@ async function run(argv = process.argv.slice(2), dependencies = {}) {
         });
 
         if (!args.apply) {
-            const report = reportFor(plan, 'dry-run', 0);
+            const repointRows = await previewConfigRepointRows(queryable, args.companyId);
+            const report = reportFor(plan, 'dry-run', 0, repointRows);
             output(report);
             return report;
         }
 
-        const writesPerformed = await applyPlan({
+        let writesPerformed = await applyPlan({
             companyId: args.companyId,
             plan,
             queryable,
             directoryQueries,
         });
+        const repointRows = await repointConfigRows(queryable, args.companyId);
+        writesPerformed += repointRows;
         await queryable.query('COMMIT');
         transactionOpen = false;
-        const report = reportFor(plan, 'apply', writesPerformed);
+        const report = reportFor(plan, 'apply', writesPerformed, repointRows);
         output(report);
         return report;
     } catch (error) {
@@ -640,7 +690,9 @@ module.exports = {
     buildPlan,
     fetchActiveRoster,
     parseArgs,
+    previewConfigRepointRows,
     readConfigExternalIds,
+    repointConfigRows,
     resolveDisplayName,
     run,
 };
