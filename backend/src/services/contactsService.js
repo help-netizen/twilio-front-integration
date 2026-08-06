@@ -7,6 +7,8 @@
 
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
+const { resolveOrCreateContact } = require('./contactResolverService');
+const { propagateContactDetails } = require('./contactPropagationService');
 const { buildActiveAssignedContactPredicate } = require('../db/providerContactAccessQueries');
 const {
     createCursorFingerprint,
@@ -352,50 +354,70 @@ async function upsertFromZenbooker(customer, companyId) {
     // Store full Zenbooker payload for rich display
     const zbData = JSON.stringify(customer);
 
-    const params = [
+    const resolution = await resolveOrCreateContact({
         companyId,
-        fullName,
-        phone,
-        secondaryPhone,
-        secondaryPhoneName,
-        email,
-        notes,
-        customerId,
-        zbData,
-    ];
-    const inserted = await db.query(
-        `INSERT INTO contacts (
-            company_id, full_name, phone_e164, secondary_phone,
-            secondary_phone_name, email, notes, zenbooker_customer_id,
-            zenbooker_data
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-         ON CONFLICT DO NOTHING
-         RETURNING *`,
-        params
+        externalId: customerId,
+        contact: customer,
+    });
+
+    // ZB can enrich blanks, but it never replaces an Albusto-owned scalar.
+    await db.query(
+        `UPDATE contacts target
+         SET full_name = COALESCE(NULLIF(BTRIM(target.full_name), ''), $2),
+             first_name = COALESCE(NULLIF(BTRIM(target.first_name), ''), $3),
+             last_name = COALESCE(NULLIF(BTRIM(target.last_name), ''), $4),
+             notes = COALESCE(NULLIF(BTRIM(target.notes), ''), $5),
+             zenbooker_data = $6::jsonb,
+             zenbooker_sync_status = 'linked',
+             zenbooker_synced_at = NOW(),
+             zenbooker_last_error = NULL,
+             updated_at = NOW()
+         WHERE target.company_id = $1 AND target.id = $7`,
+        [
+            companyId,
+            fullName,
+            customer.first_name || null,
+            customer.last_name || null,
+            notes,
+            zbData,
+            resolution.contact_id,
+        ]
     );
-    if (inserted.rows[0]) return rowToContact(inserted.rows[0]);
+
+    await propagateContactDetails(
+        companyId,
+        resolution.contact_id,
+        { phone, email },
+        { source: 'zb_contact_sync' }
+    );
+    if (secondaryPhone) {
+        await propagateContactDetails(
+            companyId,
+            resolution.contact_id,
+            { phone: secondaryPhone },
+            { source: 'zb_contact_sync' }
+        );
+    }
+
+    if (secondaryPhoneName && secondaryPhone) {
+        await db.query(
+            `UPDATE contacts
+             SET secondary_phone_name = COALESCE(
+                     NULLIF(BTRIM(secondary_phone_name), ''),
+                     $1
+                 )
+             WHERE company_id = $2
+               AND id = $3
+               AND RIGHT(REGEXP_REPLACE(COALESCE(secondary_phone, ''), '[^0-9]', '', 'g'), 10)
+                   = RIGHT(REGEXP_REPLACE($4, '[^0-9]', '', 'g'), 10)`,
+            [secondaryPhoneName, companyId, resolution.contact_id, secondaryPhone]
+        );
+    }
 
     const { rows } = await db.query(
-        `UPDATE contacts
-         SET full_name = COALESCE($2, full_name),
-             phone_e164 = COALESCE($3, phone_e164),
-             secondary_phone = COALESCE($4, secondary_phone),
-             secondary_phone_name = COALESCE($5, secondary_phone_name),
-             email = COALESCE($6, email),
-             notes = COALESCE($7, notes),
-             zenbooker_data = $9::jsonb,
-             updated_at = NOW()
-         WHERE company_id = $1 AND zenbooker_customer_id = $8
-         RETURNING *`,
-        params
+        'SELECT * FROM contacts WHERE company_id = $1 AND id = $2',
+        [companyId, resolution.contact_id]
     );
-    if (!rows[0]) {
-        const err = new Error('Zenbooker customer id is already owned by another company');
-        err.code = 'ZENBOOKER_ID_CONFLICT';
-        err.httpStatus = 409;
-        throw err;
-    }
     return rowToContact(rows[0]);
 }
 

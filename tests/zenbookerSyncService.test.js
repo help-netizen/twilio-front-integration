@@ -1,21 +1,29 @@
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/contactsService', () => ({}));
+jest.mock('../backend/src/services/contactResolverService', () => ({
+    resolveOrCreateContact: jest.fn(),
+}));
+jest.mock('../backend/src/services/contactPropagationService', () => ({
+    propagateContactDetails: jest.fn().mockResolvedValue({ phone: 'already', email: 'skipped' }),
+}));
 
 process.env.FEATURE_ZENBOOKER_SYNC = 'true';
 
 const db = require('../backend/src/db/connection');
+const { resolveOrCreateContact } = require('../backend/src/services/contactResolverService');
 const zenbookerSyncService = require('../backend/src/services/zenbookerSyncService');
 
 describe('zenbookerSyncService customer notes', () => {
     beforeEach(() => {
         db.query.mockReset();
+        resolveOrCreateContact.mockReset();
+        resolveOrCreateContact.mockResolvedValue({ contact_id: 1851, created: false });
     });
 
     it('merges Zenbooker customer notes into contact structured notes without duplicates', async () => {
         db.query
-            .mockResolvedValueOnce({ rows: [{ id: 1851 }] }) // exact linked contact lookup
-            .mockResolvedValueOnce({ rows: [] }) // contact master-field update
+            .mockResolvedValueOnce({ rows: [] }) // contact metadata/fill-empty update
             .mockResolvedValueOnce({
                 rows: [{
                     structured_notes: [{

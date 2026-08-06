@@ -5,14 +5,19 @@
  */
 const db = require('./connection');
 
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
 function normalizePhone(raw) {
     if (raw === null || raw === undefined) return null;
     const digits = String(raw).replace(/[^0-9]/g, '');
     return digits.length >= 10 ? digits.slice(-10) : null;
 }
 
-async function upsertExternalIdentity({ companyId, source, externalId, contactId }) {
-    const { rows } = await db.query(
+async function upsertExternalIdentity({ companyId, source, externalId, contactId, client = db }) {
+    const query = queryFor(client);
+    const { rows } = await query(
         `INSERT INTO contact_external_identities
             (company_id, source, external_id, contact_id)
          SELECT $1, $2, $3, c.id
@@ -24,31 +29,47 @@ async function upsertExternalIdentity({ companyId, source, externalId, contactId
     );
     if (rows[0]) return rows[0];
 
-    const existing = await db.query(
-        `SELECT company_id, source, external_id, contact_id, created_at
-         FROM contact_external_identities
-         WHERE company_id = $1 AND source = $2 AND external_id = $3`,
+    const existing = await query(
+        `SELECT identity.company_id, identity.source, identity.external_id,
+                identity.contact_id, identity.created_at
+         FROM contact_external_identities identity
+         JOIN contacts contact
+           ON contact.id = identity.contact_id
+          AND contact.company_id = identity.company_id
+         WHERE identity.company_id = $1
+           AND identity.source = $2
+           AND identity.external_id = $3`,
         [companyId, source, externalId]
     );
     return existing.rows[0] || null;
 }
 
-async function resolveExternalToContact(companyId, source, externalId) {
-    const { rows } = await db.query(
-        `SELECT contact_id
-         FROM contact_external_identities
-         WHERE company_id = $1 AND source = $2 AND external_id = $3`,
+async function resolveExternalToContact(companyId, source, externalId, client = db) {
+    const { rows } = await queryFor(client)(
+        `SELECT identity.contact_id
+         FROM contact_external_identities identity
+         JOIN contacts contact
+           ON contact.id = identity.contact_id
+          AND contact.company_id = identity.company_id
+         WHERE identity.company_id = $1
+           AND identity.source = $2
+           AND identity.external_id = $3`,
         [companyId, source, externalId]
     );
     return rows[0] ? rows[0].contact_id : null;
 }
 
-async function resolveContactToExternal(companyId, source, contactId) {
-    const { rows } = await db.query(
-        `SELECT external_id
-         FROM contact_external_identities
-         WHERE company_id = $1 AND source = $2 AND contact_id = $3
-         ORDER BY created_at ASC, external_id ASC
+async function resolveContactToExternal(companyId, source, contactId, client = db) {
+    const { rows } = await queryFor(client)(
+        `SELECT identity.external_id
+         FROM contact_external_identities identity
+         JOIN contacts contact
+           ON contact.id = identity.contact_id
+          AND contact.company_id = identity.company_id
+         WHERE identity.company_id = $1
+           AND identity.source = $2
+           AND identity.contact_id = $3
+         ORDER BY identity.created_at ASC, identity.external_id ASC
          LIMIT 1`,
         [companyId, source, contactId]
     );
@@ -58,26 +79,30 @@ async function resolveContactToExternal(companyId, source, contactId) {
 async function findContactIdsByNormalizedPhone(
     companyId,
     normalizedPhone,
-    { includeShared = false } = {}
+    { includeShared = false, client = db } = {}
 ) {
     const normalized = normalizePhone(normalizedPhone);
     if (!normalized) return [];
 
-    const sharedClause = includeShared ? '' : 'AND is_shared = FALSE';
-    const { rows } = await db.query(
-        `SELECT DISTINCT contact_id
-         FROM contact_phones
-         WHERE company_id = $1
-           AND normalized_phone = $2
+    const sharedClause = includeShared ? '' : 'AND phone.is_shared = FALSE';
+    const { rows } = await queryFor(client)(
+        `SELECT DISTINCT phone.contact_id
+         FROM contact_phones phone
+         JOIN contacts contact
+           ON contact.id = phone.contact_id
+          AND contact.company_id = phone.company_id
+         WHERE phone.company_id = $1
+           AND phone.normalized_phone = $2
+           AND contact.deleted_at IS NULL
            ${sharedClause}
-         ORDER BY contact_id ASC`,
+         ORDER BY phone.contact_id ASC`,
         [companyId, normalized]
     );
     return rows.map(row => row.contact_id);
 }
 
-async function listPhonesForContact(companyId, contactId) {
-    const { rows } = await db.query(
+async function listPhonesForContact(companyId, contactId, client = db) {
+    const { rows } = await queryFor(client)(
         `SELECT id, company_id, contact_id, phone_e164, normalized_phone,
                 label, is_primary, is_shared, created_at
          FROM contact_phones
@@ -88,19 +113,27 @@ async function listPhonesForContact(companyId, contactId) {
     return rows;
 }
 
-async function upsertContactPhone({ companyId, contactId, phoneE164, label = null, isPrimary = false }) {
+async function upsertContactPhone({
+    companyId,
+    contactId,
+    phoneE164,
+    label = null,
+    isPrimary = false,
+    isShared = false,
+    client = db,
+}) {
     const normalizedPhone = normalizePhone(phoneE164);
     if (!normalizedPhone) return null;
 
-    const { rows } = await db.query(
+    const { rows } = await queryFor(client)(
         `WITH owned_contact AS (
              SELECT id
              FROM contacts
              WHERE company_id = $1 AND id = $2
          ), inserted AS (
              INSERT INTO contact_phones
-                 (company_id, contact_id, phone_e164, normalized_phone, label, is_primary)
-             SELECT $1, owned_contact.id, $3, $4, $5, $6
+                 (company_id, contact_id, phone_e164, normalized_phone, label, is_primary, is_shared)
+             SELECT $1, owned_contact.id, $3, $4, $5, $6, $7
              FROM owned_contact
              WHERE NOT EXISTS (
                  SELECT 1
@@ -124,21 +157,26 @@ async function upsertContactPhone({ companyId, contactId, phoneE164, label = nul
            AND NOT EXISTS (SELECT 1 FROM inserted)
          ORDER BY id ASC
          LIMIT 1`,
-        [companyId, contactId, String(phoneE164).trim(), normalizedPhone, label, isPrimary]
+        [companyId, contactId, String(phoneE164).trim(), normalizedPhone, label, isPrimary, isShared]
     );
     return rows[0] || null;
 }
 
-async function markPhoneShared(companyId, normalizedPhone, isShared) {
+async function markPhoneShared(companyId, normalizedPhone, isShared, client = db) {
     const normalized = normalizePhone(normalizedPhone);
     if (!normalized) return [];
 
-    const { rows } = await db.query(
-        `UPDATE contact_phones
+    const { rows } = await queryFor(client)(
+        `UPDATE contact_phones phone
          SET is_shared = $3
-         WHERE company_id = $1 AND normalized_phone = $2
-         RETURNING id, company_id, contact_id, phone_e164, normalized_phone,
-                   label, is_primary, is_shared, created_at`,
+         FROM contacts contact
+         WHERE phone.company_id = $1
+           AND phone.normalized_phone = $2
+           AND contact.id = phone.contact_id
+           AND contact.company_id = phone.company_id
+         RETURNING phone.id, phone.company_id, phone.contact_id, phone.phone_e164,
+                   phone.normalized_phone, phone.label, phone.is_primary,
+                   phone.is_shared, phone.created_at`,
         [companyId, normalized, isShared]
     );
     return rows;

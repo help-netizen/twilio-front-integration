@@ -22,6 +22,7 @@ const { deduplicateNotesByIdentity } = require('./noteDeduplication');
 const membershipQueries = require('../db/membershipQueries');
 const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const jobFinanceQueries = require('../db/jobFinanceQueries');
+const { resolveOrCreateContact } = require('./contactResolverService');
 const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 const {
     createCursorFingerprint,
@@ -1512,17 +1513,18 @@ async function syncFromZenbooker(zbJobId, zbData, companyId, eventType = '') {
     let contactId = null;
     const zbCustomerId = zbData.customer?.id ? String(zbData.customer.id) : null;
     if (zbCustomerId) {
-        const { rows: contactRows } = await db.query(
-            `SELECT id
-             FROM contacts
-             WHERE zenbooker_customer_id = $1 AND company_id = $2
-             LIMIT 1`,
-            [zbCustomerId, companyId]
-        );
-        if (contactRows.length > 0) {
-            contactId = contactRows[0].id;
-            console.log(`[JobsService] Matched ZB customer ${zbCustomerId} → contact ${contactId}`);
-        }
+        const resolution = await resolveOrCreateContact({
+            companyId,
+            externalId: zbCustomerId,
+            contact: {
+                ...zbData.customer,
+                full_name: cols.customer_name,
+                phone: cols.customer_phone,
+                email: cols.customer_email,
+            },
+        });
+        contactId = resolution.contact_id;
+        console.log(`[JobsService] Resolved ZB customer ${zbCustomerId} → contact ${contactId}`);
     }
 
     // Check if job exists

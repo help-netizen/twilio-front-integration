@@ -10,6 +10,8 @@
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const contactsService = require('./contactsService');
+const { resolveOrCreateContact } = require('./contactResolverService');
+const { propagateContactDetails } = require('./contactPropagationService');
 const { deduplicateNotesByIdentity, noteIdentity } = require('./noteDeduplication');
 
 const FEATURE_ENABLED = process.env.FEATURE_ZENBOOKER_SYNC === 'true';
@@ -489,110 +491,23 @@ async function handleWebhookPayload(payload, companyId = null) {
         fullName = [firstName, lastName].filter(Boolean).join(' ');
     }
 
-    // 1. Try exact match by zenbooker_customer_id
-    const { rows: exact } = await db.query(
-        `SELECT id
-         FROM contacts
-         WHERE zenbooker_customer_id = $1 AND company_id = $2`,
-        [customerId, companyId]
-    );
-
-    if (exact.length > 0) {
-        // Existing linked contact — update from Zenbooker data
-        await updateContactFromZenbooker(exact[0].id, data, account, companyId);
-        return { contact_id: exact[0].id, created: false };
-    }
-
-    // 2. Try match by name + phone
-    const phone = normalizePhone(data.phone);
-    const email = (data.email || '').trim().toLowerCase();
-
-    if (phone && firstName && lastName) {
-        const { rows: byPhone } = await db.query(
-            `SELECT id FROM contacts
-             WHERE LOWER(TRIM(first_name)) = $1
-               AND LOWER(TRIM(last_name)) = $2
-               AND phone_e164 = $3
-               AND company_id = $4`,
-            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), phone, companyId]
-        );
-        if (byPhone.length === 1) {
-            await linkAndUpdate(byPhone[0].id, customerId, data, account, companyId);
-            return { contact_id: byPhone[0].id, created: false };
-        }
-    }
-
-    // 3. Try match by name + email
-    if (email && firstName && lastName) {
-        const { rows: byEmail } = await db.query(
-            `SELECT id FROM contacts
-             WHERE LOWER(TRIM(first_name)) = $1
-               AND LOWER(TRIM(last_name)) = $2
-               AND LOWER(TRIM(email)) = $3
-               AND company_id = $4`,
-            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), email, companyId]
-        );
-        if (byEmail.length === 1) {
-            await linkAndUpdate(byEmail[0].id, customerId, data, account, companyId);
-            return { contact_id: byEmail[0].id, created: false };
-        }
-    }
-
-    // 4. No match — create new Albusto contact
-    const structuredNotes = normalizeZbCustomerNotes(data.notes);
-    const legacyNotes = legacyTextFromZbNotes(data.notes);
-    const { rows: newRows } = await db.query(
-        `INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email,
-                               zenbooker_customer_id, zenbooker_account_id,
-                               zenbooker_sync_status, zenbooker_synced_at, zenbooker_data,
-                               notes, structured_notes, company_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'linked', NOW(), $8::jsonb, $9, $10::jsonb, $11)
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [fullName, firstName, lastName,
-            phone || null, data.email || null,
-            customerId, account || null,
-            JSON.stringify(data), legacyNotes || null, JSON.stringify(structuredNotes), companyId]
-    );
-    if (!newRows[0]) {
-        throw Object.assign(
-            new Error('Zenbooker customer id is already owned by another company'),
-            { code: 'ZENBOOKER_ID_CONFLICT', httpStatus: 409 }
-        );
-    }
-    console.log(`[ZbSync] Created new contact ${newRows[0].id} from Zenbooker customer ${customerId}`);
-    await syncContactNotesFromZenbooker(newRows[0].id, data.notes, companyId);
-
-    // Import addresses
-    if (newRows[0]?.id && data.addresses?.length) {
-        await importAddresses(newRows[0].id, customerId, data.addresses, companyId);
-    }
-    return { contact_id: newRows[0]?.id, created: true };
+    const resolution = await resolveOrCreateContact({
+        companyId,
+        externalId: customerId,
+        contact: {
+            ...data,
+            first_name: firstName,
+            last_name: lastName,
+            full_name: fullName,
+        },
+    });
+    await updateContactFromZenbooker(resolution.contact_id, data, account, companyId);
+    return { contact_id: resolution.contact_id, created: resolution.created };
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
-
-async function linkAndUpdate(contactId, zbCustomerId, data, account, companyId) {
-    await db.query(
-        `UPDATE contacts
-         SET zenbooker_customer_id = $1,
-             zenbooker_account_id = $2,
-             zenbooker_sync_status = 'linked',
-             zenbooker_synced_at = NOW(),
-             zenbooker_data = $3::jsonb,
-             zenbooker_last_error = NULL
-         WHERE id = $4 AND company_id = $5`,
-        [zbCustomerId, account || null, JSON.stringify(data), contactId, companyId]
-    );
-    console.log(`[ZbSync] Linked contact ${contactId} to Zenbooker customer ${zbCustomerId}`);
-    await syncContactNotesFromZenbooker(contactId, data.notes, companyId);
-
-    if (data.addresses?.length) {
-        await importAddresses(contactId, zbCustomerId, data.addresses, companyId);
-    }
-}
 
 async function updateContactFromZenbooker(contactId, data, account, companyId) {
     // Parse name — ZB sends `name` (full) or `first_name`/`last_name`
@@ -609,28 +524,39 @@ async function updateContactFromZenbooker(contactId, data, account, companyId) {
         fullName = [firstName, lastName].filter(Boolean).join(' ');
     }
 
-    const phone = normalizePhone(data.phone);
-    const email = (data.email || '').trim() || null;
+    const customerId = data.id ? String(data.id) : null;
 
-    // Update master fields + zenbooker_data using COALESCE (preserve existing if ZB sends null)
+    // Metadata follows ZB; Albusto-owned contact fields are fill-empty only.
     await db.query(
-        `UPDATE contacts
+        `UPDATE contacts target
          SET zenbooker_data = $1::jsonb,
              zenbooker_synced_at = NOW(),
              zenbooker_account_id = COALESCE($2, zenbooker_account_id),
              zenbooker_sync_status = 'linked',
              zenbooker_last_error = NULL,
-             full_name = COALESCE($3, full_name),
-             first_name = COALESCE($4, first_name),
-             last_name = COALESCE($5, last_name),
-             phone_e164 = COALESCE($6, phone_e164),
-             email = COALESCE($7, email)
-         WHERE id = $8 AND company_id = $9`,
+             full_name = COALESCE(NULLIF(BTRIM(target.full_name), ''), $3),
+             first_name = COALESCE(NULLIF(BTRIM(target.first_name), ''), $4),
+             last_name = COALESCE(NULLIF(BTRIM(target.last_name), ''), $5)
+         WHERE target.id = $6 AND target.company_id = $7`,
         [JSON.stringify(data), account || null,
-            fullName, firstName, lastName, phone, email,
+            fullName, firstName, lastName,
             contactId, companyId]
     );
-    console.log(`[ZbSync] Updated contact ${contactId} from Zenbooker (name=${fullName}, phone=${phone}, email=${email})`);
+    await propagateContactDetails(
+        companyId,
+        contactId,
+        { phone: data.phone || null, email: data.email || null },
+        { source: 'zb_webhook' }
+    );
+    if (data.secondary_phone) {
+        await propagateContactDetails(
+            companyId,
+            contactId,
+            { phone: data.secondary_phone },
+            { source: 'zb_webhook' }
+        );
+    }
+    console.log(`[ZbSync] Linked contact ${contactId} to Zenbooker customer ${customerId}`);
     await syncContactNotesFromZenbooker(contactId, data.notes, companyId);
 
     if (data.addresses?.length) {
@@ -686,15 +612,6 @@ async function importAddresses(contactId, zbCustomerId, addresses, companyId) {
                 companyId]
         );
     }
-}
-
-function normalizePhone(phone) {
-    if (!phone) return null;
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length === 10) return `+1${digits}`;
-    if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
-    if (phone.startsWith('+')) return phone;
-    return null;
 }
 
 // =============================================================================

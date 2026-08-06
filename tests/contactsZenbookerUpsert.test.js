@@ -1,8 +1,16 @@
 'use strict';
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+jest.mock('../backend/src/services/contactResolverService', () => ({
+    resolveOrCreateContact: jest.fn(),
+}));
+jest.mock('../backend/src/services/contactPropagationService', () => ({
+    propagateContactDetails: jest.fn(),
+}));
 
 const db = require('../backend/src/db/connection');
+const { resolveOrCreateContact } = require('../backend/src/services/contactResolverService');
+const { propagateContactDetails } = require('../backend/src/services/contactPropagationService');
 const contactsService = require('../backend/src/services/contactsService');
 
 describe('contactsService.upsertFromZenbooker tenant safety', () => {
@@ -10,6 +18,12 @@ describe('contactsService.upsertFromZenbooker tenant safety', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        resolveOrCreateContact.mockResolvedValue({
+            contact_id: 7,
+            created: false,
+            matched_by: 'phone',
+        });
+        propagateContactDetails.mockResolvedValue({ phone: 'already', email: 'no_slot' });
     });
 
     test('requires explicit company context before any write', async () => {
@@ -21,30 +35,30 @@ describe('contactsService.upsertFromZenbooker tenant safety', () => {
         expect(db.query).not.toHaveBeenCalled();
     });
 
-    test('a foreign natural-key collision fails closed without updating that row', async () => {
+    test('delegates identity selection to the company-scoped resolver', async () => {
         db.query
             .mockResolvedValueOnce({ rows: [] })
-            .mockResolvedValueOnce({ rows: [] });
+            .mockResolvedValueOnce({ rows: [{ id: 7, company_id: companyA }] });
 
-        await expect(contactsService.upsertFromZenbooker({
+        await contactsService.upsertFromZenbooker({
             id: 'shared-zb-id',
             first_name: 'Safe',
-        }, companyA)).rejects.toMatchObject({
-            code: 'ZENBOOKER_ID_CONFLICT',
-            httpStatus: 409,
-        });
+            phone: '6175550101',
+        }, companyA);
 
+        expect(resolveOrCreateContact).toHaveBeenCalledWith({
+            companyId: companyA,
+            externalId: 'shared-zb-id',
+            contact: expect.objectContaining({ phone: '6175550101' }),
+        });
         expect(db.query).toHaveBeenCalledTimes(2);
-        expect(db.query.mock.calls[0][0]).toContain('ON CONFLICT DO NOTHING');
-        expect(db.query.mock.calls[1][0]).toContain(
-            'WHERE company_id = $1 AND zenbooker_customer_id = $8'
-        );
+        expect(db.query.mock.calls[0][0]).toContain('WHERE target.company_id = $1 AND target.id = $7');
         expect(db.query.mock.calls[1][1][0]).toBe(companyA);
     });
 
-    test('an existing owned contact is updated with both company and external id', async () => {
+    test('fill-empty update never overwrites non-blank contact identity fields', async () => {
         db.query
-            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [], rowCount: 1 })
             .mockResolvedValueOnce({
                 rows: [{
                     id: 7,
@@ -63,6 +77,18 @@ describe('contactsService.upsertFromZenbooker tenant safety', () => {
             company_id: companyA,
             zenbooker_customer_id: 'zb-7',
         });
+
+        const [sql] = db.query.mock.calls[0];
+        expect(sql).toMatch(/full_name = COALESCE\(NULLIF\(BTRIM\(target\.full_name\), ''\), \$2\)/);
+        expect(sql).toMatch(/first_name = COALESCE\(NULLIF\(BTRIM\(target\.first_name\), ''\), \$3\)/);
+        expect(sql).toMatch(/last_name = COALESCE\(NULLIF\(BTRIM\(target\.last_name\), ''\), \$4\)/);
+        expect(sql).not.toMatch(/phone_e164\s*=/);
+        expect(sql).not.toMatch(/email\s*=/);
+        expect(propagateContactDetails).toHaveBeenCalledWith(
+            companyA,
+            7,
+            { phone: null, email: null },
+            { source: 'zb_contact_sync' }
+        );
     });
 });
-
