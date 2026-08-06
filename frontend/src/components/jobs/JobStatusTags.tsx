@@ -1,5 +1,9 @@
-import { useState } from 'react';
-import { Plus, Navigation, Play, CheckCircle2 } from 'lucide-react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
+import {
+    Plus, Navigation, Play, CheckCircle2, X, Ban, RotateCcw, ArrowRight, Wrench, PhoneCall,
+    type LucideIcon,
+} from 'lucide-react';
+import { toast } from 'sonner';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -8,6 +12,7 @@ import { TagBadge } from './jobHelpers';
 import { OnTheWayModal } from './OnTheWayModal';
 import { JobRateMeBlock } from './JobRateMeBlock';
 import { useAuthz } from '../../hooks/useAuthz';
+import { useFsmActions, useApplyTransition, type FsmAction } from '../../hooks/useFsmActions';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -15,6 +20,9 @@ interface JobOpsSectionProps {
     job: LocalJob;
     allTags: JobTag[];
     onTagsChange: (jobId: number, tagIds: number[]) => void;
+    // Legacy hardcoded-status handlers — the buttons are now FSM-driven (FSM-JOB-ACTIONS-001);
+    // only onCancel (the reason dialog) and onNotified are still consumed. The others remain in
+    // the props for the parent's sake until the Phase 4 cleanup removes them.
     onMarkEnroute: (id: number) => void;
     onMarkInProgress: (id: number) => void;
     onMarkComplete: (id: number) => void;
@@ -23,24 +31,76 @@ interface JobOpsSectionProps {
     onNotified?: (id: number) => void;
 }
 
-// ONWAY-001 — pre-visit statuses where the "On the way" CTA is offered.
-// JOB-FSM-PART-ARRIVED-FORWARD-001: "Part arrived" is a pre-visit source too — the
-// part is in, the tech heads out to finish the job, so the customer gets the ETA notice.
-export const ONWAY_SOURCE_STATUSES = ['Submitted', 'Rescheduled', 'Part arrived'];
+// FSM-JOB-ACTIONS-001 — job status buttons are rendered from the per-company FSM's
+// action-transitions (blanc:action + blanc:button) and applied through POST /api/fsm/job/apply,
+// which validates the transition against the published graph. No more hardcoded zb_status.
+
+const ICON_MAP: Record<string, LucideIcon> = {
+    Navigation, Play, CheckCircle2, X, Ban, RotateCcw, ArrowRight, Wrench, PhoneCall,
+};
+
+/** Icon from the SCXML `blanc:icon`, else a sensible default by op/variant. */
+function actionIcon(action: FsmAction): ReactNode {
+    const Named = action.icon ? ICON_MAP[action.icon] : undefined;
+    const Ico = Named
+        || (action.op === 'notify_on_the_way' ? Navigation
+            : action.variant === 'success' ? CheckCircle2
+                : action.variant === 'danger' ? Ban
+                    : undefined);
+    return Ico ? <Ico className="size-4" /> : null;
+}
+
+const BTN_BASE: CSSProperties = { minHeight: 40, borderRadius: 12, cursor: 'pointer' };
+
+/** Map the FSM `blanc:variant` to a button style (on-brand: violet primary, green success…). */
+function variantStyle(variant: string): CSSProperties {
+    switch (variant) {
+        case 'success':
+            return { ...BTN_BASE, background: 'linear-gradient(180deg, #4ade80 0%, #22c55e 100%)', color: '#fff', border: 'none', boxShadow: '0 4px 12px rgba(34,197,94,0.25)' };
+        case 'danger':
+            return { ...BTN_BASE, background: '#fff', color: 'var(--blanc-danger)', border: '1px solid var(--blanc-danger)' };
+        case 'secondary':
+            return { ...BTN_BASE, background: '#fff', color: 'var(--blanc-ink-1)', border: '1px solid var(--blanc-line)' };
+        case 'neutral':
+            return { ...BTN_BASE, background: '#fff', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' };
+        case 'primary':
+        default:
+            return { ...BTN_BASE, background: 'var(--blanc-accent)', color: '#fff', border: 'none', boxShadow: '0 4px 12px rgba(127,66,225,0.22)' };
+    }
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobOpsSection({
-    job, allTags, onTagsChange,
-    onMarkEnroute, onMarkInProgress, onMarkComplete, onNotified,
+    job, allTags, onTagsChange, onCancel, onNotified,
 }: JobOpsSectionProps) {
-    const isActionable = !job.zb_canceled && job.zb_status !== 'complete';
     const { hasPermission } = useAuthz();
-    const [onWayOpen, setOnWayOpen] = useState(false);
+    // The notify_on_the_way action pending its ETA modal (the apply fires on confirm).
+    const [onWayAction, setOnWayAction] = useState<FsmAction | null>(null);
 
-    // ONWAY-001: primary CTA only from a pre-visit status, and only with messages.send.
-    const showOnWayCta =
-        ONWAY_SOURCE_STATUSES.includes(job.blanc_status) && hasPermission('messages.send');
+    const { data: fsmActions } = useFsmActions('job', job.blanc_status);
+    const applyMutation = useApplyTransition('job');
+
+    // Prominent buttons = FSM action-transitions flagged blanc:button (server-defaulted), by order.
+    const buttons = (fsmActions || [])
+        .filter(a => a.button)
+        .slice()
+        .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+
+    const runAction = async (action: FsmAction) => {
+        if (applyMutation.isPending) return;
+        // "On the way" collects an ETA in the modal; the apply (op) sends the SMS on confirm.
+        if (action.op === 'notify_on_the_way') { setOnWayAction(action); return; }
+        // Cancel keeps its dedicated reason dialog (always-available terminal action).
+        if (action.target === 'Canceled') { onCancel(job.id); return; }
+        if (action.confirm && !window.confirm(action.confirmText || `${action.label}?`)) return;
+        try {
+            await applyMutation.mutateAsync({ entityId: job.id, event: action.event });
+            toast.success(`${action.label} — done`);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Action failed');
+        }
+    };
 
     return (
         <div className="px-5 pb-4 space-y-3">
@@ -108,69 +168,20 @@ export function JobOpsSection({
                 </DropdownMenu>
             </div>
 
-            {/* ── ONWAY-001: primary "On the way" CTA (pre-visit statuses) ── */}
-            {showOnWayCta && (
-                <button onClick={() => setOnWayOpen(true)}
-                    className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
-                    style={{
-                        minHeight: 40, borderRadius: 12,
-                        background: 'linear-gradient(180deg, #f5874a 0%, #e06020 100%)',
-                        color: '#fff', border: 'none',
-                        boxShadow: '0 4px 12px rgba(224,96,32,0.25)',
-                        cursor: 'pointer',
-                    }}>
-                    <Navigation className="size-4" /> On the way
-                </button>
-            )}
-
-            {/* ── JOB-ACTIONS-SLIM-001: curated framed primary actions per state ── */}
-            {isActionable && (
+            {/* ── FSM-driven status actions (FSM-JOB-ACTIONS-001) ── */}
+            {buttons.length > 0 && (
                 <div className="flex items-stretch gap-2 max-md:flex-wrap">
-                    {/* Submitted/scheduled → On the way (secondary outline) + Start job.
-                        Suppressed when the ONWAY-001 primary CTA above already offers
-                        "On the way" (same action) — otherwise a Submitted/Rescheduled
-                        job with messages.send shows the button twice. Kept as the
-                        fallback when the CTA is absent (no send perm, or a `scheduled`
-                        job whose blanc_status isn't a pre-visit source status). */}
-                    {job.zb_status === 'scheduled' && !showOnWayCta && (
-                        <button onClick={() => onMarkEnroute(job.id)}
-                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
-                            style={{
-                                minHeight: 40, borderRadius: 12,
-                                background: '#fff',
-                                color: 'var(--blanc-ink-1)',
-                                border: '1px solid var(--blanc-line)',
-                                cursor: 'pointer',
-                            }}>
-                            <Navigation className="size-4" /> On the way
+                    {buttons.map((action) => (
+                        <button
+                            key={action.event}
+                            onClick={() => runAction(action)}
+                            disabled={applyMutation.isPending}
+                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold transition-opacity disabled:opacity-60"
+                            style={variantStyle(action.variant)}
+                        >
+                            {actionIcon(action)} {action.label}
                         </button>
-                    )}
-                    {(job.zb_status === 'scheduled' || job.zb_status === 'en-route') && (
-                        <button onClick={() => onMarkInProgress(job.id)}
-                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
-                            style={{
-                                minHeight: 40, borderRadius: 12,
-                                background: 'linear-gradient(180deg, #f5874a 0%, #e06020 100%)',
-                                color: '#fff', border: 'none',
-                                boxShadow: '0 4px 12px rgba(224,96,32,0.25)',
-                                cursor: 'pointer',
-                            }}>
-                            <Play className="size-4" /> Start job
-                        </button>
-                    )}
-                    {job.zb_status === 'in-progress' && (
-                        <button onClick={() => onMarkComplete(job.id)}
-                            className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
-                            style={{
-                                minHeight: 40, borderRadius: 12,
-                                background: 'linear-gradient(180deg, #4ade80 0%, #22c55e 100%)',
-                                color: '#fff', border: 'none',
-                                boxShadow: '0 4px 12px rgba(34,197,94,0.25)',
-                                cursor: 'pointer',
-                            }}>
-                            <CheckCircle2 className="size-4" /> Complete job
-                        </button>
-                    )}
+                    ))}
                 </div>
             )}
 
@@ -184,13 +195,16 @@ export function JobOpsSection({
                 onSent={onNotified}
             />
 
-            {/* ── ONWAY-001: "On the way" modal ── */}
-            {showOnWayCta && (
+            {/* ── "On the way" ETA modal — collects minutes, then applies the FSM transition ── */}
+            {onWayAction && (
                 <OnTheWayModal
-                    open={onWayOpen}
-                    onClose={() => setOnWayOpen(false)}
+                    open={!!onWayAction}
+                    onClose={() => setOnWayAction(null)}
                     job={job}
-                    onDone={() => onNotified?.(job.id)}
+                    onDone={() => { onNotified?.(job.id); setOnWayAction(null); }}
+                    onConfirm={async (minutes) => {
+                        await applyMutation.mutateAsync({ entityId: job.id, event: onWayAction.event, eta_minutes: minutes });
+                    }}
                 />
             )}
         </div>

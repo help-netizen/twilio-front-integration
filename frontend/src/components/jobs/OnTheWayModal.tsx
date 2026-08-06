@@ -43,11 +43,17 @@ interface Props {
     onClose: () => void;
     job: LocalJob;
     onDone: () => void;
+    /**
+     * FSM-JOB-ACTIONS-001: when provided, the modal only COLLECTS the ETA and hands the chosen
+     * minutes to the caller — which applies the FSM transition (the backend sends the ETA SMS as
+     * the `notify_on_the_way` op). Omitted → legacy self-send via notifyEta.
+     */
+    onConfirm?: (minutes: number) => Promise<void> | void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function OnTheWayModal({ open, onClose, job, onDone }: Props) {
+export function OnTheWayModal({ open, onClose, job, onDone, onConfirm }: Props) {
     const [locating, setLocating] = useState(false);
     const [googleEta, setGoogleEta] = useState<number | null>(null); // state (b) when non-null
     const [etaUnavailable, setEtaUnavailable] = useState(false);     // state (c)
@@ -144,25 +150,34 @@ export function OnTheWayModal({ open, onClose, job, onDone }: Props) {
         if (chosenMinutes == null || sending) return;
         setSending(true);
         try {
-            const result = await notifyEta(job.id, chosenMinutes);
-            if (result.warning) {
-                toast.success("SMS sent, but the job status didn't update. You can change it manually.");
+            if (onConfirm) {
+                // FSM path: the caller applies the transition, which sends the ETA SMS server-side.
+                await onConfirm(chosenMinutes);
             } else {
-                toast.success("Customer notified — you're marked On the way.");
+                const result = await notifyEta(job.id, chosenMinutes);
+                if (result.warning) {
+                    toast.success("SMS sent, but the job status didn't update. You can change it manually.");
+                } else {
+                    toast.success("Customer notified — you're marked On the way.");
+                }
             }
             onClose();
             onDone();
         } catch (err) {
-            const code = err instanceof EtaNotifyError ? err.code : null;
-            const message =
-                code === 'NO_PHONE' ? 'No phone number on file for this customer.' :
-                code === 'NO_PROXY' ? 'No sending number configured for your company.' :
-                code === 'WALLET_BLOCKED' ? 'Messaging is paused — top up your balance.' :
-                "Couldn't send the message. Please try again.";
-            toast.error(message);
+            if (onConfirm) {
+                toast.error(err instanceof Error ? err.message : "Couldn't complete the action.");
+            } else {
+                const code = err instanceof EtaNotifyError ? err.code : null;
+                toast.error(
+                    code === 'NO_PHONE' ? 'No phone number on file for this customer.' :
+                    code === 'NO_PROXY' ? 'No sending number configured for your company.' :
+                    code === 'WALLET_BLOCKED' ? 'Messaging is paused — top up your balance.' :
+                    "Couldn't send the message. Please try again.",
+                );
+            }
             setSending(false); // keep modal open so the user can retry
         }
-    }, [chosenMinutes, sending, job.id, onClose, onDone]);
+    }, [chosenMinutes, sending, job.id, onClose, onDone, onConfirm]);
 
     // ── Render ──
     return (
