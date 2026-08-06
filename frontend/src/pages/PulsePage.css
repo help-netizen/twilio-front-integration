@@ -177,7 +177,13 @@
     container-type: inline-size;
 }
 .pulse-pinned-bar > * { min-width: 0; }
-.pulse-contact-bar { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.pulse-contact-bar { grid-template-columns: minmax(0, 1fr) auto auto; }
+.pulse-contact-bar-identity.is-expandable { cursor: pointer; }
+.pulse-contact-bar-identity.is-expandable:focus-visible {
+    outline: 2px solid var(--blanc-accent);
+    outline-offset: 3px;
+    border-radius: 8px;
+}
 .pulse-contact-bar-identity-copy { min-width: 0; }
 .pulse-contact-bar-identity.is-jobs-link {
     display: grid;
@@ -197,8 +203,14 @@
     color: var(--blanc-ink-3);
 }
 .pulse-lead-bar {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     height: 68px;
+}
+.pulse-lead-bar-name.is-expandable { cursor: pointer; }
+.pulse-lead-bar-name.is-expandable:focus-visible {
+    outline: 2px solid var(--blanc-accent);
+    outline-offset: 3px;
+    border-radius: 8px;
 }
 
 /* Entity identity stays entity-specific. Contact has an address line; Lead has
@@ -365,17 +377,22 @@
    then the summary links. Matches the approved mockup. */
 @media (max-width: 768px) {
     .pulse-contact-bar {
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr);
         grid-template-areas:
-            'identity expand'
-            'actions actions'
-            'summary summary';
+            'identity'
+            'actions'
+            'summary';
         row-gap: 9px;
         column-gap: 10px;
         padding: 10px 12px 11px;
     }
     .pulse-contact-bar-identity { grid-area: identity; }
-    .pulse-pinned-bar-expand { grid-area: expand; }
+
+    /* The floating close X (mobile) overlaps the FIRST pinned card's top-right corner —
+       reserve room so its content never runs under the button. */
+    .pulse-sticky-stack > .pulse-ar-plaque:nth-child(2) { padding-right: 52px; }
+    .pulse-sticky-stack > :nth-child(2) .pulse-contact-bar-identity,
+    .pulse-sticky-stack > :nth-child(2) .pulse-lead-bar-identity { padding-right: 46px; }
     .pulse-contact-bar-name { font-size: 18px; }
     .pulse-contact-bar-actions {
         grid-area: actions;
@@ -391,10 +408,10 @@
     .pulse-lead-bar {
         height: auto;
         min-height: 136px;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr);
         grid-template-areas:
-            'identity expand'
-            'actions actions';
+            'identity'
+            'actions';
         align-content: center;
         row-gap: 9px;
         column-gap: 10px;
@@ -546,9 +563,13 @@
    Only rendered on mobile (the desktop timeline sits beside its list and needs
    no exit). An opaque pill, because the row it lives in is transparent and the
    thread scrolls underneath it. */
+/* Floats onto the top-right corner of the first pinned card instead of sitting in its own
+   row (which left an ugly void above the contact block). z-index rides above the cards. */
 .pulse-timeline-close-row {
-    display: flex;
-    justify-content: flex-end;
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 6;
 }
 
 .pulse-timeline-close {

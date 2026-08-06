@@ -33,11 +33,6 @@ interface IdentityElementProps {
     onKeyDown?: (event: { key: string; preventDefault: () => void }) => void;
 }
 
-interface ExpandElementProps {
-    label?: string;
-    onClick?: () => void;
-}
-
 type InspectableElement = React.ReactElement<Record<string, unknown>>;
 
 function identityFrom(componentProps: PulseContactBarProps): React.ReactElement<IdentityElementProps> {
@@ -77,21 +72,22 @@ describe('TECH-CONTACT-JOBS-001 — Pulse contact navigation', () => {
         expect(markup).not.toMatch(/\d{3}[- .]\d{3}/);
     });
 
-    it('keeps contacts.view on the contact-panel path without Jobs navigation', () => {
+    it('makes the contact identity open the full card, replacing the chevron', () => {
         const onOpenJobs = vi.fn();
         const onExpand = vi.fn();
         const componentProps = props({ canOpenCard: true, onOpenJobs, onExpand });
         const bar = PulseContactBar(componentProps);
         const children = React.Children.toArray(bar.props.children) as InspectableElement[];
         const identity = identityFrom(componentProps);
-        const expand = children.find(child => child.props.label === 'Open full contact card') as
-            React.ReactElement<ExpandElementProps> | undefined;
+        const expand = children.find(child => child.props.label === 'Open full contact card');
 
-        expect(identity.props.role).toBeUndefined();
-        expect(identity.props.onClick).toBeUndefined();
-        expect(expand?.props.onClick).toBe(onExpand);
-        expand?.props.onClick?.();
-        expect(onExpand).toHaveBeenCalledOnce();
+        // The separate chevron/expand primitive is gone — the identity itself opens the card.
+        expect(expand).toBeUndefined();
+        expect(identity.props.role).toBe('button');
+        expect(identity.props.tabIndex).toBe(0);
+        identity.props.onClick?.();
+        identity.props.onKeyDown?.({ key: 'Enter', preventDefault: vi.fn() });
+        expect(onExpand).toHaveBeenCalledTimes(2);
         expect(onOpenJobs).not.toHaveBeenCalled();
     });
 });

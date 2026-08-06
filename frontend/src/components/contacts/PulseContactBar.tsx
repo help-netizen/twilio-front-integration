@@ -16,7 +16,7 @@
 import { ChevronRight, Mail, MessageSquare } from 'lucide-react';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { MaskedCallLine } from '../shared/MaskedCallLine';
-import { PulsePinnedBar, PulsePinnedBarAction, PulsePinnedBarExpand } from '../pulse/PulsePinnedBar';
+import { PulsePinnedBar, PulsePinnedBarAction } from '../pulse/PulsePinnedBar';
 import type { BarAddress } from './contactBarHelpers';
 
 export interface PulseContactBarProps {
@@ -54,20 +54,26 @@ export function PulseContactBar({
     // first reachable channel — an email-only contact promotes Email.
     const emailIsPrimary = !canCall && hasEmail;
     const jobsLinkEnabled = !canOpenCard && !!onOpenJobs;
+    // Tapping the identity opens the full card — replaces the removed chevron affordance
+    // (owner: "drop the down-pointer, people will tap the contact"). A technician without
+    // card access instead opens that customer's scoped jobs list.
+    const identityInteractive = canOpenCard || jobsLinkEnabled;
+    const activateIdentity = canOpenCard ? onExpand : (jobsLinkEnabled ? onOpenJobs : undefined);
     const handleIdentityKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-        if (!jobsLinkEnabled || (event.key !== 'Enter' && event.key !== ' ')) return;
+        if (!identityInteractive || (event.key !== 'Enter' && event.key !== ' ')) return;
         event.preventDefault();
-        onOpenJobs?.();
+        activateIdentity?.();
     };
 
     return (
         <PulsePinnedBar entityLabel="Contact" accent="var(--blanc-success)" className="pulse-contact-bar">
             <div
-                className={`pulse-contact-bar-identity${jobsLinkEnabled ? ' is-jobs-link' : ''}`}
-                role={jobsLinkEnabled ? 'button' : undefined}
-                tabIndex={jobsLinkEnabled ? 0 : undefined}
-                onClick={jobsLinkEnabled ? onOpenJobs : undefined}
-                onKeyDown={jobsLinkEnabled ? handleIdentityKeyDown : undefined}
+                className={`pulse-contact-bar-identity${jobsLinkEnabled ? ' is-jobs-link' : ''}${canOpenCard ? ' is-expandable' : ''}`}
+                role={identityInteractive ? 'button' : undefined}
+                tabIndex={identityInteractive ? 0 : undefined}
+                aria-label={canOpenCard ? 'Open full contact card' : undefined}
+                onClick={activateIdentity}
+                onKeyDown={identityInteractive ? handleIdentityKeyDown : undefined}
             >
                 <div className="pulse-contact-bar-identity-copy">
                     <h2 className="pulse-contact-bar-name" style={{ fontFamily: 'var(--blanc-font-heading)' }}>{name}</h2>
@@ -113,8 +119,6 @@ export function PulseContactBar({
                     </button>
                 </div>
             )}
-
-            {canOpenCard && <PulsePinnedBarExpand label="Open full contact card" onClick={onExpand} />}
         </PulsePinnedBar>
     );
 }
