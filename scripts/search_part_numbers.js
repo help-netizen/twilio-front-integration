@@ -6,7 +6,11 @@
 
 const axios = require('axios');
 
-const ZB_API_KEY = process.env.ZENBOOKER_API_KEY || 'zbk_Ofy4Jlkv6WC5bcBVKrjiQyAV-ynzBoX9Z7gUCQGm1Wpnid86E5soDfs1Y';
+const ZB_API_KEY = process.env.ZENBOOKER_API_KEY;
+if (!ZB_API_KEY) {
+  console.error('ZENBOOKER_API_KEY is required (export it before running this script).');
+  process.exit(1);
+}
 const ZB_BASE = 'https://api.zenbooker.com/v1';
 
 const PART_NUMBERS = ['WR60X31522', 'PS12741350', 'AP6977246', '4959523', 'SM10141'];
