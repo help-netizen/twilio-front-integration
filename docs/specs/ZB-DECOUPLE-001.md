@@ -247,25 +247,51 @@ to the home crm_user with an EMPTY native directory (current prod state), and th
 company-scoped both directions → GREEN. Sabotage `SAB-T5-LEGACY-AUTHZ`: neuter the legacy OR-clause →
 provider loses its own job visibility → probe RED → restore → GREEN.
 
-### T6 (compare-gate + per-company native cutover + attack-only re-review) — not started.
+### T6 part (c) (attack-only tenant/RBAC red-team) — DONE, commit 7e24b218
+`tests/nativeTechnicianTenantIsolation.db.test.js` — 8 adversarial real-PG cases + a roster-collision
+case prove nothing from company B resolves, lists, is read, or is assigned under company A across the
+whole re-key surface: external↔uuid resolvers, `resolveCompatibilityIdsToExternal` (ZB-leak guard),
+`listActiveTechnicians`, `findActiveTechnicianByCrmUserId`, `resolveProviderUserIds` (authz mirror by
+uuid AND external id), service-area eligibility, base-location/time-off/work-schedule reads — every
+foreign-tenant probe fails closed (null / []). Native-mode roster excludes B even with identical
+display_name + external_id. **FINDINGS: no cross-tenant leak.** No production code changed (red-team =
+tests only). Verified albusto_test: 24/24 (6 suites). Three break→red→restore sabotages each redded
+exactly its probe: resolver `company_id` scope, authz-mirror scope (both by the implementer), and
+`listActiveTechnicians` scope (independent architect control).
+
+### T6 parts (a)(b) — GO-LIVE RUNBOOK (owner-gated; executes only in a deploy window, not run yet)
+Nothing here changes prod until the owner says «да». Per-company, reversible:
+1. **Backup + deploy the code** (migration 240 + query/service layers + mode switch), still `legacy`.
+2. **Backfill the pilot company:** `node scripts/backfillNativeTechnicians.js --company-id <uuid> --dry-run`
+   → review roster/inactive/repoint counts → `--apply`. Idempotent; empty ZB fetch never deactivates.
+3. **compare-gate:** set `TECHNICIAN_DIRECTORY_MODE=compare` + `TECHNICIAN_DIRECTORY_COMPANY_IDS=<uuid>`,
+   exercise the roster, confirm the `rosterDifference` log is EMPTY (identity only — per decision #5 we
+   never diff config VALUES; Albusto is master). A non-empty diff = STOP, do not cut over.
+4. **cut over:** flip `TECHNICIAN_DIRECTORY_MODE=native` for that one `company_id`. Roster now serves
+   from `technicians` with ZERO `getTeamMembers`; ZB stays reachable for legacy job push only.
+5. **rollback (instant):** set the pilot company back to `legacy` (or drop it from the allowlist).
+   Both planes are dual-keyed, so no data changes on rollback; the mode is the only lever.
+Fail-closed everywhere: a parse error or an unknown company falls back to `legacy` automatically.
 
 ## NEXT (re-entry for a fresh session)
-State: **T1–T5 done, gated, committed** (migration 240 + query layer + backfill CLI + §3.3 config
-re-key + 4 config service layers + native roster/mode switch + job-boundary/MCP compatibility + tests).
-Nothing deployed; ZB untouched; dual-read defaults `legacy`; native directory empty on prod.
+State: **Phase A CODE-COMPLETE — T1–T6 done, gated, committed.** Migration 240 + query layer + backfill
+CLI + §3.3 config re-key + 4 config service layers + native roster/mode switch + job-boundary/MCP
+compatibility + attack-only tenant-isolation red-team. **Nothing deployed; ZB untouched; dual-read
+defaults `legacy`; native directory empty on prod.** Next actions are owner-gated: run the GO-LIVE
+RUNBOOK above for the pilot company when the owner approves a deploy, then Phase B (contact dedup).
 
-**T6 = the cutover-readiness gate, code-only (no prod action).** Three parts:
-(a) **compare-gate:** run mode=`compare` for the pilot company against a real roster snapshot and
-    confirm `rosterDifference` is empty (identity only, per decision #5 — never diff config VALUES).
-(b) **per-company native cutover switch** is already the T4 env allowlist; T6 just documents the
-    exact go-live sequence (backfill apply → verify map → flip `TECHNICIAN_DIRECTORY_MODE=native`
-    for the one pilot `company_id`) and the rollback (flip back to `legacy`; both reads dual-keyed).
-(c) **attack-only tenant/RBAC red-team** over the whole re-key surface: adversarial-only tests that
-    a native technician/id from company B can never resolve, list, or be assigned under company A
-    (roster, service-area, base/time-off/schedule, authz mirror, ZB-push resolver). No new feature
-    code — this is the security proof pass before any owner deploy decision.
-Per decision #5 the config planes stay Albusto-master (never compared to ZB); `SAB-A-ZONE-UUID-PARITY`
-+ the new `SAB-T5-LEGACY-AUTHZ` probe already anchor the read-parity and authz invariants.
+<details><summary>Historical T3 re-entry note (superseded — kept for provenance)</summary>
+
+**T3 = re-key the 8 config tables to native uuid + service dual-read/write.** Two parts:
+(a) fold the §3.3 parallel-column backfill (`SET technician_uuid FROM the map`) into the
+    backfill CLI's apply transaction — idempotent; T2 did NOT do this yet.
+(b) make technicianServiceArea / slotEngine.buildTechnicians / roster / routes/technicians /
+    availability / timeOff / baseLocations / workSchedule services read `technician_uuid`
+    first (legacy TEXT via the map when null) and dual-write both keys.
+Per decision #5: this is a PURE RE-KEY — config values are Albusto-master, never migrated or
+compared against ZB. The sabotage `SAB-A-ZONE-UUID-PARITY` proves read-by-uuid == read-by-zb-id
+yields the same eligible set (flip the ZONE-STRICT empty branch + drop company scope).
+</details>
 
 **Migrated test DB — BUILT (2026-08-06).** Local `albusto_test` on localhost:5432 holds the full
 prod schema (307 tables, incl. mig-239 `technician_area_wildcards`) + migration 240 (2 new tables,
