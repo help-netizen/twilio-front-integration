@@ -3,6 +3,7 @@
  * wildcard eligibility, both edit directions, and active-mode matching.
  */
 const queries = require('../db/technicianServiceAreaQueries');
+const directoryQueries = require('../db/technicianDirectoryQueries');
 const radiusQueries = require('../db/territoryRadiusQueries');
 const rosterService = require('./technicianRosterService');
 const territoryService = require('./territoryService');
@@ -42,11 +43,37 @@ function normalizeAssignments(mode, values) {
 function assignmentMap(rows, key) {
     const map = new Map();
     for (const row of rows || []) {
-        const technicianId = String(row.technician_id);
+        const technicianId = normalizeUuid(row.technician_id);
+        if (!technicianId) continue;
         if (!map.has(technicianId)) map.set(technicianId, []);
-        map.get(technicianId).push(String(row[key]));
+        const assignment = String(row[key]);
+        if (!map.get(technicianId).includes(assignment)) {
+            map.get(technicianId).push(assignment);
+        }
     }
     return map;
+}
+
+function normalizeUuid(value) {
+    const id = value == null ? '' : String(value);
+    return UUID_RE.test(id) ? id.toLowerCase() : null;
+}
+
+async function normalizeRoster(companyId, roster) {
+    return Promise.all((roster || []).map(async technician => {
+        const publicId = String(technician.id);
+        const technicianUuid = normalizeUuid(publicId)
+            || normalizeUuid(await directoryQueries.resolveExternalToUuid(
+                companyId,
+                'zenbooker',
+                publicId
+            ));
+        return {
+            public_id: publicId,
+            technician_uuid: technicianUuid,
+            name: technician.name || publicId,
+        };
+    }));
 }
 
 async function getAssignmentState(companyId, rosterOverride) {
@@ -57,31 +84,37 @@ async function getAssignmentState(companyId, rosterOverride) {
         rosterOverride ? Promise.resolve(rosterOverride) : rosterService.listActive(companyId),
         queries.listWildcardTechnicians(companyId),
     ]);
-    const servesAll = new Set((wildcardIds || []).map(id => String(id)));
+    const servesAll = new Set((wildcardIds || []).map(normalizeUuid).filter(Boolean));
     const activeMode = settings?.active_mode === 'radius' ? 'radius' : 'list';
-    const technicians = (roster || []).map(technician => ({
-        id: String(technician.id),
-        name: technician.name || String(technician.id),
+    const normalizedRoster = await normalizeRoster(companyId, roster);
+    const technicians = normalizedRoster.map(technician => ({
+        id: technician.public_id,
+        name: technician.name,
     }));
-    const activeIds = new Set(technicians.map(technician => technician.id));
+    const activeIds = new Set(
+        normalizedRoster.map(technician => technician.technician_uuid).filter(Boolean)
+    );
     const validDistricts = new Set(targets.districts.map(district => String(district.id)));
     const validRadii = new Set(targets.radii.map(radius => String(radius.id)));
     const districtsByTech = assignmentMap(
-        assignments.districts.filter(row => activeIds.has(String(row.technician_id))
+        assignments.districts.filter(row => activeIds.has(normalizeUuid(row.technician_id))
             && validDistricts.has(String(row.district_name))),
         'district_name'
     );
     const radiiByTech = assignmentMap(
-        assignments.radii.filter(row => activeIds.has(String(row.technician_id))
+        assignments.radii.filter(row => activeIds.has(normalizeUuid(row.technician_id))
             && validRadii.has(String(row.radius_id))),
         'radius_id'
     );
-    const technicianAssignments = technicians.map(technician => {
-        const districtNames = districtsByTech.get(technician.id) || [];
-        const radiusIds = radiiByTech.get(technician.id) || [];
+    const technicianAssignments = normalizedRoster.map(technician => {
+        const districtNames = districtsByTech.get(technician.technician_uuid) || [];
+        const radiusIds = radiiByTech.get(technician.technician_uuid) || [];
         const activeAssignments = activeMode === 'radius' ? radiusIds : districtNames;
+        const servesAllTerritory = technician.technician_uuid
+            ? servesAll.has(technician.technician_uuid)
+            : false;
         return {
-            technician_id: technician.id,
+            technician_id: technician.public_id,
             technician_name: technician.name,
             district_names: districtNames,
             radius_ids: radiusIds,
@@ -89,8 +122,8 @@ async function getAssignmentState(companyId, rosterOverride) {
             // assignments" is now merely a state (and means NOT offered);
             // "serves the whole territory" is an explicit, deliberate mark.
             unassigned_in_active_mode: activeAssignments.length === 0,
-            serves_all_territory: servesAll.has(technician.id),
-            wildcard_in_active_mode: servesAll.has(technician.id),
+            serves_all_territory: servesAllTerritory,
+            wildcard_in_active_mode: servesAllTerritory,
         };
     });
     const assignmentByTech = new Map(

@@ -5,12 +5,18 @@ jest.mock('../backend/src/db/connection', () => ({
     query: jest.fn(),
     getClient: jest.fn(),
 }));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    resolveExternalToUuid: jest.fn(),
+    resolveUuidToExternal: jest.fn(),
+}));
 
 const db = require('../backend/src/db/connection');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const queries = require('../backend/src/db/technicianServiceAreaQueries');
 
 const COMPANY = '00000000-0000-0000-0000-00000000000a';
 const RADIUS = '11111111-1111-4111-8111-111111111111';
+const TECH_UUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 
 describe('migration 184 technician service-area assignments', () => {
@@ -42,6 +48,8 @@ describe('technicianServiceAreaQueries', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         db.query.mockResolvedValue({ rows: [] });
+        directoryQueries.resolveExternalToUuid.mockResolvedValue(TECH_UUID);
+        directoryQueries.resolveUuidToExternal.mockResolvedValue('tech-1');
         client = { query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() };
         db.getClient.mockResolvedValue(client);
     });
@@ -57,6 +65,8 @@ describe('technicianServiceAreaQueries', () => {
         const districtRead = db.query.mock.calls.find(([sql]) =>
             /FROM technician_district_assignments/.test(sql));
         expect(districtRead[0]).toMatch(/EXISTS[\s\S]*service_territories/);
+        expect(districtRead[0]).toMatch(/COALESCE\(a\.technician_uuid, e\.technician_id\)/);
+        expect(districtRead[0]).toMatch(/e\.company_id = a\.company_id/);
     });
 
     it('replaces one technician district side atomically without touching radii', async () => {
@@ -72,6 +82,7 @@ describe('technicianServiceAreaQueries', () => {
         );
         const sql = client.query.mock.calls.map(call => String(call[0])).join('\n');
         expect(sql).toMatch(/BEGIN[\s\S]*DELETE FROM technician_district_assignments[\s\S]*INSERT INTO technician_district_assignments[\s\S]*COMMIT/);
+        expect(sql).toMatch(/technician_id, technician_uuid, district_name/);
         expect(sql).not.toMatch(/DELETE FROM technician_radius_assignments/);
         expect(client.release).toHaveBeenCalledTimes(1);
     });

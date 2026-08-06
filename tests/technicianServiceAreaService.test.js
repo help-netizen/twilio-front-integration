@@ -8,6 +8,9 @@ jest.mock('../backend/src/db/technicianServiceAreaQueries', () => ({
     replaceDistrictTechnicians: jest.fn(),
     replaceRadiusTechnicians: jest.fn(),
 }));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    resolveExternalToUuid: jest.fn(),
+}));
 jest.mock('../backend/src/db/territoryRadiusQueries', () => ({
     getSettings: jest.fn(),
 }));
@@ -20,6 +23,7 @@ jest.mock('../backend/src/services/territoryService', () => ({
 }));
 
 const queries = require('../backend/src/db/technicianServiceAreaQueries');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const radiusQueries = require('../backend/src/db/territoryRadiusQueries');
 const rosterService = require('../backend/src/services/technicianRosterService');
 const territoryService = require('../backend/src/services/territoryService');
@@ -32,6 +36,10 @@ const TECHS = [
     { id: 'tech-1', name: 'Alex Rivera' },
     { id: 'tech-2', name: 'Maria Lopez' },
 ];
+const TECH_UUIDS = {
+    'tech-1': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'tech-2': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+};
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -45,6 +53,9 @@ beforeEach(() => {
     });
     queries.listValidAssignments.mockResolvedValue({ districts: [], radii: [] });
     queries.listWildcardTechnicians.mockResolvedValue([]);
+    directoryQueries.resolveExternalToUuid.mockImplementation(
+        async (_companyId, _source, externalId) => TECH_UUIDS[externalId] || null
+    );
     rosterService.listActive.mockResolvedValue(TECHS);
     rosterService.requireActive.mockImplementation(async (_companyId, techId) => {
         const technician = TECHS.find(item => item.id === String(techId));
@@ -61,7 +72,7 @@ beforeEach(() => {
 // area he does not work. Serving everywhere is now an explicit mark.
 test('TC-SA-STRICT-01 — a technician with nothing assigned is NOT offered', async () => {
     queries.listValidAssignments.mockResolvedValue({
-        districts: [{ technician_id: 'tech-2', district_name: 'North' }],
+        districts: [{ technician_id: TECH_UUIDS['tech-2'], district_name: 'North' }],
         radii: [],
     });
     territoryService.resolveActiveTargets.mockResolvedValue({
@@ -77,10 +88,10 @@ test('TC-SA-STRICT-01 — a technician with nothing assigned is NOT offered', as
 
 test('TC-SA-STRICT-02 — the explicit whole-territory mark is eligible for any target', async () => {
     queries.listValidAssignments.mockResolvedValue({
-        districts: [{ technician_id: 'tech-2', district_name: 'North' }],
+        districts: [{ technician_id: TECH_UUIDS['tech-2'], district_name: 'North' }],
         radii: [],
     });
-    queries.listWildcardTechnicians.mockResolvedValue(['tech-1']);
+    queries.listWildcardTechnicians.mockResolvedValue([TECH_UUIDS['tech-1']]);
     territoryService.resolveActiveTargets.mockResolvedValue({
         mode: 'list', resolved: true, no_targets: false, target_ids: ['South'],
     });
@@ -97,7 +108,7 @@ test('TC-SA-STRICT-03 — a stale district row NARROWS the offer instead of wide
     // technician to company-wide; now it takes him out of the offer entirely,
     // so a configuration mistake can never send someone to the wrong area.
     queries.listValidAssignments.mockResolvedValue({
-        districts: [{ technician_id: 'tech-1', district_name: 'Deleted district' }],
+        districts: [{ technician_id: TECH_UUIDS['tech-1'], district_name: 'Deleted district' }],
         radii: [],
     });
     const result = await service.filterEligibleTechnicians(COMPANY, [TECHS[0]], { query: '02135' });
@@ -121,7 +132,7 @@ test('TC-SA-STRICT-04 — the whole-territory mark is written and cleared delibe
 
 test('TC-SA-STRICT-05 — unassigned technicians are reported so they are not silently invisible', async () => {
     queries.listValidAssignments.mockResolvedValue({
-        districts: [{ technician_id: 'tech-2', district_name: 'North' }],
+        districts: [{ technician_id: TECH_UUIDS['tech-2'], district_name: 'North' }],
         radii: [],
     });
     const state = await service.getAssignmentState(COMPANY, TECHS);
@@ -131,8 +142,8 @@ test('TC-SA-STRICT-05 — unassigned technicians are reported so they are not si
 
 test('district and radius assignments coexist while active-mode wildcard is mode-specific', async () => {
     queries.listValidAssignments.mockResolvedValue({
-        districts: [{ technician_id: 'tech-1', district_name: 'North' }],
-        radii: [{ technician_id: 'tech-1', radius_id: RADIUS_SOUTH }],
+        districts: [{ technician_id: TECH_UUIDS['tech-1'], district_name: 'North' }],
+        radii: [{ technician_id: TECH_UUIDS['tech-1'], radius_id: RADIUS_SOUTH }],
     });
     const listState = await service.getAssignmentState(COMPANY, TECHS);
     expect(listState.technician_assignments[0]).toMatchObject({
