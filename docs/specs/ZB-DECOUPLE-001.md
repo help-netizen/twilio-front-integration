@@ -358,6 +358,49 @@ degradation — see above), the `baseLocationStructured` stale mock, and the har
 - mig 239 (`technician_area_wildcards`, shipped 2026-08-05) has no `rollback_239_*.sql` — add
   a `DROP TABLE technician_area_wildcards` rollback for ledger consistency (not a Phase A blocker).
 
+## Phase B — Contact de-duplication (design frozen 2026-08-06)
+Goal (owner): "наконец-то убрать дубли в контактах". Two parts: (1) FIX the root cause so the ZB sync
+stops creating duplicate contacts; (2) BULK-MERGE the existing dup sets safely (no data loss). Scale
+snapshot: 3,637 contacts / 3,525 ZB-sourced / **57 phone-dup sets / 84 extra rows** (owner reruns the
+dup-count query on prod). Root cause: `zenbookerSyncService.js:615` overwrites fields + matches too
+loosely; no company-scoped contact identity/phone dedup. Existing `mergeContacts` can LOSE data
+(phones/notes/Stripe/masking/closed tasks) if reused unchanged — must be extended first.
+
+**Frozen owner decisions:**
+1. **Survivor** = most business-links → most-complete → oldest `created_at` → lowest id.
+2. **Merge trigger = normalized phone match (company-scoped), INCLUDING across ZB-sourced ↔ manual.**
+   Owner chose aggressive phone-merge (over "phone+email must agree"). Safe because donors are reversible
+   (see #3) and every merge is surfaced in a mandatory dry-run before apply.
+3. **Donor disposition = SOFT-DELETE / archive** (`deleted_at`, hidden, fully reversible) — NOT hard
+   delete. Plus an `old_id → survivor` audit redirect so links resolve.
+4. **Shared household phones (same number, clearly different people) are NOT dups** → mark the number
+   `shared`, keep contacts separate, exclude from uniqueness + bulk-merge.
+5. Email: use a unique email as a linking/corroboration signal now; defer any email-only cleanup.
+   Frozen guardrails: NEVER merge on name alone; a same-phone set whose names DIVERGE is flagged in the
+   dry-run as probable-household for owner review (reconciles #2 vs #4); fill-empty / never-steal on the
+   survivor's non-blank scalars.
+
+**Phased plan (each gated on albusto_test + a real-DB sabotage; nothing deployed without owner «да»):**
+- **B1 — identity foundation:** migration `contact_external_identities(company_id,source,external_id →
+  contact_id)` + a lossless `contact_phones` inventory (normalized phone, label, primary/shared) +
+  `contacts.deleted_at` if absent; company-scoped lookup index + partial-unique claim on
+  `(company_id, normalized_phone) WHERE NOT shared`. (⚠ migration number: my branch's max is 240 =
+  native tech dir; use **241** here. At master integration BOTH renumber above master's real max —
+  master's 240 = FSM-JOB-ACTIONS-001; see parallel-migration-collision.)
+- **B2 — root-cause resolver:** one company-scoped resolver used by hourly sync + webhooks + job-contact
+  lookup: exact external-id → unique phone/email owner → else create-once + atomically claim identity;
+  phone↔email conflict or multi-owner → review, never insert; transactional/advisory lock. Reuse
+  `contactPropagationService` fill-empty/never-steal; stop the ZB overwrite at zenbookerSyncService.js:615.
+- **B3 — merge hardening:** extend `mergeContacts` to move EVERY contact/timeline FK (fail on unknown ref),
+  preserve all identities + phones, identity-merge notes, rehome timeline tasks/history, QUARANTINE
+  Stripe/saved-card conflicts, assert zero donor refs before archiving the donor.
+- **B4 — bulk-merge CLI:** `--company-id --dry-run|--apply`, fingerprinted plan (survivor/donors/identities/
+  child counts/scalar conflicts/card blockers/shared disposition), one set per txn (lock members asc id,
+  revalidate fingerprint, call the shared merge service, write audit redirect, commit), idempotent reruns,
+  full report. Pause ZB import during apply. DRY-RUN default; apply is owner-gated per company.
+- **B5 — tenancy/RBAC red-team + tests** on albusto_test (dup round-trips, survivor rule, household
+  exclusion, cross-tenant fence, reversibility of archive).
+
 ## Open owner items (non-blocking)
 - ZB raw/receipt/link retention period (default: keep as provenance indefinitely until asked).
 - Imported-payment UI label: "Zenbooker" vs "Legacy import" (default: keep "Zenbooker").
