@@ -470,17 +470,16 @@ async function isContactEmailOnly(contactId, companyId, client = db) {
     if (!contact) return false; // unknown / foreign contact → not a deletable dup
     if (contact.phone_e164 || contact.secondary_phone) return false;
 
-    // Build one `EXISTS(...) OR EXISTS(...) …` over every identity table. $1 =
-    // contactId, $2 = companyId (referenced only by the company-scoped legs).
-    const existsLegs = IDENTITY_TABLES.map(({ table, hasCompanyId }) =>
-        hasCompanyId
-            ? `EXISTS (SELECT 1 FROM ${table} WHERE contact_id = $1 AND company_id = $2)`
-            : `EXISTS (SELECT 1 FROM ${table} WHERE contact_id = $1)`
+    // Build one exhaustive `EXISTS(...) OR EXISTS(...) …` over every identity
+    // table. Contact ids are globally unique, so a mismatched child company is
+    // still a live reference and must make this destructive-safety gate fail.
+    const existsLegs = IDENTITY_TABLES.map(({ table }) =>
+        `EXISTS (SELECT 1 FROM ${table} WHERE contact_id = $1)`
     );
 
     const { rows } = await client.query(
         `SELECT (${existsLegs.join(' OR ')}) AS has_identity`,
-        [contactId, companyId]
+        [contactId]
     );
 
     // has_identity=true → the contact has real activity → NOT email-only.
@@ -1372,13 +1371,14 @@ async function assertNoDonorReferences(client, companyId, donorId) {
     for (const descriptor of CONTACT_FK_INVENTORY) {
         const query = descriptor.hasCompanyId
             ? `SELECT COUNT(*)::int AS count FROM ${descriptor.table}
-                WHERE contact_id = $1 AND company_id = $2`
+                WHERE contact_id = $1`
             : `SELECT COUNT(*)::int AS count
                  FROM ${descriptor.table} child
                  JOIN contacts donor
                    ON donor.id = child.contact_id AND donor.company_id = $2
                 WHERE child.contact_id = $1`;
-        const { rows } = await client.query(query, [donorId, companyId]);
+        const params = descriptor.hasCompanyId ? [donorId] : [donorId, companyId];
+        const { rows } = await client.query(query, params);
         const count = Number(rows[0]?.count || 0);
         if (count > 0) remaining.push(`${descriptor.table}=${count}`);
     }
@@ -1388,8 +1388,8 @@ async function assertNoDonorReferences(client, companyId, donorId) {
             : `${descriptor.idColumn} = $1`;
         const { rows } = await client.query(
             `SELECT COUNT(*)::int AS count FROM ${descriptor.table}
-              WHERE company_id = $2 AND ${descriptor.typeColumn} = $3 AND ${idPredicate}`,
-            [donorId, companyId, descriptor.type]
+              WHERE ${descriptor.typeColumn} = $2 AND ${idPredicate}`,
+            [donorId, descriptor.type]
         );
         const count = Number(rows[0]?.count || 0);
         if (count > 0) remaining.push(`${descriptor.table}.${descriptor.idColumn}=${count}`);

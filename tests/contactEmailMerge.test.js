@@ -166,8 +166,10 @@ describe('isContactEmailOnly — emptiness gate', () => {
         expect(existsSql).not.toMatch(/FROM contact_emails\b/);
         expect(existsSql).not.toMatch(/FROM email_messages\b/);
         expect(existsSql).not.toMatch(/FROM timelines\b/);
-        // Company-scoped legs carry the company predicate.
-        expect(existsSql).toMatch(/company_id = \$2/);
+        // The safety probe is exhaustive: even a foreign-owned child pointing
+        // at this globally unique contact id must block destructive handling.
+        expect(existsSql).not.toMatch(/company_id/);
+        expect(client.calls.find(c => /has_identity/i.test(c.sql)).params).toEqual([10]);
     });
 
     // The exported catalog is exact, split by company_id. Only
