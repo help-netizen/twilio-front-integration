@@ -104,9 +104,56 @@ external-id map carry `company_id`; the ZB→native bridge stays company-scoped.
 authz continues to key on `jobs.assigned_provider_user_ids` (Albusto UUID). Settings writes
 require `tenant.company.manage` as today.
 
+## Phase A design (APPROVED 2026-08-06) — technician identity Albusto-native
+Migration **240** (verified free vs origin/master@aa899c33; prod PG 17.10 supports the SQL;
+`company_memberships.uq_user_company` exists for the composite FK).
+
+**Schema:** `technicians` (uuid pk, company_id, display_name, active, optional crm_user_id via
+composite membership FK `ON DELETE SET NULL`, created_at) + `technician_external_identities`
+(PK `(company_id, source, external_id)` → technician uuid, source='zenbooker'). Add a parallel
+`technician_uuid` column (NOT VALID composite FK, dual-read) to all **eight** ZB-keyed tables:
+technician_profiles, _base_locations, _time_off, _work_schedules, **_work_schedule_days**
+(child table — was omitted from the brief, Codex caught it), _district_assignments,
+_radius_assignments, _area_wildcards (mig 239). Legacy TEXT keys stay, dual-written.
+
+**Compatibility-key rule (Codex pushback, accepted):** the public roster `{id,name}` contract
+keeps an assignment-compatible `id` = ZB external id when mapped, else the native uuid string;
+every internal row also carries `technician_uuid`. `jobs.assigned_techs` and
+`jobs.assigned_provider_user_ids` are NEVER rewritten. Internal joins use the uuid.
+
+**Backfill (idempotent CLI, `--company-id`, `--dry-run` default):** import live ZB roster →
+active technicians + map rows (via `company_user_profiles.zenbooker_team_member_id`); create
+INACTIVE historical technicians for every distinct `jobs.assigned_techs[].id` + any config-only
+legacy key not already mapped, so absent techs resolve. Exclude `__company__` sentinel.
+Data-driven (no hardcoded ids/names). Rerun preserves every uuid, zero new rows. An empty/
+incomplete ZB fetch must NOT deactivate the directory.
+
+**Cutover — per-company, fail-closed:** `TECHNICIAN_DIRECTORY_MODE=legacy|compare|native` +
+`TECHNICIAN_DIRECTORY_COMPANY_IDS` allowlist (default legacy, no implicit company). `compare`
+shadow-evaluates native vs ZB roster/eligibility/schedule/bases/time-off; `native` makes ZERO
+`/team_members` calls. Cutover blocked until: active ZB set == active native set; every job-
+snapshot external id has exactly one company-scoped map; every non-sentinel legacy row has a
+uuid; work-schedule day uuid == parent uuid; compare shows zero unexplained diffs; a forced ZB
+outage leaves roster/settings/bases/schedules/zones/slots/time-off/availability/picker working;
+`jobs.assigned_*` byte-unchanged. Rollback after switch = mode→legacy (never drop mig 240).
+
+**Tasks T1–T6:** T1 migration 240 + native query foundation; T2 idempotent import/backfill CLI;
+T3 parallel uuid read/write for all 8 tables; T4 native roster/availability/time-off/bases/slots/
+settings + mode switch; T5 job-boundary + MCP compatibility (signatures/permissions unchanged);
+T6 compare-gate + per-company native cutover + attack-only re-review.
+
+**Named sabotage `SAB-A-ZONE-UUID-PARITY`:** real DB fixture, two companies sharing one ZB
+external id; tech A→North, B→unassigned, C→wildcard; native and legacy readers must yield the
+same eligible set (North: A,C; other: C; B: never); flip the ZONE-STRICT empty branch
+(`technicianServiceAreaService.js:264` `size===0 → true`) → parity test RED → restore edit (not
+git) → green; and removing company scope from the external-map join must fail the shared-id case.
+
 ## Verification
-(To be filled per phase as it ships — each with exact run command + sabotage control.)
-Phase A acceptance and tests: see the Phase A section once designed.
+(Filled per task as it ships — each with exact run command + sabotage control.)
+
+### Debt surfaced
+- mig 239 (`technician_area_wildcards`, shipped 2026-08-05) has no `rollback_239_*.sql` — add
+  a `DROP TABLE technician_area_wildcards` rollback for ledger consistency (not a Phase A blocker).
 
 ## Open owner items (non-blocking)
 - ZB raw/receipt/link retention period (default: keep as provenance indefinitely until asked).
