@@ -1005,8 +1005,8 @@ async function convertToInvoiceInTransaction(
             leadSerialId = lead?.serial_id || lead?.id || null;
         }
         const sequence = await invoicesQueries.nextInvoiceSequence(companyId, {
-            jobId: estimate.job_id,
-            leadId: estimate.lead_id,
+            leadSerialId,
+            jobId: jobIdForNum,
         }, client);
         invoiceNumber = invoicesQueries.buildInvoiceNumber({
             leadSerialId,
