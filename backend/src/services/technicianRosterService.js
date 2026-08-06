@@ -1,8 +1,8 @@
-/**
- * Canonical active Zenbooker service-provider roster.
- * Operational failures are explicit; callers must not substitute job history.
- */
+/** Canonical active technician roster with a per-company ZB/native cutover. */
 const zenbookerClient = require('./zenbookerClient');
+const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
+const { getTechnicianDirectoryMode } = require('../config/featureFlags');
+const COMPANY_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 class TechnicianRosterError extends Error {
     constructor(code, message, httpStatus) {
@@ -37,7 +37,7 @@ function zenbookerProfile(member, name) {
     };
 }
 
-async function listActive(companyId, { includeZenbookerProfile = false } = {}) {
+async function listLegacy(companyId, { includeZenbookerProfile = false } = {}) {
     let members;
     try {
         members = await zenbookerClient.getTeamMembers(
@@ -66,9 +66,86 @@ async function listActive(companyId, { includeZenbookerProfile = false } = {}) {
         });
 }
 
+async function listNative(companyId) {
+    const technicians = await technicianDirectoryQueries.listActiveTechnicians(companyId);
+    return (Array.isArray(technicians) ? technicians : []).map(technician => {
+        const technicianUuid = String(technician.id);
+        return {
+            id: technician.zenbooker_external_id == null
+                ? technicianUuid
+                : String(technician.zenbooker_external_id),
+            name: String(technician.display_name),
+            active: true,
+            technician_uuid: technicianUuid,
+        };
+    });
+}
+
+function rosterDifference(legacy, native) {
+    const legacyById = new Map(legacy.map(item => [String(item.id), String(item.name)]));
+    const nativeById = new Map(native.map(item => [String(item.id), String(item.name)]));
+    const missingInNative = [...legacyById.keys()].filter(id => !nativeById.has(id));
+    const missingInLegacy = [...nativeById.keys()].filter(id => !legacyById.has(id));
+    const nameMismatches = [...legacyById.entries()]
+        .filter(([id, name]) => nativeById.has(id) && nativeById.get(id) !== name)
+        .map(([id, legacyName]) => ({
+            id,
+            legacy_name: legacyName,
+            native_name: nativeById.get(id),
+        }));
+    if (missingInNative.length === 0 && missingInLegacy.length === 0 && nameMismatches.length === 0) {
+        return null;
+    }
+    return {
+        missing_in_native: missingInNative,
+        missing_in_legacy: missingInLegacy,
+        name_mismatches: nameMismatches,
+    };
+}
+
+async function listActive(companyId, options = {}) {
+    if (typeof companyId !== 'string' || !COMPANY_UUID_RE.test(companyId.trim())) {
+        throw new TechnicianRosterError('INVALID_COMPANY', 'A company UUID is required', 400);
+    }
+    const mode = getTechnicianDirectoryMode(companyId);
+    if (mode === 'native') return listNative(companyId);
+
+    const legacy = await listLegacy(companyId, options);
+    if (mode === 'compare') {
+        try {
+            const native = await listNative(companyId);
+            const difference = rosterDifference(legacy, native);
+            if (difference) {
+                console.warn('[TechnicianRoster] Native roster mismatch:', {
+                    company_id: companyId,
+                    ...difference,
+                });
+            }
+        } catch (err) {
+            console.warn('[TechnicianRoster] Native roster comparison unavailable:', {
+                company_id: companyId,
+                error: err.message,
+            });
+        }
+    }
+    return legacy;
+}
+
 async function requireActive(companyId, technicianId) {
-    const id = String(technicianId);
-    const technician = (await listActive(companyId)).find(item => item.id === id);
+    const rawId = String(technicianId);
+    const id = COMPANY_UUID_RE.test(rawId) ? rawId.toLowerCase() : rawId;
+    const roster = await listActive(companyId);
+    let technician = roster.find(item => item.id === id || item.technician_uuid === id);
+    if (!technician && COMPANY_UUID_RE.test(id)) {
+        const externalId = await technicianDirectoryQueries.resolveUuidToExternal(
+            companyId,
+            'zenbooker',
+            id
+        );
+        if (externalId) {
+            technician = roster.find(item => item.id === String(externalId));
+        }
+    }
     if (!technician) {
         throw new TechnicianRosterError('NOT_FOUND', 'Technician not found', 404);
     }

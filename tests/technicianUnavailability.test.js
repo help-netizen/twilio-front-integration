@@ -4,6 +4,11 @@ jest.mock('../backend/src/db/timeOffQueries', () => ({
 jest.mock('../backend/src/db/membershipQueries', () => ({
     getZenbookerTeamMemberIdForUser: jest.fn(),
 }));
+jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
+    findActiveTechnicianByCrmUserId: jest.fn(),
+    resolveExternalToUuid: jest.fn(),
+    resolveUuidToExternal: jest.fn(),
+}));
 jest.mock('../backend/src/db/technicianWorkScheduleQueries', () => ({
     listByTechnicianIds: jest.fn(),
     replace: jest.fn(),
@@ -17,6 +22,7 @@ jest.mock('../backend/src/services/technicianRosterService', () => ({
 
 const timeOffQueries = require('../backend/src/db/timeOffQueries');
 const membershipQueries = require('../backend/src/db/membershipQueries');
+const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const scheduleQueries = require('../backend/src/db/technicianWorkScheduleQueries');
 const scheduleService = require('../backend/src/services/scheduleService');
 const rosterService = require('../backend/src/services/technicianRosterService');
@@ -45,6 +51,8 @@ function customRows(overrides = {}) {
 
 beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.TECHNICIAN_DIRECTORY_MODE;
+    delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
     scheduleService.getDispatchSettings.mockResolvedValue({
         timezone: 'America/New_York',
         work_start_time: '08:00:00',
@@ -55,6 +63,12 @@ beforeEach(() => {
     timeOffQueries.listOverlappingRange.mockResolvedValue([]);
     rosterService.listActive.mockResolvedValue([TECH]);
     membershipQueries.getZenbookerTeamMemberIdForUser.mockResolvedValue(TECH.id);
+    directoryQueries.findActiveTechnicianByCrmUserId.mockResolvedValue(null);
+});
+
+afterAll(() => {
+    delete process.env.TECHNICIAN_DIRECTORY_MODE;
+    delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
 });
 
 it('derives before/after gaps around inherited company hours', async () => {
@@ -174,6 +188,43 @@ it('provider scope overrides the requested technician id with the caller bridge'
     }, { assignedOnly: true, userId: 'crm-user' });
     expect(membershipQueries.getZenbookerTeamMemberIdForUser).toHaveBeenCalledWith(COMPANY, 'crm-user');
     expect(timeOffQueries.listOverlappingRange).toHaveBeenCalled();
+});
+
+it('native provider scope resolves crm_user_id directly and filters by technician UUID', async () => {
+    const technicianUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    process.env.TECHNICIAN_DIRECTORY_MODE = 'native';
+    process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS = COMPANY;
+    directoryQueries.findActiveTechnicianByCrmUserId.mockResolvedValue({ id: technicianUuid });
+    rosterService.listActive.mockResolvedValue([{
+        id: 'tech-1',
+        name: 'Alex Rivera',
+        technician_uuid: technicianUuid,
+    }]);
+
+    await availabilityService.listUnavailability(COMPANY, {
+        from: '2026-07-20T04:00:00.000Z',
+        to: '2026-07-21T04:00:00.000Z',
+        technicianId: 'someone-else',
+    }, { assignedOnly: true, userId: 'crm-user' });
+
+    expect(directoryQueries.findActiveTechnicianByCrmUserId)
+        .toHaveBeenCalledWith(COMPANY, 'crm-user');
+    expect(membershipQueries.getZenbookerTeamMemberIdForUser).not.toHaveBeenCalled();
+    expect(scheduleQueries.listByTechnicianIds).toHaveBeenCalledWith(COMPANY, ['tech-1']);
+});
+
+it('native provider scope denies by default when crm_user_id is unlinked', async () => {
+    process.env.TECHNICIAN_DIRECTORY_MODE = 'native';
+    process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS = COMPANY;
+    directoryQueries.findActiveTechnicianByCrmUserId.mockResolvedValue(null);
+
+    await expect(availabilityService.listUnavailability(COMPANY, {
+        from: '2026-07-20T04:00:00.000Z',
+        to: '2026-07-21T04:00:00.000Z',
+    }, { assignedOnly: true, userId: 'unlinked-user' })).resolves.toEqual([]);
+
+    expect(rosterService.listActive).not.toHaveBeenCalled();
+    expect(membershipQueries.getZenbookerTeamMemberIdForUser).not.toHaveBeenCalled();
 });
 
 it('company-settings failure rejects instead of returning an all-day-open collection', async () => {

@@ -72,13 +72,35 @@ async function resolveUuidToExternal(companyId, source, technicianUuid) {
 
 async function listActiveTechnicians(companyId) {
     const { rows } = await db.query(
-        `SELECT id, display_name, active, crm_user_id
-         FROM technicians
-         WHERE company_id = $1 AND active = TRUE
-         ORDER BY display_name ASC, id ASC`,
+        `SELECT t.id, t.display_name, t.active, t.crm_user_id,
+                external.external_id AS zenbooker_external_id
+         FROM technicians t
+         LEFT JOIN LATERAL (
+             SELECT e.external_id
+             FROM technician_external_identities e
+             WHERE e.company_id = t.company_id
+               AND e.source = 'zenbooker'
+               AND e.technician_id = t.id
+             ORDER BY e.created_at ASC, e.external_id ASC
+             LIMIT 1
+         ) external ON TRUE
+         WHERE t.company_id = $1 AND t.active = TRUE
+         ORDER BY t.display_name ASC, t.id ASC`,
         [companyId]
     );
     return rows;
+}
+
+async function findActiveTechnicianByCrmUserId(companyId, crmUserId) {
+    const { rows } = await db.query(
+        `SELECT id, display_name, active, crm_user_id
+         FROM technicians
+         WHERE company_id = $1
+           AND crm_user_id = $2
+           AND active = TRUE`,
+        [companyId, crmUserId]
+    );
+    return rows[0] || null;
 }
 
 /**
@@ -103,5 +125,6 @@ module.exports = {
     resolveExternalToUuid,
     resolveUuidToExternal,
     listActiveTechnicians,
+    findActiveTechnicianByCrmUserId,
     linkCrmUser,
 };

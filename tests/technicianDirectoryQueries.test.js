@@ -88,6 +88,19 @@ test('listActiveTechnicians filters active and scopes to the company', async () 
     assertCompanyScoped(CO_A);
 });
 
+test('findActiveTechnicianByCrmUserId is active-only and company-scoped', async () => {
+    db.query.mockResolvedValueOnce({
+        rows: [{ id: TECH_A, display_name: 'Ali', active: true, crm_user_id: 'crm-user' }],
+    });
+    const row = await q.findActiveTechnicianByCrmUserId(CO_A, 'crm-user');
+    expect(row.id).toBe(TECH_A);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/company_id\s*=\s*\$1/);
+    expect(sql).toMatch(/crm_user_id\s*=\s*\$2/);
+    expect(sql).toMatch(/active\s*=\s*TRUE/);
+    expect(params).toEqual([CO_A, 'crm-user']);
+});
+
 test('linkCrmUser updates within the tenant only and can unlink with null', async () => {
     db.query.mockResolvedValueOnce({ rows: [{ id: TECH_A, crm_user_id: null }] });
     await q.linkCrmUser({ companyId: CO_A, technicianId: TECH_A, crmUserId: null });

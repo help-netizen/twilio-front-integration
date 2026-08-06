@@ -7,8 +7,8 @@
  *     (company_user_profiles.zenbooker_team_member_id); no bridge → [] —
  *     deny-by-default (E-14), never tenant-wide.
  *   • createTimeOff — target 'technician' inserts ONE row (name snapshot from
- *     the client); target 'company' materializes K rows from the live ZB
- *     roster in ONE multi-row INSERT (E-3 atomicity), sharing a fresh batch_id.
+ *     the client); target 'company' materializes K rows from the selected
+ *     active roster in ONE multi-row INSERT (E-3 atomicity), sharing a batch_id.
  *   • deleteTimeOff — always per-row (INV-6); zero affected rows → 404
  *     (foreign tenant indistinguishable from a missing id, E-13).
  *
@@ -19,7 +19,7 @@
 const crypto = require('crypto');
 const timeOffQueries = require('../db/timeOffQueries');
 const membershipQueries = require('../db/membershipQueries');
-const zenbookerClient = require('./zenbookerClient');
+const technicianRosterService = require('./technicianRosterService');
 
 const NOTE_MAX_LENGTH = 500;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -85,10 +85,10 @@ async function listTimeOff(companyId, { from, to, technicianId } = {}, providerS
  * display name is the client's snapshot (ZB is NOT called, E-5: the id is not
  * validated against the roster — an orphaned row is harmless).
  *
- * target 'company' → the active ZB roster (exactly the buildTechnicians
+ * target 'company' → the selected active roster (exactly the buildTechnicians
  * contract) is materialized into K rows sharing one fresh batch_id via ONE
- * multi-row INSERT. Empty roster → 400 NO_ACTIVE_TECHNICIANS; ZB failure →
- * 502 ZENBOOKER_UNAVAILABLE; zero inserts in both cases (E-3).
+ * multi-row INSERT. Empty roster → 400 NO_ACTIVE_TECHNICIANS; roster failure
+ * propagates; zero inserts in both cases (E-3).
  *
  * @param {string} companyId
  * @param {Object} payload - { target, technician_id?, technician_name?, starts_at, ends_at, note? }
@@ -150,17 +150,8 @@ async function createTimeOff(companyId, payload = {}, createdBy = null) {
         return [created];
     }
 
-    // target === 'company' — materialize over the active ZB roster.
-    let members;
-    try {
-        members = await zenbookerClient.getTeamMembers(
-            { service_provider: true, deactivated: false },
-            companyId
-        );
-    } catch (err) {
-        console.error('[TimeOff] ZB roster fetch failed:', err.message);
-        throw new TimeOffServiceError('ZENBOOKER_UNAVAILABLE', 'Zenbooker roster is unavailable; no time off was created', 502);
-    }
+    // target === 'company' — materialize over the selected active roster.
+    const members = await technicianRosterService.listActive(companyId);
     const roster = Array.isArray(members) ? members : [];
     if (roster.length === 0) {
         throw new TimeOffServiceError('NO_ACTIVE_TECHNICIANS', 'No active technicians found to apply company-wide time off', 400);
@@ -169,8 +160,7 @@ async function createTimeOff(companyId, payload = {}, createdBy = null) {
     const batchId = crypto.randomUUID();
     const rows = roster.map(m => ({
         technicianId: String(m.id),
-        // Same display-name derivation as buildTechnicians (slotEngineService).
-        technicianName: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.name || String(m.id),
+        technicianName: m.name || String(m.id),
         startsAt: startsAtIso,
         endsAt: endsAtIso,
         note: normalizedNote,
