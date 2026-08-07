@@ -189,7 +189,9 @@ export function beginCardEntrySameWindow(
     const stored: StoredCardEntryHandoff = {
         version: 1,
         expiresAt: now + HANDOFF_TTL_MS,
-        sessionId: payload.sessionId,
+        // Coerce: a BIGSERIAL id can arrive as a string, and consumeCardEntryHandoff validates
+        // sessionId with isPositiveInteger (typeof 'number') — a string fails as "bad-payload".
+        sessionId: Number(payload.sessionId),
         initMessage: payload.initMessage,
         ...(payload.resumeContext === undefined ? {} : { resumeContext: payload.resumeContext }),
     };

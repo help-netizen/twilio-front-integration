@@ -779,7 +779,10 @@ async function createCardSession(
         }
     }
     return {
-        session_id: row.id,
+        // BIGSERIAL → pg serializes the id as a STRING. The client contract is a number, and the
+        // same-window card-entry hand-off validates sessionId with isPositiveInteger (typeof
+        // 'number'); a string there fails as "bad-payload" (installed-PWA card entry, CARDFRAME).
+        session_id: Number(row.id),
         client_secret: pi.client_secret,
         payment_intent_id: pi.id,
         account_id: account.stripe_account_id,

@@ -88,6 +88,40 @@ describe('same-window card-entry handoff', () => {
         expect(storage.getItem(key)).toBeNull();
     });
 
+    it('coerces a string sessionId (BIGSERIAL id) so the hand-off is not rejected as bad-payload', () => {
+        const storage = memoryStorage();
+        const assign = vi.fn();
+        const hostWindow = {
+            location: { origin: 'https://app.albusto.test', pathname: '/jobs/1632', search: '', hash: '', assign },
+            navigator: { userAgent: 'Mozilla/5.0 (iPhone)' },
+            matchMedia: vi.fn(() => ({ matches: true })),
+            open: vi.fn(),
+            sessionStorage: storage,
+            crypto: { randomUUID: () => 'stringy-id-key' },
+        } as unknown as Window;
+
+        // The backend serialises a BIGSERIAL session id as a string; the same-window path used to
+        // reject it (isPositiveInteger → typeof 'number') as "bad-payload" in installed PWAs.
+        launchCardEntryPopup(
+            { mode: 'collect', accountId: 'acct_x', amount: 0.5 },
+            { hostWindow, sessionId: '122' as unknown as number },
+        );
+
+        const assignedUrl = String(assign.mock.calls[0]?.[0]);
+        const cardWindow = {
+            location: {
+                origin: 'https://app.albusto.test',
+                pathname: '/card-entry.html',
+                search: new URL(assignedUrl, 'https://app.albusto.test').search,
+                hash: '',
+            },
+            sessionStorage: storage,
+        };
+        const consumed = consumeCardEntryHandoff(cardWindow, Date.now());
+        expect(consumed.failure).toBeUndefined();
+        expect(consumed.handoff?.sessionId).toBe(122);
+    });
+
     it('falls back with the same session when an opened popup never acknowledges', () => {
         const storage = memoryStorage();
         const assign = vi.fn();
