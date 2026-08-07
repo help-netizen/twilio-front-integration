@@ -7,3 +7,6 @@ interface ImportMetaEnv {
 interface ImportMeta {
     readonly env: ImportMetaEnv;
 }
+
+// PWA-UPDATE-001 — build stamp injected by vite.config `define`.
+declare const __APP_VERSION__: string;

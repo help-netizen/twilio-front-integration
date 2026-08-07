@@ -31,6 +31,7 @@ function OnboardingGate() {
   return null;
 }
 import { AppLayout } from './components/layout/AppLayout';
+import { AppUpdateBanner } from './components/AppUpdateBanner';
 import { HomePage } from './pages/HomePage';
 import { ConversationPage } from './pages/ConversationPage';
 import { LeadsPage } from './pages/LeadsPage';
@@ -239,6 +240,7 @@ function App() {
           <EventNotification />
           <InstallOnboardingSheet />
           <Toaster />
+          <AppUpdateBanner />
           </OverlayStackProvider>
         </BrowserRouter>
       </QueryClientProvider>
