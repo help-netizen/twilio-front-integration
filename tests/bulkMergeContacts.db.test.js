@@ -12,14 +12,26 @@ jest.setTimeout(60000);
 describe('ZB-DECOUPLE-001 B4 bulk contact merge against albusto_test', () => {
     const companyA = randomUUID();
     const companyB = randomUUID();
+    const fuzzyCompany = randomUUID();
     const suffix = randomUUID().replaceAll('-', '');
     const cleanPhone = '6175554101';
     const householdPhone = '6175554202';
     const stripePhone = '6175554303';
+    const fuzzyPhones = {
+        marilyn: '6175554401',
+        kanny: '6175554402',
+        nickname: '6175554403',
+        gender: '6175554404',
+        different: '6175554405',
+        placeholder: '6175554406',
+        multi: '6175554407',
+        sabotage: '6175554408',
+    };
     const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'albusto-b4-'));
     const output = jest.fn();
     const warningOutput = jest.fn();
     const ids = {};
+    const fuzzyIds = {};
     let runNumber = 0;
 
     function dependencies() {
@@ -115,8 +127,16 @@ describe('ZB-DECOUPLE-001 B4 bulk contact merge against albusto_test', () => {
         await db.query(
             `INSERT INTO companies (id, name, slug, status, timezone)
              VALUES ($1, 'B4 bulk merge A', $2, 'active', 'America/New_York'),
-                    ($3, 'B4 bulk merge B', $4, 'active', 'America/New_York')`,
-            [companyA, `b4-a-${suffix}`, companyB, `b4-b-${suffix}`]
+                    ($3, 'B4 bulk merge B', $4, 'active', 'America/New_York'),
+                    ($5, 'B4 fuzzy merge', $6, 'active', 'America/New_York')`,
+            [
+                companyA,
+                `b4-a-${suffix}`,
+                companyB,
+                `b4-b-${suffix}`,
+                fuzzyCompany,
+                `b4-fuzzy-${suffix}`,
+            ]
         );
 
         ids.cleanOld = await insertContact(companyA, {
@@ -248,6 +268,61 @@ describe('ZB-DECOUPLE-001 B4 bulk contact merge against albusto_test', () => {
         });
         await inventoryPhone(companyB, ids.foreignOne, '+16175554101', cleanPhone);
         await inventoryPhone(companyB, ids.foreignTwo, '+16175554101', cleanPhone);
+
+        const fuzzyFixtures = {
+            marilyn: [
+                ['Marilyn Stone', 'Marilyn', 'Stone'],
+                ['Marylin Stone', 'Marylin', 'Stone'],
+            ],
+            kanny: [
+                ['Kanny Lee', 'Kanny', 'Lee'],
+                ['Kenny Lee', 'Kenny', 'Lee'],
+            ],
+            nickname: [
+                ['Judy Hale', 'Judy', 'Hale'],
+                ['Judith Hale', 'Judith', 'Hale'],
+            ],
+            gender: [
+                ['Gabriel Hall', 'Gabriel', 'Hall'],
+                ['Gabrielle Hall', 'Gabrielle', 'Hall'],
+            ],
+            different: [
+                ['Olga Elizarova', 'Olga', 'Elizarova'],
+                ['Brooks Allwardt', 'Brooks', 'Allwardt'],
+            ],
+            placeholder: [
+                ['Test Customer', 'Test', 'Customer'],
+                ['Tess Customer', 'Tess', 'Customer'],
+            ],
+            multi: [
+                ['Marilyn Stone', 'Marilyn', 'Stone'],
+                ['Marylin Stone', 'Marylin', 'Stone'],
+                ['Olga Stone', 'Olga', 'Stone'],
+            ],
+            sabotage: [
+                ['John Reed', 'John', 'Reed'],
+                ['Jane Reed', 'Jane', 'Reed'],
+            ],
+        };
+        for (const [fixture, members] of Object.entries(fuzzyFixtures)) {
+            fuzzyIds[fixture] = [];
+            for (const [fullName, firstName, lastName] of members) {
+                const contactId = await insertContact(fuzzyCompany, {
+                    fullName,
+                    firstName,
+                    lastName,
+                    phone: `+1${fuzzyPhones[fixture]}`,
+                    createdAt: '2024-01-01T00:00:00Z',
+                });
+                fuzzyIds[fixture].push(contactId);
+                await inventoryPhone(
+                    fuzzyCompany,
+                    contactId,
+                    `+1${fuzzyPhones[fixture]}`,
+                    fuzzyPhones[fixture]
+                );
+            }
+        }
     });
 
     test('requires an explicit mode and validates the optional selection guards', () => {
@@ -260,6 +335,114 @@ describe('ZB-DECOUPLE-001 B4 bulk contact merge against albusto_test', () => {
             .toThrow('--limit must be a positive integer');
         expect(() => parseArgs(['--company-id', companyA, '--dry-run', '--set', '617555']))
             .toThrow('--set must be one normalized 10-digit phone number');
+        expect(parseArgs(['--company-id', companyA, '--dry-run']).fuzzy).toBe(false);
+        expect(parseArgs(['--company-id', companyA, '--dry-run', '--fuzzy']).fuzzy).toBe(true);
+    });
+
+    test('fuzzy merges close variants while gender, placeholder, and different people stay in review', async () => {
+        const defaultDryRun = await run(
+            ['--company-id', fuzzyCompany, '--dry-run'],
+            dependencies()
+        );
+        expect(defaultDryRun.totals).toEqual({
+            sets: 8,
+            mergeable: 0,
+            probable_household: 8,
+            quarantine_blocked: 0,
+            total_donors: 9,
+        });
+        expect(defaultDryRun.contact_totals).toEqual({
+            before: 17,
+            expected_after: 17,
+            after: 17,
+        });
+        expect(defaultDryRun.sets.every(set => set.fuzzy_reason === undefined)).toBe(true);
+
+        const fuzzyDryRun = await run(
+            ['--company-id', fuzzyCompany, '--dry-run', '--fuzzy'],
+            dependencies()
+        );
+        expect(fuzzyDryRun.totals).toEqual({
+            sets: 8,
+            mergeable: 3,
+            probable_household: 5,
+            quarantine_blocked: 0,
+            total_donors: 9,
+        });
+        expect(fuzzyDryRun.contact_totals).toEqual({
+            before: 17,
+            expected_after: 14,
+            after: 17,
+        });
+        const plansByPhone = new Map(
+            fuzzyDryRun.sets.map(set => [set.normalized_phone, set])
+        );
+        expect(plansByPhone.get(fuzzyPhones.marilyn)).toMatchObject({
+            disposition: 'mergeable',
+            fuzzy_reason: 'levenshtein',
+        });
+        expect(plansByPhone.get(fuzzyPhones.kanny)).toMatchObject({
+            disposition: 'mergeable',
+            fuzzy_reason: 'levenshtein',
+        });
+        expect(plansByPhone.get(fuzzyPhones.nickname)).toMatchObject({
+            disposition: 'mergeable',
+            fuzzy_reason: 'nickname',
+        });
+        for (const fixture of ['gender', 'different', 'placeholder', 'multi', 'sabotage']) {
+            expect(plansByPhone.get(fuzzyPhones[fixture])).toMatchObject({
+                disposition: 'probable_household',
+            });
+            expect(plansByPhone.get(fuzzyPhones[fixture]).fuzzy_reason).toBeUndefined();
+        }
+        expect(plansByPhone.get(fuzzyPhones.gender).household.members.map(member => member.name))
+            .toEqual(['Gabriel Hall', 'Gabrielle Hall']);
+        expect(plansByPhone.get(fuzzyPhones.different).household.members.map(member => member.name))
+            .toEqual(['Olga Elizarova', 'Brooks Allwardt']);
+        expect(plansByPhone.get(fuzzyPhones.placeholder).household.members.map(member => member.name))
+            .toEqual(['Test Customer', 'Tess Customer']);
+        expect(plansByPhone.get(fuzzyPhones.multi).household.members).toHaveLength(3);
+
+        const summary = fs.readFileSync(fuzzyDryRun.artifacts.summary, 'utf8');
+        expect(summary).toContain('FUZZY → mergeable (3)');
+        expect(summary).toContain(`${fuzzyPhones.marilyn} [levenshtein]`);
+        expect(summary).toContain(`${fuzzyPhones.nickname} [nickname]`);
+
+        const apply = await run(
+            ['--company-id', fuzzyCompany, '--apply', '--fuzzy'],
+            dependencies()
+        );
+        expect(apply.exit_code).toBe(0);
+        expect(apply.failures).toEqual([]);
+        expect(apply.contact_totals).toEqual({ before: 17, expected_after: 14, after: 14 });
+        expect(apply.aggregate_apply_result).toMatchObject({
+            merged_sets: 3,
+            merged_donors: 3,
+            skipped_sets: 5,
+            failed_sets: 0,
+        });
+        for (const fixture of ['marilyn', 'kanny', 'nickname']) {
+            const active = (await db.query(
+                `SELECT COUNT(*)::int AS count
+                   FROM contacts
+                  WHERE company_id = $1
+                    AND id = ANY($2::bigint[])
+                    AND deleted_at IS NULL`,
+                [fuzzyCompany, fuzzyIds[fixture]]
+            )).rows[0].count;
+            expect({ fixture, active }).toEqual({ fixture, active: 1 });
+        }
+        for (const fixture of ['gender', 'different', 'placeholder', 'multi', 'sabotage']) {
+            const active = (await db.query(
+                `SELECT COUNT(*)::int AS count
+                   FROM contacts
+                  WHERE company_id = $1
+                    AND id = ANY($2::bigint[])
+                    AND deleted_at IS NULL`,
+                [fuzzyCompany, fuzzyIds[fixture]]
+            )).rows[0].count;
+            expect({ fixture, active }).toEqual({ fixture, active: fuzzyIds[fixture].length });
+        }
     });
 
     test('dry-run is write-free; survivor = most-linked; apply is selective and rerun is a no-op', async () => {
@@ -415,7 +598,7 @@ describe('ZB-DECOUPLE-001 B4 bulk contact merge against albusto_test', () => {
     afterAll(async () => {
         await db.query(
             'DELETE FROM companies WHERE id = ANY($1::uuid[])',
-            [[companyA, companyB]]
+            [[companyA, companyB, fuzzyCompany]]
         ).catch(() => {});
         fs.rmSync(outputDirectory, { recursive: true, force: true });
         try { await db.pool.end(); } catch (_) { /* already closed */ }

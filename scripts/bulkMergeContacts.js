@@ -17,6 +17,7 @@ const mergeService = require('../backend/src/services/contactEmailMergeService')
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NORMALIZED_PHONE_SHAPE = /^[0-9]{10}$/;
 const PLAN_VERSION = 1;
+const MAX_FUZZY_NAME_DISTANCE = 2;
 const BUSINESS_LINK_KEYS = [
     'jobs',
     'leads',
@@ -115,6 +116,7 @@ function parseArgs(argv) {
         companyId: null,
         dryRun: false,
         apply: false,
+        fuzzy: false,
         limit: null,
         set: null,
     };
@@ -122,6 +124,7 @@ function parseArgs(argv) {
         const arg = argv[index];
         if (arg === '--dry-run') parsed.dryRun = true;
         else if (arg === '--apply') parsed.apply = true;
+        else if (arg === '--fuzzy') parsed.fuzzy = true;
         else if (arg === '--company-id') {
             parsed.companyId = argv[index + 1] || null;
             index += 1;
@@ -219,6 +222,43 @@ function normalizeNameParts(value) {
 
 const NAME_PREFIXES = new Set(['mr', 'mrs', 'ms', 'miss', 'dr']);
 const NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv']);
+const FUZZY_NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii']);
+const PLACEHOLDER_NAMES = new Set([
+    'customer',
+    'customer notes',
+    'n a',
+    'na',
+    'no name',
+    'none',
+    'placeholder',
+    'test',
+    'test customer',
+    'unknown',
+    'unknown customer',
+]);
+const PLACEHOLDER_GIVEN_NAMES = new Set(['customer', 'placeholder', 'test', 'unknown']);
+const GENDERING_SUFFIXES = ['ette', 'ina', 'tte', 'ne', 'a', 'e'];
+const NICKNAME_PAIRS = [
+    ['judy', 'judith'],
+    ['mike', 'michael'],
+    ['bob', 'robert'],
+    ['jim', 'james'],
+    ['bill', 'william'],
+    ['dave', 'david'],
+    ['tom', 'thomas'],
+    ['kathy', 'katherine'],
+    ['liz', 'elizabeth'],
+    ['dan', 'daniel'],
+    ['chris', 'christopher'],
+    ['joe', 'joseph'],
+    ['sue', 'susan'],
+    ['rick', 'richard'],
+    ['steve', 'steven'],
+];
+const NICKNAME_LOOKUP = new Set(NICKNAME_PAIRS.flatMap(([left, right]) => [
+    `${left}:${right}`,
+    `${right}:${left}`,
+]));
 
 function nameIdentity(contact) {
     let given = normalizeNameParts(contact.first_name);
@@ -299,6 +339,100 @@ function nameDivergence(contacts) {
         })),
         divergent_pairs: divergentPairs,
     };
+}
+
+function fuzzyNameIdentity(contact) {
+    const rawName = !isBlank(contact.full_name)
+        ? contact.full_name
+        : [contact.first_name, contact.last_name].filter(value => !isBlank(value)).join(' ');
+    const tokens = normalizeNameParts(rawName);
+    if (tokens.at(-1) && FUZZY_NAME_SUFFIXES.has(tokens.at(-1))) tokens.pop();
+
+    const ordinaryIdentity = nameIdentity(contact);
+    return {
+        full: tokens.join(' '),
+        given: ordinaryIdentity.given,
+        family: ordinaryIdentity.family,
+    };
+}
+
+function isPlaceholderName(identity) {
+    return !identity.full
+        || PLACEHOLDER_NAMES.has(identity.full)
+        || PLACEHOLDER_GIVEN_NAMES.has(identity.given);
+}
+
+function levenshteinDistance(left, right) {
+    if (left === right) return 0;
+    if (left.length === 0) return right.length;
+    if (right.length === 0) return left.length;
+
+    let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+        const current = [leftIndex];
+        for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+            current[rightIndex] = Math.min(
+                current[rightIndex - 1] + 1,
+                previous[rightIndex] + 1,
+                previous[rightIndex - 1]
+                    + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1)
+            );
+        }
+        previous = current;
+    }
+    return previous[right.length];
+}
+
+function stripGenderingSuffix(name, suffix) {
+    if (!name.endsWith(suffix) || name.length === suffix.length) return null;
+    return name.slice(0, -suffix.length);
+}
+
+function isGenderVariant(left, right) {
+    if (!left || !right || left === right) return false;
+    const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+    for (const suffix of GENDERING_SUFFIXES) {
+        if (longer === `${shorter}${suffix}`) return true;
+        if (longer === `${shorter}${shorter.at(-1)}${suffix}`) return true;
+    }
+    for (const leftSuffix of GENDERING_SUFFIXES) {
+        const leftRoot = stripGenderingSuffix(left, leftSuffix);
+        if (!leftRoot) continue;
+        for (const rightSuffix of GENDERING_SUFFIXES) {
+            if (leftSuffix === rightSuffix) continue;
+            const rightRoot = stripGenderingSuffix(right, rightSuffix);
+            if (rightRoot && leftRoot === rightRoot) return true;
+        }
+    }
+    return false;
+}
+
+function fuzzyPairReason(left, right) {
+    if (isPlaceholderName(left) || isPlaceholderName(right)) return null;
+    if (isGenderVariant(left.given, right.given)) return null;
+
+    if (levenshteinDistance(left.full, right.full) <= MAX_FUZZY_NAME_DISTANCE) {
+        return 'levenshtein';
+    }
+    if (left.family && left.family === right.family
+        && left.given && right.given
+        && NICKNAME_LOOKUP.has(`${left.given}:${right.given}`)) {
+        return 'nickname';
+    }
+    return null;
+}
+
+function fuzzySetReason(contacts) {
+    const identities = contacts.map(fuzzyNameIdentity);
+    let nicknameRequired = false;
+    for (let leftIndex = 0; leftIndex < identities.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < identities.length; rightIndex += 1) {
+            const reason = fuzzyPairReason(identities[leftIndex], identities[rightIndex]);
+            if (!reason) return null;
+            if (reason === 'nickname') nicknameRequired = true;
+        }
+    }
+    return nicknameRequired ? 'nickname' : 'levenshtein';
 }
 
 function normalizedScalar(field, value) {
@@ -692,7 +826,7 @@ function collisionSummary(inventories) {
     return collisions;
 }
 
-async function buildSetPlan(queryable, companyId, duplicateSet) {
+async function buildSetPlan(queryable, companyId, duplicateSet, fuzzy = false) {
     const contacts = await readContacts(queryable, companyId, duplicateSet.member_ids);
     if (contacts.length !== duplicateSet.member_ids.length) {
         throw new BulkMergeError(
@@ -734,9 +868,13 @@ async function buildSetPlan(queryable, companyId, duplicateSet) {
         duplicateSet.member_ids,
         storedInventories
     );
-    const disposition = household.probable_household
+    const baseDisposition = household.probable_household
         ? 'probable_household'
         : blockers.length > 0 ? 'quarantine_blocked' : 'mergeable';
+    const fuzzyReason = fuzzy && baseDisposition === 'probable_household' && blockers.length === 0
+        ? fuzzySetReason(candidates)
+        : null;
+    const disposition = fuzzyReason ? 'mergeable' : baseDisposition;
 
     const contactReport = contact => ({
         id: contact.id,
@@ -771,6 +909,7 @@ async function buildSetPlan(queryable, companyId, duplicateSet) {
         household,
         blockers,
         collisions,
+        ...(fuzzyReason ? { fuzzy_reason: fuzzyReason } : {}),
         contact_rows: candidates.map(contact => Object.fromEntries(
             CONTACT_SELECT_COLUMNS.map(column => [column, contact[column]])
         )),
@@ -779,6 +918,7 @@ async function buildSetPlan(queryable, companyId, duplicateSet) {
         normalized_phone: duplicateSet.normalized_phone,
         fingerprint: fingerprint(fingerprintState),
         disposition,
+        ...(fuzzyReason ? { fuzzy_reason: fuzzyReason } : {}),
         shared_phone: false,
         survivor,
         donors,
@@ -826,7 +966,7 @@ async function buildPlan(queryable, args, generatedAt) {
     const duplicateSets = await discoverDuplicateSets(queryable, args);
     const sets = [];
     for (const duplicateSet of duplicateSets) {
-        sets.push(await buildSetPlan(queryable, args.companyId, duplicateSet));
+        sets.push(await buildSetPlan(queryable, args.companyId, duplicateSet, args.fuzzy));
     }
     const mergeableDonors = sets
         .filter(set => set.disposition === 'mergeable')
@@ -836,7 +976,7 @@ async function buildPlan(queryable, args, generatedAt) {
         generated_at: generatedAt,
         company_id: args.companyId,
         mode: args.apply ? 'apply' : 'dry-run',
-        filters: { limit: args.limit, set: args.set },
+        filters: { limit: args.limit, set: args.set, fuzzy: args.fuzzy },
         totals: summarizeTotals(sets),
         contact_totals: {
             before,
@@ -963,7 +1103,12 @@ async function applySet(database, companyId, setPlan, mergeContacts) {
                 `Set ${setPlan.normalized_phone} is no longer a duplicate set`
             );
         }
-        const revalidated = await buildSetPlan(client, companyId, liveSet);
+        const revalidated = await buildSetPlan(
+            client,
+            companyId,
+            liveSet,
+            Boolean(setPlan.fuzzy_reason)
+        );
         if (revalidated.fingerprint !== setPlan.fingerprint) {
             throw new BulkMergeError(
                 'PLAN_FINGERPRINT_CHANGED',
@@ -1060,6 +1205,15 @@ function humanSummary(report) {
             `Moved child rows: ${Object.entries(aggregate.moved_child_counts).map(([key, count]) => `${key}=${count}`).join(', ') || 'none'}`
         );
     }
+    if (report.filters.fuzzy) {
+        const fuzzySets = report.sets.filter(set => set.fuzzy_reason);
+        lines.push('', `FUZZY → mergeable (${fuzzySets.length})`);
+        for (const set of fuzzySets) {
+            lines.push(
+                `  ${set.normalized_phone} [${set.fuzzy_reason}] ${set.household.members.map(member => member.name || '(unnamed)').join(' <> ')}`
+            );
+        }
+    }
     lines.push('');
     for (const set of report.sets) {
         lines.push(
@@ -1152,6 +1306,8 @@ module.exports = {
     discoverDuplicateSets,
     fingerprint,
     humanSummary,
+    fuzzySetReason,
+    levenshteinDistance,
     nameDivergence,
     parseArgs,
     run,
