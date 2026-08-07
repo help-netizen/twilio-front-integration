@@ -37,12 +37,11 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
     const initialState = fsmData?.initialState || null;
     const { data: fsmActions } = useFsmActions('job', job.blanc_status);
     const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
-    // FSM-JOB-ACTIONS-001: prominent FSM actions (blanc:button) render as buttons in
-    // JobOpsSection, so this dropdown offers only the OTHER reachable statuses — no double
-    // affordance for the same transition.
-    const buttonTargets = new Set(fsmActions?.filter(a => a.button).map(a => a.target) || []);
+    // FSM-JOB-ACTIONS-001: prominent FSM actions also render as buttons in JobOpsSection, but they
+    // stay in this dropdown too — it is the complete manual status picker (a button is a shortcut,
+    // not the only way to reach a status).
     const reachable = allStatuses.filter(
-        s => s !== job.blanc_status && allowedTargets.has(s) && !buttonTargets.has(s),
+        s => s !== job.blanc_status && allowedTargets.has(s),
     );
     const unreachable = allStatuses.filter(s => s !== job.blanc_status && !allowedTargets.has(s));
     const canReset = initialState && job.blanc_status !== initialState;
