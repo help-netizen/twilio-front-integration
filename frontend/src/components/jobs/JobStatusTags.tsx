@@ -12,7 +12,7 @@ import { TagBadge } from './jobHelpers';
 import { OnTheWayModal } from './OnTheWayModal';
 import { JobRateMeBlock } from './JobRateMeBlock';
 import { useAuthz } from '../../hooks/useAuthz';
-import { useFsmActions, useApplyTransition, type FsmAction } from '../../hooks/useFsmActions';
+import { useFsmActions, useApplyTransition, useFsmStates, type FsmAction } from '../../hooks/useFsmActions';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -75,10 +75,14 @@ export function JobOpsSection({
 
     const { data: fsmActions } = useFsmActions('job', job.blanc_status);
     const applyMutation = useApplyTransition('job');
+    const { data: fsmStates } = useFsmStates('job', true);
+    const initialState = fsmStates?.initialState || null;
 
-    // Prominent buttons = FSM action-transitions flagged blanc:button (server-defaulted), by order.
+    // Prominent buttons = FSM action-transitions flagged blanc:button (server-defaulted), by order,
+    // EXCEPT the corrective/terminal ones: Cancel (→ Canceled) and "back to the start" (→ the
+    // initial state, e.g. Back to Submitted) stay dropdown-only in the JobDetailHeader status picker.
     const buttons = (fsmActions || [])
-        .filter(a => a.button)
+        .filter(a => a.button && a.target !== 'Canceled' && a.target !== initialState)
         .slice()
         .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
 

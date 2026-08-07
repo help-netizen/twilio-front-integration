@@ -11,12 +11,14 @@ import type { FsmAction } from '../../hooks/useFsmActions';
 
 const state = vi.hoisted(() => ({
     actions: [] as FsmAction[],
+    initialState: 'Submitted' as string | null,
     mutateAsync: vi.fn(),
 }));
 
 vi.mock('../../hooks/useFsmActions', () => ({
     useFsmActions: () => ({ data: state.actions }),
     useApplyTransition: () => ({ mutateAsync: state.mutateAsync, isPending: false }),
+    useFsmStates: () => ({ data: { initialState: state.initialState, states: [] } }),
 }));
 vi.mock('../../hooks/useAuthz', () => ({
     useAuthz: () => ({ hasPermission: () => true, hasAnyPermission: () => true }),
@@ -69,11 +71,15 @@ function render(j: LocalJob = job()) {
 describe('JobOpsSection — FSM-driven status buttons (FSM-JOB-ACTIONS-001)', () => {
     beforeEach(() => {
         state.mutateAsync = vi.fn();
+        state.initialState = 'Submitted';
         state.actions = [
             action({ event: 'go_on_the_way', target: 'On the way', label: 'On the way', icon: 'Navigation', order: 1, button: true, variant: 'primary', op: 'notify_on_the_way' }),
             action({ event: 'finish', target: 'Job is Done', label: 'Complete job', icon: 'CheckCircle2', order: 2, button: true, variant: 'success' }),
+            // Corrective/terminal — flagged button:true but must stay dropdown-only, never a button.
+            action({ event: 'cancel', target: 'Canceled', label: 'Cancel', order: 4, button: true, variant: 'danger' }),
+            action({ event: 'reset', target: 'Submitted', label: 'Back to Submitted', order: 5, button: true, variant: 'secondary' }),
             // button:false → menu-only, must NOT surface as a prominent button.
-            action({ event: 'note_only', target: 'Submitted', label: 'Menu Only Action', order: 3, button: false, variant: 'neutral' }),
+            action({ event: 'note_only', target: 'Follow Up with Client', label: 'Menu Only Action', order: 3, button: false, variant: 'neutral' }),
         ];
     });
 
@@ -86,6 +92,15 @@ describe('JobOpsSection — FSM-driven status buttons (FSM-JOB-ACTIONS-001)', ()
     it('does not render actions that are menu-only (button === false)', () => {
         const html = render();
         expect(html).not.toContain('Menu Only Action');
+    });
+
+    it('keeps Cancel and back-to-initial (Back to Submitted) out of the buttons — dropdown-only', () => {
+        const html = render();
+        expect(html).not.toContain('Back to Submitted');
+        expect(html).not.toContain('Cancel');
+        // forward actions still render as buttons
+        expect(html).toContain('On the way');
+        expect(html).toContain('Complete job');
     });
 
     it('renders no button row when the FSM offers no actions', () => {
