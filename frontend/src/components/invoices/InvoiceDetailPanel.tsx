@@ -181,7 +181,15 @@ export function InvoiceDetailPanel({
 
     const { hasPermission } = useAuthz();
     const isVoid = invoice.status === 'void' || invoice.status === 'refunded';
-    const readOnly = isVoid;
+    // VIEW-FIRST (owner 2026-08-08): the panel opens as a read-only document preview —
+    // items and totals render as plain info with no add/remove/edit affordances. The
+    // footer's explicit Edit switches to the editing state (all existing readOnly-gated
+    // affordances light up); Save returns to the preview. Void/refunded documents have
+    // no Edit at all (permanently read-only, as before).
+    const [editing, setEditing] = useState(false);
+    useEffect(() => setEditing(false), [invoice.id]);
+    const canEdit = !isVoid;
+    const readOnly = !editing || !canEdit;
     // Send is always available for non-void invoices (re-sends are a normal workflow).
     // Permission-gated: only roles with invoices.send may dispatch.
     const canSend = hasPermission('invoices.send') && (!invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded'));
@@ -360,6 +368,7 @@ export function InvoiceDetailPanel({
         await new Promise(resolve => setTimeout(resolve, 150)); // let on-blur saves land
         await refreshAfterItemChange().catch(() => {});
         toast.success('All changes saved');
+        setEditing(false); // back to the read-only preview (VIEW-FIRST)
     };
     const previewPdf = () => openAuthedPdf(`/api/invoices/${invoice.id}/pdf`, `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`)
         .catch(() => toast.error('Could not open the PDF'));
@@ -512,7 +521,13 @@ export function InvoiceDetailPanel({
                                 <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
                                 <span className="font-mono text-[var(--blanc-ink-1)]">{money(invoice.subtotal)}</span>
                             </div>
-                            {hasDiscount ? (
+                            {hasDiscount ? readOnly ? (
+                                /* View mode: the discount is a plain info row like Subtotal/Tax. */
+                                <div className="flex justify-between">
+                                    <span className="text-[var(--blanc-ink-2)]">Discount</span>
+                                    <span className="font-mono text-red-600">-{money(invoice.discount_amount)}</span>
+                                </div>
+                            ) : (
                                 /* OB-24: wrap so the amount drops to its own line on narrow widths. */
                                 <div className="flex flex-wrap items-center gap-2 text-sm">
                                     <span className="text-[var(--blanc-ink-2)]">Discount</span>
@@ -534,26 +549,33 @@ export function InvoiceDetailPanel({
                                     Add Discount
                                 </button>
                             )}
-                            <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
-                                <div className="relative w-24">
-                                    <Input
-                                        type="text"
-                                        inputMode="decimal"
-                                        value={taxRate}
-                                        onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
-                                        onBlur={() => {
-                                            const n = Number(taxRate);
-                                            const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
-                                            setTaxRate(formatted);
-                                            persist({ tax_rate: formatted } as any);
-                                        }}
-                                        disabled={readOnly}
-                                        className={`${TOTALS_INPUT} w-full pr-7 text-right tabular-nums`}
-                                    />
-                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                            {readOnly ? Number(taxRate) > 0 && (
+                                /* View mode: plain rate row (omitted when 0 — no empty states). */
+                                <div className="flex justify-between">
+                                    <span className="text-[var(--blanc-ink-2)]">Tax rate</span>
+                                    <span className="font-mono text-[var(--blanc-ink-1)]">{taxRate}%</span>
                                 </div>
-                            </div>
+                            ) : (
+                                <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+                                    <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
+                                    <div className="relative w-24">
+                                        <Input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={taxRate}
+                                            onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
+                                            onBlur={() => {
+                                                const n = Number(taxRate);
+                                                const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
+                                                setTaxRate(formatted);
+                                                persist({ tax_rate: formatted } as any);
+                                            }}
+                                            className={`${TOTALS_INPUT} w-full pr-7 text-right tabular-nums`}
+                                        />
+                                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                                    </div>
+                                </div>
+                            )}
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Tax</span>
                                 <span className="font-mono text-[var(--blanc-ink-1)]">{money(invoice.tax_amount)}</span>
@@ -589,27 +611,37 @@ export function InvoiceDetailPanel({
                     {/* Tasks are meta — beside the document (desktop) / after it (mobile). */}
                     <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
 
-                    {/* Document settings */}
-                    <section className="space-y-3 text-sm">
-                        <p className="blanc-eyebrow">Document settings</p>
-                        {/* minmax(0,1fr) + w-full min-w-0: a native <input type="date"> has an
-                            intrinsic min-width that a bare 1fr (= minmax(auto,1fr)) won't shrink,
-                            so it overflowed the panel and drove the horizontal rubber-band. */}
-                        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
-                            <Label className="text-[var(--blanc-ink-2)]">Due date</Label>
-                            <Input
-                                type="date"
-                                value={dueDate}
-                                onChange={e => setDueDate(e.target.value)}
-                                onBlur={() => persist({ due_date: dueDate || null } as any)}
-                                disabled={readOnly}
-                                className={`${TOTALS_INPUT} w-full min-w-0`}
-                            />
-                        </div>
-                    </section>
+                    {/* Document settings — in view mode a plain "Due date" info row (whole
+                        section omitted when there's no due date; no empty states). */}
+                    {(!readOnly || !!dueDate) && (
+                        <section className="space-y-3 text-sm">
+                            <p className="blanc-eyebrow">Document settings</p>
+                            {readOnly ? (
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[var(--blanc-ink-2)]">Due date</span>
+                                    <span className="font-medium text-[var(--blanc-ink-1)]">{fmtDate(dueDate)}</span>
+                                </div>
+                            ) : (
+                                /* minmax(0,1fr) + w-full min-w-0: a native <input type="date"> has an
+                                    intrinsic min-width that a bare 1fr (= minmax(auto,1fr)) won't shrink,
+                                    so it overflowed the panel and drove the horizontal rubber-band. */
+                                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+                                    <Label className="text-[var(--blanc-ink-2)]">Due date</Label>
+                                    <Input
+                                        type="date"
+                                        value={dueDate}
+                                        onChange={e => setDueDate(e.target.value)}
+                                        onBlur={() => persist({ due_date: dueDate || null } as any)}
+                                        className={`${TOTALS_INPUT} w-full min-w-0`}
+                                    />
+                                </div>
+                            )}
+                        </section>
+                    )}
 
-                    {/* Fully-paid state — flat row, no box (containers invisible). */}
-                    {!readOnly && balanceDueNum <= 0 && (
+                    {/* Fully-paid state — flat row, no box (containers invisible). Info, not an
+                        edit affordance → shown in view mode too (hidden only for void/refunded). */}
+                    {!isVoid && balanceDueNum <= 0 && (
                         <div className="flex items-center gap-2 text-sm font-medium text-emerald-700">
                             <Check className="size-4 shrink-0" />
                             Invoice is fully paid
@@ -719,11 +751,17 @@ export function InvoiceDetailPanel({
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {!isVoid && (
+                    {/* VIEW-FIRST: Edit enters the editing state; Save flushes pending on-blur
+                        saves and returns to the preview. */}
+                    {canEdit && (editing ? (
                         <Button variant="secondary" onClick={handleExplicitSave}>
                             <Check className="mr-1.5 size-4" />Save
                         </Button>
-                    )}
+                    ) : (
+                        <Button variant="secondary" onClick={() => setEditing(true)}>
+                            <Pencil className="mr-1.5 size-4" />Edit
+                        </Button>
+                    ))}
                     {primaryKey === 'send' ? (
                         <Button onClick={onSend}><Send className="mr-1.5 size-4" />Send</Button>
                     ) : (

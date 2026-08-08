@@ -121,7 +121,15 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     }, [estimate.tax_rate, estimate.discount_type, estimate.discount_value]);
 
     const archived = !!estimate.archived_at;
-    const readOnly = archived;
+    // VIEW-FIRST (owner 2026-08-08): the panel opens as a read-only document preview —
+    // items and totals render as plain info with no add/remove/edit affordances. The
+    // footer's explicit Edit switches to the editing state (all existing readOnly-gated
+    // affordances light up); Save returns to the preview. Archived estimates have no
+    // Edit at all (permanently read-only, as before).
+    const [editing, setEditing] = useState(false);
+    useEffect(() => setEditing(false), [initialEstimate.id]);
+    const canEdit = !archived;
+    const readOnly = !editing || !canEdit;
 
     const refreshAfterItemChange = async () => {
         try {
@@ -324,6 +332,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
         await new Promise(resolve => setTimeout(resolve, 150)); // let on-blur saves land
         await refreshAfterItemChange().catch(() => {});
         toast.success('All changes saved');
+        setEditing(false); // back to the read-only preview (VIEW-FIRST)
     };
     const doSend = () => { if (requireItems()) setSendOpen(true); };
     const doApprove = () => { if (requireItems()) onApprove(); };
@@ -488,7 +497,16 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
                                 <span className="font-mono">{money(estimate.subtotal)}</span>
                             </div>
-                            {discountType ? (
+                            {discountType ? readOnly ? (
+                                /* View mode: the discount is a plain info row like Subtotal/Tax
+                                   (percentage discounts show the rate beside the label). */
+                                <div className="flex justify-between">
+                                    <span className="text-[var(--blanc-ink-2)]">
+                                        Discount{discountType === 'percentage' && Number(discountValue) > 0 ? ` (${Number(discountValue)}%)` : ''}
+                                    </span>
+                                    <span className="font-mono text-red-600">-{money(estimate.discount_amount)}</span>
+                                </div>
+                            ) : (
                                 /* OB-24: wrap so the amount drops to its own line on narrow widths. */
                                 <div className="flex flex-wrap items-center gap-2 text-sm">
                                     <span className="text-[var(--blanc-ink-2)]">Discount</span>
@@ -535,26 +553,33 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                     Add Discount
                                 </button>
                             )}
-                            <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
-                                <div className="relative w-24">
-                                    <Input
-                                        type="text"
-                                        inputMode="decimal"
-                                        value={taxRate}
-                                        onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
-                                        onBlur={() => {
-                                            const n = Number(taxRate);
-                                            const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
-                                            setTaxRate(formatted);
-                                            persist({ tax_rate: formatted } as any);
-                                        }}
-                                        disabled={readOnly}
-                                        className="h-8 w-full pr-7 text-right tabular-nums"
-                                    />
-                                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                            {readOnly ? Number(taxRate) > 0 && (
+                                /* View mode: plain rate row (omitted when 0 — no empty states). */
+                                <div className="flex justify-between">
+                                    <span className="text-[var(--blanc-ink-2)]">Tax rate</span>
+                                    <span className="font-mono">{taxRate}%</span>
                                 </div>
-                            </div>
+                            ) : (
+                                <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+                                    <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
+                                    <div className="relative w-24">
+                                        <Input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={taxRate}
+                                            onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
+                                            onBlur={() => {
+                                                const n = Number(taxRate);
+                                                const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
+                                                setTaxRate(formatted);
+                                                persist({ tax_rate: formatted } as any);
+                                            }}
+                                            className="h-8 w-full pr-7 text-right tabular-nums"
+                                        />
+                                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                                    </div>
+                                </div>
+                            )}
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Tax</span>
                                 <span className="font-mono">{money(estimate.tax_amount)}</span>
@@ -589,14 +614,21 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
 
                     <section className="space-y-3 text-sm">
                         <p className="blanc-eyebrow">Document settings</p>
-                        <label className="flex items-center justify-between cursor-pointer">
-                            <span className="text-[var(--blanc-ink-2)]">Require signature</span>
-                            <Checkbox
-                                checked={!!estimate.signature_required}
-                                disabled={readOnly}
-                                onCheckedChange={(checked) => persist({ signature_required: !!checked } as any)}
-                            />
-                        </label>
+                        {readOnly ? (
+                            /* View mode: plain Yes/No — same style as the Deposit row below. */
+                            <div className="flex items-center justify-between">
+                                <span className="text-[var(--blanc-ink-2)]">Require signature</span>
+                                <span className="font-medium">{estimate.signature_required ? 'Yes' : 'No'}</span>
+                            </div>
+                        ) : (
+                            <label className="flex items-center justify-between cursor-pointer">
+                                <span className="text-[var(--blanc-ink-2)]">Require signature</span>
+                                <Checkbox
+                                    checked={!!estimate.signature_required}
+                                    onCheckedChange={(checked) => persist({ signature_required: !!checked } as any)}
+                                />
+                            </label>
+                        )}
                         <div className="flex items-center justify-between">
                             <span className="text-[var(--blanc-ink-2)]">Deposit required</span>
                             <span className="font-medium">No</span>
@@ -677,11 +709,17 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             )}
                         </DropdownMenuContent>
                     </DropdownMenu>
-                    {!archived && (
+                    {/* VIEW-FIRST: Edit enters the editing state; Save flushes pending on-blur
+                        saves and returns to the preview. */}
+                    {canEdit && (editing ? (
                         <Button variant="secondary" onClick={handleExplicitSave}>
                             <Check className="mr-1.5 size-4" />Save
                         </Button>
-                    )}
+                    ) : (
+                        <Button variant="secondary" onClick={() => setEditing(true)}>
+                            <Pencil className="mr-1.5 size-4" />Edit
+                        </Button>
+                    ))}
                     {primaryAction && (
                         <Button onClick={primaryAction.onClick} disabled={primaryAction.disabled}>
                             {primaryAction.icon}{primaryAction.label}
