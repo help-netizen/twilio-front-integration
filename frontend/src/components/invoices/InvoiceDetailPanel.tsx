@@ -407,7 +407,7 @@ export function InvoiceDetailPanel({
                         </div>
                         <div className="flex items-start gap-3">
                             <div className="text-right">
-                                <p className="blanc-eyebrow">Balance Due</p>
+                                <p className="blanc-eyebrow">Due</p>
                                 <p className={`font-mono text-xl font-semibold ${balanceDueNum > 0 ? 'text-[var(--blanc-ink-1)]' : 'text-emerald-700'}`}>
                                     {money(invoice.balance_due)}
                                 </p>
