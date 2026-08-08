@@ -369,44 +369,47 @@ export function InvoiceDetailPanel({
 
     return (
         <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${isVoid ? 'grayscale opacity-60' : ''}`}>
-            <div className="shrink-0 border-b border-[var(--blanc-line)] px-5 py-4 pr-14">
-                <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                            {invoice.job_id ? (
-                                <a
-                                    href={`/jobs/${invoice.job_id}`}
-                                    onClick={e => { e.preventDefault(); window.open(`/jobs/${invoice.job_id}`, '_blank', 'noopener,noreferrer'); }}
-                                    className="font-mono text-sm font-semibold text-blue-600 hover:underline"
-                                    title={`Open Job #${invoice.job_id}`}
-                                >
-                                    {invoice.invoice_number}
-                                </a>
-                            ) : (
-                                <span className="font-mono text-sm font-semibold text-[var(--blanc-ink-1)]">{invoice.invoice_number}</span>
-                            )}
-                            <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">{invoice.status}</Badge>
-                            {invoice.estimate_id && (
-                                <Badge variant="outline" title={`From estimate #${invoice.estimate_id}`}>Estimate #{invoice.estimate_id}</Badge>
-                            )}
+            {/* ONE scroll surface at every width (design review 2026-07-23) — see
+                EstimateDetailPanel: the per-column scroll pair broke mobile. The header
+                lives INSIDE this scroller (owner 2026-08-08: it scrolls with the content,
+                not pinned). overflow-x-hidden kills the mobile horizontal rubber-band —
+                overflow-y:auto makes overflow-x compute to `auto`, so a child a hair too
+                wide (the native date input below) became draggable sideways. */}
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+                <div className="border-b border-[var(--blanc-line)] px-5 py-4 pr-14">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                                {invoice.job_id ? (
+                                    <a
+                                        href={`/jobs/${invoice.job_id}`}
+                                        onClick={e => { e.preventDefault(); window.open(`/jobs/${invoice.job_id}`, '_blank', 'noopener,noreferrer'); }}
+                                        className="font-mono text-sm font-semibold text-blue-600 hover:underline"
+                                        title={`Open Job #${invoice.job_id}`}
+                                    >
+                                        {invoice.invoice_number}
+                                    </a>
+                                ) : (
+                                    <span className="font-mono text-sm font-semibold text-[var(--blanc-ink-1)]">{invoice.invoice_number}</span>
+                                )}
+                                <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">{invoice.status}</Badge>
+                                {invoice.estimate_id && (
+                                    <Badge variant="outline" title={`From estimate #${invoice.estimate_id}`}>Estimate #{invoice.estimate_id}</Badge>
+                                )}
+                            </div>
+                            <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{invoice.contact_name || 'No customer linked'}</p>
                         </div>
-                        <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{invoice.contact_name || 'No customer linked'}</p>
-                    </div>
-                    <div className="flex items-start gap-3">
-                        <div className="text-right">
-                            <p className="blanc-eyebrow">Balance Due</p>
-                            <p className={`font-mono text-xl font-semibold ${balanceDueNum > 0 ? 'text-[var(--blanc-ink-1)]' : 'text-emerald-700'}`}>
-                                {money(invoice.balance_due)}
-                            </p>
-                            <p className="text-[11px] text-[var(--blanc-ink-3)]">of {money(invoice.total)}</p>
+                        <div className="flex items-start gap-3">
+                            <div className="text-right">
+                                <p className="blanc-eyebrow">Balance Due</p>
+                                <p className={`font-mono text-xl font-semibold ${balanceDueNum > 0 ? 'text-[var(--blanc-ink-1)]' : 'text-emerald-700'}`}>
+                                    {money(invoice.balance_due)}
+                                </p>
+                                <p className="text-[11px] text-[var(--blanc-ink-3)]">of {money(invoice.total)}</p>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
-
-            {/* ONE scroll surface at every width (design review 2026-07-23) — see
-                EstimateDetailPanel: the per-column scroll pair broke mobile. */}
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 <div className="grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
                 <main className="space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
                     {/* Summary (stored in `notes`; labeled "Summary" to match estimates).
@@ -589,7 +592,10 @@ export function InvoiceDetailPanel({
                     {/* Document settings */}
                     <section className="space-y-3 text-sm">
                         <p className="blanc-eyebrow">Document settings</p>
-                        <div className="grid grid-cols-[auto_1fr] items-center gap-2">
+                        {/* minmax(0,1fr) + w-full min-w-0: a native <input type="date"> has an
+                            intrinsic min-width that a bare 1fr (= minmax(auto,1fr)) won't shrink,
+                            so it overflowed the panel and drove the horizontal rubber-band. */}
+                        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
                             <Label className="text-[var(--blanc-ink-2)]">Due date</Label>
                             <Input
                                 type="date"
@@ -597,7 +603,7 @@ export function InvoiceDetailPanel({
                                 onChange={e => setDueDate(e.target.value)}
                                 onBlur={() => persist({ due_date: dueDate || null } as any)}
                                 disabled={readOnly}
-                                className={`${TOTALS_INPUT}`}
+                                className={`${TOTALS_INPUT} w-full min-w-0`}
                             />
                         </div>
                     </section>

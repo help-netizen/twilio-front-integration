@@ -346,7 +346,15 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
 
     return (
         <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${archived ? 'grayscale opacity-60' : ''}`}>
-            <div className="shrink-0 border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14">
+            {/* ONE scroll surface at every width (design review 2026-07-23): the old
+                per-column overflow-y-auto pair split the mobile viewport into two
+                half-height scroll boxes — the meta column ate half the screen and
+                scrolling only worked in whichever half you tapped first. Desktop keeps
+                two columns inside the shared scroll; the meta column is sticky. The header
+                lives INSIDE this scroller (owner 2026-08-08: it scrolls with the content,
+                not pinned); overflow-x-hidden blocks the mobile horizontal rubber-band. */}
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+                <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14">
                 <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -376,13 +384,6 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 </div>
                 </div>
             </div>
-
-            {/* ONE scroll surface at every width (design review 2026-07-23): the old
-                per-column overflow-y-auto pair split the mobile viewport into two
-                half-height scroll boxes — the meta column ate half the screen and
-                scrolling only worked in whichever half you tapped first. Desktop keeps
-                two columns inside the shared scroll; the meta column is sticky. */}
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 <div className="grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
                 <main className="space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
