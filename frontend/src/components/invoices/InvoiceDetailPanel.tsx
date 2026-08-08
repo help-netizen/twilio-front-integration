@@ -402,9 +402,6 @@ export function InvoiceDetailPanel({
                                     <span className="font-mono text-sm font-semibold text-[var(--blanc-ink-1)]">{invoice.invoice_number}</span>
                                 )}
                                 <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">{invoice.status}</Badge>
-                                {invoice.estimate_id && (
-                                    <Badge variant="outline" title={`From estimate #${invoice.estimate_id}`}>Estimate #{invoice.estimate_id}</Badge>
-                                )}
                             </div>
                             <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{invoice.contact_name || 'No customer linked'}</p>
                         </div>
