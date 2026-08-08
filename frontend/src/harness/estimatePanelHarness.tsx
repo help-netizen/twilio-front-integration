@@ -36,7 +36,9 @@ const estimate = {
         {
             id: 2, estimate_id: 58, name: 'Control board replacement',
             description: 'OEM control board, includes installation and calibration.',
-            quantity: '1', unit_price: '280.00', amount: '280.00', taxable: true, sort_order: 1,
+            // qty 2 on purpose: exercises the view-mode `2 × $140.00 = $280.00` price
+            // cluster (qty-1 items hide it) while keeping the fixture subtotal at $375.
+            quantity: '2', unit_price: '140.00', amount: '280.00', taxable: true, sort_order: 1,
         },
     ],
     subtotal: '375.00',

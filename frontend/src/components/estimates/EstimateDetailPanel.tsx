@@ -393,8 +393,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 </div>
                 </div>
             </div>
-                <div className="grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
-                <main className="space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
+                <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
+                <main className="min-w-0 space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
                         dashed invite block when empty, collapsible card when filled. */}
                     {estimate.summary ? (
@@ -438,14 +438,37 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             </div>
                         </div>
                         {hasItems ? (
-                            <div className="space-y-2">
-                                {estimate.items!.map(item => (
-                                    /* Tile: name↔amount header, full-width description, meta row
-                                       with actions — no dead right gutter on narrow widths. */
+                            <div className={readOnly ? 'space-y-4' : 'space-y-2'}>
+                                {estimate.items!.map(item => readOnly ? (
+                                    /* VIEW MODE: flat row, no tile chrome (owner: flat design).
+                                       Qty × price folds into the price line — `2 × $140.00 = $280.00` —
+                                       and is omitted for qty 1 (the overwhelmingly common case, so the
+                                       row stays one line shorter). Long names truncate. Taxable trails
+                                       the description on the same line. */
+                                    <div key={item.id} className="text-sm">
+                                        <div className="flex items-baseline justify-between gap-3">
+                                            <p className="min-w-0 truncate font-medium">{item.name}</p>
+                                            <p className="shrink-0 font-mono whitespace-nowrap">
+                                                {Number(item.quantity) !== 1 && (
+                                                    <span className="text-[var(--blanc-ink-3)]">{Number(item.quantity)} × {money(item.unit_price)} = </span>
+                                                )}
+                                                <span className="font-semibold">{money(item.amount)}</span>
+                                            </p>
+                                        </div>
+                                        {(item.description || item.taxable) && (
+                                            <p className="mt-0.5 whitespace-pre-wrap text-[var(--blanc-ink-2)]">
+                                                {item.description}
+                                                {item.taxable && <span className="text-xs text-[var(--blanc-ink-3)]">{item.description ? ' · ' : ''}Taxable</span>}
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    /* EDIT MODE tile: name↔amount header, full-width description, meta
+                                       row with actions — no dead right gutter on narrow widths. */
                                     <div
                                         key={item.id}
-                                        className={`rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
-                                        onClick={() => { if (!readOnly) openEditItem(item); }}
+                                        className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors cursor-pointer hover:bg-white"
+                                        onClick={() => openEditItem(item)}
                                     >
                                         <div className="flex items-start justify-between gap-3">
                                             <p className="min-w-0 font-medium">{item.name}</p>
@@ -455,16 +478,14 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                         <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blanc-ink-2)]">
                                             <span>{Number(item.quantity)} × {money(item.unit_price)}</span>
                                             {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
-                                            {!readOnly && (
-                                                <span className="ml-auto flex items-center gap-1">
-                                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
-                                                        <Pencil className="size-4" />
-                                                    </Button>
-                                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
-                                                        <Trash2 className="size-4" />
-                                                    </Button>
-                                                </span>
-                                            )}
+                                            <span className="ml-auto flex items-center gap-1">
+                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
+                                                    <Pencil className="size-4" />
+                                                </Button>
+                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                            </span>
                                         </div>
                                     </div>
                                 ))}
@@ -606,7 +627,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
 
                 {/* Meta column: invisible container (no tint, no border) — flows under
                     the document on mobile, sticks beside it on desktop. */}
-                <aside className="space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
+                <aside className="min-w-0 space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
                     {/* Tasks are meta, not document content — they live beside the
                         document (desktop) / after it (mobile), so the first screen
                         belongs to the estimate itself (green-path review). */}
