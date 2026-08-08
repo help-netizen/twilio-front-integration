@@ -132,7 +132,13 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
     const receiptHistory = tx.receipt_history ?? [];
 
     return (
-        <div className="space-y-6 p-6">
+        // min-h-0 flex-1 overflow-y-auto → THIS is the scroll owner inside the flex-column
+        // `.blanc-floating-panel` (which is overflow:hidden). Every other FloatingDetailPanel
+        // child self-scrolls (h-full/max-h-full + overflow-y-auto); this one didn't, so a tall
+        // receipt (long receipt history + the reveal form) was clipped on desktop and chained
+        // to the page behind on mobile. overscroll-contain stops the boundary scroll from
+        // bleeding out; the panel also locks the body on mobile (FloatingDetailPanel).
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain p-6">
             {/* Header — amount + context + status */}
             <div>
                 <p className={`font-mono text-3xl font-semibold text-[var(--blanc-ink-1)] ${voided ? VOIDED_AMOUNT_CLASS : ''}`}>

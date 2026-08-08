@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { Overlay } from './Overlay';
 import { OverlayClose } from './OverlayClose';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface Props {
     open: boolean;
@@ -11,14 +12,24 @@ interface Props {
 
 export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
     // NON-MODAL on desktop (variant="right-drawer" modal={false}): the core wires no
-    // scroll-lock and no focus-trap (so the background list stays scrollable + clickable),
-    // and renders NO default backdrop — this panel's scrim is the CSS-driven
-    // `.blanc-floating-backdrop` below (hidden on desktop, dark tap-to-close on mobile).
-    // Esc-to-close and mobile backdrop-tap-to-close are kept via the core; the panel's
-    // z-index stays CSS-owned (.blanc-floating-panel 80 desktop / 120 mobile), so we
+    // focus-trap and renders NO default backdrop — the desktop panel is a 420px right
+    // drawer, so the background list stays scrollable + clickable, and this panel's scrim is
+    // the CSS-driven `.blanc-floating-backdrop` below (hidden on desktop, dark tap-to-close
+    // on mobile). Esc-to-close and mobile backdrop-tap-to-close are kept via the core; the
+    // panel's z-index stays CSS-owned (.blanc-floating-panel 80 desktop / 120 mobile), so we
     // intentionally do NOT apply the render-prop `z` here.
+    //
+    // MOBILE body-scroll-lock (scrollLock={isMobile}) — OVERLAY-SCROLL-CHAIN fix: on mobile
+    // the panel is a full-screen OPAQUE cover (CSS `@media (max-width:768px)` → inset:0 /
+    // 100dvh / z-120), so the page behind it is fully hidden and must NOT scroll. Without the
+    // lock, a touch that overscrolls the panel content chains through to the (non-modal)
+    // <body> and drags the background list underneath — the reported "receipt scroll moves
+    // the page behind it" bug, shared by every FloatingDetailPanel consumer (most inner
+    // scrollers lack `overscroll-contain`). Locking here fixes them all at once. Desktop
+    // stays unlocked — the drawer is only 420px and the list beside it is meant to scroll.
+    const isMobile = useIsMobile();
     return (
-        <Overlay open={open} onClose={onClose} variant="right-drawer" modal={false} backdrop={false}>
+        <Overlay open={open} onClose={onClose} variant="right-drawer" modal={false} backdrop={false} scrollLock={isMobile}>
             {({ panelProps, backdropProps, stack }) => (
         <>
             {/* Mobile: dark backdrop that closes on tap. Desktop: CSS-hidden — list stays clickable */}
