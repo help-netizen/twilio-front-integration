@@ -420,7 +420,13 @@ export function InvoiceDetailPanel({
                 <main className="min-w-0 space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
                     {/* Summary (stored in `notes`; labeled "Summary" to match estimates).
                         OB-28 mirror: dashed invite when empty, collapsible card when filled. */}
-                    {invoice.notes ? (
+                    {invoice.notes ? readOnly ? (
+                        /* VIEW MODE: flat — eyebrow + text, no box/chevron (matches the flat items). */
+                        <section>
+                            <p className="mb-3 blanc-eyebrow">Summary</p>
+                            <p className="text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</p>
+                        </section>
+                    ) : (
                         <section className="rounded-2xl border border-[var(--blanc-line)]">
                             <div className="flex items-center justify-between px-4 py-3">
                                 <button
@@ -441,7 +447,8 @@ export function InvoiceDetailPanel({
                                 <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</div>
                             )}
                         </section>
-                    ) : (
+                    ) : !readOnly ? (
+                        /* Edit mode only — no empty-state box in the preview. */
                         <div className="rounded-2xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
                             <p className="text-sm font-medium text-[var(--blanc-ink-1)]">Summary</p>
                             <p className="mt-1 text-sm text-[var(--blanc-ink-3)]">Add scope, findings, or any context worth highlighting to the customer.</p>
@@ -451,7 +458,7 @@ export function InvoiceDetailPanel({
                                 </Button>
                             )}
                         </div>
-                    )}
+                    ) : null}
 
                     {/* Items */}
                     <section>

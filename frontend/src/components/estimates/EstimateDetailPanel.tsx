@@ -397,7 +397,13 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 <main className="min-w-0 space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
                         dashed invite block when empty, collapsible card when filled. */}
-                    {estimate.summary ? (
+                    {estimate.summary ? readOnly ? (
+                        /* VIEW MODE: flat — eyebrow + text, no box/chevron (matches the flat items). */
+                        <section>
+                            <p className="mb-3 blanc-eyebrow">Summary</p>
+                            <p className="text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</p>
+                        </section>
+                    ) : (
                         <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
                             <div className="flex items-center justify-between px-4 py-3">
                                 <button
@@ -418,7 +424,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <div className="border-t border-[var(--blanc-line)] px-4 py-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</div>
                             )}
                         </section>
-                    ) : (
+                    ) : !readOnly ? (
+                        /* Edit mode only — no empty-state box in the preview. */
                         <div className="rounded-md border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
                             <p className="text-sm font-medium">Summary</p>
                             <p className="mt-1 text-sm text-[var(--blanc-ink-3)]">Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
@@ -428,7 +435,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 </Button>
                             )}
                         </div>
-                    )}
+                    ) : null}
 
                     {/* Items */}
                     <section>
