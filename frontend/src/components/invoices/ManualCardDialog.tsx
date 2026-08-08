@@ -2,7 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { CircleCheckBig, Loader2, LockKeyhole, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
-import { FloatingTextField } from '../shared/FloatingTextField';
+import { FloatingField } from '../ui/floating-field';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import {
     Dialog,
@@ -265,16 +265,18 @@ export function ManualCardSuccessView({
                     </p>
                 ) : (
                     <>
-                        <FloatingTextField
+                        {/* A plain, directly-editable input (matches TransactionReview): the receipt
+                            email pre-fills from the job contact but ANYONE collecting the payment can
+                            correct a typo or send to whoever is actually paying. The address they use
+                            is captured in the timeline note. */}
+                        <FloatingField
                             label="Customer email"
+                            type="email"
                             inputMode="email"
                             autoComplete="off"
                             value={receiptState.email}
                             onChange={event => onReceiptEmailChange(event.target.value)}
                             disabled={receiptLocked}
-                            onSubmit={onSendReceipt}
-                            submitting={receiptState.phase === 'sending'}
-                            canSubmit={Boolean(receiptState.email.trim()) && !receiptLocked}
                         />
                         {showContactSaveCaption && (
                             <p className="text-xs text-[var(--blanc-ink-3)]">
