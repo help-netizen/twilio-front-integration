@@ -194,7 +194,11 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
             {/* Actions */}
             <div className="space-y-3 pt-1">
                 {receiptOpen ? (
-                    <div className="space-y-3 rounded-2xl bg-[var(--blanc-field)] p-4">
+                    // White surface (not --blanc-field): the filled email field is itself
+                    // --blanc-field, so on a matching grey card it vanished and read as plain text —
+                    // techs thought the pre-filled address was un-editable. On white it clearly reads
+                    // as an input.
+                    <div className="space-y-3 rounded-2xl bg-[var(--blanc-surface-strong)] border border-[var(--blanc-line)] p-4">
                         {/* RECEIPT-EMAIL-COPY: a double-tap inside an email input selects
                             only one "word" — the part after @ — so techs could not copy the
                             address. Focusing selects the WHOLE address, and an explicit Copy
