@@ -531,3 +531,22 @@ THE flow that fed Zenbooker its jobs is native end-to-end:
   Timeslot/TimeslotDay/TimeslotsResult; backend GET /service-area-check + GET
   /timeslots. routes/zenbooker.js now contains ONLY the mode-aware /team-members.
 Gates: FE build clean; backend 100/100; FE vitest (conversations+leads) 14/14.
+
+## Phase D — PROD cutover — EXECUTED 2026-08-09
+Runbook followed end-to-end in one window (owner: «Продолжай фазу D»):
+1. Deployed master `43226f60` (C1–C4b; staging GREEN on the same SHA; no migrations;
+   pg_dump 122MB `predeploy_20260809_151512.dump`; rollback image `30e8f8622318`;
+   bundle `main-DsgZWEIC.js`; resolveNativeSchedule marker in image).
+2. Backfill on prod: dry-run == the staging rehearsal exactly (roster 3 live + 3
+   historical → 6 technicians / 6 identities / 39 repoints) → --apply, 51 writes.
+   All 3 active technicians came out LINKED to their users (bridge-derived).
+3. compare-gate: MODE=compare + allowlist ABC → roster exercised → rosterDifference
+   log EMPTY → PASS.
+4. Cutover: MODE=native. Native roster serves Ali/Robert/Russell (compat ids +
+   technician_uuid); getTechnicianDirectoryMode: ABC=native, other companies=legacy
+   (fail-closed allowlist). Health 200.
+Rollback (instant, no data changes): set TECHNICIAN_DIRECTORY_MODE=legacy in
+/opt/albusto/.env + `docker compose up -d app`.
+Consequences now live: schedule availability + all roster consumers run ZB-free for
+ABC; the USERS-FIRST projection (C3b) is active on prod; NEW conversions create
+native-only jobs (no ZB push). Remaining ZB surface = Phase E/F list above.
