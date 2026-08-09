@@ -56,37 +56,11 @@ export interface TimeslotsResult {
     days: TimeslotDay[];
 }
 
-export interface ServiceOption {
-    option_id: string;
-    name: string;
-    price: string;
-    duration: number;
-}
-
-export interface ServiceSection {
-    section_id: string;
-    section_type: string;
-    title: string;
-    input_type: string;
-    options: ServiceOption[];
-}
-
-export interface ZbService {
-    service_id: string;
-    name: string;
-    base_duration: number;
-    base_price: string;
-    sections?: ServiceSection[];
-}
-
-export interface ZbServicesResult {
-    results: ZbService[];
-}
-
-export interface CreateJobResult {
-    job_id: string;
-    status: string;
-}
+// ZB-DECOUPLE C4a (2026-08-09): the ZbService catalog types, CreateJobResult,
+// getServices() and createJob() were removed — zero consumers (native job
+// creation goes through jobsApi). Remaining ZB surface here: checkServiceArea +
+// getTimeslots (the convert-wizards' booking step — replaced by native
+// slot-recommendations in C4b) and getTeamMembers (mode-aware since C1).
 
 // ─── Territory Check (local service_territories lookup) ──────────────────────
 
@@ -128,17 +102,6 @@ export async function getTimeslots(params: {
     if (params.lat) qs.set('lat', String(params.lat));
     if (params.lng) qs.set('lng', String(params.lng));
     return zbRequest<TimeslotsResult>(`${ZB_BASE}/timeslots?${qs.toString()}`);
-}
-
-export async function getServices(): Promise<ZbServicesResult> {
-    return zbRequest<ZbServicesResult>(`${ZB_BASE}/services`);
-}
-
-export async function createJob(payload: Record<string, unknown>): Promise<CreateJobResult> {
-    return zbRequest<CreateJobResult>(`${ZB_BASE}/jobs`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-    });
 }
 
 // ─── Team Members (Providers) ─────────────────────────────────────────────────

@@ -499,5 +499,17 @@ user lost provider/active ⇒ deactivated; UNLINKED technicians never touched. H
 (non-fatal) into routes/users.js create / PATCH (role) / status / remove. Manual
 POST /native stays as the TEMPORARY fallback per owner. No dedicated technician-management UI needed: the Technicians page lists the mode-aware roster (derived rows appear
 automatically); name/deactivation live in Команда. 6 projection contract tests.
-- C4: sweep remaining FE surfaces off `zenbookerApi` proxies (service-area-check etc. —
-  inventory then port or delete).
+### C4a — dead-proxy sweep — DONE 2026-08-09
+Inventory (FE+backend+albusto-mobile): mobile touches ONLY /team-members (mode-aware
+since C1 → safe). checkZipCode is NOT ZB (local /api/zip-check). Dead with zero callers
+and REMOVED: FE getServices()/createJob() + ZbService/ServiceOption/ServiceSection/
+ZbServicesResult/CreateJobResult types; backend GET /api/zenbooker/services + the
+simple POST /api/zenbooker/jobs; the ENTIRE legacy /api/zenbooker/jobs router
+(list/get/cancel/reschedule/assign/notes/enroute/start/complete — clientless since
+FSM-JOB-ACTIONS-001) unmounted and deleted. Kept until later phases: /service-area-check
++ /timeslots (convert-wizards — C4b re-platforms them onto native slot-recommendations),
+/api/zenbooker/payments (ZBPAY P2 / Phase E), /api/integrations/zenbooker webhooks +
+server-side ZB job push in leadsService/zb_job_sync (Phase E).
+- C4b: convert-wizards (useConvertToJob / CreateLeadJobWizard) → native
+  slot-recommendations + native job creation; then delete /service-area-check,
+  /timeslots, checkServiceArea, getTimeslots.

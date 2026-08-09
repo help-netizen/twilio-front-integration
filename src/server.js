@@ -216,11 +216,14 @@ const zipCheckRouter = require('../backend/src/routes/zip-check');
 app.use('/api/zip-check', authenticate, requireCompanyAccess, zipCheckRouter);
 
 // Zenbooker scheduling proxy
+// ZB-DECOUPLE C4a (2026-08-09): the /api/zenbooker/jobs router (legacy ZB job
+// CRUD + enroute/start/complete status pushes) is UNMOUNTED — zero FE/mobile
+// callers since FSM-JOB-ACTIONS-001 replaced the status routes; job mutations
+// are native (/api/jobs, FSM apply). The server-side ZB push (leadsService /
+// zb_job_sync) is separate and retires in Phase E.
 const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
-const zenbookerJobsRouter = require('../backend/src/routes/zenbooker/jobs');
 const localJobsRouter = require('../backend/src/routes/jobs');
 app.use('/api/zenbooker/payments', authenticate, requireCompanyAccess, zenbookerPaymentsRouter);
-app.use('/api/zenbooker/jobs', authenticate, requireCompanyAccess, zenbookerJobsRouter);
 app.use('/api/jobs', authenticate, requireCompanyAccess, localJobsRouter);
 app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
