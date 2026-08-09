@@ -15,6 +15,8 @@ const workScheduleService = require('../services/technicianWorkScheduleService')
 const serviceAreaService = require('../services/technicianServiceAreaService');
 const baseLocationQueries = require('../db/technicianBaseLocationQueries');
 
+const directoryService = require('../services/technicianDirectoryService');
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
@@ -22,6 +24,45 @@ const upload = multer({
 });
 
 function companyId(req) { return req.companyFilter?.company_id; }
+
+// ── ZB-DECOUPLE Phase C3 — native-directory maintenance (spec deferred #4) ────
+// The native plane stops being import-only: admins can list (incl. inactive),
+// create, rename, and (de)activate native technicians. Mounted under the same
+// tenant.company.manage gate as the rest of this router.
+
+// GET /api/settings/technicians/native — full native directory
+router.get('/native', requirePermission('tenant.company.manage'), async (req, res) => {
+    try {
+        const technicians = await directoryService.listDirectory(companyId(req));
+        res.json({ ok: true, data: technicians });
+    } catch (err) {
+        sendError(res, err, 'GET /native');
+    }
+});
+
+// POST /api/settings/technicians/native — create {display_name, crm_user_id?, zenbooker_external_id?}
+router.post('/native', requirePermission('tenant.company.manage'), async (req, res) => {
+    try {
+        const technician = await directoryService.createNativeTechnician(companyId(req), req.body || {});
+        res.status(201).json({ ok: true, data: technician });
+    } catch (err) {
+        sendError(res, err, 'POST /native');
+    }
+});
+
+// PATCH /api/settings/technicians/native/:technicianUuid — {display_name?, active?}
+router.patch('/native/:technicianUuid', requirePermission('tenant.company.manage'), async (req, res) => {
+    try {
+        const technician = await directoryService.updateNativeTechnician(
+            companyId(req),
+            req.params.technicianUuid,
+            req.body || {}
+        );
+        res.json({ ok: true, data: technician });
+    } catch (err) {
+        sendError(res, err, 'PATCH /native');
+    }
+});
 
 function sendError(res, err, context) {
     console.error(`[Technicians] ${context} error:`, err.message);

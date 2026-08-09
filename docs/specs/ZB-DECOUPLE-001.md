@@ -474,7 +474,17 @@ roster (requireActive; off-roster/foreign → 400 INVALID_TECHNICIAN, nothing wr
 Contract: backend/tests/services/scheduleCreateFromSlot.test.js (7 cases).
 
 ### C-remaining (ordered)
-- C3: native directory maintenance — admin re-link updates `technicians.crm_user_id` +
-  external map (deferred #3); production CRUD for native technicians (deferred #4).
+### C3a — native-directory maintenance API + bridge-sync — DONE 2026-08-09
+Deferred #3: routes/users.js bridge edits now dual-write the native plane —
+technicianDirectoryService.syncBridgeLink runs after the profile write (clear → unlink;
+set → unlink-then-link honoring the one-technician-per-user partial unique index; unknown
+external id pre-backfill → explicit NO_NATIVE_TECHNICIAN no-op, logged). Deferred #4:
+the directory stops being import-only — GET/POST /api/settings/technicians/native +
+PATCH /native/:uuid (tenant.company.manage) create/rename/(de)activate native
+technicians; crm links only to ACTIVE members; a ZB external id owned by another
+technician is a 409, never a silent repoint. Queries added: getTechnicianById,
+listTechnicians (incl. inactive), updateTechnician, unlinkCrmUser. Contract:
+backend/tests/services/technicianDirectoryService.test.js (12 cases).
+- C3b: maintenance UI over the /native API (Technicians settings surface) — remaining.
 - C4: sweep remaining FE surfaces off `zenbookerApi` proxies (service-area-check etc. —
   inventory then port or delete).

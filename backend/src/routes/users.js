@@ -385,6 +385,20 @@ router.patch('/:id', requireTenantAdmin, async (req, res) => {
             } catch (mirrorErr) {
                 console.error('[Users] Provider mirror refresh failed:', mirrorErr.message);
             }
+            // ZB-DECOUPLE C3 (spec deferred #3): the native plane follows the
+            // bridge edit — technicians.crm_user_id re-links (or clears) so the
+            // native directory never drifts from the admin's ZB re-link.
+            try {
+                const directoryService = require('../services/technicianDirectoryService');
+                const sync = await directoryService.syncBridgeLink(companyId, userId, changes.newTeamMemberId);
+                if (!sync.linked && sync.reason === 'NO_NATIVE_TECHNICIAN') {
+                    console.warn('[Users] Bridge re-link has no native technician yet (pre-backfill):', {
+                        company_id: companyId, user_id: userId, external_id: changes.newTeamMemberId,
+                    });
+                }
+            } catch (nativeErr) {
+                console.error('[Users] Native directory bridge-sync failed:', nativeErr.message);
+            }
         }
 
         await auditService.log({

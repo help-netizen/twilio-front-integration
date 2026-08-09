@@ -151,6 +151,85 @@ async function linkCrmUser({ companyId, technicianId, crmUserId }) {
     return rows[0] || null;
 }
 
+// ── ZB-DECOUPLE Phase C3 — native-directory maintenance ──────────────────────
+
+/** Company-scoped fetch (active or not) with the compat ZB external id. */
+async function getTechnicianById(companyId, technicianId) {
+    const { rows } = await db.query(
+        `SELECT t.id, t.company_id, t.display_name, t.active, t.crm_user_id, t.created_at,
+                external.external_id AS zenbooker_external_id
+         FROM technicians t
+         LEFT JOIN LATERAL (
+             SELECT e.external_id
+             FROM technician_external_identities e
+             WHERE e.company_id = t.company_id
+               AND e.source = 'zenbooker'
+               AND e.technician_id = t.id
+             ORDER BY e.created_at ASC, e.external_id ASC
+             LIMIT 1
+         ) external ON TRUE
+         WHERE t.company_id = $1 AND t.id = $2`,
+        [companyId, technicianId]
+    );
+    return rows[0] || null;
+}
+
+/** Full directory (active AND inactive) for the maintenance surface. */
+async function listTechnicians(companyId) {
+    const { rows } = await db.query(
+        `SELECT t.id, t.display_name, t.active, t.crm_user_id, t.created_at,
+                external.external_id AS zenbooker_external_id
+         FROM technicians t
+         LEFT JOIN LATERAL (
+             SELECT e.external_id
+             FROM technician_external_identities e
+             WHERE e.company_id = t.company_id
+               AND e.source = 'zenbooker'
+               AND e.technician_id = t.id
+             ORDER BY e.created_at ASC, e.external_id ASC
+             LIMIT 1
+         ) external ON TRUE
+         WHERE t.company_id = $1
+         ORDER BY t.active DESC, t.display_name ASC, t.id ASC`,
+        [companyId]
+    );
+    return rows;
+}
+
+/** Rename and/or (de)activate. Only provided fields change. Company-scoped. */
+async function updateTechnician({ companyId, technicianId, displayName, active }) {
+    const sets = [];
+    const params = [companyId, technicianId];
+    if (displayName !== undefined) { params.push(displayName); sets.push(`display_name = $${params.length}`); }
+    if (active !== undefined) { params.push(active); sets.push(`active = $${params.length}`); }
+    if (sets.length === 0) return getTechnicianById(companyId, technicianId);
+    const { rows } = await db.query(
+        `UPDATE technicians
+         SET ${sets.join(', ')}
+         WHERE company_id = $1 AND id = $2
+         RETURNING id, company_id, display_name, active, crm_user_id, created_at`,
+        [...params]
+    );
+    return rows[0] || null;
+}
+
+/**
+ * Clear every native link this CRM user holds in the company. Run BEFORE
+ * linkCrmUser when re-linking: the partial unique index on
+ * (company_id, crm_user_id) WHERE crm_user_id IS NOT NULL would otherwise
+ * reject the new link while the old one stands.
+ */
+async function unlinkCrmUser({ companyId, crmUserId }) {
+    const { rows } = await db.query(
+        `UPDATE technicians
+         SET crm_user_id = NULL
+         WHERE company_id = $1 AND crm_user_id = $2
+         RETURNING id`,
+        [companyId, crmUserId]
+    );
+    return rows.map(row => row.id);
+}
+
 module.exports = {
     createTechnician,
     upsertExternalIdentity,
@@ -160,4 +239,9 @@ module.exports = {
     listActiveTechnicians,
     findActiveTechnicianByCrmUserId,
     linkCrmUser,
+    // ZB-DECOUPLE Phase C3 — native-directory maintenance
+    getTechnicianById,
+    listTechnicians,
+    updateTechnician,
+    unlinkCrmUser,
 };
