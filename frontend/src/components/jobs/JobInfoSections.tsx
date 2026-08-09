@@ -22,7 +22,7 @@ import { googleMapsUrl } from '../../utils/routeFormat';
 
 interface JobInfoSectionsProps {
     job: LocalJob;
-    contactInfo: { id: number; name: string; phone?: string; email?: string } | null;
+    contactInfo: { id: number; name: string; phone?: string; email?: string; secondary_phone?: string; secondary_phone_name?: string } | null;
     onJobUpdated?: (updatedJob: LocalJob) => void;
 }
 
@@ -168,6 +168,10 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
     // (operator-reopen scenario, see jobsService.js syncFromZenbooker override).
     const canReschedule = !!job.start_date;
     const phone = contactInfo?.phone || job.customer_phone;
+    // The contact's second number + its label — the job card shows EVERY phone,
+    // exactly like the contact card (a second number was silently invisible here).
+    const secondaryPhone = contactInfo?.secondary_phone || '';
+    const secondaryPhoneName = contactInfo?.secondary_phone_name || '';
     const email = contactInfo?.email || job.customer_email;
     const customerName = contactInfo?.name || job.customer_name;
 
@@ -175,7 +179,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
         <div className="px-4 py-4 space-y-3">
 
             {/* ── CONTACT ── */}
-            {(customerName || phone || email) && (
+            {(customerName || phone || secondaryPhone || email) && (
                 <div style={sectionCard}>
                     <p style={eyebrow}>Contact</p>
                     {customerName && (
@@ -216,6 +220,30 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                                 </MaskedCallLine>
                                 <OpenTimelineButton
                                     phone={phone}
+                                    contactId={contactInfo?.id}
+                                    contactName={customerName || undefined}
+                                />
+                            </div>
+                        </div>
+                    )}
+                    {secondaryPhone && (
+                        <div style={infoRow}>
+                            {/* The label sits OUTSIDE the masking wrapper on purpose: masking
+                                collapses both numbers to ONE masked dial, so the stored label
+                                ("Wife", "Office"…) is the only way a masked viewer tells the
+                                rows apart — mirrors ContactInfoSections exactly. */}
+                            <span style={infoLabel}>{secondaryPhoneName || 'Phone 2'}</span>
+                            <div className="flex items-center gap-2">
+                                <MaskedCallLine entityType="job" entityId={job.id} maskedLabel="Call">
+                                    <div className="flex items-center gap-2">
+                                        <a href={`tel:${secondaryPhone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                            {formatPhone(secondaryPhone)}
+                                        </a>
+                                        <ClickToCallButton phone={secondaryPhone} contactName={customerName || undefined} />
+                                    </div>
+                                </MaskedCallLine>
+                                <OpenTimelineButton
+                                    phone={secondaryPhone}
                                     contactId={contactInfo?.id}
                                     contactName={customerName || undefined}
                                 />

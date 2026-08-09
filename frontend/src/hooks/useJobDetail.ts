@@ -20,6 +20,11 @@ interface ContactInfo {
     name: string;
     phone?: string;
     email?: string;
+    /** Contact's second number + its stored label — the job card mirrors the
+        contact card and shows EVERY phone (masked viewers tell them apart by
+        the labels, since masking collapses both to one masked dial). */
+    secondary_phone?: string;
+    secondary_phone_name?: string;
 }
 
 interface UseJobDetailParams {
@@ -90,6 +95,8 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
                             name: c.full_name || '—',
                             phone: c.phone_e164 || '',
                             email: c.email || '',
+                            secondary_phone: c.secondary_phone || '',
+                            secondary_phone_name: c.secondary_phone_name || '',
                         });
                     } catch { /* no contact found */ }
                 }

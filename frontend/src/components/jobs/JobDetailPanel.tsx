@@ -18,7 +18,7 @@ import {
 
 export interface JobDetailPanelProps {
     job: LocalJob;
-    contactInfo: { id: number; name: string; phone?: string; email?: string } | null;
+    contactInfo: { id: number; name: string; phone?: string; email?: string; secondary_phone?: string; secondary_phone_name?: string } | null;
     detailLoading: boolean;
     noteJobId?: number | null;
     noteText?: string;
