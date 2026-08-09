@@ -398,10 +398,19 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
                         dashed invite block when empty, collapsible card when filled. */}
                     {estimate.summary ? readOnly ? (
-                        /* VIEW MODE: flat — eyebrow + text, no box/chevron (matches the flat items). */
+                        /* VIEW MODE: flat — no box; the eyebrow row keeps the collapse chevron. */
                         <section>
-                            <p className="mb-3 blanc-eyebrow">Summary</p>
-                            <p className="text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</p>
+                            <button
+                                type="button"
+                                onClick={() => setSummaryOpen(o => !o)}
+                                className="flex items-center gap-1.5"
+                            >
+                                <span className="blanc-eyebrow">Summary</span>
+                                <ChevronDown className={`size-3.5 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            {summaryOpen && (
+                                <p className="mt-3 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</p>
+                            )}
                         </section>
                     ) : (
                         <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">

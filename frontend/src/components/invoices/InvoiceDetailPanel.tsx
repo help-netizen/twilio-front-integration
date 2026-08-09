@@ -421,10 +421,19 @@ export function InvoiceDetailPanel({
                     {/* Summary (stored in `notes`; labeled "Summary" to match estimates).
                         OB-28 mirror: dashed invite when empty, collapsible card when filled. */}
                     {invoice.notes ? readOnly ? (
-                        /* VIEW MODE: flat — eyebrow + text, no box/chevron (matches the flat items). */
+                        /* VIEW MODE: flat — no box; the eyebrow row keeps the collapse chevron. */
                         <section>
-                            <p className="mb-3 blanc-eyebrow">Summary</p>
-                            <p className="text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</p>
+                            <button
+                                type="button"
+                                onClick={() => setNotesOpen(o => !o)}
+                                className="flex items-center gap-1.5"
+                            >
+                                <span className="blanc-eyebrow">Summary</span>
+                                <ChevronDown className={`size-3.5 text-[var(--blanc-ink-3)] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            {notesOpen && (
+                                <p className="mt-3 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</p>
+                            )}
                         </section>
                     ) : (
                         <section className="rounded-2xl border border-[var(--blanc-line)]">
