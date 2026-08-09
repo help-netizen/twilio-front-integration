@@ -437,3 +437,38 @@ loosely; no company-scoped contact identity/phone dedup. Existing `mergeContacts
 ## Open owner items (non-blocking)
 - ZB raw/receipt/link retention period (default: keep as provenance indefinitely until asked).
 - Imported-payment UI label: "Zenbooker" vs "Legacy import" (default: keep "Zenbooker").
+
+## COURSE CHANGE (owner, 2026-08-09) — FULL Zenbooker removal
+Owner: «Я хочу чтобы все зависимости и интеграции с Zenbooker были удалены, он не нужен
+больше». The former standing rule "ZB job creation stays ON" is REVOKED. The phased plan
+above is now the removal roadmap; remaining work continues as Phases C–F.
+
+## Phase C — frontend last-mile + native maintenance (STARTED 2026-08-09)
+
+### Staging rehearsal of the Phase A go-live runbook — DONE 2026-08-09
+Executed on the STAGING copy (Mac mini, prod data snapshot; see docs/deploy/STAGING-ENV-001.md):
+backfill `--dry-run` → `--apply` for company `…0001` (roster 3 live + 3 historical → 6 native
+technicians + 6 external identities, 39/40 config rows repointed — the 40th is the
+`__company__` base sentinel, excluded by design; `writes_performed: 51`), then
+`TECHNICIAN_DIRECTORY_MODE=native` + allowlist. `listActive` resolves Ali/Robert/Russell with
+ZERO ZB calls. The ZB key was injected into the single CLI process only and destroyed after.
+PROD is still legacy with an EMPTY native directory — the prod cutover (Phase D) reruns this
+same runbook there (backfill + compare-gate + flip).
+
+### C1 — `/api/zenbooker/team-members` is mode-aware — DONE 2026-08-09
+Deferred #1 closed. The route no longer calls the ZB client directly; it delegates to
+`technicianRosterService.listActive` (native → zero ZB; legacy/compare → unchanged ZB fetch).
+Consumer audit (2026-08-09): useProviders / useScheduleData / CompanyUserDialogs /
+CustomTimeModal(getTeamMembers) read ONLY `{id, name}`; TechnicianPhotosPage uses
+`techniciansApi` (already mode-aware), not this route. Native `id` = legacy ZB external id
+(uuid fallback) → assignment flows byte-compatible. Route maps `err.httpStatus` (502 on ZB
+outage in legacy). Contract locked by backend/tests/services/technicianRosterService.test.js
+(native-never-calls-ZB / legacy shape / 502 outage / UUID validation).
+
+### C-remaining (ordered)
+- C2: createFromSlot input validation (deferred #2) — resolve assignee ids through the
+  crm_users plane before writing the authz mirror.
+- C3: native directory maintenance — admin re-link updates `technicians.crm_user_id` +
+  external map (deferred #3); production CRUD for native technicians (deferred #4).
+- C4: sweep remaining FE surfaces off `zenbookerApi` proxies (service-area-check etc. —
+  inventory then port or delete).

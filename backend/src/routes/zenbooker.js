@@ -8,6 +8,7 @@ const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const zenbookerClient = require('../services/zenbookerClient');
 const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
+const technicianRosterService = require('../services/technicianRosterService');
 
 // GET /api/zenbooker/service-area-check?postal_code=02101  OR  ?address=Boston+MA
 router.get('/service-area-check', async (req, res) => {
@@ -138,21 +139,25 @@ router.post('/jobs', requirePermission('jobs.create', 'leads.convert'), async (r
 });
 
 // GET /api/zenbooker/team-members — Fetch service providers
+// ZB-DECOUPLE Phase C1 (spec deferred #1): this route used to call the ZB client
+// directly, BYPASSING the technician-directory mode switch — in native mode the
+// UI pickers (useProviders / useScheduleData / CompanyUserDialogs) still hit ZB.
+// It now serves through the mode-aware roster service: `native` touches ZERO
+// Zenbooker; `legacy`/`compare` keep the same ZB fetch. Consumers only read
+// {id, name} (audited 2026-08-09), and the service keeps id = the legacy ZB
+// external id for native technicians, so assignment flows stay byte-compatible.
 router.get('/team-members', requirePermission('schedule.dispatch', 'jobs.assign', 'tenant.company.manage'), async (req, res) => {
     try {
-        // Scope to the caller's company — getTeamMembers returns [] for tenants
-        // that haven't connected their own Zenbooker (no cross-tenant roster leak).
-        const members = await zenbookerClient.getTeamMembers({
-            service_provider: true,
-            deactivated: false,
-        }, req.companyFilter?.company_id);
+        // Scope to the caller's company (no cross-tenant roster leak; the
+        // service validates the UUID and fails closed to legacy behavior).
+        const members = await technicianRosterService.listActive(req.companyFilter?.company_id);
         res.json({ ok: true, data: members });
     } catch (err) {
-        console.error('[Zenbooker] team-members error:', err.response?.data || err.message);
-        const status = err.response?.status || 500;
-        res.status(status).json({
+        console.error('[Zenbooker] team-members error:', err.message);
+        // TechnicianRosterError carries httpStatus (502 for a ZB outage in legacy mode).
+        res.status(err.httpStatus || 500).json({
             ok: false,
-            error: err.response?.data?.error?.message || err.message,
+            error: err.message,
         });
     }
 });
