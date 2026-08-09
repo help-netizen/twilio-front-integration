@@ -10,11 +10,10 @@ import { FloatingSelect } from '../ui/floating-select';
 import { Calendar, Clock, RefreshCw, X } from 'lucide-react';
 import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
 import type { Lead } from '../../types/lead';
-import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/zenbookerApi';
-import type { CustomFieldDef, Step } from './useConvertToJob';
-import { STEP_TITLES } from './useConvertToJob';
+import type { SlotRecommendation } from '../../services/slotRecommendationsApi';
+import type { CustomFieldDef, SelectedSchedule, Step } from './useConvertToJob';
+import { STEP_TITLES, slotRecommendationToSchedule } from './useConvertToJob';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
-import { useAuth } from '../../auth/AuthProvider';
 import { useAuthz } from '../../hooks/useAuthz';
 import { todayInTZ } from '../../utils/companyTime';
 
@@ -25,7 +24,7 @@ interface StepProps {
     addressFields: AddressFields; setAddressFields: (v: AddressFields) => void;
     coords: { lat: number; lng: number } | null;
     setCoords: (v: { lat: number; lng: number } | null) => void;
-    territoryLoading: boolean; territoryResult: ServiceAreaResult | null; territoryError: string;
+    territoryLoading: boolean; territoryError: string;
     zipExists: boolean | null; zipArea: string; zipSource: string;
     serviceName: string; setServiceName: (v: string) => void;
     serviceDescription: string; setServiceDescription: (v: string) => void;
@@ -33,8 +32,11 @@ interface StepProps {
     serviceDuration: string; setServiceDuration: (v: string) => void;
     jobTypes: string[];
     selectedDate: string; setSelectedDate: (v: string) => void;
-    timeslotDays: TimeslotDay[]; selectedTimeslot: Timeslot | null; setSelectedTimeslot: (v: Timeslot | null) => void;
-    timeslotsLoading: boolean; timeslotsError: string; fetchTimeslots: () => void;
+    // ZB-DECOUPLE C4b — native slot recommendations replace the ZB timeslot grid.
+    recommendations: SlotRecommendation[]; engineEnabled: boolean | null;
+    recsLoading: boolean; recsError: string;
+    selectedSchedule: SelectedSchedule | null; setSelectedSchedule: (v: SelectedSchedule | null) => void;
+    fetchRecommendations: () => void; companyTz: string;
     lead: Lead; customFields: CustomFieldDef[];
     step: Step; setStep: (s: Step) => void;
 }
@@ -91,31 +93,29 @@ export function ConvertStep2({ serviceName, setServiceName, serviceDescription, 
     );
 }
 
-export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, timeslotsError, timeslotDays, selectedTimeslot, setSelectedTimeslot, fetchTimeslots, coords, addressFields, territoryResult, setStep }: StepProps) {
-    const { company } = useAuth();
-    const companyTz = company?.timezone || 'America/New_York';
+export function ConvertStep3({ selectedDate, setSelectedDate, recsLoading, recsError, recommendations, engineEnabled, selectedSchedule, setSelectedSchedule, fetchRecommendations, coords, addressFields, serviceDuration, companyTz, setStep }: StepProps) {
     const [showCustomTime, setShowCustomTime] = useState(false);
-    const isCustomSlot = selectedTimeslot?.type === 'arrival_window';
+    const isCustom = selectedSchedule?.source === 'custom';
 
     return (
         <div className="space-y-3.5">
             {/* Header row */}
             <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
-                    <Calendar className="w-4" /> Available times
+                    <Calendar className="w-4" /> Recommended times
                 </span>
                 <Button size="sm" variant="secondary" onClick={() => setShowCustomTime(true)} className="flex items-center gap-1">
                     <Clock className="w-3.5" /> Custom time
                 </Button>
             </div>
 
-            <p className="text-xs text-muted-foreground">Select a date and timeslot for this job.</p>
+            <p className="text-xs text-muted-foreground">Pick a recommended slot, or set a custom time.</p>
 
-            {/* Custom slot display */}
-            {isCustomSlot && (
+            {/* Custom pick display */}
+            {isCustom && (
                 <div className="flex items-center gap-2 p-2.5 rounded-md border border-primary bg-primary/10">
-                    <span className="text-sm font-medium flex-1">★ Custom: {selectedTimeslot!.formatted}</span>
-                    <button type="button" onClick={() => setSelectedTimeslot(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4" /></button>
+                    <span className="text-sm font-medium flex-1">★ Custom: {selectedSchedule!.formatted}</span>
+                    <button type="button" onClick={() => setSelectedSchedule(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4" /></button>
                 </div>
             )}
 
@@ -123,19 +123,37 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
             <div className="flex items-end gap-2">
                 <div className="flex-1 space-y-1.5">
                     <Label htmlFor="cj-date" className="blanc-eyebrow">Starting date</Label>
-                    <Input id="cj-date" type="date" value={selectedDate} onChange={e => { setSelectedDate(e.target.value); setSelectedTimeslot(null); }} min={todayInTZ(companyTz)} className="h-[50px] rounded-xl bg-transparent text-[15px]" />
+                    <Input id="cj-date" type="date" value={selectedDate} onChange={e => { setSelectedDate(e.target.value); }} min={todayInTZ(companyTz)} className="h-[50px] rounded-xl bg-transparent text-[15px]" />
                 </div>
-                <Button size="icon" variant="ghost" onClick={fetchTimeslots} disabled={timeslotsLoading} title="Refresh timeslots" className="shrink-0 mb-0.5">
-                    <RefreshCw className={`w-4 ${timeslotsLoading ? 'animate-spin' : ''}`} />
+                <Button size="icon" variant="ghost" onClick={fetchRecommendations} disabled={recsLoading} title="Refresh recommendations" className="shrink-0 mb-0.5">
+                    <RefreshCw className={`w-4 ${recsLoading ? 'animate-spin' : ''}`} />
                 </Button>
             </div>
 
-            {timeslotsLoading && <p className="text-sm text-muted-foreground animate-pulse">Fetching available times…</p>}
-            {timeslotsError && !timeslotsLoading && <p className="text-sm text-destructive">{timeslotsError}</p>}
+            {recsLoading && <p className="text-sm text-muted-foreground animate-pulse">Finding recommended slots…</p>}
+            {engineEnabled === false && !recsLoading && (
+                <p className="text-sm text-muted-foreground">Slot recommendations are not enabled — use Custom time to schedule.</p>
+            )}
+            {recsError && !recsLoading && engineEnabled !== false && <p className="text-sm text-destructive">{recsError}</p>}
 
-            {/* Timeslot grid */}
-            <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
-                {timeslotDays.map(day => { if (!day.timeslots?.length) return null; return (<div key={day.date}><p className="text-xs font-semibold text-muted-foreground mb-1.5">{new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p><div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">{day.timeslots.map(slot => (<button key={slot.id} type="button" onClick={() => setSelectedTimeslot(slot)} className={`p-2 rounded-md border text-sm text-left transition-colors ${selectedTimeslot?.id === slot.id ? 'border-primary bg-primary/10 font-medium' : 'border-border hover:border-primary/50 hover:bg-muted/50'}`}>{slot.formatted}</button>))}</div></div>); })}
+            {/* Recommendation cards (native slot engine) */}
+            <div className="space-y-1.5 max-h-[320px] overflow-y-auto pr-1">
+                {recommendations.map(rec => {
+                    const sched = slotRecommendationToSchedule(rec, companyTz);
+                    const selected = selectedSchedule?.source === 'engine' && selectedSchedule.start === sched.start && selectedSchedule.techId === sched.techId;
+                    const day = new Date(`${rec.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                    return (
+                        <button
+                            key={`${rec.rank}-${rec.date}-${rec.time_frame.start}-${sched.techId ?? 'any'}`}
+                            type="button"
+                            onClick={() => setSelectedSchedule(sched)}
+                            className={`flex w-full items-center justify-between gap-3 rounded-md border p-2.5 text-left text-sm transition-colors ${selected ? 'border-primary bg-primary/10 font-medium' : 'border-border hover:border-primary/50 hover:bg-muted/50'}`}
+                        >
+                            <span>{day} · {rec.time_frame.start}–{rec.time_frame.end}</span>
+                            <span className="shrink-0 text-xs text-muted-foreground">{sched.techName || 'Any technician'}</span>
+                        </button>
+                    );
+                })}
             </div>
 
             <CustomTimeModal
@@ -143,9 +161,15 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
                 onClose={() => setShowCustomTime(false)}
                 newJobCoords={coords}
                 newJobAddress={[addressFields.street, addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ')}
-                territoryId={territoryResult?.service_territory?.id}
+                newJobDuration={Number(serviceDuration) || 120}
                 onConfirm={(customSlot) => {
-                    setSelectedTimeslot(customSlot);
+                    setSelectedSchedule({
+                        start: customSlot.start,
+                        end: customSlot.end,
+                        formatted: customSlot.formatted,
+                        techId: customSlot.techId ?? null,
+                        source: 'custom',
+                    });
                     setShowCustomTime(false);
                     setStep(4 as Step);
                 }}
@@ -154,7 +178,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
     );
 }
 
-export function ConvertStep4({ name, phone, email, addressFields, serviceName, serviceDescription, servicePrice, serviceDuration, selectedTimeslot, territoryResult, lead, customFields, zipArea }: StepProps) {
+export function ConvertStep4({ name, phone, email, addressFields, serviceName, serviceDescription, servicePrice, serviceDuration, selectedSchedule, lead, customFields, zipArea }: StepProps) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
     const cardStyle = { background: 'rgba(25, 25, 25, 0.03)' };
@@ -166,8 +190,8 @@ export function ConvertStep4({ name, phone, email, addressFields, serviceName, s
             <div className="rounded-2xl p-3.5" style={cardStyle}>{[addressFields.street, addressFields.apt].filter(Boolean).join(', ') && <p>{[addressFields.street, addressFields.apt].filter(Boolean).join(', ')}</p>}{[addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ') && <p>{[addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ')}</p>}</div>
             <h4 className="font-semibold">Service</h4>
             <div className="rounded-2xl p-3.5 space-y-1" style={cardStyle}><p><span className="text-muted-foreground">Name:</span> {serviceName}</p>{serviceDescription && <p className="text-xs text-muted-foreground line-clamp-2">{serviceDescription}</p>}<p><span className="text-muted-foreground">Duration:</span> {serviceDuration} min • <span className="text-muted-foreground">Price:</span> ${servicePrice}</p></div>
-            <h4 className="font-semibold">Timeslot</h4>
-            <div className="rounded-2xl p-3.5" style={cardStyle}>{selectedTimeslot ? <p>{selectedTimeslot.formatted} — {new Date(selectedTimeslot.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p> : <p className="text-destructive">No timeslot selected</p>}</div>
+            <h4 className="font-semibold">Schedule</h4>
+            <div className="rounded-2xl p-3.5" style={cardStyle}>{selectedSchedule ? <p>{selectedSchedule.formatted}{selectedSchedule.techName ? '' : ''}</p> : <p className="text-destructive">No time selected</p>}</div>
             <h4 className="font-semibold">Lead Details</h4>
             <div className="rounded-2xl p-3.5 space-y-1" style={cardStyle}>
                 {canViewSource && lead.JobSource && <p><span className="text-muted-foreground">Job Source:</span> {lead.JobSource}</p>}
@@ -175,7 +199,7 @@ export function ConvertStep4({ name, phone, email, addressFields, serviceName, s
                 {lead.Metadata && Object.keys(lead.Metadata).length > 0 && <>{Object.entries(lead.Metadata).map(([key, value]) => { if (!value) return null; const fieldDef = customFields.find(f => f.api_name === key); return <p key={key}><span className="text-muted-foreground">{fieldDef?.display_name || key}:</span> {value}</p>; })}</>}
                 {!(canViewSource && lead.JobSource) && !lead.Comments && (!lead.Metadata || Object.keys(lead.Metadata).length === 0) && <p className="text-muted-foreground">No additional details</p>}
             </div>
-            <div className="flex items-center gap-2 pt-1"><Badge variant="default" className="bg-green-600">✓ {zipArea || territoryResult?.service_territory?.name}</Badge></div>
+            <div className="flex items-center gap-2 pt-1"><Badge variant="default" className="bg-green-600">✓ {zipArea || 'In service area'}</Badge></div>
         </div>
     );
 }

@@ -20,41 +20,12 @@ async function zbRequest<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface ServiceTerritory {
-    id: string;
-    name: string;
-    timezone: string;
-}
-
-export interface ServiceAreaResult {
-    in_service_area: boolean;
-    service_territory?: ServiceTerritory;
-    customer_location?: {
-        coordinates: { lat: number; lng: number };
-    };
-}
-
-export interface Timeslot {
-    id?: string;
-    start: string;
-    end: string;
-    type: string;
-    formatted: string;
-    /** Provider ID selected from the timeline modal */
-    techId?: string;
-}
-
-export interface TimeslotDay {
-    date: string;
-    timeslots: Timeslot[];
-}
-
-export interface TimeslotsResult {
-    territory_id: string;
-    timezone: string;
-    days: TimeslotDay[];
-}
+// ZB-DECOUPLE C4b (2026-08-09): the ZB territory/timeslot surface
+// (ServiceTerritory/ServiceAreaResult/Timeslot* types, checkServiceArea,
+// getTimeslots) is GONE — the convert wizards run on the native
+// slot-recommendation engine and native conversion. What remains here:
+// checkZipCode (a LOCAL /api/zip-check lookup, not ZB) and getTeamMembers
+// (mode-aware roster since C1). Both go away with the final ZB removal (Phase F).
 
 // ZB-DECOUPLE C4a (2026-08-09): the ZbService catalog types, CreateJobResult,
 // getServices() and createJob() were removed — zero consumers (native job
@@ -75,33 +46,6 @@ export interface ZipCheckResult {
 
 export async function checkZipCode(query: string): Promise<ZipCheckResult> {
     return zbRequest<ZipCheckResult>(`/api/zip-check?q=${encodeURIComponent(query)}`);
-}
-
-// ─── API calls ────────────────────────────────────────────────────────────────
-
-export async function checkServiceArea(query: string | { postal_code?: string; address?: string }): Promise<ServiceAreaResult> {
-    const params = typeof query === 'string'
-        ? `postal_code=${encodeURIComponent(query)}`
-        : Object.entries(query).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v!)}`).join('&');
-    return zbRequest<ServiceAreaResult>(`${ZB_BASE}/service-area-check?${params}`);
-}
-
-export async function getTimeslots(params: {
-    territory: string;
-    date: string;
-    duration: number;
-    days?: number;
-    lat?: number;
-    lng?: number;
-}): Promise<TimeslotsResult> {
-    const qs = new URLSearchParams();
-    qs.set('territory', params.territory);
-    qs.set('date', params.date);
-    qs.set('duration', String(params.duration));
-    if (params.days) qs.set('days', String(params.days));
-    if (params.lat) qs.set('lat', String(params.lat));
-    if (params.lng) qs.set('lng', String(params.lng));
-    return zbRequest<TimeslotsResult>(`${ZB_BASE}/timeslots?${qs.toString()}`);
 }
 
 // ─── Team Members (Providers) ─────────────────────────────────────────────────

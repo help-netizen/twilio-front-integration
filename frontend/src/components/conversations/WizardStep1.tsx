@@ -106,7 +106,7 @@ export function WizardStep1(s: WizardState) {
             {s.territoryLoading && <span className="ml-2 text-xs animate-pulse" style={{ color: 'var(--blanc-ink-3)' }}>Checking…</span>}
             {s.zipExists && (
                 <Badge variant="default" className="bg-green-600 ml-2 text-[10px]">
-                    ✓ {s.zipArea || s.territoryResult?.service_territory?.name || 'In service area'}
+                    ✓ {s.zipArea || 'In service area'}
                 </Badge>
             )}
             {s.territoryError && !s.territoryLoading && (

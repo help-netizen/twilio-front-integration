@@ -5,9 +5,9 @@ import { formatUSPhone, toE164 } from '../ui/PhoneInput';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
-import * as zenbookerApi from '../../services/zenbookerApi';
 import * as leadsApi from '../../services/leadsApi';
-import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
+import { fetchSlotRecommendations, type SlotRecommendation } from '../../services/slotRecommendationsApi';
+import { type SelectedSchedule } from '../leads/useConvertToJob';
 import { useZipCheck } from '../../hooks/useZipCheck';
 import { ChevronRight, ChevronLeft, Phone } from 'lucide-react';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
@@ -46,7 +46,7 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
     const [territoryQuery, setTerritoryQuery] = useState(''); // full display text in territory input
     const [postalCode, setPostalCode] = useState('');        // zip/city for territory check
     const zipCheck = useZipCheck(postalCode);
-    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, zbLoading, coords, setCoords } = zipCheck;
+    const { territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, coords, setCoords } = zipCheck;
 
     const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone || ''));
     const [firstName, setFirstName] = useState('');
@@ -66,28 +66,37 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
     const [price, setPrice] = useState('95');
 
     const [selectedDate, setSelectedDate] = useState('');
-    const [timeslotDays, setTimeslotDays] = useState<TimeslotDay[]>([]);
-    const [selectedTimeslot, setSelectedTimeslot] = useState<Timeslot | null>(null);
-    const [timeslotsLoading, setTimeslotsLoading] = useState(false);
-    const [timeslotsError, setTimeslotsError] = useState('');
+    // ZB-DECOUPLE C4b — native slot recommendations replace the ZB timeslot grid.
+    const [recommendations, setRecommendations] = useState<SlotRecommendation[]>([]);
+    const [engineEnabled, setEngineEnabled] = useState<boolean | null>(null);
+    const [selectedSchedule, setSelectedSchedule] = useState<SelectedSchedule | null>(null);
+    const [recsLoading, setRecsLoading] = useState(false);
+    const [recsError, setRecsError] = useState('');
     const [timeslotSkipped, setTimeslotSkipped] = useState(false);
 
     useEffect(() => { setSelectedDate(todayInTZ(companyTz)); }, []);
     // Note: Step 1 now uses AddressAutocomplete which fills streetAddress directly — no need to pre-fill from postalCode
 
-    const fetchTimeslots = useCallback(async () => {
-        const territoryId = territoryResult?.service_territory?.id;
-        if (!territoryId || !selectedDate) return;
-        setTimeslotsLoading(true); setTimeslotsError(''); setSelectedTimeslot(null);
+    const fetchRecommendations = useCallback(async () => {
+        if (!selectedDate) return;
+        setRecsLoading(true); setRecsError('');
+        setSelectedSchedule(prev => (prev?.source === 'custom' ? prev : null));
         try {
-            const result = await zenbookerApi.getTimeslots({ territory: territoryId, date: selectedDate, duration: Number(duration) || 120, days: 7, lat: coords?.lat, lng: coords?.lng });
-            setTimeslotDays(result.days || []);
-            if (!result.days?.length || result.days.every(d => !d.timeslots?.length)) setTimeslotsError('No available timeslots for this date range');
-        } catch (err) { setTimeslotsError(err instanceof Error ? err.message : 'Failed to load timeslots'); setTimeslotDays([]); }
-        finally { setTimeslotsLoading(false); }
-    }, [territoryResult, selectedDate, duration, coords]);
+            const address = [streetAddress, city, state, postalCode].filter(Boolean).join(', ');
+            const result = await fetchSlotRecommendations({
+                lat: coords?.lat, lng: coords?.lng, address,
+                duration_minutes: Number(duration) || 120,
+                earliest_allowed_date: selectedDate,
+            });
+            setEngineEnabled(result.enabled);
+            setRecommendations(result.recommendations);
+            if (result.enabled && result.recommendations.length === 0) {
+                setRecsError('No recommended slots for this date range — pick a custom time or skip.');
+            }
+        } finally { setRecsLoading(false); }
+    }, [selectedDate, duration, coords, streetAddress, city, state, postalCode]);
 
-    useEffect(() => { if (step === 3 && !timeslotSkipped) fetchTimeslots(); }, [step, fetchTimeslots, timeslotSkipped]);
+    useEffect(() => { if (step === 3 && !timeslotSkipped) fetchRecommendations(); }, [step, fetchRecommendations, timeslotSkipped]);
 
     function formatPhone(p: string): string {
         const cleaned = p.replace(/\D/g, '');
@@ -144,38 +153,23 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
             const createdUUID = leadRes.data?.UUID;
 
             if (withJob && createdUUID) {
-                const territoryId = territoryResult?.service_territory?.id;
-                if (!territoryId) throw new Error('No territory for job creation — Zenbooker data not loaded yet');
-                const zbJobPayload: Record<string, unknown> = {
-                    territory_id: territoryId,
-                    customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), ...(email && { email }) },
-                    address: { line1: streetAddress || 'N/A', ...(unit && { line2: unit }), city: city || 'N/A', ...(state && { state }), ...((matchedZip || (/^\d/.test(postalCode) && postalCode)) && { postal_code: matchedZip || postalCode }), country: 'US' },
-                    services: [{ custom_service: { name: jobType || 'General Service', description: description || '', price: Number(price) || 95, duration: Number(duration) || 120, taxable: false } }],
-                    min_providers_needed: 1,
-                    sms_notifications: true, email_notifications: true,
-                };
-                if (selectedTimeslot?.id) {
-                    // Zenbooker timeslot — use timeslot_id
-                    zbJobPayload.timeslot_id = selectedTimeslot.id;
-                    zbJobPayload.assignment_method = 'auto';
-                } else if (selectedTimeslot?.type === 'arrival_window') {
-                    // Custom timeslot — use arrival window object
-                    zbJobPayload.timeslot = { type: 'arrival_window', start: selectedTimeslot.start, end: selectedTimeslot.end };
-                    if (selectedTimeslot.techId) {
-                        // Pre-assign specific tech — must NOT have assignment_method:'auto'
-                        zbJobPayload.assigned_providers = [selectedTimeslot.techId];
-                    } else {
-                        zbJobPayload.assignment_method = 'auto';
-                    }
+                // ZB-DECOUPLE C4b: native conversion — a plain schedule, no Zenbooker.
+                // Skipped/absent pick falls back to tomorrow 8am–12pm (company tz),
+                // same default window the ZB path used.
+                let scheduleStart: string; let scheduleEnd: string; let techIds: string[] = [];
+                if (selectedSchedule) {
+                    scheduleStart = selectedSchedule.start;
+                    scheduleEnd = selectedSchedule.end;
+                    techIds = selectedSchedule.techId ? [selectedSchedule.techId] : [];
                 } else {
-                    // No timeslot — default arrival window (tomorrow 8am–12pm in company timezone)
                     const tomorrowStart = tomorrowAtInTZ(8, 0, companyTz);
                     const tomorrowEnd = new Date(tomorrowStart.getTime() + 4 * 60 * 60 * 1000);
-                    zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrowStart.toISOString(), end: tomorrowEnd.toISOString() };
-                    zbJobPayload.assignment_method = 'auto';
+                    scheduleStart = tomorrowStart.toISOString();
+                    scheduleEnd = tomorrowEnd.toISOString();
                 }
                 const result = await leadsApi.convertLead(createdUUID, {
-                    zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service', description: description || undefined },
+                    schedule: { start_at: scheduleStart, end_at: scheduleEnd, technician_ids: techIds },
+                    service: { name: jobType || 'General Service', description: description || undefined },
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), email: email || undefined },
                     address: { line1: streetAddress, line2: unit, city, state, postal_code: matchedZip || (/^\d/.test(postalCode) ? postalCode : '') },
                     ...(timelineId ? { timeline_id: timelineId } : {}),
@@ -191,12 +185,7 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
                     } catch { /* non-critical */ }
                 }
 
-                const zbWarning = result.data?.zb_warning;
-                if (zbWarning) {
-                    toast.warning('Lead created but Zenbooker job failed', { description: zbWarning, duration: 15000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
-                } else {
-                    toast.success('Lead & Job created', { description: jobId ? `Job #${jobId}` : 'Job created', duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
-                }
+                toast.success('Lead & Job created', { description: jobId ? `Job #${jobId}` : 'Job created', duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
             } else {
                 toast.success('Lead created', { description: 'Status: Submitted' });
             }
@@ -209,20 +198,20 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
 
     const canProceedStep1 = !!(postalCode.trim() && zipExists);
     const canProceedStep2 = !!(jobType.trim() && Number(duration) > 0);
-    const canProceedStep3 = !!selectedTimeslot || timeslotSkipped;
-    // A Zenbooker job requires a phone. Email-origin (phoneless) → offer "Create Lead" only until a
-    // phone is typed; entering one re-enables the with-job leg. Phone-origin is always true.
+    const canProceedStep3 = !!selectedSchedule || timeslotSkipped;
+    // Jobs from this wizard notify by SMS — keep requiring a phone for the with-job
+    // leg. Email-origin (phoneless) → "Create Lead" only until a phone is typed.
     const canCreateJob = !!toE164(phoneNumber);
 
     const ws = {
-        territoryQuery, setTerritoryQuery, postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, zbLoading,
+        territoryQuery, setTerritoryQuery, postalCode, setPostalCode, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource,
         firstName, setFirstName, lastName, setLastName, phoneNumber, setPhoneNumber, email, setEmail,
         jobTypes, jobType, setJobType, description, setDescription, duration, setDuration, price, setPrice,
-        selectedDate, setSelectedDate, timeslotDays, selectedTimeslot, setSelectedTimeslot,
-        timeslotsLoading, timeslotsError, timeslotSkipped, setTimeslotSkipped, fetchTimeslots,
+        selectedDate, setSelectedDate, recommendations, engineEnabled, selectedSchedule, setSelectedSchedule,
+        recsLoading, recsError, timeslotSkipped, setTimeslotSkipped, fetchRecommendations,
         showSkipConfirm, setShowSkipConfirm,
         streetAddress, setStreetAddress, unit, setUnit, city, setCity, state, setState,
-        coords, setCoords, submitting, handleCreate, setStep, canCreateJob,
+        coords, setCoords, submitting, handleCreate, setStep, canCreateJob, companyTz,
     };
 
     return (

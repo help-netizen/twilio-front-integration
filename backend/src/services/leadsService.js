@@ -1114,6 +1114,46 @@ async function persistZenbookerJobLink(localJobId, leadId, zenbookerJobId, compa
     );
 }
 
+/**
+ * ZB-DECOUPLE C4b — native conversion schedule. When the wizard sends
+ * overrides.schedule = { start_at, end_at, technician_ids? } the conversion is
+ * FULLY native: the local job carries the schedule/assignment and NO Zenbooker
+ * job is created (this flow stops feeding ZB; the remaining server-side push
+ * paths retire in Phase E). technician_ids are validated on the mode-aware
+ * roster and stored as roster-compat ids — the same plane jobs.assigned_techs
+ * has always used, so lanes/mirrors keep working unchanged.
+ */
+async function resolveNativeSchedule(schedule, companyId) {
+    if (!schedule || typeof schedule !== 'object') return null;
+    const start = new Date(schedule.start_at);
+    const end = new Date(schedule.end_at);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        throw new LeadsServiceError('INVALID_SCHEDULE', 'schedule.start_at and schedule.end_at must be valid timestamps', 400);
+    }
+    if (end <= start) {
+        throw new LeadsServiceError('INVALID_SCHEDULE', 'schedule.end_at must be after schedule.start_at', 400);
+    }
+    const rawIds = Array.isArray(schedule.technician_ids) ? schedule.technician_ids : [];
+    const technicianRosterService = require('./technicianRosterService');
+    const assigned = [];
+    for (const raw of rawIds) {
+        const id = String(raw ?? '').trim();
+        if (!id) continue;
+        let technician;
+        try {
+            technician = await technicianRosterService.requireActive(companyId, id);
+        } catch {
+            throw new LeadsServiceError('INVALID_TECHNICIAN', `schedule.technician_ids: ${id} is not on the active roster`, 400);
+        }
+        assigned.push({ id: String(technician.id), name: technician.name });
+    }
+    return {
+        startISO: start.toISOString(),
+        endISO: end.toISOString(),
+        assignedTechs: assigned.length ? JSON.stringify(assigned) : null,
+    };
+}
+
 async function convertLead(uuid, overrides = {}, companyId = null, activityActor = null) {
     if (!companyId) {
         throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
@@ -1179,6 +1219,15 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         if (zbp.assigned_providers?.length) {
             initialAssignedTechs = JSON.stringify(zbp.assigned_providers.map(id => ({ id })));
         }
+    }
+
+    // ZB-DECOUPLE C4b: a native schedule wins over any zb-payload-derived values
+    // and (below) suppresses the Zenbooker job creation entirely.
+    const nativeSchedule = await resolveNativeSchedule(overrides.schedule, companyId);
+    if (nativeSchedule) {
+        initialStartDate = nativeSchedule.startISO;
+        initialEndDate = nativeSchedule.endISO;
+        initialAssignedTechs = nativeSchedule.assignedTechs;
     }
 
     let zenbookerJobId = overrides.zenbooker_job_id || null;
@@ -1268,10 +1317,14 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         }
     }
 
-    // 3. Create Zenbooker job (if booking data provided or auto-create)
+    // 3. Create Zenbooker job (if booking data provided or auto-create).
+    // ZB-DECOUPLE C4b: a NATIVE schedule short-circuits this whole section —
+    // native conversions never create (or auto-create) a Zenbooker job.
     let zbWarning = null;
 
-    if (!zenbookerJobId && overrides.zb_job_payload) {
+    if (nativeSchedule) {
+        console.log(`[ConvertLead] Native schedule — no Zenbooker job for local job ${localJobId}`);
+    } else if (!zenbookerJobId && overrides.zb_job_payload) {
         const zbPayload = { ...overrides.zb_job_payload };
 
         const requestedProviders = Array.isArray(zbPayload.assigned_providers)
@@ -1801,6 +1854,7 @@ module.exports = {
     assignUser,
     unassignUser,
     convertLead,
+    resolveNativeSchedule,
     getLeadTransitions,
     LeadsServiceError,
 };

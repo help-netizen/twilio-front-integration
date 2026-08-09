@@ -6,88 +6,13 @@
 const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
-const zenbookerClient = require('../services/zenbookerClient');
 const technicianRosterService = require('../services/technicianRosterService');
 
-// GET /api/zenbooker/service-area-check?postal_code=02101  OR  ?address=Boston+MA
-router.get('/service-area-check', async (req, res) => {
-    try {
-        const { postal_code, address } = req.query;
-        if (!postal_code && !address) {
-            return res.status(400).json({ ok: false, error: 'postal_code or address is required' });
-        }
-
-        // Build params for Zenbooker API (supports postal_code or address)
-        const zbParams = {};
-        if (postal_code) zbParams.postal_code = postal_code;
-        else if (address) zbParams.address = address;
-
-        // Try the scheduling endpoint first
-        try {
-            const data = await zenbookerClient.checkServiceArea(zbParams);
-            return res.json({ ok: true, data });
-        } catch (primaryErr) {
-            console.warn('[Zenbooker] service_area_check failed, trying territory fallback:', primaryErr.response?.data?.error?.message || primaryErr.message);
-        }
-
-        // Fallback: use our territory postal-code matching (only works with postal_code)
-        if (!postal_code) {
-            return res.json({ ok: true, data: { in_service_area: false, service_territory: null, customer_location: null } });
-        }
-        try {
-            const territoryId = await zenbookerClient.findTerritoryByPostalCode(postal_code);
-            const territories = await zenbookerClient.getTerritories();
-            const territory = territories.find(t => t.id === territoryId);
-            return res.json({
-                ok: true,
-                data: {
-                    in_service_area: true,
-                    service_territory: {
-                        id: territoryId,
-                        name: territory?.name || 'Service Territory',
-                        timezone: 'America/New_York',
-                    },
-                    customer_location: null,
-                    _fallback: true,
-                },
-            });
-        } catch (fallbackErr) {
-            // Both failed
-            return res.json({
-                ok: true,
-                data: { in_service_area: false, service_territory: null, customer_location: null },
-            });
-        }
-    } catch (err) {
-        console.error('[Zenbooker] service-area-check error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
-    }
-});
-
-// GET /api/zenbooker/timeslots?territory=...&date=...&duration=...
-router.get('/timeslots', async (req, res) => {
-    try {
-        const { territory, date, duration, days, lat, lng } = req.query;
-        if (!territory || !date || !duration) {
-            return res.status(400).json({ ok: false, error: 'territory, date, duration are required' });
-        }
-        const params = { territory, date, duration: Number(duration) };
-        if (days) params.days = Number(days);
-        if (lat) params.lat = Number(lat);
-        if (lng) params.lng = Number(lng);
-
-        console.log('[Zenbooker] timeslots request params:', JSON.stringify(params));
-        const data = await zenbookerClient.getTimeslots(params);
-        res.json({ ok: true, data });
-    } catch (err) {
-        console.error('[Zenbooker] timeslots error:', err.response?.data || err.message);
-        const status = err.response?.status || 500;
-        res.status(status).json({
-            ok: false,
-            error: err.response?.data?.error?.message || err.message,
-        });
-    }
-});
+// ZB-DECOUPLE C4b (2026-08-09): GET /service-area-check and GET /timeslots
+// removed — the convert wizards run on the native slot-recommendation engine
+// (/api/schedule/slot-recommendations) and the local /api/zip-check; conversion
+// itself is native (leadsService overrides.schedule). The ONLY route left here
+// is /team-members (mode-aware roster; retires with Phase F).
 
 // GET /api/zenbooker/services
 // ZB-DECOUPLE C4a (2026-08-09): GET /services and POST /jobs removed — zero

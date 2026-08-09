@@ -13,9 +13,8 @@ export interface WizardState {
     // Step 1
     territoryQuery: string; setTerritoryQuery: (v: string) => void;
     postalCode: string; setPostalCode: (v: string) => void;
-    territoryResult: any; territoryLoading: boolean; territoryError: string;
+    territoryLoading: boolean; territoryError: string;
     zipExists: boolean | null; zipArea: string; matchedZip: string; zipSource: string;
-    zbLoading: boolean;
     firstName: string; setFirstName: (v: string) => void;
     lastName: string; setLastName: (v: string) => void;
     phoneNumber: string; setPhoneNumber: (v: string) => void;
@@ -26,12 +25,13 @@ export interface WizardState {
     description: string; setDescription: (v: string) => void;
     duration: string; setDuration: (v: string) => void;
     price: string; setPrice: (v: string) => void;
-    // Step 3
+    // Step 3 — ZB-DECOUPLE C4b: native slot recommendations (engine optional)
     selectedDate: string; setSelectedDate: (v: string) => void;
-    timeslotDays: any[]; selectedTimeslot: any; setSelectedTimeslot: (v: any) => void;
-    timeslotsLoading: boolean; timeslotsError: string;
+    recommendations: any[]; engineEnabled: boolean | null;
+    selectedSchedule: any; setSelectedSchedule: (v: any) => void;
+    recsLoading: boolean; recsError: string;
     timeslotSkipped: boolean; setTimeslotSkipped: (v: boolean) => void;
-    fetchTimeslots: () => void;
+    fetchRecommendations: () => void; companyTz: string;
     showSkipConfirm: boolean; setShowSkipConfirm: (v: boolean) => void;
     // Step 4
     streetAddress: string; setStreetAddress: (v: string) => void;
@@ -42,6 +42,6 @@ export interface WizardState {
     submitting: boolean;
     handleCreate: (withJob: boolean) => void;
     setStep: (s: Step) => void;
-    // Email-origin: a Zenbooker job needs a phone, so the with-job leg is offered only once a phone is entered.
+    // Jobs from this wizard notify by SMS — the with-job leg needs a phone.
     canCreateJob: boolean;
 }

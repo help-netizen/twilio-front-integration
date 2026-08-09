@@ -510,6 +510,24 @@ FSM-JOB-ACTIONS-001) unmounted and deleted. Kept until later phases: /service-ar
 + /timeslots (convert-wizards — C4b re-platforms them onto native slot-recommendations),
 /api/zenbooker/payments (ZBPAY P2 / Phase E), /api/integrations/zenbooker webhooks +
 server-side ZB job push in leadsService/zb_job_sync (Phase E).
-- C4b: convert-wizards (useConvertToJob / CreateLeadJobWizard) → native
-  slot-recommendations + native job creation; then delete /service-area-check,
-  /timeslots, checkServiceArea, getTimeslots.
+### C4b — convert wizards go native — DONE 2026-08-09
+THE flow that fed Zenbooker its jobs is native end-to-end:
+• Server: leadsService accepts overrides.schedule={start_at,end_at,technician_ids?} —
+  validated (timestamps/order 400; every tech via mode-aware requireActive 400,
+  normalized to roster-compat ids) and it SHORT-CIRCUITS every ZB branch in convertLead
+  (incl. the createJobFromLead auto-push): native conversions never create a ZB job.
+  Contract: backend/tests/services/leadsConvertSchedule.test.js (6 cases).
+• Lead wizard (useConvertToJob/ConvertToJobSteps): ZB timeslot grid → native
+  slot-recommendation cards (engine optional → explicit hint) + CustomTimeModal
+  (already native) as the always-available manual path; submit sends schedule, not
+  zb_job_payload. Step renamed Available Timeslots→Schedule.
+• Conversations wizard (CreateLeadJobWizard/WizardStep3/4): same re-platform; the
+  skip-flow default window (tomorrow 8–12 company tz) preserved natively; the
+  zbLoading/territory gates dropped.
+• useZipCheck: the ZB background call (checkServiceArea — existed only to fetch a ZB
+  territory_id for ZB timeslots) removed; local /api/zip-check stays. NewJobDialog
+  stops passing territoryId (the native engine needs coords/address only).
+• Deleted: FE checkServiceArea/getTimeslots + ServiceTerritory/ServiceAreaResult/
+  Timeslot/TimeslotDay/TimeslotsResult; backend GET /service-area-check + GET
+  /timeslots. routes/zenbooker.js now contains ONLY the mode-aware /team-members.
+Gates: FE build clean; backend 100/100; FE vitest (conversations+leads) 14/14.

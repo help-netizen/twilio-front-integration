@@ -42,7 +42,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                         {h.step < 4 ? (
                             <Button onClick={() => h.setStep((h.step + 1) as Step)} disabled={(h.step === 1 && !h.canProceedStep1) || (h.step === 2 && !h.canProceedStep2) || (h.step === 3 && !h.canProceedStep3)}>Next</Button>
                         ) : (
-                            <Button onClick={h.handleSubmit} disabled={h.submitting || !h.selectedTimeslot}>{h.submitting ? 'Creating…' : 'Create job'}</Button>
+                            <Button onClick={h.handleSubmit} disabled={h.submitting || !h.selectedSchedule}>{h.submitting ? 'Creating…' : 'Create job'}</Button>
                         )}
                     </div>
                 </DialogPanelFooter>

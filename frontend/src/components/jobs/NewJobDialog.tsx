@@ -84,8 +84,9 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
 
     // ── Address ──
     const [address, setAddress] = useState<AddressFields>(EMPTY_ADDRESS);
-    const { territoryResult, coords } = useZipCheck(address.zip);
-    const territoryId = territoryResult?.service_territory?.id;
+    // ZB-DECOUPLE C4b: the ZB territory lookup is gone — the native slot engine
+    // works from coords/address alone.
+    const { coords } = useZipCheck(address.zip);
 
     // ── Time & technician ──
     const [timeOpen, setTimeOpen] = useState(false);
@@ -492,7 +493,6 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                 open={timeOpen}
                 onClose={() => setTimeOpen(false)}
                 onConfirm={handleSlotConfirm}
-                territoryId={territoryId}
                 newJobCoords={coords}
                 newJobAddress={composeAddress(address) || undefined}
                 newJobDuration={120}
