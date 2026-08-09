@@ -546,10 +546,57 @@ async function reassignItem(
 }
 
 /**
+ * ZB-DECOUPLE Phase C2 (spec deferred #2): from-slot assignment ids are CLIENT
+ * input, but they land in authz-bearing columns (tasks.assigned_provider_id;
+ * jobs.assigned_provider_user_ids via createManualJob's direct assignee path).
+ * Resolve them against the owning planes BEFORE any write:
+ *   • assignee_id lives on the crm_users plane — provider scope filters match it
+ *     against crm ids — so it must be an ACTIVE member of THIS company;
+ *   • assigned_techs[].id lives on the roster plane — validated mode-aware
+ *     (legacy ZB external id today; a native uuid also resolves via the map),
+ *     so an off-roster or cross-company id can no longer be injected.
+ */
+async function assertFromSlotAssignment(companyId, slotData) {
+    const membershipQueries = require('../db/membershipQueries');
+    const technicianRosterService = require('./technicianRosterService');
+
+    const assigneeId = slotData?.assignee_id;
+    if (assigneeId != null && String(assigneeId).trim() !== '') {
+        const membership = await membershipQueries.getActiveMembershipInCompany(String(assigneeId), companyId);
+        if (!membership) {
+            throw new ScheduleServiceError(
+                'INVALID_ASSIGNEE',
+                'assignee_id is not an active member of this company',
+                400
+            );
+        }
+    }
+
+    const techs = Array.isArray(slotData?.assigned_techs) ? slotData.assigned_techs : [];
+    for (const tech of techs) {
+        const id = tech && tech.id;
+        if (id == null || String(id).trim() === '') {
+            throw new ScheduleServiceError('INVALID_TECHNICIAN', 'assigned_techs entries require an id', 400);
+        }
+        try {
+            await technicianRosterService.requireActive(companyId, String(id));
+        } catch (err) {
+            throw new ScheduleServiceError(
+                'INVALID_TECHNICIAN',
+                `assigned_techs id ${id} is not on the active roster`,
+                400
+            );
+        }
+    }
+}
+
+/**
  * Create a new entity from a schedule time slot.
  * Currently only supports 'task'. Lead/Job shells can be added later.
  */
 async function createFromSlot(companyId, entityType, slotData, activityActor = null) {
+    // C2: validate client-supplied assignment ids before either branch writes.
+    await assertFromSlotAssignment(companyId, slotData);
     switch (entityType) {
         case 'task': {
             const row = await scheduleQueries.createTask(companyId, {

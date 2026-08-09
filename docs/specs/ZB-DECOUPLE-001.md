@@ -465,9 +465,15 @@ CustomTimeModal(getTeamMembers) read ONLY `{id, name}`; TechnicianPhotosPage use
 outage in legacy). Contract locked by backend/tests/services/technicianRosterService.test.js
 (native-never-calls-ZB / legacy shape / 502 outage / UUID validation).
 
+### C2 — createFromSlot assignment validation — DONE 2026-08-09
+Deferred #2 closed. assertFromSlotAssignment (scheduleService) runs before either branch
+writes: assignee_id must be an ACTIVE member of the company (crm_users plane — provider
+scope filters match this column against crm ids; an injected native uuid dies here with
+400 INVALID_ASSIGNEE), and every assigned_techs[].id must resolve on the mode-aware
+roster (requireActive; off-roster/foreign → 400 INVALID_TECHNICIAN, nothing written).
+Contract: backend/tests/services/scheduleCreateFromSlot.test.js (7 cases).
+
 ### C-remaining (ordered)
-- C2: createFromSlot input validation (deferred #2) — resolve assignee ids through the
-  crm_users plane before writing the authz mirror.
 - C3: native directory maintenance — admin re-link updates `technicians.crm_user_id` +
   external map (deferred #3); production CRUD for native technicians (deferred #4).
 - C4: sweep remaining FE surfaces off `zenbookerApi` proxies (service-area-check etc. —
