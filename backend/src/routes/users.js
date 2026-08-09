@@ -56,6 +56,24 @@ function isValidEmail(email) {
     return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
 }
 
+/**
+ * ZB-DECOUPLE C3b — USERS-FIRST technician directory: after any membership
+ * mutation (create / role change / status change / removal) the native
+ * directory re-projects so «роль provider ⇔ активный техник» holds without any
+ * manual linking. No-op in legacy mode; never fails the admin's request.
+ */
+async function projectTechnicians(companyId, context) {
+    try {
+        const directoryService = require('../services/technicianDirectoryService');
+        const out = await directoryService.projectFromMemberships(companyId);
+        if (out && !out.skipped && (out.created || out.reactivated || out.adopted || out.deactivated)) {
+            console.log('[Users] Technician projection:', { company_id: companyId, context, ...out });
+        }
+    } catch (err) {
+        console.error('[Users] Technician projection failed:', err.message);
+    }
+}
+
 router.post('/', async (req, res) => {
     try {
         const { email, full_name, role = 'company_member', role_key, profile } = req.body;
@@ -108,6 +126,8 @@ router.post('/', async (req, res) => {
             details: { email, role },
             trace_id: req.traceId,
         });
+
+        await projectTechnicians(companyId, 'user-created'); // C3b: provider role ⇒ technician
 
         res.status(201).json({
             ok: true,
@@ -401,6 +421,9 @@ router.patch('/:id', requireTenantAdmin, async (req, res) => {
             }
         }
 
+        // C3b: role changes re-project the directory (provider granted/revoked).
+        await projectTechnicians(companyId, 'user-updated');
+
         await auditService.log({
             actor_id: req.user.crmUser.id,
             actor_email: req.user.email,
@@ -603,6 +626,8 @@ router.patch('/:id/status', async (req, res) => {
             trace_id: req.traceId,
         });
 
+        await projectTechnicians(companyId, `user-${status}`); // C3b: (de)activation follows
+
         res.json({ ok: true, message: `User ${status}` });
     } catch (err) {
         console.error('[Users] Status change failed:', err.message);
@@ -668,6 +693,8 @@ router.delete('/:id', requireTenantAdmin, async (req, res) => {
             details: {},
             trace_id: req.traceId,
         });
+
+        await projectTechnicians(companyId, 'user-removed'); // C3b: removal deactivates the technician
 
         res.json({ ok: true, message: 'User removed from company' });
     } catch (err) {

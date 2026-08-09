@@ -261,6 +261,30 @@ async function getZenbookerTeamMemberIdForUser(companyId, userId) {
     return rows[0] ? String(rows[0].zenbooker_team_member_id) : null;
 }
 
+/**
+ * ZB-DECOUPLE C3b — the technician projection's source set: every ACTIVE
+ * membership in the company with the given role whose user is active. Includes
+ * the legacy ZB bridge id so the projection can ADOPT a pre-existing native
+ * technician instead of minting a duplicate.
+ */
+async function listActiveMembershipsByRole(companyId, roleKey) {
+    const { rows } = await db.query(
+        `SELECT m.user_id, u.full_name, u.email, p.zenbooker_team_member_id
+         FROM company_memberships m
+         JOIN crm_users u
+           ON u.id = m.user_id
+          AND u.status = 'active'
+          AND u.onboarding_status = 'active'
+          AND COALESCE(u.kind, 'user') = 'user'
+         LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+         WHERE m.company_id = $1
+           AND m.status = 'active'
+           AND m.role_key = $2`,
+        [companyId, roleKey]
+    );
+    return rows;
+}
+
 module.exports = {
     getActiveMembership,
     getMembershipById,
@@ -273,4 +297,5 @@ module.exports = {
     getMembershipWithProfile,
     resolveProviderUserIds,
     getZenbookerTeamMemberIdForUser,
+    listActiveMembershipsByRole,
 };

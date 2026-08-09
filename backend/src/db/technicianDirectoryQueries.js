@@ -135,6 +135,18 @@ async function findActiveTechnicianByCrmUserId(companyId, crmUserId) {
     return rows[0] || null;
 }
 
+/** C3b projection: same lookup but regardless of active (reactivation path). */
+async function findTechnicianByCrmUserId(companyId, crmUserId) {
+    const { rows } = await db.query(
+        `SELECT id, display_name, active, crm_user_id
+         FROM technicians
+         WHERE company_id = $1
+           AND crm_user_id = $2`,
+        [companyId, crmUserId]
+    );
+    return rows[0] || null;
+}
+
 /**
  * Link (or unlink, with crmUserId=null) a CRM user to a native technician. The
  * (company_id, id) filter is what keeps the write inside the tenant; the schema's
@@ -242,6 +254,7 @@ module.exports = {
     // ZB-DECOUPLE Phase C3 — native-directory maintenance
     getTechnicianById,
     listTechnicians,
+    findTechnicianByCrmUserId,
     updateTechnician,
     unlinkCrmUser,
 };

@@ -485,6 +485,19 @@ technicians; crm links only to ACTIVE members; a ZB external id owned by another
 technician is a 409, never a silent repoint. Queries added: getTechnicianById,
 listTechnicians (incl. inactive), updateTechnician, unlinkCrmUser. Contract:
 backend/tests/services/technicianDirectoryService.test.js (12 cases).
-- C3b: maintenance UI over the /native API (Technicians settings surface) — remaining.
+### C3b — USERS-FIRST projection — DONE 2026-08-09 (owner redefinition)
+Owner: «роль provider ⇒ автоматически техник; понятия „линк" в UI нет; техники не
+создаются вручную — они из раздела пользователей». Verified against live data first:
+all 3 active technicians were already linked and all are role provider (the historical
+unlinked trio stays for the owner to link later).
+projectFromMemberships(companyId) — idempotent, MODE-GATED to native (legacy prod
+pre-backfill must not mint rows the backfill would duplicate): active provider
+membership ⇒ active linked technician (adopt-by-crm-link → reactivate; else ADOPT an
+unlinked backfilled technician via the legacy ZB bridge id — duplicate-free; else
+create, name from the user, manual renames never overwritten); linked technician whose
+user lost provider/active ⇒ deactivated; UNLINKED technicians never touched. Hooked
+(non-fatal) into routes/users.js create / PATCH (role) / status / remove. Manual
+POST /native stays as the TEMPORARY fallback per owner. No dedicated technician-management UI needed: the Technicians page lists the mode-aware roster (derived rows appear
+automatically); name/deactivation live in Команда. 6 projection contract tests.
 - C4: sweep remaining FE surfaces off `zenbookerApi` proxies (service-area-check etc. —
   inventory then port or delete).
