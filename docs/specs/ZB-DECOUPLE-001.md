@@ -599,10 +599,21 @@ LIVE INTEGRATION, not the history.
 if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` depends on it.
 
 **Ordered sub-phases (each independently shippable to staging; prod only on «Деплой»):**
-- **F2a — dead cron + inbound webhooks (SAFEST, backend-only, no app consumers):** delete
-  `backend/src/services/zbJobsSyncCron.js` (confirmed dead — zero requires); unmount
-  `src/server.js:298` + delete `routes/integrations-zenbooker.js`; drop `ZENBOOKER_WEBHOOK_SECRET`
-  / `ZENBOOKER_WEBHOOK_COMPANY_ID`. Inbound ZB pushes are moot post-Phase-D.
+- **F2-cron — DONE 2026-08-09 (`1c677269`):** the no-op jobs-sync cron stub, unwired from
+  `src/server.js` + deleted.
+- **F2a — integration route + webhooks (NEXT; NOT backend-only — FE-entangled, atomic 6-file
+  batch):** unmount `src/server.js:296-298` + delete `backend/src/routes/integrations-zenbooker.js`
+  (webhooks POST /webhooks + /wh/:key; FE-facing GET/POST /webhook-url, GET/PUT /api-key, POST
+  /contacts/:id/create-customer + /sync, GET /jobs); drop `ZENBOOKER_WEBHOOK_SECRET` /
+  `_WEBHOOK_COMPANY_ID`. **FE to remove in the same commit (build breaks otherwise, noUnusedLocals):**
+  `integrationsApi.ts` (fetchWebhookUrl/regenerateWebhookUrl/fetch+saveZenbookerApiKey +
+  ZenbookerApiKeyStatus) · `contactsApi.ts` (createZenbookerCustomer/syncToZenbooker/fetchZenbookerJobs
+  [last one already has no UI caller]) · **`IntegrationsPage.tsx` — the entire `value="zenbooker"`
+  TabsTrigger+TabsContent** (webhook-URL card + API-key card + regenerate dialog + their state/
+  queries/mutations/copyWebhookUrl) ⚠ if Zenbooker was one of only 2 tabs, DE-TAB the page (design
+  call) · `ContactDetailPanel.tsx` — the sync-to-ZB button + handleSync + syncing state.
+  ⚠ `IntegrationsPage.test.ts` is already-failing on master — check it doesn't assert the ZB tab.
+  handleJobWebhook/jobsService.syncFromZenbooker become dead after this → sweep in F4.
 - **F2b — legacy lead→ZB status push — DONE 2026-08-10:** removed the SubStatus→ZB push block in
   `routes/leads.js` + `jobSyncService.syncBlancStatusToZenbooker` (+ its export + the now-orphaned
   `zenbookerClient` require in jobSyncService; `handleJobWebhook` stays for F2a). Native jobs carry
