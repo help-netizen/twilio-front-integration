@@ -246,6 +246,28 @@ describe('classification (REAL handleLeadEndOfCall)', () => {
     });
 
     it.each([
+        ['already Converted', { Status: 'Converted' }, false],
+        ['already linked to a Job', { Status: 'Contacted' }, true],
+    ])('LEAD-AUTOCONVERT-OLC-IDEMPOTENCE: %s is never forced back to Review', async (_label, leadOverride, linked) => {
+        const updateSpy = jest.spyOn(leadsService, 'updateLead').mockResolvedValue({});
+        mockQuery.mockImplementation(async (sql) => {
+            if (/FROM jobs/.test(sql)) return { rows: linked ? [{ '?column?': 1 }] : [] };
+            if (/SELECT 1 FROM tasks/.test(sql)) return { rows: [] };
+            return { rows: [], rowCount: 1 };
+        });
+        getLeadByUUIDSpy.mockResolvedValue({
+            ...LEAD,
+            ...leadOverride,
+            LeadDateTime: '2026-07-16T14:00:00Z',
+        });
+
+        await svc.handleLeadEndOfCall(leadRow({ status: 'booked' }), 'failed', 'customer-ended-call', {});
+
+        expect(updateSpy).not.toHaveBeenCalled();
+        expect(ladderInserts()).toHaveLength(0);
+    });
+
+    it.each([
         ['no_answer', 'customer-did-not-answer'],
         ['voicemail', 'voicemail-detected'],
         ['failed', 'assistant-error'],

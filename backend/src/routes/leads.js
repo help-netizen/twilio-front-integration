@@ -595,7 +595,15 @@ router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
         }
 
         const companyId = req.companyFilter?.company_id;
-        const activityActor = userActor(req.user?.crmUser?.id || null);
+        const crmActorId = req.user?.crmUser?.id;
+        if (!crmActorId) {
+            return res.status(403).json(errorResponse(
+                'CRM_ACTOR_REQUIRED',
+                'An active CRM user is required to update a lead',
+                reqId
+            ));
+        }
+        const activityActor = userActor(crmActorId);
         const result = await leadsService.updateLead(uuid, fields, companyId, activityActor);
 
         // Log status change event
@@ -814,11 +822,19 @@ router.post('/:uuid/unassign', requirePermission('leads.edit'), async (req, res)
 router.post('/:uuid/convert', requirePermission('leads.convert'), async (req, res) => {
     const reqId = requestId();
     try {
+        const crmActorId = req.user?.crmUser?.id;
+        if (!crmActorId) {
+            return res.status(403).json(errorResponse(
+                'CRM_ACTOR_REQUIRED',
+                'An active CRM user is required to convert a lead',
+                reqId
+            ));
+        }
         const result = await leadsService.convertLead(
             req.params.uuid,
             req.body || {},
             req.companyFilter?.company_id,
-            userActor(req.user?.crmUser?.id || null)
+            userActor(crmActorId)
         );
         eventService.logEvent(req.companyFilter?.company_id, 'lead', result.ClientId, 'converted',
             { job_id: result.job_id, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);

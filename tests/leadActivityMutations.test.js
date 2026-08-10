@@ -15,6 +15,9 @@ jest.mock('../backend/src/services/transactionService', () => ({
 }));
 jest.mock('../backend/src/services/leadContactActivityService', () => ({
     logLeadContactActivity: (...args) => mockLogLeadContactActivity(...args),
+    systemActor: (label = 'Automation', source = 'crm') => ({
+        id: null, type: 'system', label, source,
+    }),
 }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
     logJobActivity: jest.fn(),
@@ -87,7 +90,7 @@ beforeEach(() => {
             lead = created;
             return { rows: [created], rowCount: 1 };
         }
-        if (/SELECT status FROM leads/i.test(text)) {
+        if (/SELECT status\s+FROM leads/i.test(text)) {
             return owned(params[0], params[1]) ? { rows: [{ status: lead.status }] } : { rows: [] };
         }
         if (/SELECT id FROM leads WHERE uuid/i.test(text)) {
@@ -181,6 +184,27 @@ test('a status-only save emits lead.status_changed instead of lead.updated', asy
         actor: ACTOR,
         summary: { status: 'Review' },
     }, expect.objectContaining({ client: expect.any(Object) }));
+});
+
+test('LEAD-AUTOCONVERT-STATUS-PRIMITIVE: status-only Converted is rejected before mutation', async () => {
+    await expect(
+        leadsService.updateLead('ABC123', { Status: 'Converted' }, COMPANY_A, ACTOR)
+    ).rejects.toMatchObject({ code: 'CONVERSION_REQUIRED', httpStatus: 409 });
+
+    expect(lead.status).toBe('Submitted');
+    expect(mockLogLeadContactActivity).not.toHaveBeenCalled();
+});
+
+test('LEAD-AUTOCONVERT-SYSTEM-ACTOR: a null internal actor records an explicit system activity', async () => {
+    await leadsService.updateLead('ABC123', { FirstName: 'Automation' }, COMPANY_A);
+
+    expect(mockLogLeadContactActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+            action: 'lead.updated',
+            actor: { id: null, type: 'system', label: 'Albusto', source: 'crm' },
+        }),
+        expect.objectContaining({ client: expect.any(Object) })
+    );
 });
 
 test.each([

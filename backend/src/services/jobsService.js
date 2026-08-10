@@ -15,6 +15,7 @@ const db = require('../db/connection');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
 const eventBus = require('./eventBus');
+const { convertLeadWithJob } = require('./leadConversionService');
 const { logJobActivity } = require('./jobActivityService');
 const { withTransaction } = require('./transactionService');
 const { deduplicateNotesByIdentity } = require('./noteDeduplication');
@@ -276,7 +277,14 @@ async function refreshCompanyProviderMirror(companyId) {
 // CRUD
 // =============================================================================
 
-async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId }) {
+async function createJob({
+    leadId,
+    contactId,
+    zenbookerJobId,
+    zbData,
+    companyId,
+    activityActor = null,
+}) {
     if (!companyId) {
         const err = new Error('createJob requires companyId');
         err.code = 'TENANT_CONTEXT_REQUIRED';
@@ -290,63 +298,104 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
 
     const assignedProviderUserIds = await resolveAssignedProviderUserIds(companyId, cols.assigned_techs);
 
-    const { rows } = await db.query(`
-        INSERT INTO jobs (lead_id, contact_id, zenbooker_job_id, blanc_status,
-            zb_status, zb_canceled, zb_rescheduled,
-            job_number, service_name, description, start_date, end_date,
-            customer_name, customer_phone, customer_email, address, city,
-            territory, invoice_total, invoice_status, assigned_techs, notes,
-            zb_raw, company_id, lat, lng, assigned_provider_user_ids)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
-        ON CONFLICT (zenbooker_job_id) DO UPDATE SET
-            lead_id = COALESCE(EXCLUDED.lead_id, jobs.lead_id),
-            contact_id = COALESCE(EXCLUDED.contact_id, jobs.contact_id),
-            blanc_status = EXCLUDED.blanc_status,
-            zb_status = EXCLUDED.zb_status,
-            zb_canceled = EXCLUDED.zb_canceled,
-            zb_rescheduled = EXCLUDED.zb_rescheduled,
-            job_number = EXCLUDED.job_number,
-            service_name = EXCLUDED.service_name,
-            description = COALESCE(NULLIF(jobs.description, ''), EXCLUDED.description),
-            start_date = EXCLUDED.start_date,
-            end_date = EXCLUDED.end_date,
-            customer_name = EXCLUDED.customer_name,
-            customer_phone = EXCLUDED.customer_phone,
-            customer_email = EXCLUDED.customer_email,
-            address = EXCLUDED.address,
-            city = EXCLUDED.city,
-            territory = EXCLUDED.territory,
-            invoice_total = EXCLUDED.invoice_total,
-            invoice_status = EXCLUDED.invoice_status,
-            assigned_techs = EXCLUDED.assigned_techs,
-            notes = EXCLUDED.notes,
-            zb_raw = EXCLUDED.zb_raw,
-            lat = EXCLUDED.lat,
-            lng = EXCLUDED.lng,
-            assigned_provider_user_ids = EXCLUDED.assigned_provider_user_ids,
-            updated_at = NOW()
-        WHERE jobs.company_id = EXCLUDED.company_id
-        RETURNING *
-    `, [
-        leadId || null, contactId || null, zenbookerJobId, blancStatus,
-        cols.zb_status || 'scheduled', cols.zb_canceled || false, cols.zb_rescheduled || false,
-        cols.job_number || null, cols.service_name || null, cols.description || null,
-        cols.start_date || null, cols.end_date || null,
-        cols.customer_name || null, cols.customer_phone || null, cols.customer_email || null, cols.address || null,
-        cols.city || null,
-        cols.territory || null, cols.invoice_total || null, cols.invoice_status || null,
-        cols.assigned_techs || '[]', cols.notes || '[]',
-        cols.zb_raw || '{}', companyId || null, cols.lat || null, cols.lng || null,
-        assignedProviderUserIds,
-    ]);
+    const upsert = async (queryable) => {
+        const { rows } = await queryable.query(`
+            INSERT INTO jobs (lead_id, contact_id, zenbooker_job_id, blanc_status,
+                zb_status, zb_canceled, zb_rescheduled,
+                job_number, service_name, description, start_date, end_date,
+                customer_name, customer_phone, customer_email, address, city,
+                territory, invoice_total, invoice_status, assigned_techs, notes,
+                zb_raw, company_id, lat, lng, assigned_provider_user_ids)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+            ON CONFLICT (zenbooker_job_id) DO UPDATE SET
+                lead_id = COALESCE(EXCLUDED.lead_id, jobs.lead_id),
+                contact_id = COALESCE(EXCLUDED.contact_id, jobs.contact_id),
+                blanc_status = EXCLUDED.blanc_status,
+                zb_status = EXCLUDED.zb_status,
+                zb_canceled = EXCLUDED.zb_canceled,
+                zb_rescheduled = EXCLUDED.zb_rescheduled,
+                job_number = EXCLUDED.job_number,
+                service_name = EXCLUDED.service_name,
+                description = COALESCE(NULLIF(jobs.description, ''), EXCLUDED.description),
+                start_date = EXCLUDED.start_date,
+                end_date = EXCLUDED.end_date,
+                customer_name = EXCLUDED.customer_name,
+                customer_phone = EXCLUDED.customer_phone,
+                customer_email = EXCLUDED.customer_email,
+                address = EXCLUDED.address,
+                city = EXCLUDED.city,
+                territory = EXCLUDED.territory,
+                invoice_total = EXCLUDED.invoice_total,
+                invoice_status = EXCLUDED.invoice_status,
+                assigned_techs = EXCLUDED.assigned_techs,
+                notes = EXCLUDED.notes,
+                zb_raw = EXCLUDED.zb_raw,
+                lat = EXCLUDED.lat,
+                lng = EXCLUDED.lng,
+                assigned_provider_user_ids = EXCLUDED.assigned_provider_user_ids,
+                updated_at = NOW()
+            WHERE jobs.company_id = EXCLUDED.company_id
+            RETURNING *, (xmax = 0) AS local_job_created
+        `, [
+            leadId || null, contactId || null, zenbookerJobId, blancStatus,
+            cols.zb_status || 'scheduled', cols.zb_canceled || false, cols.zb_rescheduled || false,
+            cols.job_number || null, cols.service_name || null, cols.description || null,
+            cols.start_date || null, cols.end_date || null,
+            cols.customer_name || null, cols.customer_phone || null, cols.customer_email || null, cols.address || null,
+            cols.city || null,
+            cols.territory || null, cols.invoice_total || null, cols.invoice_status || null,
+            cols.assigned_techs || '[]', cols.notes || '[]',
+            cols.zb_raw || '{}', companyId, cols.lat || null, cols.lng || null,
+            assignedProviderUserIds,
+        ]);
+        return rows[0] || null;
+    };
 
-    if (!rows[0]) {
+    if (leadId) {
+        const conversion = await convertLeadWithJob({
+            companyId,
+            leadId,
+            activityActor,
+            createOrReuseJob: async ({ client }) => {
+                const { rows: existingRows } = await client.query(
+                    `SELECT *
+                     FROM jobs
+                     WHERE lead_id = $1 AND company_id = $2
+                     ORDER BY id ASC
+                     LIMIT 1
+                     FOR UPDATE`,
+                    [leadId, companyId]
+                );
+                const row = existingRows[0] || await upsert(client);
+                if (!row) {
+                    throw Object.assign(
+                        new Error('Zenbooker job id is already owned by another company'),
+                        { code: 'ZENBOOKER_ID_CONFLICT', httpStatus: 409 }
+                    );
+                }
+                return {
+                    jobId: row.id,
+                    jobCreated: existingRows.length === 0 && row.local_job_created === true,
+                    jobStatus: row.blanc_status || blancStatus,
+                    jobRow: row,
+                    leadUpdates: {
+                        ...(contactId ? { contact_id: contactId } : {}),
+                        ...(zenbookerJobId ? { zenbooker_job_id: zenbookerJobId } : {}),
+                    },
+                };
+            },
+        });
+        return rowToJob(conversion.jobRow);
+    }
+
+    const row = await upsert(db);
+    if (!row) {
         const err = new Error('Zenbooker job id is already owned by another company');
         err.code = 'ZENBOOKER_ID_CONFLICT';
         err.httpStatus = 409;
         throw err;
     }
-    return rowToJob(rows[0]);
+    return rowToJob(row);
 }
 
 /**

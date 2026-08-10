@@ -428,6 +428,7 @@ describe('REPAIR-ADVISOR-001 — convertLead emits job.created only on the new-l
         jest.isolateModules(() => {
             jest.doMock('../backend/src/db/connection', () => ({
                 query: dbQuery,
+                getClient: jest.fn().mockResolvedValue(client),
                 pool: { connect: jest.fn().mockResolvedValue(client) },
             }));
             jest.doMock('../backend/src/services/fsmService', () => ({}));
@@ -461,19 +462,22 @@ describe('REPAIR-ADVISOR-001 — convertLead emits job.created only on the new-l
     it('TC-RA-062: emits job.created once when a NEW local job is created (localJobCreated===true)', async () => {
         const emit = jest.fn().mockResolvedValue({});
         const NEW_JOB_ID = 2222;
-        // Transaction, CREATE branch: existing-job lookup EMPTY → INSERT returns the new id.
+        const leadRow = makeLeadRow();
         const client = { query: jest.fn(), release: jest.fn() };
-        client.query
-            .mockResolvedValueOnce({ rows: [] })                   // BEGIN
-            .mockResolvedValueOnce({ rows: [] })                   // pg_advisory_xact_lock
-            .mockResolvedValueOnce({ rows: [] })                   // existing local job lookup → none
-            .mockResolvedValueOnce({ rows: [{ id: NEW_JOB_ID }] }) // INSERT INTO jobs RETURNING id
-            .mockResolvedValueOnce({ rows: [] })                   // UPDATE leads converted
-            .mockResolvedValueOnce({ rows: [] });                  // COMMIT
-        client.query.mockResolvedValue({ rows: [] });              // any trailing tx call
+        client.query.mockImplementation(async (sql) => {
+            const text = String(sql);
+            if (/SELECT \*\s+FROM leads[\s\S]+FOR UPDATE/i.test(text)) return { rows: [leadRow] };
+            if (/SELECT id, contact_id, zenbooker_job_id\s+FROM jobs/i.test(text)) return { rows: [] };
+            if (/INSERT INTO jobs/i.test(text)) return { rows: [{ id: NEW_JOB_ID }] };
+            if (/SELECT id\s+FROM jobs/i.test(text)) return { rows: [{ id: NEW_JOB_ID }] };
+            if (/UPDATE leads/i.test(text)) {
+                return { rows: [{ id: leadRow.id, uuid: leadRow.uuid, status: 'Converted', converted_to_job: true }] };
+            }
+            return { rows: [], rowCount: 0 };
+        });
 
         const svc = loadLeadsService({
-            dbQuery: poolQuery(makeLeadRow()),
+            dbQuery: poolQuery(leadRow),
             client,
             createJob: jest.fn().mockResolvedValue({ job_id: 'zb-2222' }),
             getJob: jest.fn().mockResolvedValue({ job_number: '971346', status: 'scheduled', customer: { id: 'cust-1' } }),
@@ -499,19 +503,22 @@ describe('REPAIR-ADVISOR-001 — convertLead emits job.created only on the new-l
 
     it('TC-RA-063: does NOT emit when an existing local job is reused (localJobCreated===false)', async () => {
         const emit = jest.fn().mockResolvedValue({});
-        // Transaction, REUSE branch: existing-job lookup RETURNS a row (mirror the sibling
-        // suite's mockClaimExistingJob) → no INSERT, localJobCreated=false.
+        const leadRow = makeLeadRow();
+        const existingJob = { id: 1131, contact_id: 123, zenbooker_job_id: null };
         const client = { query: jest.fn(), release: jest.fn() };
-        client.query
-            .mockResolvedValueOnce({ rows: [] })   // BEGIN
-            .mockResolvedValueOnce({ rows: [] })   // pg_advisory_xact_lock
-            .mockResolvedValueOnce({ rows: [{ id: 1131, contact_id: 123, zenbooker_job_id: null }] }) // existing job → reuse
-            .mockResolvedValueOnce({ rows: [] })   // UPDATE leads converted
-            .mockResolvedValueOnce({ rows: [] });  // COMMIT
-        client.query.mockResolvedValue({ rows: [] });
+        client.query.mockImplementation(async (sql) => {
+            const text = String(sql);
+            if (/SELECT \*\s+FROM leads[\s\S]+FOR UPDATE/i.test(text)) return { rows: [leadRow] };
+            if (/SELECT id, contact_id, zenbooker_job_id\s+FROM jobs/i.test(text)) return { rows: [existingJob] };
+            if (/SELECT id\s+FROM jobs/i.test(text)) return { rows: [{ id: existingJob.id }] };
+            if (/UPDATE leads/i.test(text)) {
+                return { rows: [{ id: leadRow.id, uuid: leadRow.uuid, status: 'Converted', converted_to_job: true }] };
+            }
+            return { rows: [], rowCount: 0 };
+        });
 
         const svc = loadLeadsService({
-            dbQuery: poolQuery(makeLeadRow()),
+            dbQuery: poolQuery(leadRow),
             client,
             createJob: jest.fn().mockResolvedValue({ job_id: 'zb-1131' }),
             getJob: jest.fn().mockResolvedValue({ job_number: '971346', status: 'scheduled', customer: { id: 'cust-1' } }),

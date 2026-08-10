@@ -10,6 +10,8 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const db = require('../backend/src/db/connection');
+const eventBus = require('../backend/src/services/eventBus');
+const eventService = require('../backend/src/services/eventService');
 const fsmService = require('../backend/src/services/fsmService');
 const skill = require('../backend/src/services/agentSkills/skills/confirmLeadBooking');
 
@@ -109,7 +111,7 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
         expect(ROLLBACK).toMatch(/Rollback AGENT-BOOKING-FAIL-001/);
     });
 
-    test('incident lead + Monday chosen slot is refused before migration and books after it', async () => {
+    test('LEAD-AUTOCONVERT-HOLD-ONLY: booking hold changes to Review without converting or linking a Job', async () => {
         if (!dbReady) return console.warn('AGENT-BOOKING-FAIL-001 SKIPPED-NEEDS-DB');
 
         const client = await db.pool.connect();
@@ -120,6 +122,8 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
         const leadUuid = `AB${process.pid}${Date.now()}`.slice(-20);
         const foreignLeadUuid = `FB${process.pid}${Date.now()}`.slice(-20);
         const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const eventEmitSpy = jest.spyOn(eventBus, 'emit').mockResolvedValue({ id: null });
+        const legacyEventSpy = jest.spyOn(eventService, 'logEvent').mockImplementation(() => {});
         try {
             await client.query('BEGIN');
             db.query = (text, params) => client.query(text, params);
@@ -231,13 +235,19 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
 
             expect(out.success).toBe(true);
             const stored = await client.query(
-                `SELECT status, lead_date_time, lead_end_date_time
+                `SELECT id, status, converted_to_job, lead_date_time, lead_end_date_time
                  FROM leads WHERE company_id = $1 AND uuid = $2`,
                 [companyId, leadUuid]
             );
             expect(stored.rows[0].status).toBe('Review');
+            expect(stored.rows[0].converted_to_job).toBe(false);
             expect(stored.rows[0].lead_date_time.toISOString()).toBe('2026-07-20T14:00:00.000Z');
             expect(stored.rows[0].lead_end_date_time.toISOString()).toBe('2026-07-20T16:00:00.000Z');
+            const heldJobs = await client.query(
+                `SELECT id FROM jobs WHERE company_id = $1 AND lead_id = $2`,
+                [companyId, stored.rows[0].id]
+            );
+            expect(heldJobs.rows).toHaveLength(0);
             expect((await client.query(
                 `SELECT status, lead_date_time, lead_end_date_time, phone
                  FROM leads WHERE company_id = $1 AND uuid = $2`,
@@ -258,6 +268,8 @@ describe('AGENT-BOOKING-FAIL-001 · DB-driven Review transition', () => {
                 await client.query('ROLLBACK');
             } finally {
                 client.release();
+                eventEmitSpy.mockRestore();
+                legacyEventSpy.mockRestore();
                 errorSpy.mockRestore();
             }
         }

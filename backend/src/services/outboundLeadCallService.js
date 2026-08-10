@@ -553,7 +553,19 @@ async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
                  WHERE id = $1 AND status <> 'booked'`,
                 [attempt.id]
             );
-            if (String(lead.Status || '').toLowerCase() !== 'review') {
+            const isConverted = String(lead.Status || '').toLowerCase() === 'converted';
+            let hasLinkedJob = false;
+            if (!isConverted && lead.ClientId) {
+                const linked = await db.query(
+                    `SELECT 1
+                     FROM jobs
+                     WHERE lead_id = $1 AND company_id = $2
+                     LIMIT 1`,
+                    [lead.ClientId, companyId]
+                );
+                hasLinkedJob = linked.rows.length > 0;
+            }
+            if (!isConverted && !hasLinkedJob && String(lead.Status || '').toLowerCase() !== 'review') {
                 try {
                     await leadsService.updateLead(
                         attempt.lead_uuid,

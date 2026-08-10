@@ -8,8 +8,11 @@
 const db = require('../db/connection');
 const fsmService = require('./fsmService');
 const eventBus = require('./eventBus');
-const { logJobActivity } = require('./jobActivityService');
-const { logLeadContactActivity } = require('./leadContactActivityService');
+const { convertLeadWithJob } = require('./leadConversionService');
+const {
+    logLeadContactActivity,
+    systemActor,
+} = require('./leadContactActivityService');
 const { withTransaction } = require('./transactionService');
 const {
     createCursorFingerprint,
@@ -525,7 +528,7 @@ async function getLeadById(id, companyId = null) {
 // Create Lead
 // =============================================================================
 async function mutateLeadWithActivity(activityActor, work, buildActivities) {
-    if (!activityActor) return work(db);
+    const actor = activityActor || systemActor('Albusto', 'crm');
     return withTransaction(async (client) => {
         const result = await work(client);
         const activities = buildActivities(result).filter(Boolean);
@@ -535,7 +538,7 @@ async function mutateLeadWithActivity(activityActor, work, buildActivities) {
                 entityType: 'lead',
                 action: activity.action,
                 entityId: activity.entityId,
-                actor: activityActor,
+                actor,
                 ...(activity.summary ? { summary: activity.summary } : {}),
             }, { client });
         }
@@ -646,10 +649,49 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
     }
     const columns = mapFieldsToColumns(fields);
     let statusChanged = false;
+    let expectedOldStatus = null;
 
     const result = await mutateLeadWithActivity(
         activityActor,
         async (client) => {
+            if (columns.status) {
+                const { rows: currentRows } = await client.query(
+                    `SELECT status
+                     FROM leads
+                     WHERE uuid = $1 AND company_id = $2
+                     FOR UPDATE`,
+                    [uuid, companyId]
+                );
+                if (currentRows.length === 0) {
+                    throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+                }
+                expectedOldStatus = currentRows[0].status;
+                statusChanged = columns.status !== expectedOldStatus;
+                if (statusChanged && columns.status === 'Converted') {
+                    throw new LeadsServiceError(
+                        'CONVERSION_REQUIRED',
+                        'Converted status can only be set by linking a job',
+                        409
+                    );
+                }
+                if (statusChanged) {
+                    const transition = await fsmService.resolveTransition(
+                        companyId,
+                        'lead',
+                        expectedOldStatus,
+                        columns.status,
+                        { queryable: client }
+                    );
+                    if (transition.valid === false) {
+                        throw new LeadsServiceError(
+                            'FSM_TRANSITION_DENIED',
+                            transition.error || `Lead status transition ${expectedOldStatus} → ${columns.status} is not allowed`,
+                            403
+                        );
+                    }
+                }
+            }
+
             // Handle custom metadata fields (flat api_name keys + Metadata object)
             // For updates, merge with existing metadata to avoid overwriting unset fields.
             const meta = await extractCustomMetadata(fields, client);
@@ -664,33 +706,6 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
 
             if (Object.keys(columns).length === 0) {
                 throw new LeadsServiceError('VALIDATION_ERROR', 'At least one field must be provided', 400);
-            }
-
-            if (columns.status) {
-                const { rows: currentRows } = await client.query(
-                    'SELECT status FROM leads WHERE uuid = $1 AND company_id = $2',
-                    [uuid, companyId]
-                );
-                if (currentRows.length === 0) {
-                    throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
-                }
-                const currentStatus = currentRows[0].status;
-                statusChanged = columns.status !== currentStatus;
-                if (statusChanged) {
-                    const transition = await fsmService.resolveTransition(
-                        companyId,
-                        'lead',
-                        currentStatus,
-                        columns.status
-                    );
-                    if (transition.valid === false) {
-                        throw new LeadsServiceError(
-                            'FSM_TRANSITION_DENIED',
-                            transition.error || `Lead status transition ${currentStatus} → ${columns.status} is not allowed`,
-                            403
-                        );
-                    }
-                }
             }
 
             const setClauses = [];
@@ -709,6 +724,11 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
             idx++;
             conditions.push(`company_id = $${idx}`);
             values.push(companyId);
+            if (columns.status) {
+                idx++;
+                conditions.push(`status = $${idx}`);
+                values.push(expectedOldStatus);
+            }
 
             const { rows } = await client.query(
                 `UPDATE leads SET ${setClauses.join(', ')}
@@ -717,7 +737,11 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
                 values
             );
             if (rows.length === 0) {
-                throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+                throw new LeadsServiceError(
+                    'LEAD_STATUS_CONFLICT',
+                    'Lead status changed while this update was in progress',
+                    409
+                );
             }
 
             return {
@@ -955,146 +979,115 @@ async function claimLocalJobForConversion({
     contactId,
     zenbookerJobId,
     localJobFields,
+    leadUpdates,
     companyId,
     activityActor,
 }) {
-    const client = await db.pool.connect();
     try {
-        await client.query('BEGIN');
-        await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [leadRow.id]);
-
-        const jobConditions = ['lead_id = $1'];
-        const jobParams = [leadRow.id];
-        if (companyId) {
-            jobParams.push(companyId);
-            jobConditions.push(`company_id = $${jobParams.length}`);
-        }
-
-        const { rows: existingJobs } = await client.query(
-            `SELECT id, contact_id, zenbooker_job_id
-             FROM jobs
-             WHERE ${jobConditions.join(' AND ')}
-             ORDER BY id ASC
-             LIMIT 1`,
-            jobParams
-        );
-
-        let localJobId;
-        let localJobCreated = false;
-        let existingZenbookerJobId = null;
-        let activeZenbookerJobId = zenbookerJobId || null;
-
-        if (existingJobs.length > 0) {
-            const existingJob = existingJobs[0];
-            localJobId = existingJob.id;
-            existingZenbookerJobId = existingJob.zenbooker_job_id || null;
-            activeZenbookerJobId = existingZenbookerJobId || activeZenbookerJobId;
-
-            const updates = [];
-            const updateParams = [];
-            let idx = 0;
-
-            if (!existingJob.contact_id && contactId) {
-                idx++;
-                updates.push(`contact_id = $${idx}`);
-                updateParams.push(contactId);
-            }
-
-            if (!existingJob.zenbooker_job_id && zenbookerJobId) {
-                idx++;
-                updates.push(`zenbooker_job_id = $${idx}`);
-                updateParams.push(zenbookerJobId);
-            }
-
-            if (updates.length > 0) {
-                idx++;
-                updateParams.push(localJobId);
-                idx++;
-                updateParams.push(companyId);
-                await client.query(
-                    `UPDATE jobs SET ${updates.join(', ')}, updated_at = NOW()
-                     WHERE id = $${idx - 1} AND company_id = $${idx}`,
-                    updateParams
+        const conversion = await convertLeadWithJob({
+            companyId,
+            leadId: leadRow.id,
+            activityActor,
+            leadUpdates,
+            createOrReuseJob: async ({ client, lead }) => {
+                const { rows: existingJobs } = await client.query(
+                    `SELECT id, contact_id, zenbooker_job_id
+                     FROM jobs
+                     WHERE lead_id = $1 AND company_id = $2
+                     ORDER BY id ASC
+                     LIMIT 1
+                     FOR UPDATE`,
+                    [lead.id, companyId]
                 );
-            }
-        } else {
-            const { rows: [jobRow] } = await client.query(`
-                INSERT INTO jobs (
-                    lead_id, contact_id, zenbooker_job_id, blanc_status, service_name, address,
-                    customer_name, customer_phone, customer_email, company_id,
-                    job_type, job_source, description, metadata, comments,
-                    start_date, end_date, assigned_techs
-                ) VALUES ($1, $2, $3, 'Submitted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
-                RETURNING id
-            `, [
-                leadRow.id,
-                contactId,
-                activeZenbookerJobId,
-                localJobFields.serviceName,
-                localJobFields.address,
-                localJobFields.customerName,
-                localJobFields.customerPhone,
-                localJobFields.customerEmail,
-                leadRow.company_id || null,
-                leadRow.job_type || localJobFields.serviceName,
-                leadRow.job_source || null,
-                localJobFields.description,
-                leadRow.metadata || '{}',
-                leadRow.comments || null,
-                localJobFields.initialStartDate,
-                localJobFields.initialEndDate,
-                localJobFields.initialAssignedTechs,
-            ]);
-            localJobId = jobRow.id;
-            localJobCreated = true;
-        }
 
-        const leadUpdateParams = [leadRow.id, contactId, activeZenbookerJobId, companyId];
+                let localJobId;
+                let localJobCreated = false;
+                let existingZenbookerJobId = null;
+                let activeZenbookerJobId = zenbookerJobId || null;
 
-        await client.query(
-            `UPDATE leads SET
-                converted_to_job = true,
-                status = 'Converted',
-                contact_id = COALESCE(contact_id, $2),
-                zenbooker_job_id = COALESCE($3, zenbooker_job_id)
-             WHERE id = $1 AND company_id = $4`,
-            leadUpdateParams
-        );
+                if (existingJobs.length > 0) {
+                    const existingJob = existingJobs[0];
+                    localJobId = existingJob.id;
+                    existingZenbookerJobId = existingJob.zenbooker_job_id || null;
+                    activeZenbookerJobId = existingZenbookerJobId || activeZenbookerJobId;
 
-        if (activityActor) {
-            await logLeadContactActivity({
-                companyId: leadRow.company_id,
-                entityType: 'lead',
-                action: 'lead.converted',
-                entityId: leadRow.id,
-                actor: activityActor,
-                summary: { job_id: localJobId, status: 'Converted' },
-            }, { client });
-        }
+                    const updates = [];
+                    const updateParams = [];
+                    if (!existingJob.contact_id && contactId) {
+                        updateParams.push(contactId);
+                        updates.push(`contact_id = $${updateParams.length}`);
+                    }
+                    if (!existingJob.zenbooker_job_id && zenbookerJobId) {
+                        updateParams.push(zenbookerJobId);
+                        updates.push(`zenbooker_job_id = $${updateParams.length}`);
+                    }
+                    if (updates.length > 0) {
+                        updateParams.push(localJobId, companyId);
+                        await client.query(
+                            `UPDATE jobs SET ${updates.join(', ')}, updated_at = NOW()
+                             WHERE id = $${updateParams.length - 1}
+                               AND company_id = $${updateParams.length}`,
+                            updateParams
+                        );
+                    }
+                } else {
+                    const { rows: [jobRow] } = await client.query(`
+                        INSERT INTO jobs (
+                            lead_id, contact_id, zenbooker_job_id, blanc_status, service_name, address,
+                            customer_name, customer_phone, customer_email, company_id,
+                            job_type, job_source, description, metadata, comments,
+                            start_date, end_date, assigned_techs
+                        ) VALUES ($1, $2, $3, 'Submitted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
+                        RETURNING id
+                    `, [
+                        lead.id,
+                        contactId,
+                        activeZenbookerJobId,
+                        localJobFields.serviceName,
+                        localJobFields.address,
+                        localJobFields.customerName,
+                        localJobFields.customerPhone,
+                        localJobFields.customerEmail,
+                        companyId,
+                        lead.job_type || localJobFields.serviceName,
+                        lead.job_source || null,
+                        localJobFields.description,
+                        lead.metadata || '{}',
+                        lead.comments || null,
+                        localJobFields.initialStartDate,
+                        localJobFields.initialEndDate,
+                        localJobFields.initialAssignedTechs,
+                    ]);
+                    localJobId = jobRow.id;
+                    localJobCreated = true;
+                }
 
-        if (localJobCreated && activityActor) {
-            await logJobActivity({
-                companyId: leadRow.company_id,
-                action: 'job.created',
-                jobId: localJobId,
-                actor: activityActor,
-                summary: { status: 'Submitted' },
-            }, { client });
-        }
-
-        await client.query('COMMIT');
+                return {
+                    jobId: localJobId,
+                    jobCreated: localJobCreated,
+                    jobStatus: 'Submitted',
+                    zenbookerJobId: activeZenbookerJobId,
+                    existingZenbookerJobId,
+                    leadUpdates: {
+                        ...(contactId ? { contact_id: contactId } : {}),
+                        ...(activeZenbookerJobId ? { zenbooker_job_id: activeZenbookerJobId } : {}),
+                    },
+                };
+            },
+        });
 
         return {
-            localJobId,
-            localJobCreated,
-            zenbookerJobId: activeZenbookerJobId,
-            existingZenbookerJobId,
+            localJobId: conversion.jobId,
+            localJobCreated: conversion.jobCreated,
+            zenbookerJobId: conversion.zenbookerJobId,
+            existingZenbookerJobId: conversion.existingZenbookerJobId,
+            conversionChanged: conversion.conversionChanged,
         };
     } catch (err) {
-        try { await client.query('ROLLBACK'); } catch (_) {}
+        if (err?.code && err?.httpStatus) {
+            throw new LeadsServiceError(err.code, err.message, err.httpStatus);
+        }
         throw err;
-    } finally {
-        client.release();
     }
 }
 
@@ -1213,6 +1206,26 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
     }
 
     let zenbookerJobId = overrides.zenbooker_job_id || null;
+    const conversionLeadUpdates = {};
+    if (overrides.service?.name && overrides.service.name !== leadRow.job_type) {
+        conversionLeadUpdates.job_type = overrides.service.name;
+    }
+    if (overrides.service?.description && overrides.service.description !== (leadRow.lead_notes || '')) {
+        conversionLeadUpdates.lead_notes = overrides.service.description;
+    }
+    if (overrides.address) {
+        if (overrides.address.line1 != null) conversionLeadUpdates.address = overrides.address.line1;
+        if (overrides.address.line2 != null) conversionLeadUpdates.unit = overrides.address.line2;
+        if (overrides.address.city != null) conversionLeadUpdates.city = overrides.address.city;
+        if (overrides.address.state != null) conversionLeadUpdates.state = overrides.address.state;
+        if (overrides.address.postal_code != null) conversionLeadUpdates.postal_code = overrides.address.postal_code;
+    }
+    if (overrides.customer?.phone && overrides.customer.phone !== leadRow.phone) {
+        conversionLeadUpdates.phone = overrides.customer.phone;
+    }
+    if (overrides.customer?.email && overrides.customer.email !== leadRow.email) {
+        conversionLeadUpdates.email = overrides.customer.email;
+    }
 
     const claimedJob = await claimLocalJobForConversion({
         leadRow,
@@ -1234,6 +1247,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
             initialEndDate,
             initialAssignedTechs,
         },
+        leadUpdates: conversionLeadUpdates,
         companyId,
         activityActor,
     });
@@ -1297,47 +1311,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         }
     }
 
-    // 3. Mark lead as converted + sync overridden fields back to lead
-    const setClauses = [
-        'converted_to_job = true',
-        'status = $2',
-        'zenbooker_job_id = COALESCE($3, zenbooker_job_id)',
-    ];
-    const updateParams = [uuid, 'Converted', zenbookerJobId];
-    let pIdx = 3;
-
-    // Sync back job type if changed in wizard
-    if (overrides.service?.name && overrides.service.name !== leadRow.job_type) {
-        pIdx++; setClauses.push(`job_type = $${pIdx}`); updateParams.push(overrides.service.name);
-    }
-    // Sync back description if changed
-    if (overrides.service?.description && overrides.service.description !== (leadRow.lead_notes || '')) {
-        pIdx++; setClauses.push(`lead_notes = $${pIdx}`); updateParams.push(overrides.service.description);
-    }
-    // Sync back address if overridden
-    if (overrides.address) {
-        if (overrides.address.line1 != null) { pIdx++; setClauses.push(`address = $${pIdx}`); updateParams.push(overrides.address.line1); }
-        if (overrides.address.line2 != null) { pIdx++; setClauses.push(`unit = $${pIdx}`); updateParams.push(overrides.address.line2); }
-        if (overrides.address.city != null) { pIdx++; setClauses.push(`city = $${pIdx}`); updateParams.push(overrides.address.city); }
-        if (overrides.address.state != null) { pIdx++; setClauses.push(`state = $${pIdx}`); updateParams.push(overrides.address.state); }
-        if (overrides.address.postal_code != null) { pIdx++; setClauses.push(`postal_code = $${pIdx}`); updateParams.push(overrides.address.postal_code); }
-    }
-    // Sync back customer fields if overridden
-    if (overrides.customer?.phone && overrides.customer.phone !== leadRow.phone) {
-        pIdx++; setClauses.push(`phone = $${pIdx}`); updateParams.push(overrides.customer.phone);
-    }
-    if (overrides.customer?.email && overrides.customer.email !== leadRow.email) {
-        pIdx++; setClauses.push(`email = $${pIdx}`); updateParams.push(overrides.customer.email);
-    }
-
-    pIdx++;
-    updateParams.push(companyId);
-    await db.query(`
-        UPDATE leads SET ${setClauses.join(', ')}
-        WHERE uuid = $1 AND company_id = $${pIdx}
-    `, updateParams);
-
-    // 4. Add lead comments as local job notes.
+    // 3. Add lead comments as local job notes.
     try {
         const jobsService = require('./jobsService');
         const commentText = leadRow.comments?.trim();

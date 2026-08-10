@@ -11,6 +11,7 @@ jest.mock('../backend/src/services/leadsService', () => {
         activateLead: jest.fn(),
         assignUser: jest.fn(),
         unassignUser: jest.fn(),
+        updateLead: jest.fn(),
         convertLead: jest.fn(),
     };
 });
@@ -38,11 +39,11 @@ const COMPANY = '00000000-0000-4000-8000-000000000001';
 const CRM_USER = '10000000-0000-4000-8000-000000000001';
 const ACTOR = { id: CRM_USER, type: 'user', label: null, source: 'crm' };
 
-function app() {
+function app({ crmUserId = CRM_USER } = {}) {
     const instance = express();
     instance.use(express.json());
     instance.use((req, _res, next) => {
-        req.user = { sub: 'kc-sub', crmUser: { id: CRM_USER } };
+        req.user = { sub: 'kc-sub', crmUser: crmUserId ? { id: crmUserId } : null };
         req.authz = {
             permissions: ['leads.edit', 'leads.convert'],
             scopes: {},
@@ -81,6 +82,7 @@ beforeEach(() => {
         ClientId: '42',
         job_id: 99,
     });
+    leadsService.updateLead.mockResolvedValue({ UUID: 'ABC123', ClientId: '42' });
 });
 
 test.each([
@@ -128,4 +130,14 @@ test('conversion threads the CRM actor and keeps the Lead event on the real Lead
     );
     expect(eventService.logEvent.mock.calls[0][2]).toBe('42');
     expect(eventService.logEvent.mock.calls[0][2]).not.toBe('undefined');
+});
+
+test('LEAD-AUTOCONVERT-PATCH-ACTOR: PATCH fails before mutation without a CRM actor', async () => {
+    const response = await request(app({ crmUserId: null }))
+        .patch('/api/leads/ABC123')
+        .send({ FirstName: 'Stale writer' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('CRM_ACTOR_REQUIRED');
+    expect(leadsService.updateLead).not.toHaveBeenCalled();
 });

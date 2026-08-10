@@ -7,6 +7,7 @@ const mockLogLeadContactActivity = jest.fn();
 
 jest.mock('../backend/src/db/connection', () => ({
     query: jest.fn(),
+    getClient: jest.fn(),
     pool: {
         connect: jest.fn(),
     },
@@ -18,6 +19,9 @@ jest.mock('../backend/src/services/jobActivityService', () => ({
 }));
 jest.mock('../backend/src/services/leadContactActivityService', () => ({
     logLeadContactActivity: (...args) => mockLogLeadContactActivity(...args),
+    systemActor: (label = 'Automation', source = 'crm') => ({
+        id: null, type: 'system', label, source,
+    }),
 }));
 
 const db = require('../backend/src/db/connection');
@@ -63,7 +67,10 @@ function makeLeadRow(overrides = {}) {
     };
 }
 
+let currentLeadRow;
+
 function mockLeadLookup(leadRow = makeLeadRow()) {
+    currentLeadRow = leadRow;
     db.query.mockImplementation((sql) => {
         if (String(sql).includes('SELECT * FROM leads')) {
             return Promise.resolve({ rows: [leadRow] });
@@ -73,22 +80,30 @@ function mockLeadLookup(leadRow = makeLeadRow()) {
 }
 
 function mockClaimExistingJob(existingJob) {
-    mockClient.query
-        .mockResolvedValueOnce({ rows: [] }) // BEGIN
-        .mockResolvedValueOnce({ rows: [] }) // advisory lock
-        .mockResolvedValueOnce({ rows: [existingJob] }) // existing local job lookup
-        .mockResolvedValueOnce({ rows: [] }) // early lead converted update
-        .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    mockClient.query.mockImplementation(async (sql) => {
+        const text = String(sql);
+        if (/SELECT \*\s+FROM leads[\s\S]+FOR UPDATE/i.test(text)) return { rows: [currentLeadRow] };
+        if (/SELECT id, contact_id, zenbooker_job_id\s+FROM jobs/i.test(text)) return { rows: [existingJob] };
+        if (/SELECT id\s+FROM jobs/i.test(text)) return { rows: [{ id: existingJob.id }] };
+        if (/UPDATE leads/i.test(text)) {
+            return { rows: [{ id: currentLeadRow.id, uuid: currentLeadRow.uuid, status: 'Converted', converted_to_job: true }] };
+        }
+        return { rows: [], rowCount: 0 };
+    });
 }
 
 function mockClaimNewJob(jobId = 1131) {
-    mockClient.query
-        .mockResolvedValueOnce({ rows: [] }) // BEGIN
-        .mockResolvedValueOnce({ rows: [] }) // advisory lock
-        .mockResolvedValueOnce({ rows: [] }) // existing local job lookup
-        .mockResolvedValueOnce({ rows: [{ id: jobId }] }) // local job insert
-        .mockResolvedValueOnce({ rows: [] }) // early lead converted update
-        .mockResolvedValueOnce({ rows: [] }); // COMMIT
+    mockClient.query.mockImplementation(async (sql) => {
+        const text = String(sql);
+        if (/SELECT \*\s+FROM leads[\s\S]+FOR UPDATE/i.test(text)) return { rows: [currentLeadRow] };
+        if (/SELECT id, contact_id, zenbooker_job_id\s+FROM jobs/i.test(text)) return { rows: [] };
+        if (/INSERT INTO jobs/i.test(text)) return { rows: [{ id: jobId }] };
+        if (/SELECT id\s+FROM jobs/i.test(text)) return { rows: [{ id: jobId }] };
+        if (/UPDATE leads/i.test(text)) {
+            return { rows: [{ id: currentLeadRow.id, uuid: currentLeadRow.uuid, status: 'Converted', converted_to_job: true }] };
+        }
+        return { rows: [], rowCount: 0 };
+    });
 }
 
 function insertedJobDescription() {
@@ -102,6 +117,7 @@ describe('leadsService.convertLead idempotency', () => {
         mockClient.query.mockReset();
         mockClient.release.mockReset();
         db.pool.connect.mockResolvedValue(mockClient);
+        db.getClient.mockResolvedValue(mockClient);
         mockLeadLookup();
         mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
         mockLogLeadContactActivity.mockResolvedValue({ ok: true, id: 2 });
@@ -186,7 +202,15 @@ describe('leadsService.convertLead idempotency', () => {
             action: 'lead.converted',
             entityId: 42,
             actor,
-            summary: { job_id: 1131, status: 'Converted' },
+            summary: { job_id: 1131, status: 'Converted', previous_status: 'Submitted' },
+        }, { client: mockClient });
+        expect(mockLogLeadContactActivity).toHaveBeenCalledWith({
+            companyId: 'company-1',
+            entityType: 'lead',
+            action: 'lead.status_changed',
+            entityId: 42,
+            actor,
+            summary: { job_id: 1131, status: 'Converted', previous_status: 'Submitted' },
         }, { client: mockClient });
     });
 
@@ -206,7 +230,7 @@ describe('leadsService.convertLead idempotency', () => {
             link: '/jobs/1131',
         });
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO jobs'))).toBe(false);
-        expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('pg_advisory_xact_lock'))).toBe(true);
+        expect(mockClient.query.mock.calls.some(([sql]) => /FROM leads[\s\S]+FOR UPDATE/.test(String(sql)))).toBe(true);
         expect(mockLogJobActivity).not.toHaveBeenCalled();
     });
 
