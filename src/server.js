@@ -225,6 +225,10 @@ const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payment
 const localJobsRouter = require('../backend/src/routes/jobs');
 app.use('/api/zenbooker/payments', authenticate, requireCompanyAccess, zenbookerPaymentsRouter);
 app.use('/api/jobs', authenticate, requireCompanyAccess, localJobsRouter);
+// Dispatch technician roster (native directory; ZB-DECOUPLE F1). Primary native
+// path is /api/team; /api/zenbooker is a DEPRECATED backward-compat alias kept only
+// for the currently-deployed native mobile app until it ships a build using /api/team.
+app.use('/api/team', authenticate, requireCompanyAccess, zenbookerRouter);
 app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
 // TASKS-001 — cross-entity tasks (per-route requirePermission inside the router).

@@ -1,11 +1,12 @@
 /**
- * Zenbooker Scheduling API Client
- * Frontend fetch wrapper for /api/zenbooker/* proxy endpoints.
+ * Team roster + zip lookup API client.
+ * ZB-DECOUPLE F1: the dispatch roster now lives at the native /api/team path
+ * (the old /api/zenbooker alias still resolves for the deployed mobile app).
  */
 
 import { authedFetch } from './apiClient';
 
-const ZB_BASE = '/api/zenbooker';
+const TEAM_BASE = '/api/team';
 
 async function zbRequest<T>(url: string, options?: RequestInit): Promise<T> {
     const res = await authedFetch(url, {
@@ -59,5 +60,5 @@ export interface TeamMember {
 }
 
 export async function getTeamMembers(): Promise<TeamMember[]> {
-    return zbRequest<TeamMember[]>(`${ZB_BASE}/team-members`);
+    return zbRequest<TeamMember[]>(`${TEAM_BASE}/team-members`);
 }

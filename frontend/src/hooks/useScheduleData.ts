@@ -209,7 +209,7 @@ export function useScheduleData() {
 
     useEffect(() => {
         if (!canDispatch) return;
-        authedFetch('/api/zenbooker/team-members')
+        authedFetch('/api/team/team-members')
             .then(r => r.json())
             .then(j => {
                 const list = j.data || [];

@@ -1,7 +1,7 @@
 /**
  * useProviders — the company's technician roster (ZenBooker team members).
  *
- * Same source the Schedule uses (`/api/zenbooker/team-members`, dispatch-scoped).
+ * Same source the Schedule uses (`/api/team/team-members`, dispatch-scoped).
  * Best-effort: any error yields an empty list. Pass `enabled=false` to skip the
  * fetch entirely (e.g. when the caller lacks the dispatch permission).
  */
@@ -18,7 +18,7 @@ export function useProviders(enabled: boolean = true): { providers: ProviderInfo
         if (!enabled) return;
         let cancelled = false;
         setLoading(true);
-        authedFetch('/api/zenbooker/team-members')
+        authedFetch('/api/team/team-members')
             .then((r) => r.json())
             .then((j) => {
                 if (cancelled) return;

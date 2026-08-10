@@ -65,7 +65,7 @@ const okJson = (data: unknown) => new Response(JSON.stringify({ ok: true, data }
 const origFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes('/api/zenbooker/team-members')) return okJson(teamMembers);
+    if (url.includes('/api/team/team-members')) return okJson(teamMembers);
     if (url.includes('/api/jobs')) return okJson({ results: jobs, total: jobs.length, offset: 0, limit: 200, has_more: false });
     if (url.includes('/api/schedule/slot-recommendations')) {
         return okJson({

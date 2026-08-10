@@ -639,10 +639,14 @@ if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` 
   payments-budget/`FEATURE_ZENBOOKER_SYNC` are deleted in F5 once the mode-collapse removes that last
   call. Verify: no dangling require of deleted services (boot-safe), local writes preserved, unit
   contracts C4b+C2 13/13, FE untouched. DB-integration verified on staging (real DB).
-- **F1 — rename team-members route (needs mobile coordination):** `:228` → native path
-  (e.g. `/api/team/field-workers`); update FE useProviders/useScheduleData/CustomTimeModal +
-  albusto-mobile. ⚠ Keep the old path as a TEMPORARY alias until the native app ships the new one
-  (separately deployed) — do NOT hard-cut.
+- **F1 — rename team-members route to native — DONE 2026-08-10.** The dispatch-roster router
+  (native data since F5) now mounts at **`/api/team`** (primary); `/api/zenbooker` stays as a
+  DEPRECATED backward-compat alias for the currently-deployed native mobile app. Web switched to
+  `/api/team/team-members` (zenbookerApi.ts/useScheduleData/useProviders/slotPickerHarness);
+  albusto-mobile code switched too (jobControlsApi.ts + test) for its next build. ⚠ Remove the
+  `/api/zenbooker` alias only AFTER the mobile app ships a build using `/api/team` (separate deploy).
+  FE build ✓. (File `routes/zenbooker.js` + `frontend/services/zenbookerApi.ts` keep their names —
+  pure cosmetic, optional later polish.)
 - **F5 — collapse directory mode + drop column — DONE 2026-08-10 (tandem: Codex impl, Claude verify + migration).**
   Native-only technician directory: `getTechnicianDirectoryMode` + the legacy/compare mode +
   `TECHNICIAN_DIRECTORY_MODE`/`_COMPANY_IDS`/`FEATURE_ZENBOOKER_SYNC` removed; `technicianRosterService.listActive`
