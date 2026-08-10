@@ -29,9 +29,19 @@ export class NewJobModal {
 
     async selectContact(marker: string): Promise<void> {
         await this.contactSearch.fill(marker);
-        const candidate = this.page.locator('.cld-candidates__item').filter({ hasText: marker }).first();
-        await expect(candidate).toBeVisible();
-        await candidate.click();
+        // The candidate dropdown renders inside the panel dialog and its click point is
+        // intermittently covered by the Radix scrim (fixed inset-0 z-[140]) — the element
+        // is visible+stable, but BOTH a normal click and force:true route to the topmost
+        // element (the scrim), so pickContact never fires. dispatchEvent fires React's
+        // onClick directly on the candidate regardless of coverage. Re-query per retry in
+        // case an SSE tick re-mounts it; stop once the dropdown closed (candidate → picked).
+        const candidate = () => this.page.locator('.cld-candidates__item').filter({ hasText: marker }).first();
+        await expect(candidate()).toBeVisible();
+        await expect(async () => {
+            if (await candidate().count() === 0) return; // already picked
+            await candidate().dispatchEvent('click');
+            await expect(candidate()).toHaveCount(0, { timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
     }
 
     async ensureAddress(): Promise<void> {
