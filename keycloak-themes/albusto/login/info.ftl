@@ -22,11 +22,23 @@
 </#if>
 
 <#if proceedUri?has_content>
-  <#-- ===== MANUAL PROCEED — no auto-redirect, cannot loop ===== -->
+  <#-- ===== MANUAL PROCEED — no auto-redirect, cannot loop.
+       Security "confirm it's you" step. Name the button after the actual action
+       when we can tell (best-effort, wrapped so it can never break the page);
+       fall back to a neutral label since this page is shared across actions. ===== -->
+  <#assign proceedLabel = "Continue securely">
+  <#attempt>
+    <#if requiredActions?? && requiredActions?has_content>
+      <#list requiredActions as ra>
+        <#if ra?string?upper_case?contains("PASSWORD")><#assign proceedLabel = "Set a new password"></#if>
+      </#list>
+    </#if>
+  <#recover>
+  </#attempt>
   <@layout.registrationLayout displayMessage=false; section>
     <#if section = "header">
-      <h1>One more step</h1>
-      <p class="lede">Click continue to finish updating your account.</p>
+      <h1>Confirm it&rsquo;s you</h1>
+      <p class="lede">One quick step to keep your account secure.</p>
     <#elseif section = "form">
       <#if message?has_content && (message.summary)?has_content && message.type != 'success'>
         <div class="alert alert--${message.type}">
@@ -34,7 +46,7 @@
           <span>${kcSanitize(message.summary)?no_esc}</span>
         </div>
       </#if>
-      <a class="btn" href="${proceedUri}">Continue</a>
+      <a class="btn" href="${proceedUri}">${proceedLabel}</a>
     </#if>
   </@layout.registrationLayout>
 <#else>
