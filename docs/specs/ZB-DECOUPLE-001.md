@@ -580,8 +580,40 @@ manual "link a Zenbooker team member" step is gone.
 Gates: FE build clean; backend 105/105. (Pre-existing unrelated FE failures:
 IntegrationsPage, ScheduleHeaderContract — fail on origin/master too.)
 
-### Phase F (remaining ZB teardown — not started)
-Rename `/api/zenbooker/team-members` → native endpoint (useProviders /
-useScheduleData / CustomTimeModal / albusto-mobile); retire the ZB payments
-router / jobs-sync cron / legacy lead→ZB push / webhooks; drop the
-zenbooker_team_member_id column + zenbookerClient + ZENBOOKER_API_KEY.
+### Phase F (remaining ZB teardown — STARTED 2026-08-09)
+
+**Structural map (established 2026-08-09):** the backend is TWO trees — the Express
+bootstrap + route mounts live in repo-root `src/server.js`; ZB routers/services live in
+`backend/src/`. Dockerfile copies both (`COPY src/ ./src/` + `COPY backend/src/`). ZB mounts:
+`src/server.js:226` `/api/zenbooker/payments`→zenbookerPaymentsRouter · `:228` `/api/zenbooker`
+→zenbookerRouter (ONLY `/team-members`, mode-aware native) · `:298` `/api/integrations/zenbooker`
+→integrationsZenbookerRouter (webhooks). `FEATURE_ZENBOOKER_SYNC` defaults **ON**.
+
+**KEEP (provenance, never drop):** `contacts.zenbooker_id`, `jobs.zenbooker_job_id`,
+`leads.zenbooker_job_id`, `source='zenbooker'`, external-id map, and every service read of them
+(jobsService/leadsService/contactsService/… reference ZB ids historically). Phase F removes the
+LIVE INTEGRATION, not the history.
+
+**Open discovery to close before its sub-phase:** `reconcileJobLinks`
+(zenbookerPaymentsSyncService) — classify LOCAL payment↔job healing vs ZB-API job-body fetch;
+if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` depends on it.
+
+**Ordered sub-phases (each independently shippable to staging; prod only on «Деплой»):**
+- **F2a — dead cron + inbound webhooks (SAFEST, backend-only, no app consumers):** delete
+  `backend/src/services/zbJobsSyncCron.js` (confirmed dead — zero requires); unmount
+  `src/server.js:298` + delete `routes/integrations-zenbooker.js`; drop `ZENBOOKER_WEBHOOK_SECRET`
+  / `ZENBOOKER_WEBHOOK_COMPANY_ID`. Inbound ZB pushes are moot post-Phase-D.
+- **F2b — legacy lead→ZB status push:** remove `jobSyncService.syncBlancStatusToZenbooker` call
+  in `routes/leads.js:730` (+ the function). Native jobs carry no zenbooker_job_id → already no-op.
+- **F3 — payments sync retire:** unmount `:226`, delete `routes/zenbooker/payments.js` +
+  `zenbookerPaymentsSyncService.syncPayments`; resolve reconcileJobLinks (keep-local decision).
+- **F4 — sync services + client:** retire zenbookerSyncService/contactsSyncService/jobSyncService/
+  zenbookerActivityService ZB-API pulls (preserve local logic); delete `zenbookerClient.js`; remove
+  `ZENBOOKER_API_KEY`/`_API_BASE_URL`/`_TIMEOUT_MS`/`_DEFAULT_COMPANY_ID`/payments-budget vars.
+- **F1 — rename team-members route (needs mobile coordination):** `:228` → native path
+  (e.g. `/api/team/field-workers`); update FE useProviders/useScheduleData/CustomTimeModal +
+  albusto-mobile. ⚠ Keep the old path as a TEMPORARY alias until the native app ships the new one
+  (separately deployed) — do NOT hard-cut.
+- **F5 — collapse directory mode + drop column (LAST, reviewed migration):** native-only path
+  (drop legacy/compare + allowlist + technicianRosterService ZB fetch + getZenbookerTeamMemberIdForUser);
+  migration DROP COLUMN `crm_users.zenbooker_team_member_id` (dormant since Phase E).

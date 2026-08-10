@@ -505,10 +505,6 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
       require('../backend/src/services/outboundCallWorker').start();
     }
 
-    // Start daily Zenbooker jobs sync cron
-    const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');
-    zbSyncCron.start();
-
     // Start email sync scheduler (EMAIL-001)
     const emailSyncService = require('../backend/src/services/emailSyncService');
     emailSyncService.startScheduler();
