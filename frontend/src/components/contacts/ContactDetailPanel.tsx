@@ -6,13 +6,11 @@
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Pencil, RefreshCw, Activity, CloudUpload, Loader2, ChevronRight } from 'lucide-react';
+import { Pencil, Activity, ChevronRight } from 'lucide-react';
 import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
-import { toast } from 'sonner';
 import { Skeleton } from '../ui/skeleton';
 import { Switch } from '../ui/switch';
 import type { Contact, ContactLead } from '../../types/contact';
-import * as contactsApi from '../../services/contactsApi';
 import { pulseApi } from '../../services/pulseApi';
 import { useAuthz } from '../../hooks/useAuthz';
 import { ContactInfoSections } from './ContactInfoSections';
@@ -36,24 +34,7 @@ interface ContactDetailPanelProps {
 export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged, onContactChanged }: ContactDetailPanelProps) {
     const navigate = useNavigate();
     const [editOpen, setEditOpen] = useState(false);
-    const [syncing, setSyncing] = useState(false);
     const [onlyOpen, setOnlyOpen] = useState(true);
-
-    const handleSync = async () => {
-        setSyncing(true);
-        try {
-            if (contact.zenbooker_customer_id) {
-                await contactsApi.syncToZenbooker(contact.id);
-                toast.success('Synced to Zenbooker');
-            } else {
-                await contactsApi.createZenbookerCustomer(contact.id);
-                toast.success('Created in Zenbooker');
-            }
-            onContactChanged?.();
-        } catch (err) {
-            toast.error('Sync failed', { description: err instanceof Error ? err.message : '' });
-        } finally { setSyncing(false); }
-    };
 
     const handleViewInPulse = async () => {
         if (contact.phone_e164) {
@@ -108,9 +89,6 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                                 </button>
                                 <button onClick={() => setEditOpen(true)} title="Edit contact" className="p-1.5 max-md:p-3 rounded-lg transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }}>
                                     <Pencil className="size-3.5 max-md:size-4" />
-                                </button>
-                                <button onClick={handleSync} disabled={syncing} title={contact.zenbooker_customer_id ? 'Sync to Zenbooker' : 'Create in Zenbooker'} className="p-1.5 max-md:p-3 rounded-lg transition-opacity hover:opacity-70 disabled:opacity-40" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    {syncing ? <Loader2 className="size-3.5 max-md:size-4 animate-spin" /> : contact.zenbooker_customer_id ? <RefreshCw className="size-3.5 max-md:size-4" /> : <CloudUpload className="size-3.5 max-md:size-4" />}
                                 </button>
                             </div>
                         </div>

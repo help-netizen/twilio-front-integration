@@ -89,26 +89,3 @@ export function RevokeDialog({ target, onClose, onRevoke, isPending }: RevokeDia
         </Dialog>
     );
 }
-
-interface RegenerateDialogProps { open: boolean; onOpenChange: (o: boolean) => void; onRegenerate: () => void; isPending: boolean; }
-export function RegenerateDialog({ open, onOpenChange, onRegenerate, isPending }: RegenerateDialogProps) {
-    return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent variant="panel">
-                <DialogPanelHeader>
-                    <DialogTitle className="flex items-center gap-2 text-[22px] font-semibold leading-tight text-[var(--blanc-warning)]" style={{ fontFamily: 'var(--blanc-font-heading)' }}><AlertTriangle className="h-5 w-5" />Regenerate Webhook URL</DialogTitle>
-                    <DialogDescription className="sr-only">Generate a new webhook URL and invalidate the current one.</DialogDescription>
-                </DialogPanelHeader>
-                <DialogBody className="md:px-8 md:py-7">
-                    <div className="mx-auto w-full max-w-[740px] space-y-6">
-                        <p className="text-sm text-[var(--blanc-ink-2)]">This will generate a new webhook URL and <strong>invalidate the current one</strong>. You will need to update the URL in Zenbooker settings.</p>
-                    </div>
-                </DialogBody>
-                <DialogPanelFooter>
-                    <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-                    <Button onClick={onRegenerate} disabled={isPending}>{isPending ? 'Regenerating…' : 'Regenerate'}</Button>
-                </DialogPanelFooter>
-            </DialogContent>
-        </Dialog>
-    );
-}

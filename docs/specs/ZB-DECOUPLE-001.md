@@ -601,8 +601,8 @@ if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` 
 **Ordered sub-phases (each independently shippable to staging; prod only on «Деплой»):**
 - **F2-cron — DONE 2026-08-09 (`1c677269`):** the no-op jobs-sync cron stub, unwired from
   `src/server.js` + deleted.
-- **F2a — integration route + webhooks (NEXT; NOT backend-only — FE-entangled, atomic 6-file
-  batch):** unmount `src/server.js:296-298` + delete `backend/src/routes/integrations-zenbooker.js`
+- **F2a — integration route + webhooks — DONE 2026-08-10 (atomic 8-file batch; FE build ✓,
+  server require-graph loads ✓; handleJobWebhook + jobsService.syncFromZenbooker now dead → F4):** unmount `src/server.js:296-298` + delete `backend/src/routes/integrations-zenbooker.js`
   (webhooks POST /webhooks + /wh/:key; FE-facing GET/POST /webhook-url, GET/PUT /api-key, POST
   /contacts/:id/create-customer + /sync, GET /jobs); drop `ZENBOOKER_WEBHOOK_SECRET` /
   `_WEBHOOK_COMPANY_ID`. **FE to remove in the same commit (build breaks otherwise, noUnusedLocals):**
