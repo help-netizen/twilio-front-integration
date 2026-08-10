@@ -34,6 +34,11 @@ export interface Technician {
     name: string;
 }
 
+export interface ProvisionedTechnicians {
+    technicians: Technician[];
+    userIdsToRestore: string[];
+}
+
 export interface JobRecord extends JsonObject {
     id: number;
     start_date?: string | null;
@@ -427,6 +432,86 @@ export class ApiClient {
         });
         if (techs.length < minimum) throw new Error(`Expected at least ${minimum} active technicians, found ${techs.length}`);
         return techs;
+    }
+
+    /**
+     * Ensure the native directory has enough technicians for multi-provider
+     * schedule tests. Existing office users are promoted only for the test and
+     * returned for restoration. If the tenant has no second member, create one
+     * stable dedicated provider account once and reuse it on later runs.
+     */
+    async provisionTechnicians(minimum: number): Promise<ProvisionedTechnicians> {
+        let technicians = await this.fetchTechs(0);
+        if (technicians.length >= minimum) return { technicians, userIdsToRestore: [] };
+
+        const list = await this.get<JsonObject>('/api/users?status=active&limit=100');
+        const users = Array.isArray(list.users) ? list.users.filter(isObject) : [];
+        const candidates = users.filter((user) =>
+            user.membership_status === 'active'
+            && user.is_provider !== true
+            && user.role_key !== 'provider'
+            && typeof user.id === 'string'
+        );
+        const userIdsToRestore: string[] = [];
+
+        try {
+            for (const user of candidates) {
+                const userId = String(user.id);
+                await this.patch(`/api/users/${userId}`, { profile: { is_provider: true } });
+                userIdsToRestore.push(userId);
+
+                for (let poll = 0; poll < 10; poll += 1) {
+                    technicians = await this.fetchTechs(0);
+                    if (technicians.length >= minimum) {
+                        return { technicians, userIdsToRestore };
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                }
+            }
+
+            const seedEmail = 'albusto-e2e-schedule-provider@e2e.local';
+            const existingSeed = users.find((user) =>
+                String(user.email || '').toLowerCase() === seedEmail
+            );
+            if (!existingSeed) {
+                await this.post('/api/users', {
+                    email: seedEmail,
+                    full_name: 'E2E Schedule Provider',
+                    role: 'company_member',
+                    role_key: 'provider',
+                    profile: { is_provider: true },
+                });
+            } else if (typeof existingSeed.id === 'string') {
+                await this.patch(`/api/users/${existingSeed.id}`, {
+                    role_key: 'provider',
+                    profile: { is_provider: true },
+                });
+            }
+
+            for (let poll = 0; poll < 10; poll += 1) {
+                technicians = await this.fetchTechs(0);
+                if (technicians.length >= minimum) {
+                    return { technicians, userIdsToRestore };
+                }
+                await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+        } catch (error) {
+            await this.restoreProvisionedTechnicians(userIdsToRestore);
+            throw error;
+        }
+
+        await this.restoreProvisionedTechnicians(userIdsToRestore);
+        throw new Error(`Unable to provision ${minimum} active technicians from the tenant's existing users`);
+    }
+
+    async restoreProvisionedTechnicians(userIds: string[]): Promise<void> {
+        for (const userId of [...userIds].reverse()) {
+            try {
+                await this.patch(`/api/users/${userId}`, { profile: { is_provider: false } });
+            } catch {
+                // Teardown is best-effort and must not mask the schedule result.
+            }
+        }
     }
 
     /**

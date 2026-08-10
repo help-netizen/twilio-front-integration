@@ -19,13 +19,20 @@ export class LoginPage {
     }
 
     async expectVisible(): Promise<void> {
-        await expect(this.username).toBeVisible();
-        await expect(this.password).toBeVisible();
+        await expect(this.username).toBeVisible({ timeout: 30_000 });
+        await expect(this.password).toBeVisible({ timeout: 30_000 });
     }
 
     async login(user: string, pass: string): Promise<void> {
         await this.username.fill(user);
         await this.password.fill(pass);
         await this.submit.click();
+    }
+
+    async expectSessionCleared(protectedPath = '/jobs'): Promise<void> {
+        await this.expectVisible();
+        await this.page.goto(protectedPath);
+        await this.expectVisible();
+        await expect(this.page).toHaveURL(/\/realms\//);
     }
 }

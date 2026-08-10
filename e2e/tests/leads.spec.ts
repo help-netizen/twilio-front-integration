@@ -6,7 +6,7 @@ import { LeadsPage } from '../pages/LeadsPage';
 test.describe('@suite:leads', () => {
     test.skip(!hasAdmin(), 'requires E2E_ADMIN_USER / E2E_ADMIN_PASS');
 
-    test.fixme('@p0 LEAD-01 create lead', async ({ page }) => {
+    test('@p0 LEAD-01 create lead', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];
         const marker = `${RUN_ID} Lead`;

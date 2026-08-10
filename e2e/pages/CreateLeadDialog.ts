@@ -20,6 +20,25 @@ export class CreateLeadDialog {
     get description(): Locator { return this.page.getByLabel('Description'); }
     get submit(): Locator { return this.page.getByRole('button', { name: 'Create Lead', exact: true }); }
 
+    private async selectOption(trigger: () => Locator, option: () => Locator): Promise<void> {
+        await expect(async () => {
+            if (await option().count() > 0) return;
+            await trigger().dispatchEvent('click');
+            await expect(option()).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+
+        const optionLabel = (await option().textContent())?.trim() || '';
+        await expect(async () => {
+            if (await option().count() === 0) {
+                await expect(trigger()).toContainText(optionLabel, { timeout: 2000 });
+                return;
+            }
+            await option().dispatchEvent('click');
+            await expect(option()).toHaveCount(0, { timeout: 2000 });
+            await expect(trigger()).toContainText(optionLabel, { timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+    }
+
     async fill(values: LeadFormValues): Promise<void> {
         const [first, ...last] = values.name.trim().split(/\s+/);
         await this.firstName.fill(first);
@@ -27,26 +46,24 @@ export class CreateLeadDialog {
         await this.phone.fill(values.phone);
         if (values.email) await this.email.fill(values.email);
 
-        // The lead form re-renders as it loads, so the Radix select triggers/options
-        // jitter ("not stable") and force-clicking an option doesn't reliably close the
-        // dropdown (its overlay then intercepts the submit click). Drive the selects by
-        // keyboard instead — open (force past the jitter), pick, Enter — which selects
-        // AND closes cleanly.
-        await this.jobType.click({ force: true });
-        await this.page.getByRole('option').first().click({ force: true });
-        await this.jobSource.click({ force: true });
-        await this.page.getByRole('option', { name: 'Other', exact: true }).click({ force: true });
-        // Wait for the select dropdown/overlay to fully close — a lingering Radix
-        // overlay was intercepting the submit-button click.
-        await expect(this.page.getByRole('option')).toHaveCount(0);
+        await this.selectOption(
+            () => this.jobType,
+            () => this.page.getByRole('option').first(),
+        );
+        await this.selectOption(
+            () => this.jobSource,
+            () => this.page.getByRole('option', { name: 'Other', exact: true }),
+        );
         if (values.description) await this.description.fill(values.description);
     }
 
     async create(values: LeadFormValues): Promise<void> {
         await this.fill(values);
-        // The submit button jitters with the re-rendering form and a Radix overlay can
-        // linger over it — force past the actionability check.
-        await this.submit.click({ force: true });
-        await expect(this.title).toBeHidden();
+        await expect(async () => {
+            if (await this.title.isHidden()) return;
+            await expect(this.submit).toBeEnabled({ timeout: 2000 });
+            await this.submit.dispatchEvent('click');
+            await expect(this.title).toBeHidden({ timeout: 5000 });
+        }).toPass({ timeout: 30_000 });
     }
 }

@@ -32,7 +32,7 @@ test.describe('@suite:jobs', () => {
             cleanup.push({ type: 'job', id: jobId });
             await expect(page.getByText(/^Job created/)).toBeVisible();
             await expect(page.getByText(contact.name, { exact: false }).first()).toBeVisible();
-            await expect(page.getByText(`${marker} description`, { exact: true })).toBeVisible();
+            await expect(page.getByText(`${marker} description`, { exact: true }).last()).toBeVisible();
 
             await jobs.goto();
             const row = await jobs.searchFor(contact.name);

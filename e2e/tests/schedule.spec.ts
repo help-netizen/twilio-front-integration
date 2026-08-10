@@ -43,7 +43,12 @@ test.describe('@suite:schedule', () => {
             expect(created.start_date).toBeTruthy();
 
             await schedule.goto();
-            await schedule.findScheduled(contact.name, undefined, created.start_date || undefined);
+            await schedule.findScheduled(
+                contact.name,
+                undefined,
+                created.start_date || undefined,
+                String(jobId).padStart(6, '0'),
+            );
         } finally {
             await api.cleanup(cleanup);
             await api.dispose();
@@ -53,9 +58,12 @@ test.describe('@suite:schedule', () => {
     test('@p0 SCH-02 assign a technician and show the job in that schedule lane', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];
+        let provisionedUserIds: string[] = [];
 
         try {
-            const [techA] = await api.fetchTechs(2);
+            const provisioned = await api.provisionTechnicians(2);
+            provisionedUserIds = provisioned.userIdsToRestore;
+            const [techA] = provisioned.technicians;
             const job = await api.createJob({ label: 'SCH-02 Job' });
             await api.reassignJob(job.id, []);
             cleanup.push(
@@ -74,6 +82,7 @@ test.describe('@suite:schedule', () => {
             await schedule.findScheduled(job.marker, techA.name, updated.start_date || undefined);
         } finally {
             await api.cleanup(cleanup);
+            await api.restoreProvisionedTechnicians(provisionedUserIds);
             await api.dispose();
         }
     });
@@ -83,7 +92,7 @@ test.describe('@suite:schedule', () => {
         const cleanup: CleanupEntity[] = [];
 
         try {
-            const [techA] = await api.fetchTechs(2);
+            const [techA] = await api.fetchTechs(1);
             const job = await api.createJob({ label: 'SCH-03 Job' });
             await api.reassignJob(job.id, [techA]);
             cleanup.push(
@@ -113,9 +122,12 @@ test.describe('@suite:schedule', () => {
     test('@p0 SCH-04 reassign replaces technician A with technician B', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];
+        let provisionedUserIds: string[] = [];
 
         try {
-            const [techA, techB] = await api.fetchTechs(2);
+            const provisioned = await api.provisionTechnicians(2);
+            provisionedUserIds = provisioned.userIdsToRestore;
+            const [techA, techB] = provisioned.technicians;
             const job = await api.createJob({ label: 'SCH-04 Job' });
             await api.reassignJob(job.id, [techA]);
             cleanup.push(
@@ -134,6 +146,7 @@ test.describe('@suite:schedule', () => {
             await schedule.findScheduled(job.marker, techB.name, updated.start_date || undefined);
         } finally {
             await api.cleanup(cleanup);
+            await api.restoreProvisionedTechnicians(provisionedUserIds);
             await api.dispose();
         }
     });
