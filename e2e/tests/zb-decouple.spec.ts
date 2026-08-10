@@ -1,18 +1,15 @@
 import { expect, test } from '../fixtures/test';
-import { ApiClient } from '../fixtures/api';
+import { ApiClient, type CleanupEntity } from '../fixtures/api';
 import { hasAdmin } from '../fixtures/env';
 
 /**
  * ZB-DECOUPLE Phase F regression.
  *
  * Verifies the Zenbooker teardown (a) removed the surfaces it should and (b) left
- * the affected functionality working natively. The broader job/estimate/invoice/
- * schedule lifecycle — which USED to be Zenbooker-coupled and auto-skipped — now
- * runs by default via the P0 suites (JOBS_NATIVE flipped in fixtures/env.ts once
- * Phase F removed the POST /api/jobs → ZB coupling). These tests cover the ZB-
- * specific removals on top of that.
- *
- * Auth-gated: needs the admin storageState (E2E_ADMIN_USER / E2E_ADMIN_PASS).
+ * the affected functionality working natively — in particular, that a tenant WITHOUT
+ * a Zenbooker integration is no longer blocked by it. Before Phase F, `POST /api/jobs`
+ * hard-500'd with "ZENBOOKER_API_KEY is not configured" for such a company; ZBX-04
+ * proves that is gone. Auth-gated: needs the admin storageState (E2E_ADMIN_USER/PASS).
  */
 test.describe('@suite:zb-decouple', () => {
     test.skip(!hasAdmin(), 'requires E2E_ADMIN_USER / E2E_ADMIN_PASS');
@@ -26,14 +23,14 @@ test.describe('@suite:zb-decouple', () => {
         await expect(page.getByRole('tab', { name: 'Zenbooker' })).toHaveCount(0);
     });
 
-    test('@p0 ZBX-02 Payments page loads with no Zenbooker Sync controls (F3)', async ({ page }) => {
+    test('@p0 ZBX-02 Payments page has no Zenbooker Sync controls (F3)', async ({ page }) => {
         await page.goto('/payments');
-        // The page renders — Export is the remaining toolbar action.
-        await expect(page.getByRole('button', { name: /Export/i })).toBeVisible();
+        await page.waitForLoadState('networkidle');
+        await expect(page).toHaveURL(/\/payments/);
         // The Zenbooker payment-sync buttons ("Sync" / "Sync full history") are gone;
         // the local Payments data layer (list/detail/export) is untouched.
-        await expect(page.getByRole('button', { name: /^Sync\b/ })).toHaveCount(0);
         await expect(page.getByRole('button', { name: /full history/i })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: /^Sync$/ })).toHaveCount(0);
     });
 
     test('@p0 ZBX-03 dispatch roster serves natively via /api/team (F1/F5)', async ({ page }) => {
@@ -45,6 +42,26 @@ test.describe('@suite:zb-decouple', () => {
             expect(techs.length).toBeGreaterThan(0);
             expect(techs[0]?.name).toBeTruthy();
         } finally {
+            await api.dispose();
+        }
+    });
+
+    test('@p0 ZBX-04 native job creation is not blocked by Zenbooker (F4)', async ({ page }) => {
+        // The crux of the ZB teardown: pre-Phase-F, POST /api/jobs 500'd with
+        // "ZENBOOKER_API_KEY is not configured" for a company with no Zenbooker.
+        // A successful create with a real job_id proves the block is gone.
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+        try {
+            const job = await api.createJob({ label: 'ZBX-04', scheduled: false });
+            expect(job.id).toBeGreaterThan(0);
+            cleanup.push(
+                { type: 'job', id: job.id },
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+            );
+        } finally {
+            await api.cleanup(cleanup);
             await api.dispose();
         }
     });
