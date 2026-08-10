@@ -550,3 +550,38 @@ Rollback (instant, no data changes): set TECHNICIAN_DIRECTORY_MODE=legacy in
 Consequences now live: schedule availability + all roster consumers run ZB-free for
 ABC; the USERS-FIRST projection (C3b) is active on prod; NEW conversions create
 native-only jobs (no ZB push). Remaining ZB surface = Phase E/F list above.
+
+## Phase E — providers self-sufficient in Albusto (no ZB link) — 2026-08-09
+Owner: «техники перешли в Albusto, интеграция потеряла смысл; провайдеры
+самодостаточны — расписание, задачи, настройки живут только в Albusto». The
+manual "link a Zenbooker team member" step is gone.
+
+- **Projection now covers "Also works in the field"**: the source set is role=
+  provider OR company_user_profiles.is_provider (membershipQueries
+  .listActiveFieldWorkerMemberships). An office role that also runs jobs becomes
+  a native technician automatically. Deactivation mirrors the full set.
+- **timeOffService own-scope goes native**: a provider's OWN time-off resolves
+  crm_user → technician in native mode (was ZB-bridge-only → a native-only tech
+  saw nothing). Legacy keeps the bridge; both deny-by-default when unresolved.
+  Locked by backend/tests/services/timeOffScope.test.js (5 cases).
+  (technicianAvailabilityService was already native.)
+- **User carries technician_id**: listUsers surfaces the user's OWN active native
+  technician's roster-compat id (external ZB id, else uuid) so the FE keys
+  Field-work natively — no link picker.
+- **FE bridge fully removed**: ZenbookerLinkField deleted; FieldWorkSection keys
+  territories/start-location/color on user.technician_id (null → "save first"
+  hint); zenbooker_team_member_id stripped from EditUserForm / CompanyUser /
+  useCompanyUsers / useAdminCompanyUsers / CallMaskingPage; the PATCH no longer
+  writes the bridge. is_provider on save ⇒ the projection makes/links the tech.
+- Kept: the `zenbooker_team_member_id` COLUMN stays dormant (dropped in Phase F
+  with the rest of the ZB teardown), and `getZenbookerTeamMemberIdForUser` stays
+  for the legacy-mode branch.
+
+Gates: FE build clean; backend 105/105. (Pre-existing unrelated FE failures:
+IntegrationsPage, ScheduleHeaderContract — fail on origin/master too.)
+
+### Phase F (remaining ZB teardown — not started)
+Rename `/api/zenbooker/team-members` → native endpoint (useProviders /
+useScheduleData / CustomTimeModal / albusto-mobile); retire the ZB payments
+router / jobs-sync cron / legacy lead→ZB push / webhooks; drop the
+zenbooker_team_member_id column + zenbookerClient + ZENBOOKER_API_KEY.

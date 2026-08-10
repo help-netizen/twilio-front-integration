@@ -128,16 +128,18 @@ async function syncBridgeLink(companyId, crmUserId, newExternalId) {
 }
 
 /**
- * ZB-DECOUPLE C3b — USERS-FIRST projection (owner 2026-08-09: «роль provider ⇒
+ * ZB-DECOUPLE C3b/E — USERS-FIRST projection (owner 2026-08-09: «роль provider ⇒
  * автоматически техник; техники не создаются вручную, они из раздела
- * пользователей»). Idempotent, company-scoped:
+ * пользователей»; Phase E: «Also works in the field» тоже ⇒ нативный техник):
+ * Idempotent, company-scoped. A FIELD WORKER = role=provider OR the profile
+ * is_provider flag.
  *
- *   • every ACTIVE membership with role_key='provider' has an ACTIVE technician:
+ *   • every ACTIVE field-worker membership has an ACTIVE technician:
  *     adopt by crm link → reactivate; else adopt an UNLINKED technician via the
  *     legacy ZB bridge id (pre-existing rows never duplicate); else create one
  *     (display_name from the user, only at creation — manual renames stick);
- *   • an ACTIVE technician LINKED to a user who is no longer an active provider
- *     is deactivated (work history stays);
+ *   • an ACTIVE technician LINKED to a user who is no longer an active field
+ *     worker is deactivated (work history stays);
  *   • UNLINKED technicians are never touched (the owner links historical ones
  *     себе later; manual create stays as the temporary fallback).
  *
@@ -152,11 +154,11 @@ async function projectFromMemberships(companyId) {
         return { skipped: 'legacy-mode' };
     }
 
-    const providers = await membershipQueries.listActiveMembershipsByRole(companyId, 'provider');
-    const providerIds = new Set(providers.map(row => String(row.user_id)));
+    const fieldWorkers = await membershipQueries.listActiveFieldWorkerMemberships(companyId);
+    const fieldWorkerIds = new Set(fieldWorkers.map(row => String(row.user_id)));
     const summary = { created: 0, reactivated: 0, adopted: 0, deactivated: 0 };
 
-    for (const provider of providers) {
+    for (const provider of fieldWorkers) {
         const userId = String(provider.user_id);
         const existing = await technicianDirectoryQueries.findTechnicianByCrmUserId(companyId, userId);
         if (existing) {
@@ -197,11 +199,11 @@ async function projectFromMemberships(companyId) {
         summary.created += 1;
     }
 
-    // Linked + active technicians whose user is no longer an active provider → off.
+    // Linked + active technicians whose user is no longer an active field worker → off.
     const directory = await technicianDirectoryQueries.listTechnicians(companyId);
     for (const technician of directory) {
         if (!technician.active || technician.crm_user_id == null) continue;
-        if (!providerIds.has(String(technician.crm_user_id))) {
+        if (!fieldWorkerIds.has(String(technician.crm_user_id))) {
             await technicianDirectoryQueries.updateTechnician({
                 companyId, technicianId: technician.id, active: false,
             });

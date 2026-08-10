@@ -142,7 +142,20 @@ async function listUsers(companyId, opts = {}) {
                 COALESCE(p.is_provider, false) as is_provider,
                 p.schedule_color,
                 COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
-                p.zenbooker_team_member_id
+                p.zenbooker_team_member_id,
+                -- ZB-DECOUPLE Phase E: the user's OWN active native technician's
+                -- roster-compat id (external ZB id when present, else the uuid) —
+                -- the FE keys the Field-work settings on this, no manual link.
+                (SELECT COALESCE(ext.external_id, t.id::text)
+                 FROM technicians t
+                 LEFT JOIN LATERAL (
+                     SELECT e.external_id FROM technician_external_identities e
+                     WHERE e.company_id = t.company_id AND e.source = 'zenbooker'
+                       AND e.technician_id = t.id
+                     ORDER BY e.created_at ASC, e.external_id ASC LIMIT 1
+                 ) ext ON TRUE
+                 WHERE t.company_id = m.company_id AND t.crm_user_id = u.id AND t.active = TRUE
+                 LIMIT 1) AS technician_id
          FROM crm_users u
          ${join}
          LEFT JOIN company_user_profiles p ON p.membership_id = m.id

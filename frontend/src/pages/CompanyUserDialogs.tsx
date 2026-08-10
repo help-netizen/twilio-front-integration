@@ -2,92 +2,16 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogPanelHeader, DialogPanelFooter } from '../components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { FloatingField } from '../components/ui/floating-field';
 import { Switch } from '../components/ui/switch';
-import { Copy, Link2, Unlink, KeyRound, Ban, Power, Trash2 } from 'lucide-react';
+import { Copy, KeyRound, Ban, Power, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useEffect, useState, type ReactNode } from 'react';
-import { authedFetch } from '../services/apiClient';
 import type { CompanyUser, EditUserForm } from '../hooks/useCompanyUsers';
 import { TechnicianServiceAreasEditor } from '../components/settings/TechnicianServiceAreas';
 import { techniciansApi, type TechnicianServiceAreas } from '../services/techniciansApi';
 import { technicianBaseLocationsApi } from '../services/technicianBaseLocationsApi';
 
-// ─── Provider bridge (ALB-104) ───────────────────────────────────────────────
-// Maps a CRM user to a Zenbooker team member so the assigned-only provider
-// scope (PF007) can resolve job assignments to this user.
-
-interface RosterMember { id: string; name: string }
-
-function ZenbookerLinkField({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
-    const [roster, setRoster] = useState<RosterMember[] | null>(null);
-    const [rosterError, setRosterError] = useState(false);
-
-    useEffect(() => {
-        let cancelled = false;
-        authedFetch('/api/zenbooker/team-members')
-            .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-            .then(j => { if (!cancelled) setRoster((j.data || []).map((m: any) => ({ id: String(m.id), name: m.name || String(m.id) }))); })
-            .catch(() => { if (!cancelled) { setRoster([]); setRosterError(true); } });
-        return () => { cancelled = true; };
-    }, []);
-
-    const linked = !!value;
-    const linkedName = roster?.find(m => m.id === value)?.name;
-
-    return (
-        <div className="space-y-2 rounded-xl p-3" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <span className={`inline-block size-2 rounded-full ${linked ? 'bg-green-500' : 'bg-amber-400'}`} />
-                    <Label className="text-sm">Zenbooker team member</Label>
-                </div>
-                {linked && (
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => onChange(null)}>
-                        <Unlink className="size-3.5 mr-1" />Unlink
-                    </Button>
-                )}
-            </div>
-
-            {rosterError ? (
-                <>
-                    <Input
-                        placeholder="Zenbooker team member ID"
-                        value={value || ''}
-                        onChange={e => onChange(e.target.value.trim() || null)}
-                    />
-                    <p className="text-[12px] text-muted-foreground">
-                        Couldn't load the roster — paste the team member ID from Zenbooker.
-                    </p>
-                </>
-            ) : roster === null ? (
-                <div className="text-[13px] text-muted-foreground">Loading roster…</div>
-            ) : (
-                <>
-                    <Select value={value || '__none__'} onValueChange={v => onChange(v === '__none__' ? null : v)}>
-                        <SelectTrigger>
-                            <SelectValue>
-                                {linked
-                                    ? <span className="flex items-center gap-1.5"><Link2 className="size-3.5" />{linkedName || value}</span>
-                                    : 'Not linked'}
-                            </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="__none__">Not linked</SelectItem>
-                            {roster.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
-                        </SelectContent>
-                    </Select>
-                    <p className="text-[12px] text-muted-foreground">
-                        {linked
-                            ? 'Jobs assigned to this provider in Zenbooker are visible to this user.'
-                            : 'Without a link, a provider with "assigned jobs only" sees no jobs.'}
-                    </p>
-                </>
-            )}
-        </div>
-    );
-}
 
 type CreateForm = { full_name: string; email: string; phone: string; role_key: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; location_tracking_enabled: boolean };
 
@@ -178,12 +102,13 @@ function RoleCards({ role, onRole, isProvider, onIsProvider, fieldContent }: {
     );
 }
 
-// Field-work details for an EXISTING user: ZB bridge, territories (reuses the
-// Scheduling-settings editor), start location (address or bare ZIP — geocoded
-// server-side on save), schedule color.
-function FieldWorkSection({ zbId, onZbChange, scheduleColor, onColorChange }: {
-    zbId: string | null;
-    onZbChange: (v: string | null) => void;
+// ZB-DECOUPLE Phase E: no Zenbooker link. A provider / "also works in the field"
+// user IS a native technician automatically — this section keys its territories
+// and start location on the user's OWN native technician id (technicianId),
+// which the backend derives. Null until the user is saved with the role/flag
+// (the technician is created then); we show a "save first" hint in that window.
+function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
+    technicianId: string | null;
     scheduleColor: string;
     onColorChange: (v: string) => void;
 }) {
@@ -195,27 +120,27 @@ function FieldWorkSection({ zbId, onZbChange, scheduleColor, onColorChange }: {
 
     useEffect(() => {
         setAreas(null); setAreasError(false); setBaseInput(''); setBaseSaved('');
-        if (!zbId) return;
+        if (!technicianId) return;
         let cancelled = false;
-        techniciansApi.getSettings(zbId)
+        techniciansApi.getSettings(technicianId)
             .then(s => { if (!cancelled) setAreas(s.service_areas); })
             .catch(() => { if (!cancelled) setAreasError(true); });
         technicianBaseLocationsApi.list()
             .then(list => {
                 if (cancelled) return;
-                const mine = list.find(b => String(b.tech_id) === String(zbId));
+                const mine = list.find(b => String(b.tech_id) === String(technicianId));
                 const label = mine?.address || mine?.zip || '';
                 setBaseInput(label); setBaseSaved(label);
             })
             .catch(() => { /* base stays editable from scratch */ });
         return () => { cancelled = true; };
-    }, [zbId]);
+    }, [technicianId]);
 
     const saveBase = async () => {
-        if (!zbId || !baseInput.trim()) return;
+        if (!technicianId || !baseInput.trim()) return;
         setSavingBase(true);
         try {
-            const saved = await technicianBaseLocationsApi.upsert(zbId, { address: baseInput.trim() });
+            const saved = await technicianBaseLocationsApi.upsert(technicianId, { address: baseInput.trim() });
             const label = saved.address || baseInput.trim();
             setBaseInput(label); setBaseSaved(label);
             toast.success('Start location saved');
@@ -228,13 +153,12 @@ function FieldWorkSection({ zbId, onZbChange, scheduleColor, onColorChange }: {
 
     return (
         <div className="space-y-4">
-            <ZenbookerLinkField value={zbId} onChange={onZbChange} />
-            {zbId ? (
+            {technicianId ? (
                 <>
                     <div className="space-y-2">
                         <div className="blanc-eyebrow">Territories</div>
                         {areas ? (
-                            <TechnicianServiceAreasEditor technicianId={zbId} value={areas} onSaved={setAreas} />
+                            <TechnicianServiceAreasEditor technicianId={technicianId} value={areas} onSaved={setAreas} />
                         ) : (
                             <p className="text-[12.5px]" style={{ color: 'var(--blanc-ink-3)' }}>
                                 {areasError
@@ -259,7 +183,7 @@ function FieldWorkSection({ zbId, onZbChange, scheduleColor, onColorChange }: {
                 </>
             ) : (
                 <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
-                    Link a Zenbooker team member to set territories and the start location.
+                    Save the user first — territories and the start location become editable here once they’re a field technician.
                 </p>
             )}
             <div className="flex items-center justify-between gap-3">
@@ -458,8 +382,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                             onIsProvider={v => setForm(f => ({ ...f, is_provider: v }))}
                             fieldContent={(
                                 <FieldWorkSection
-                                    zbId={form.zenbooker_team_member_id}
-                                    onZbChange={v => setForm(f => ({ ...f, zenbooker_team_member_id: v }))}
+                                    technicianId={user?.technician_id ?? null}
                                     scheduleColor={form.schedule_color}
                                     onColorChange={v => setForm(f => ({ ...f, schedule_color: v }))}
                                 />

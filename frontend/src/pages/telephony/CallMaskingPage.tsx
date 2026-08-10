@@ -43,7 +43,7 @@ function roleKeyOf(u: CompanyUser): string {
 const BLANK_EDIT: EditUserForm = {
     full_name: '', email: '', phone: '', role_key: 'dispatcher',
     phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6',
-    location_tracking_enabled: false, zenbooker_team_member_id: null,
+    location_tracking_enabled: false,
 };
 
 export default function CallMaskingPage() {
@@ -141,7 +141,6 @@ export default function CallMaskingPage() {
             is_provider: !!u.is_provider,
             schedule_color: u.schedule_color || '#3B82F6',
             location_tracking_enabled: !!u.location_tracking_enabled,
-            zenbooker_team_member_id: u.zenbooker_team_member_id || null,
         });
         setEditOpen(true);
     };
@@ -163,7 +162,6 @@ export default function CallMaskingPage() {
                         is_provider: editForm.is_provider,
                         schedule_color: editForm.schedule_color,
                         location_tracking_enabled: editForm.location_tracking_enabled,
-                        zenbooker_team_member_id: editForm.is_provider ? (editForm.zenbooker_team_member_id || null) : null,
                     },
                 }),
             });

@@ -262,12 +262,15 @@ async function getZenbookerTeamMemberIdForUser(companyId, userId) {
 }
 
 /**
- * ZB-DECOUPLE C3b — the technician projection's source set: every ACTIVE
- * membership in the company with the given role whose user is active. Includes
- * the legacy ZB bridge id so the projection can ADOPT a pre-existing native
+ * ZB-DECOUPLE C3b/E — the technician projection's source set: every ACTIVE
+ * field worker in the company. A field worker is a user whose role is
+ * `provider` OR who has the "Also works in the field" flag
+ * (company_user_profiles.is_provider) set — owner 2026-08-09: office roles that
+ * also run jobs become native technicians too, no Zenbooker link. Includes the
+ * legacy ZB bridge id so the projection can ADOPT a pre-existing native
  * technician instead of minting a duplicate.
  */
-async function listActiveMembershipsByRole(companyId, roleKey) {
+async function listActiveFieldWorkerMemberships(companyId) {
     const { rows } = await db.query(
         `SELECT m.user_id, u.full_name, u.email, p.zenbooker_team_member_id
          FROM company_memberships m
@@ -279,8 +282,8 @@ async function listActiveMembershipsByRole(companyId, roleKey) {
          LEFT JOIN company_user_profiles p ON p.membership_id = m.id
          WHERE m.company_id = $1
            AND m.status = 'active'
-           AND m.role_key = $2`,
-        [companyId, roleKey]
+           AND (m.role_key = 'provider' OR COALESCE(p.is_provider, false) = true)`,
+        [companyId]
     );
     return rows;
 }
@@ -297,5 +300,5 @@ module.exports = {
     getMembershipWithProfile,
     resolveProviderUserIds,
     getZenbookerTeamMemberIdForUser,
-    listActiveMembershipsByRole,
+    listActiveFieldWorkerMemberships,
 };

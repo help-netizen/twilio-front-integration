@@ -19,7 +19,9 @@
 const crypto = require('crypto');
 const timeOffQueries = require('../db/timeOffQueries');
 const membershipQueries = require('../db/membershipQueries');
+const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const technicianRosterService = require('./technicianRosterService');
+const { getTechnicianDirectoryMode } = require('../config/featureFlags');
 
 const NOTE_MAX_LENGTH = 500;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -63,12 +65,24 @@ async function listTimeOff(companyId, { from, to, technicianId } = {}, providerS
 
     let effectiveTechnicianId = technicianId ? String(technicianId) : undefined;
     if (providerScope?.assignedOnly) {
-        // Provider sees ONLY his own blocks: resolve his ZB id through the
-        // bridge; request parameters never widen his visibility (S-8).
+        // Provider sees ONLY his own blocks; request parameters never widen his
+        // visibility (S-8). ZB-DECOUPLE Phase E: resolve the provider's OWN id
+        // natively (crm_user → technician) in native mode — a native-only
+        // technician has no ZB bridge, so the legacy path denied him his own
+        // time-off. Legacy mode keeps the bridge. Both deny-by-default (E-14).
         if (!providerScope.userId) return [];
-        const ownZbId = await membershipQueries.getZenbookerTeamMemberIdForUser(companyId, providerScope.userId);
-        if (!ownZbId) return []; // no bridge mapping → deny-by-default (E-14)
-        effectiveTechnicianId = ownZbId;
+        let ownId;
+        if (getTechnicianDirectoryMode(companyId) === 'native') {
+            const ownTechnician = await technicianDirectoryQueries.findActiveTechnicianByCrmUserId(
+                companyId,
+                providerScope.userId
+            );
+            ownId = ownTechnician ? String(ownTechnician.id) : null;
+        } else {
+            ownId = await membershipQueries.getZenbookerTeamMemberIdForUser(companyId, providerScope.userId);
+        }
+        if (!ownId) return []; // no mapping → deny-by-default (E-14)
+        effectiveTechnicianId = ownId;
     }
 
     return timeOffQueries.listRange(companyId, {

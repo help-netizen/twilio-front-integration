@@ -25,13 +25,13 @@ const mockQueries = {
     findTechnicianByCrmUserId: jest.fn(),
 };
 const mockGetActiveMembershipInCompany = jest.fn();
-const mockListActiveMembershipsByRole = jest.fn();
+const mockListActiveFieldWorkers = jest.fn();
 let mockMode = 'native';
 
 jest.mock('../../src/db/technicianDirectoryQueries', () => mockQueries);
 jest.mock('../../src/db/membershipQueries', () => ({
     getActiveMembershipInCompany: (...args) => mockGetActiveMembershipInCompany(...args),
-    listActiveMembershipsByRole: (...args) => mockListActiveMembershipsByRole(...args),
+    listActiveFieldWorkerMemberships: (...args) => mockListActiveFieldWorkers(...args),
 }));
 jest.mock('../../src/config/featureFlags', () => ({
     getTechnicianDirectoryMode: () => mockMode,
@@ -163,7 +163,7 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
     describe('projectFromMemberships (USERS-FIRST: роль provider ⇔ активный техник)', () => {
         beforeEach(() => {
             mockMode = 'native';
-            mockListActiveMembershipsByRole.mockResolvedValue([]);
+            mockListActiveFieldWorkers.mockResolvedValue([]);
             mockQueries.listTechnicians.mockResolvedValue([]);
             mockQueries.findTechnicianByCrmUserId.mockResolvedValue(null);
         });
@@ -172,11 +172,11 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
             mockMode = 'legacy';
             const out = await service.projectFromMemberships(COMPANY);
             expect(out).toEqual({ skipped: 'legacy-mode' });
-            expect(mockListActiveMembershipsByRole).not.toHaveBeenCalled();
+            expect(mockListActiveFieldWorkers).not.toHaveBeenCalled();
         });
 
         it('creates a linked technician for a provider without one (name from the user)', async () => {
-            mockListActiveMembershipsByRole.mockResolvedValue([
+            mockListActiveFieldWorkers.mockResolvedValue([
                 { user_id: CRM_USER, full_name: 'New Provider', email: 'p@x.com', zenbooker_team_member_id: null },
             ]);
             const out = await service.projectFromMemberships(COMPANY);
@@ -187,7 +187,7 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
         });
 
         it('reactivates an inactive linked technician instead of creating (rename preserved)', async () => {
-            mockListActiveMembershipsByRole.mockResolvedValue([
+            mockListActiveFieldWorkers.mockResolvedValue([
                 { user_id: CRM_USER, full_name: 'Provider', email: 'p@x.com', zenbooker_team_member_id: null },
             ]);
             mockQueries.findTechnicianByCrmUserId.mockResolvedValue({ id: TECH_UUID, active: false, display_name: 'Manual Rename' });
@@ -201,7 +201,7 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
         });
 
         it('adopts an UNLINKED backfilled technician via the ZB bridge instead of duplicating', async () => {
-            mockListActiveMembershipsByRole.mockResolvedValue([
+            mockListActiveFieldWorkers.mockResolvedValue([
                 { user_id: CRM_USER, full_name: 'Ali', email: 'a@x.com', zenbooker_team_member_id: '1770x-ali' },
             ]);
             mockQueries.resolveExternalToUuid.mockResolvedValue(TECH_UUID);
@@ -215,7 +215,7 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
         });
 
         it('does NOT adopt a technician already linked to a DIFFERENT user — creates instead', async () => {
-            mockListActiveMembershipsByRole.mockResolvedValue([
+            mockListActiveFieldWorkers.mockResolvedValue([
                 { user_id: CRM_USER, full_name: 'P', email: 'p@x.com', zenbooker_team_member_id: '1770x-taken' },
             ]);
             mockQueries.resolveExternalToUuid.mockResolvedValue(TECH_UUID);
@@ -226,8 +226,8 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
             expect(out).toMatchObject({ created: 1, adopted: 0 });
         });
 
-        it('deactivates a linked technician whose user lost the provider role; unlinked rows untouched', async () => {
-            mockListActiveMembershipsByRole.mockResolvedValue([]); // no providers anymore
+        it('deactivates a linked technician whose user is no longer a field worker; unlinked rows untouched', async () => {
+            mockListActiveFieldWorkers.mockResolvedValue([]); // no providers anymore
             mockQueries.listTechnicians.mockResolvedValue([
                 { id: TECH_UUID, active: true, crm_user_id: CRM_USER },        // linked → deactivate
                 { id: OTHER_UUID, active: true, crm_user_id: null },           // unlinked → NEVER touched

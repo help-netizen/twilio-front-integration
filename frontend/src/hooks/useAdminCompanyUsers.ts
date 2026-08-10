@@ -27,7 +27,7 @@ export function useAdminCompanyUsers(companyId: string) {
     // Edit Mode
     const [editOpen, setEditOpen] = useState(false);
     const [editUser, setEditUser] = useState<CompanyUser | null>(null);
-    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false, zenbooker_team_member_id: null });
+    const [editForm, setEditForm] = useState<EditUserForm>({ full_name: '', email: '', phone: '', role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', location_tracking_enabled: false });
 
     // Reset Password
     const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
@@ -111,8 +111,7 @@ export function useAdminCompanyUsers(companyId: string) {
                         phone_calls_allowed: editForm.phone_calls_allowed,
                         is_provider: editForm.is_provider,
                         schedule_color: editForm.schedule_color,
-                        location_tracking_enabled: editForm.location_tracking_enabled,
-                        zenbooker_team_member_id: editForm.is_provider ? (editForm.zenbooker_team_member_id || null) : null
+                        location_tracking_enabled: editForm.location_tracking_enabled
                     }
                 })
             });
@@ -176,8 +175,7 @@ export function useAdminCompanyUsers(companyId: string) {
             phone_calls_allowed: !!u.phone_calls_allowed,
             is_provider: !!u.is_provider,
             schedule_color: u.schedule_color || '#3B82F6',
-            location_tracking_enabled: !!u.location_tracking_enabled,
-            zenbooker_team_member_id: u.zenbooker_team_member_id || null
+            location_tracking_enabled: !!u.location_tracking_enabled
         });
         setEditOpen(true);
     };
