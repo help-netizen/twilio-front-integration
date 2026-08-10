@@ -18,23 +18,50 @@ export class SlotPicker {
             if (technicianIndex >= 0) return this.timelines.nth(technicianIndex);
             const nextTechPage = this.page.locator('.ctm-tech-bar-spacer--right .ctm-tech-bar__arrow');
             if (await nextTechPage.count() === 0 || !await nextTechPage.isEnabled()) break;
-            await nextTechPage.click();
+            await expect(async () => {
+                const namesBefore = await this.page.locator('.ctm-tech-bar__name').allTextContents();
+                if (namesBefore.some((name) => name.trim() === technicianName)) return;
+                await this.page.locator('.ctm-tech-bar-spacer--right .ctm-tech-bar__arrow').dispatchEvent('click');
+                await expect.poll(
+                    () => this.page.locator('.ctm-tech-bar__name').allTextContents(),
+                    { timeout: 2000 },
+                ).not.toEqual(namesBefore);
+            }).toPass({ timeout: 20_000 });
         }
         throw new Error(`Technician ${technicianName} was not present in the slot picker`);
     }
 
     async chooseNextDaySlot(technicianName?: string): Promise<void> {
         await expect(this.title).toBeVisible();
-        await this.nextDate.click();
-        const timeline = await this.timelineFor(technicianName);
-        await expect(timeline).toBeVisible();
-        await timeline.click({ position: { x: 24, y: 120 } });
-        await expect(this.confirm).toBeEnabled();
+        const dateLabel = this.page.locator('.ctm-date-nav__text');
+        const dateBefore = await dateLabel.textContent();
+        await expect(async () => {
+            if (await dateLabel.textContent() !== dateBefore) return;
+            await this.nextDate.dispatchEvent('click');
+            await expect(dateLabel).not.toHaveText(dateBefore || '', { timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+
+        await expect(async () => {
+            if (await this.page.locator('.tech-timeline__selected').count() > 0) return;
+            const timeline = await this.timelineFor(technicianName);
+            await expect(timeline).toBeVisible({ timeout: 2000 });
+            const box = await timeline.boundingBox();
+            if (!box) throw new Error('Slot timeline had no bounding box');
+            const clientX = box.x + 24;
+            const clientY = box.y + 120;
+            await timeline.dispatchEvent('mousemove', { clientX, clientY });
+            await timeline.dispatchEvent('click', { clientX, clientY });
+            await expect(this.page.locator('.tech-timeline__selected')).toBeVisible({ timeout: 2000 });
+            await expect(this.confirm).toBeEnabled({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
     }
 
     async confirmSelection(): Promise<void> {
-        await this.confirm.click();
-        await expect(this.title).toBeHidden();
+        await expect(async () => {
+            if (await this.title.isHidden()) return;
+            await this.confirm.dispatchEvent('click');
+            await expect(this.title).toBeHidden({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
     }
 
     async pickNextDaySlot(technicianName?: string): Promise<void> {

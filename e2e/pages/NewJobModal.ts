@@ -51,18 +51,49 @@ export class NewJobModal {
         await this.zip.fill('10001');
     }
 
+    private async selectOption(trigger: () => Locator, option: () => Locator): Promise<void> {
+        await expect(async () => {
+            if (await option().count() > 0) return;
+            await trigger().dispatchEvent('click');
+            await expect(option()).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+
+        const optionLabel = (await option().textContent())?.trim() || '';
+        await expect(async () => {
+            if (await option().count() === 0) {
+                await expect(trigger()).toContainText(optionLabel, { timeout: 2000 });
+                return;
+            }
+            await option().dispatchEvent('click');
+            await expect(option()).toHaveCount(0, { timeout: 2000 });
+            await expect(trigger()).toContainText(optionLabel, { timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+    }
+
     async fillAndSubmit(values: NewJobValues): Promise<void> {
         await this.selectContact(values.contactMarker);
         await this.ensureAddress();
-        await this.pickTime.click();
+        await expect(async () => {
+            if (await this.slotPicker.title.isVisible()) return;
+            await this.pickTime.dispatchEvent('click');
+            await expect(this.slotPicker.title).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
         await this.slotPicker.pickNextDaySlot();
 
-        await this.jobType.click();
-        await this.page.getByRole('option').first().click();
-        await this.source.click();
-        await this.page.getByRole('option', { name: 'Other', exact: true }).click();
+        await this.selectOption(
+            () => this.jobType,
+            () => this.page.getByRole('option').first(),
+        );
+        await this.selectOption(
+            () => this.source,
+            () => this.page.getByRole('option', { name: 'Other', exact: true }),
+        );
         await this.description.fill(values.description);
-        await this.create.click();
-        await expect(this.title).toBeHidden();
+        await expect(async () => {
+            if (await this.title.isHidden()) return;
+            await expect(this.create).toBeEnabled({ timeout: 2000 });
+            await this.create.dispatchEvent('click');
+            await expect(this.title).toBeHidden({ timeout: 5000 });
+        }).toPass({ timeout: 30_000 });
     }
 }

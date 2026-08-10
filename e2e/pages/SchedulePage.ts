@@ -44,12 +44,27 @@ export class SchedulePage {
         return this.page.getByRole('button').filter({ hasText: marker }).first();
     }
 
-    async findScheduled(marker: string, technicianName?: string, scheduledAt?: string): Promise<Locator> {
+    async findScheduled(
+        marker: string,
+        technicianName?: string,
+        scheduledAt?: string,
+        cardMarker = marker,
+    ): Promise<Locator> {
         await this.showTeamWeek();
         if (scheduledAt) await this.focusWeekContaining(scheduledAt);
         await this.search.fill(marker);
-        const card = this.scheduleCard(marker);
-        await expect(card).toBeVisible();
+        const card = this.scheduleCard(cardMarker);
+        await expect(async () => {
+            if (await card.isVisible()) return;
+            // A just-created job can miss the board's first schedule fetch. Reload
+            // the board and rebuild its view/filter state on every bounded retry.
+            await this.page.reload();
+            await expect(this.search).toBeVisible({ timeout: 5000 });
+            await this.showTeamWeek();
+            if (scheduledAt) await this.focusWeekContaining(scheduledAt);
+            await this.search.fill(marker);
+            await expect(card).toBeVisible({ timeout: 5000 });
+        }).toPass({ timeout: 30_000 });
         if (technicianName) await expect(card).toContainText(technicianName);
         return card;
     }

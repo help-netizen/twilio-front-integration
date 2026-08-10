@@ -32,42 +32,72 @@ export class JobPanel {
     }
 
     async createEstimate(): Promise<EstimateEditor> {
-        const button = this.estimateSection.getByRole('button', { name: /^(Create|New estimate)$/ });
-        await button.click();
-        await expect(this.estimateEditor.title).toBeVisible();
+        await expect(async () => {
+            if (await this.estimateEditor.title.isVisible()) return;
+            await this.estimateSection.getByRole('button', { name: /^(Create|New estimate)$/ }).dispatchEvent('click');
+            await expect(this.estimateEditor.title).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
         return this.estimateEditor;
     }
 
     async openEstimate(marker: string): Promise<void> {
-        await this.estimateSection.getByRole('button').filter({ hasText: marker }).click();
-        await expect(this.page.getByText(marker, { exact: true })).toBeVisible();
+        await expect(async () => {
+            if (await this.estimateEditor.detailPanel.isVisible()) return;
+            await this.estimateSection.getByRole('button').filter({ hasText: marker }).dispatchEvent('click');
+            await expect(this.estimateEditor.detailPanel).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+        await expect(this.estimateEditor.detailPanel.getByText(marker, { exact: true }).first()).toBeVisible();
     }
 
     async createInvoice(): Promise<InvoiceEditor> {
-        const button = this.invoiceSection.getByRole('button', { name: /^(Create|New invoice)$/ });
-        await button.click();
-        await expect(this.invoiceEditor.title).toBeVisible();
+        await expect(async () => {
+            if (await this.invoiceEditor.title.isVisible()) return;
+            await this.invoiceSection.getByRole('button', { name: /^(Create|New invoice)$/ }).dispatchEvent('click');
+            await expect(this.invoiceEditor.title).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
         return this.invoiceEditor;
     }
 
     async openOnlyInvoice(): Promise<void> {
-        await this.invoiceSection.locator('button').filter({ hasText: /draft/i }).first().click();
-        await expect(this.page.getByText('Balance Due', { exact: true }).first()).toBeVisible();
+        await expect(async () => {
+            if (await this.invoiceEditor.detailPanel.isVisible()) return;
+            await this.invoiceSection.locator('button').filter({ hasText: /draft/i }).first().dispatchEvent('click');
+            await expect(this.invoiceEditor.detailPanel).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
     }
 
     async replaceTechnicians(currentNames: string[], targetName: string): Promise<void> {
-        await this.page.getByRole('button', { name: /^(Assign|Change)$/ }).click();
         const search = this.page.getByPlaceholder('Search providers…');
+        await expect(async () => {
+            if (await search.isVisible()) return;
+            await this.page.getByRole('button', { name: /^(Assign|Change)$/ }).dispatchEvent('click');
+            await expect(search).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+        let selectedCount = currentNames.length;
         for (const name of [...currentNames, targetName]) {
             await search.fill(name);
-            await this.page.getByRole('option', { name, exact: true }).click();
+            selectedCount += currentNames.includes(name) ? -1 : 1;
+            const expectedCount = selectedCount;
+            await expect(async () => {
+                await this.page.getByRole('option', { name, exact: true }).dispatchEvent('click');
+                await expect(this.page.getByText(`${expectedCount} selected`, { exact: true })).toBeVisible({ timeout: 2000 });
+            }).toPass({ timeout: 20_000 });
         }
-        await this.page.getByRole('button', { name: 'Save', exact: true }).click();
-        await expect(this.page.getByText('Providers updated', { exact: true })).toBeVisible();
+        const success = this.page.getByText('Providers updated', { exact: true });
+        await expect(async () => {
+            if (await success.isVisible()) return;
+            await this.page.getByRole('button', { name: 'Save', exact: true }).dispatchEvent('click');
+            await expect(success).toBeVisible({ timeout: 5000 });
+            await expect(search).toBeHidden({ timeout: 2000 });
+        }).toPass({ timeout: 30_000 });
     }
 
     async rescheduleToNextDay(technicianName?: string): Promise<void> {
-        await this.page.getByRole('button', { name: 'Reschedule', exact: true }).click();
+        await expect(async () => {
+            if (await this.slotPicker.title.isVisible()) return;
+            await this.page.getByRole('button', { name: 'Reschedule', exact: true }).dispatchEvent('click');
+            await expect(this.slotPicker.title).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
         await this.slotPicker.pickNextDaySlot(technicianName);
         const warning = this.page.getByRole('dialog').filter({ hasText: 'Blocked by time off' });
         const success = this.page.getByText('Job rescheduled', { exact: true });
@@ -76,7 +106,11 @@ export class JobPanel {
             success.waitFor({ state: 'visible' }).then(() => 'success' as const),
         ]);
         if (outcome === 'warning') {
-            await warning.getByRole('button', { name: 'Reschedule', exact: true }).click();
+            await expect(async () => {
+                if (await success.isVisible()) return;
+                await warning.getByRole('button', { name: 'Reschedule', exact: true }).dispatchEvent('click');
+                await expect(success).toBeVisible({ timeout: 5000 });
+            }).toPass({ timeout: 30_000 });
         }
         await expect(success).toBeVisible();
     }

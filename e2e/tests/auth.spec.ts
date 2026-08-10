@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/test';
 import { LoginPage } from '../pages/LoginPage';
+import { AppNav } from '../pages/AppNav';
 import {
     ADMIN_PASS,
     ADMIN_USER,
@@ -47,12 +48,8 @@ test.describe('@suite:auth', () => {
             await login.login(ADMIN_USER, ADMIN_PASS);
             await page.locator('button.user-menu').waitFor({ state: 'visible', timeout: 30_000 });
 
-            await page.locator('button.user-menu').click();
-            await page.getByRole('menuitem', { name: 'Log Out', exact: true }).click();
-
-            await login.expectVisible();
-            await page.goto('/jobs');
-            await login.expectVisible();
+            await new AppNav(page).logout();
+            await login.expectSessionCleared('/jobs');
         } finally {
             await context.close();
         }

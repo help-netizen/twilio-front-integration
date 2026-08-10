@@ -7,7 +7,7 @@ import { ContactsPage } from '../pages/ContactsPage';
 test.describe('@suite:contacts', () => {
     test.skip(!hasAdmin(), 'requires E2E_ADMIN_USER / E2E_ADMIN_PASS');
 
-    test.fixme('@p0 CONT-01 create contact through the lead form fallback', async ({ page }) => {
+    test('@p0 CONT-01 create contact through the lead form fallback', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];
         const marker = `${RUN_ID} Contact`;
