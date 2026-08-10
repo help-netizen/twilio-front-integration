@@ -5,7 +5,6 @@ const { randomUUID } = require('node:crypto');
 const TEST_DB_URL = process.env.LIST_PAGINATION_TEST_DB_URL || '';
 if (TEST_DB_URL) process.env.DATABASE_URL = TEST_DB_URL;
 
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));
 jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn() }));

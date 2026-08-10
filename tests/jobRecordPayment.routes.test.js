@@ -24,7 +24,6 @@ jest.mock('../backend/src/services/paymentsService', () => ({
 }));
 
 // Cheap require-time stubs for unrelated jobs-router dependencies.
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1,
     MAX_FILES_PER_NOTE: 1,

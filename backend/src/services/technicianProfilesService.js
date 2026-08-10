@@ -1,6 +1,6 @@
 /**
  * technicianProfilesService.js — technician display info (photo + name) for the
- * public payment page. Settings supplies the active Zenbooker roster and this
+ * public payment page. Settings supplies the active native roster and this
  * service merges stored photo/name overrides keyed by (company_id, tech_id).
  * Invoice display still resolves the assigned technician from the invoice job.
  */

@@ -22,7 +22,6 @@ jest.mock('../backend/src/services/jobActivityService', () => ({
 jest.mock('../backend/src/services/fsmService', () => ({
     resolveTransition: (...args) => mockResolveTransition(...args),
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn(async () => ({ id: 1 })) }));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
 

@@ -3,7 +3,6 @@
 const mockQuery = jest.fn();
 
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({
     logEvent: jest.fn(),

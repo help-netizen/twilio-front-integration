@@ -9,7 +9,7 @@
  *  • assignee_id must be an ACTIVE member of THIS company (crm_users plane) —
  *    a foreign/nonexistent id (including an injected NATIVE technician uuid)
  *    is a 400 INVALID_ASSIGNEE and nothing is written;
- *  • every assigned_techs[].id must resolve on the mode-aware roster —
+ *  • every assigned_techs[].id must resolve on the native roster —
  *    off-roster ids are a 400 INVALID_TECHNICIAN and nothing is written;
  *  • valid ids pass through unchanged (byte-compatible with pre-C2 writes).
  */

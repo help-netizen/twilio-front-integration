@@ -6,14 +6,13 @@
  * Contract: overrides.schedule = { start_at, end_at, technician_ids? } drives a
  * FULLY native conversion (convertLead skips every Zenbooker branch when it is
  * present). The helper must: validate timestamps and ordering (400), validate
- * every technician on the mode-aware roster (400 on foreign ids), normalize ids
+ * every technician on the native roster (400 on foreign ids), normalize ids
  * to the roster-compat plane, and pass null through for absent schedules.
  */
 
 const mockRequireActive = jest.fn();
 
 jest.mock('../../src/db/connection', () => ({ query: jest.fn() }));
-jest.mock('../../src/services/zenbookerClient', () => ({}));
 jest.mock('../../src/services/technicianRosterService', () => ({
     requireActive: (...args) => mockRequireActive(...args),
 }));

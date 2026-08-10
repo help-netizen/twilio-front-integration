@@ -41,7 +41,6 @@ jest.mock('../backend/src/db/connection', () => ({
 
 const mockBroadcast = jest.fn();
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: mockBroadcast }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 
 const mockResolveTransition = jest.fn();
 jest.mock('../backend/src/services/fsmService', () => ({

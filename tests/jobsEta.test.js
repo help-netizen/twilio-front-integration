@@ -98,7 +98,6 @@ jest.mock('../backend/src/services/jobActivityService', () => ({
 }));
 
 // Cheap stubs for the unrelated modules the router pulls in at require()-time.
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1, MAX_FILES_PER_NOTE: 1,
 }));

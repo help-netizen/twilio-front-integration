@@ -1,12 +1,10 @@
 'use strict';
 
-jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 
 const { randomUUID } = require('crypto');
 const db = require('../backend/src/db/connection');
 const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const service = require('../backend/src/services/technicianBaseLocationsService');
 
 jest.setTimeout(60000);
@@ -20,11 +18,6 @@ describe('technician base-location native UUID re-key (real PostgreSQL)', () => 
     let nativeTechnician;
     let legacyTechnician;
     let foreignTechnician;
-
-    async function listWithId(companyId, id, name = 'Technician') {
-        zenbookerClient.getTeamMembers.mockResolvedValue([{ id, name }]);
-        return service.list(companyId);
-    }
 
     function baseFor(rows, id) {
         return rows.find(row => row.tech_id === String(id));
@@ -96,7 +89,7 @@ describe('technician base-location native UUID re-key (real PostgreSQL)', () => 
         );
     });
 
-    test('native write dual-writes and UUID/ZB reads return the same base values', async () => {
+    test('native write dual-writes and the native roster returns the base values', async () => {
         const stored = (await db.query(
             `SELECT tech_id, technician_uuid
              FROM technician_base_locations
@@ -108,17 +101,13 @@ describe('technician base-location native UUID re-key (real PostgreSQL)', () => 
             technician_uuid: nativeTechnician.id,
         }]);
 
-        const viaUuid = baseFor(await listWithId(companyA, nativeTechnician.id), nativeTechnician.id);
-        const viaExternal = baseFor(await listWithId(companyA, nativeExternal), nativeExternal);
-        expect(baseValues(viaUuid)).toEqual(baseValues(viaExternal));
-        expect(baseValues(viaUuid)).toMatchObject({ label: 'Native home', has_base: true });
+        const viaExternal = baseFor(await service.list(companyA), nativeExternal);
+        expect(baseValues(viaExternal)).toMatchObject({ label: 'Native home', has_base: true });
     });
 
-    test('legacy NULL-UUID row dual-reads identically without rewriting its TEXT key', async () => {
-        const viaUuid = baseFor(await listWithId(companyA, legacyTechnician.id), legacyTechnician.id);
-        const viaExternal = baseFor(await listWithId(companyA, sharedExternal), sharedExternal);
-        expect(baseValues(viaUuid)).toEqual(baseValues(viaExternal));
-        expect(baseValues(viaUuid)).toMatchObject({ label: 'Legacy home', has_base: true });
+    test('legacy NULL-UUID row is surfaced through its mapped compatibility id without rewriting its TEXT key', async () => {
+        const viaExternal = baseFor(await service.list(companyA), sharedExternal);
+        expect(baseValues(viaExternal)).toMatchObject({ label: 'Legacy home', has_base: true });
 
         const legacy = (await db.query(
             `SELECT tech_id, technician_uuid
@@ -151,7 +140,6 @@ describe('technician base-location native UUID re-key (real PostgreSQL)', () => 
     });
 
     test('same ZB id in two companies never crosses (SAB-T3B2-BASE control)', async () => {
-        zenbookerClient.getTeamMembers.mockRejectedValue(new Error('forced roster outage'));
         const local = await service.list(companyA);
         expect(local.filter(row => row.tech_id === sharedExternal)).toHaveLength(1);
         expect(baseFor(local, sharedExternal)).toMatchObject({

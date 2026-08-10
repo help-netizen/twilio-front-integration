@@ -15,7 +15,6 @@ jest.mock('../backend/src/db/connection', () => {
         })),
     };
 });
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({
     logEvent: jest.fn(), actorName: jest.fn(() => 'Test'), getEntityHistory: jest.fn(async () => []),

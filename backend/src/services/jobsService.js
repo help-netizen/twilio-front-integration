@@ -231,8 +231,7 @@ async function resolveAssignedProviderUserIds(companyId, assignedTechs) {
 
 /**
  * Recompute the internal assignee mirror for every job in a company.
- * Called when a tenant admin changes a provider bridge mapping so existing
- * jobs immediately reflect the new ownership. Idempotent and company-scoped.
+ * Idempotent and company-scoped.
  */
 async function refreshCompanyProviderMirror(companyId) {
     if (!companyId) return { updated: 0 };
@@ -242,8 +241,8 @@ async function refreshCompanyProviderMirror(companyId) {
          FROM (
              SELECT j2.id AS job_id,
                     COALESCE(
-                        jsonb_agg(DISTINCT to_jsonb(COALESCE(legacy_m.user_id, native_m.user_id)::text))
-                            FILTER (WHERE COALESCE(legacy_m.user_id, native_m.user_id) IS NOT NULL),
+                        jsonb_agg(DISTINCT to_jsonb(native_m.user_id::text))
+                            FILTER (WHERE native_m.user_id IS NOT NULL),
                         '[]'::jsonb
                     ) AS user_ids
              FROM jobs j2
@@ -251,12 +250,6 @@ async function refreshCompanyProviderMirror(companyId) {
                  CASE WHEN jsonb_typeof(j2.assigned_techs) = 'array'
                       THEN j2.assigned_techs ELSE '[]'::jsonb END
              ) AS tech(value) ON TRUE
-             LEFT JOIN company_user_profiles p
-                 ON p.zenbooker_team_member_id = tech.value->>'id'
-             LEFT JOIN company_memberships legacy_m
-                 ON legacy_m.id = p.membership_id
-                AND legacy_m.company_id = j2.company_id
-                AND legacy_m.status = 'active'
              LEFT JOIN technician_external_identities e
                  ON e.company_id = j2.company_id
                 AND e.source = 'zenbooker'

@@ -2,7 +2,7 @@
  * SCHED-ROUTE-001 gap-closure coverage:
  *  - Gap 1/2: updateJobLocation → geocoding_status + recalc (+ async geocode).
  *  - Gap 3:   createManualJob resolves ZB-shaped assigned_techs → crm mirror.
- *  - Feature flag default; retention SQL.
+ *  - Retention SQL.
  */
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), pool: { end: jest.fn() } }));
 jest.mock('../backend/src/db/membershipQueries');
@@ -15,23 +15,10 @@ const routeQueries = require('../backend/src/db/routeQueries');
 const routeSeg = require('../backend/src/services/routeSegmentService');
 
 const jobsService = require('../backend/src/services/jobsService');
-const flags = require('../backend/src/config/featureFlags');
 
 beforeEach(() => {
     jest.clearAllMocks();
     db.query.mockResolvedValue({ rows: [], rowCount: 0 });
-    delete process.env.FEATURE_ZENBOOKER_SYNC;
-});
-
-describe('feature flag default (C-12)', () => {
-    it('ZB sync is ON by default, OFF when explicitly disabled', () => {
-        delete process.env.FEATURE_ZENBOOKER_SYNC;
-        expect(flags.isZenbookerSyncEnabled()).toBe(true);
-        process.env.FEATURE_ZENBOOKER_SYNC = '0';
-        expect(flags.isZenbookerSyncEnabled()).toBe(false);
-        process.env.FEATURE_ZENBOOKER_SYNC = 'true';
-        expect(flags.isZenbookerSyncEnabled()).toBe(true);
-    });
 });
 
 describe('createManualJob (Gap 3)', () => {

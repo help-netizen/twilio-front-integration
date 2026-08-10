@@ -27,9 +27,6 @@ jest.mock('../backend/src/services/transactionService', () => ({
 jest.mock('../backend/src/services/fsmService', () => ({
     resolveTransition: (...args) => mockResolveTransition(...args),
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({
-    cancelJob: jest.fn(),
-}));
 jest.mock('../backend/src/db/routeQueries', () => ({
     getCompanyTimezone: jest.fn(async () => 'America/New_York'),
     getTechDaysForJob: jest.fn(async () => []),
@@ -40,9 +37,6 @@ jest.mock('../backend/src/services/routeSegmentService', () => ({
 }));
 jest.mock('../backend/src/db/membershipQueries', () => ({
     resolveProviderUserIds: jest.fn(async () => []),
-}));
-jest.mock('../backend/src/config/featureFlags', () => ({
-    isZenbookerSyncEnabled: jest.fn(() => false),
 }));
 jest.mock('../backend/src/services/eventBus', () => ({
     emit: (...args) => mockEventBusEmit(...args),

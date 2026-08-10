@@ -1,5 +1,4 @@
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));
 

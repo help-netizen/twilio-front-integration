@@ -1,6 +1,6 @@
 /**
  * technicianBaseLocationsService.js — manage technician base (home) locations for the
- * slot engine (SLOT-ENGINE-001 Phase 2). Lists the Zenbooker service-provider roster
+ * slot engine (SLOT-ENGINE-001 Phase 2). Lists the native service-provider roster
  * merged with stored base coordinates, and upserts a base either from explicit lat/lng
  * or by geocoding an address.
  */
@@ -42,7 +42,7 @@ function composeAddress({ street, apt, city, state, zip }) {
 
 /**
  * Roster of service-provider technicians, LEFT-merged with stored base locations.
- * If the mode-aware roster is unavailable, degrade to just the stored rows.
+ * If the native roster is unavailable, degrade to just the stored rows.
  * Shape: [{ tech_id, name, lat, lng, label, address, has_base }]
  */
 async function list(companyId) {

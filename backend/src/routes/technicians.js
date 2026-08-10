@@ -72,11 +72,11 @@ function sendError(res, err, context) {
     });
 }
 
-// GET /api/settings/technicians — active Zenbooker roster + effective schedule.
+// GET /api/settings/technicians — active native roster + effective schedule.
 router.get('/', requirePermission('tenant.company.manage'), async (req, res) => {
     try {
         const tenantId = companyId(req);
-        const roster = await rosterService.listActive(tenantId, { includeZenbookerProfile: true });
+        const roster = await rosterService.listActive(tenantId);
         const ids = roster.map(technician => technician.id);
         const [profiles, bases, schedules, serviceAreas] = await Promise.all([
             profileService.listProfiles(tenantId, ids),

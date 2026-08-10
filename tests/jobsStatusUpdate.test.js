@@ -14,13 +14,7 @@ jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/fsmService', () => ({
     resolveTransition: jest.fn(async () => ({ valid: true })),
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({
-    markJobComplete: jest.fn(),
-    cancelJob: jest.fn(),
-}));
-
 const db = require('../backend/src/db/connection');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const jobsService = require('../backend/src/services/jobsService');
 
 const COMPANY = '11111111-1111-1111-1111-111111111111';
@@ -86,23 +80,6 @@ describe('updateBlancStatus query shape', () => {
             from: 'Submitted',
             to: 'Canceled',
         });
-    });
-
-    it('does not call Zenbooker from the blanc_status change path', async () => {
-        db.query.mockResolvedValue({
-            rows: [{
-                id: 5,
-                blanc_status: 'Submitted',
-                zenbooker_job_id: 'zb-job-5',
-                zb_status: 'scheduled',
-                company_id: COMPANY,
-            }],
-        });
-
-        await jobsService.updateBlancStatus(5, 'Job is Done', COMPANY);
-
-        expect(zenbookerClient.markJobComplete).not.toHaveBeenCalled();
-        expect(zenbookerClient.cancelJob).not.toHaveBeenCalled();
     });
 
     it('uses a supplied transaction client for the status write and domain event', async () => {

@@ -3,12 +3,7 @@
 /**
  * ZB-DECOUPLE Phase C3 — native technician-directory maintenance.
  *
- * Until now the native directory was import-only (seeded by the backfill CLI)
- * and the admin ZB-bridge editor updated ONLY the legacy company_user_profiles
- * bridge (spec deferred #3/#4). This service adds:
- *   • create / rename / (de)activate for native technicians (production CRUD);
- *   • syncBridgeLink — the users.js bridge editor now dual-writes the native
- *     plane: technicians.crm_user_id follows the ZB-bridge re-link.
+ * Native technician-directory maintenance and membership projection.
  *
  * Plane rules: crm_user_id must be an ACTIVE member of the company (crm plane);
  * the ZB external id maps through technician_external_identities (roster plane).
@@ -101,33 +96,6 @@ async function listDirectory(companyId) {
 }
 
 /**
- * Deferred #3 fix: keep the native plane in step with the legacy ZB-bridge
- * editor. Called by routes/users.js AFTER company_user_profiles changes.
- *   newExternalId = null/''  → just unlink this user's native technician(s);
- *   newExternalId set        → unlink, then link the mapped native technician
- *                              (no-op with reason when the directory has no row
- *                              for that external id — e.g. before the backfill).
- * Never throws business errors at the caller — the bridge write already
- * happened; this reports what it did for the route's non-fatal log.
- */
-async function syncBridgeLink(companyId, crmUserId, newExternalId) {
-    const userId = String(crmUserId);
-    const unlinked = await technicianDirectoryQueries.unlinkCrmUser({ companyId, crmUserId: userId });
-    const externalId = newExternalId == null ? '' : String(newExternalId).trim();
-    if (!externalId) {
-        return { linked: false, unlinked_count: unlinked.length, reason: 'BRIDGE_CLEARED' };
-    }
-    const technicianUuid = await technicianDirectoryQueries.resolveExternalToUuid(companyId, SOURCE, externalId);
-    if (!technicianUuid) {
-        return { linked: false, unlinked_count: unlinked.length, reason: 'NO_NATIVE_TECHNICIAN' };
-    }
-    const technician = await technicianDirectoryQueries.linkCrmUser({
-        companyId, technicianId: technicianUuid, crmUserId: userId,
-    });
-    return { linked: !!technician, unlinked_count: unlinked.length, technician_uuid: technicianUuid };
-}
-
-/**
  * ZB-DECOUPLE C3b/E — USERS-FIRST projection (owner 2026-08-09: «роль provider ⇒
  * автоматически техник; техники не создаются вручную, они из раздела
  * пользователей»; Phase E: «Also works in the field» тоже ⇒ нативный техник):
@@ -135,25 +103,14 @@ async function syncBridgeLink(companyId, crmUserId, newExternalId) {
  * is_provider flag.
  *
  *   • every ACTIVE field-worker membership has an ACTIVE technician:
- *     adopt by crm link → reactivate; else adopt an UNLINKED technician via the
- *     legacy ZB bridge id (pre-existing rows never duplicate); else create one
+ *     find by crm link → reactivate; otherwise create one
  *     (display_name from the user, only at creation — manual renames stick);
  *   • an ACTIVE technician LINKED to a user who is no longer an active field
  *     worker is deactivated (work history stays);
  *   • UNLINKED technicians are never touched (the owner links historical ones
  *     себе later; manual create stays as the temporary fallback).
- *
- * MODE-GATED to 'native': in legacy mode the roster is still ZB and the prod
- * directory may be pre-backfill — projecting there would mint rows the backfill
- * would later duplicate. Phase D flips prod to native; new companies start
- * native → their technicians derive purely from Команда.
  */
 async function projectFromMemberships(companyId) {
-    const { getTechnicianDirectoryMode } = require('../config/featureFlags');
-    if (getTechnicianDirectoryMode(companyId) !== 'native') {
-        return { skipped: 'legacy-mode' };
-    }
-
     const fieldWorkers = await membershipQueries.listActiveFieldWorkerMemberships(companyId);
     const fieldWorkerIds = new Set(fieldWorkers.map(row => String(row.user_id)));
     const summary = { created: 0, reactivated: 0, adopted: 0, deactivated: 0 };
@@ -169,25 +126,6 @@ async function projectFromMemberships(companyId) {
                 summary.reactivated += 1;
             }
             continue;
-        }
-
-        // Adopt a pre-existing (backfilled) technician via the legacy ZB bridge
-        // before ever creating — this is what keeps projection duplicate-free.
-        const bridgeId = provider.zenbooker_team_member_id == null
-            ? '' : String(provider.zenbooker_team_member_id).trim();
-        if (bridgeId) {
-            const mappedUuid = await technicianDirectoryQueries.resolveExternalToUuid(companyId, SOURCE, bridgeId);
-            if (mappedUuid) {
-                const mapped = await technicianDirectoryQueries.getTechnicianById(companyId, mappedUuid);
-                if (mapped && (mapped.crm_user_id == null || String(mapped.crm_user_id) === userId)) {
-                    await technicianDirectoryQueries.linkCrmUser({ companyId, technicianId: mappedUuid, crmUserId: userId });
-                    if (!mapped.active) {
-                        await technicianDirectoryQueries.updateTechnician({ companyId, technicianId: mappedUuid, active: true });
-                    }
-                    summary.adopted += 1;
-                    continue;
-                }
-            }
         }
 
         await technicianDirectoryQueries.createTechnician({
@@ -217,7 +155,6 @@ module.exports = {
     createNativeTechnician,
     updateNativeTechnician,
     listDirectory,
-    syncBridgeLink,
     projectFromMemberships,
     TechnicianDirectoryError,
 };

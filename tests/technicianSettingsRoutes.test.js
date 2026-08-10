@@ -116,13 +116,13 @@ it('lists the active roster with profile/base and visible effective schedule sum
         schedule_summary: EFFECTIVE.schedule_summary,
         inherits_company_schedule: true,
     })]);
-    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_A, { includeZenbookerProfile: true });
+    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_A);
     expect(profileService.listProfiles).toHaveBeenCalledWith(COMPANY_A, [TECH.id]);
 });
 
 it('passes only the caller company into every list read', async () => {
     await request(appWith({ companyId: COMPANY_B })).get('/');
-    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_B, { includeZenbookerProfile: true });
+    expect(rosterService.listActive).toHaveBeenCalledWith(COMPANY_B);
     expect(profileService.listProfiles).toHaveBeenCalledWith(COMPANY_B, [TECH.id]);
     expect(baseLocationQueries.listByCompany).toHaveBeenCalledWith(COMPANY_B);
     expect(workScheduleService.listEffective).toHaveBeenCalledWith(COMPANY_B, [TECH]);

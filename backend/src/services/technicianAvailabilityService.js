@@ -4,11 +4,9 @@
  * are derived for the requested company-local dates and are never persisted.
  */
 const timeOffQueries = require('../db/timeOffQueries');
-const membershipQueries = require('../db/membershipQueries');
 const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const technicianRosterService = require('./technicianRosterService');
 const technicianWorkScheduleService = require('./technicianWorkScheduleService');
-const { getTechnicianDirectoryMode } = require('../config/featureFlags');
 const { dateInTZ } = require('../utils/companyTime');
 
 class TechnicianAvailabilityError extends Error {
@@ -177,21 +175,12 @@ async function listUnavailability(companyId, { from, to, technicianId } = {}, pr
     let effectiveTechnicianId = technicianId ? String(technicianId) : null;
     if (providerScope?.assignedOnly) {
         if (!providerScope.userId) return [];
-        if (getTechnicianDirectoryMode(companyId) === 'native') {
-            const ownTechnician = await technicianDirectoryQueries.findActiveTechnicianByCrmUserId(
-                companyId,
-                providerScope.userId
-            );
-            if (!ownTechnician) return [];
-            effectiveTechnicianId = String(ownTechnician.id);
-        } else {
-            const ownId = await membershipQueries.getZenbookerTeamMemberIdForUser(
-                companyId,
-                providerScope.userId
-            );
-            if (!ownId) return [];
-            effectiveTechnicianId = String(ownId);
-        }
+        const ownTechnician = await technicianDirectoryQueries.findActiveTechnicianByCrmUserId(
+            companyId,
+            providerScope.userId
+        );
+        if (!ownTechnician) return [];
+        effectiveTechnicianId = String(ownTechnician.id);
     }
 
     let roster = await technicianRosterService.listActive(companyId);

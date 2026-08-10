@@ -142,7 +142,6 @@ async function listUsers(companyId, opts = {}) {
                 COALESCE(p.is_provider, false) as is_provider,
                 p.schedule_color,
                 COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
-                p.zenbooker_team_member_id,
                 -- ZB-DECOUPLE Phase E: the user's OWN active native technician's
                 -- roster-compat id (external ZB id when present, else the uuid) —
                 -- the FE keys the Field-work settings on this, no manual link.
@@ -192,8 +191,7 @@ async function listActiveUsersMissingPhone(companyId, roleKeys = []) {
                 COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
                 COALESCE(p.is_provider, false) as is_provider,
                 p.schedule_color,
-                COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
-                p.zenbooker_team_member_id
+                COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled
          FROM crm_users u
          JOIN company_memberships m ON m.user_id = u.id
          LEFT JOIN company_user_profiles p ON p.membership_id = m.id
@@ -417,7 +415,7 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
         const membershipId = target.membership_id;
 
         // Update profile
-        const changes = { membershipId, providerBridgeChanged: false, previousTeamMemberId: undefined, newTeamMemberId: undefined };
+        const changes = { membershipId };
         if (updates.profile) {
             const p = updates.profile;
             const fields = [];
@@ -434,29 +432,6 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
             if (typeof p.is_provider === 'boolean') { fields.push(`is_provider = $${i++}`); values.push(p.is_provider); }
             if (p.schedule_color) { fields.push(`schedule_color = $${i++}`); values.push(p.schedule_color); }
             if (typeof p.location_tracking_enabled === 'boolean') { fields.push(`location_tracking_enabled = $${i++}`); values.push(p.location_tracking_enabled); }
-
-            // Provider bridge (PF007-HARDENING-001): external Zenbooker team member id.
-            // Integration mapping only — ownership stays on crm_users.id.
-            if ('zenbooker_team_member_id' in p) {
-                const raw = p.zenbooker_team_member_id;
-                const normalized = (raw === null || raw === undefined || String(raw).trim() === '')
-                    ? null
-                    : String(raw).trim();
-
-                const { rows: prevRows } = await client.query(
-                    `SELECT zenbooker_team_member_id FROM company_user_profiles WHERE membership_id = $1`,
-                    [membershipId]
-                );
-                const previous = prevRows[0]?.zenbooker_team_member_id ?? null;
-
-                if (previous !== normalized) {
-                    changes.providerBridgeChanged = true;
-                    changes.previousTeamMemberId = previous;
-                    changes.newTeamMemberId = normalized;
-                }
-                fields.push(`zenbooker_team_member_id = $${i++}`);
-                values.push(normalized);
-            }
 
             if (fields.length > 0) {
                 // Upsert logic for profile
@@ -567,7 +542,6 @@ async function getUserDetail(userId, companyId) {
             location_tracking_enabled: row.location_tracking_enabled,
             phone_calls_allowed: row.phone_calls_allowed,
             job_close_mode: row.job_close_mode,
-            zenbooker_team_member_id: row.zenbooker_team_member_id,
         },
     };
 }

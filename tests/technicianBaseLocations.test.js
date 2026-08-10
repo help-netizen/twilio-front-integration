@@ -8,7 +8,6 @@
  */
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
     resolveExternalToUuid: jest.fn(),
@@ -20,7 +19,6 @@ const express = require('express');
 const request = require('supertest');
 
 const db = require('../backend/src/db/connection');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const googlePlacesService = require('../backend/src/services/googlePlacesService');
 const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const queries = require('../backend/src/db/technicianBaseLocationQueries');
@@ -47,27 +45,16 @@ function appWith({ permissions = [], companyId = COMPANY_A } = {}) {
 
 beforeEach(() => {
     db.query.mockReset();
-    zenbookerClient.getTeamMembers.mockReset();
     googlePlacesService.geocodeAddress.mockReset();
-    delete process.env.TECHNICIAN_DIRECTORY_MODE;
-    delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
     directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
     directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
     directoryQueries.listActiveTechnicians.mockReset().mockResolvedValue([]);
     // schema bootstrap + default empty result
     db.query.mockResolvedValue({ rows: [] });
-    zenbookerClient.getTeamMembers.mockResolvedValue([]);
 });
 
-afterAll(() => {
-    delete process.env.TECHNICIAN_DIRECTORY_MODE;
-    delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
-});
-
-describe('mode-aware roster merge', () => {
-    it('native mode lists a native-only technician without calling Zenbooker', async () => {
-        process.env.TECHNICIAN_DIRECTORY_MODE = 'native';
-        process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS = COMPANY_A;
+describe('native roster merge', () => {
+    it('lists a native-only technician', async () => {
         directoryQueries.listActiveTechnicians.mockResolvedValue([{
             id: TECH_UUID,
             display_name: 'Native Technician',
@@ -94,7 +81,6 @@ describe('mode-aware roster merge', () => {
             has_base: true,
         })]);
         expect(directoryQueries.listActiveTechnicians).toHaveBeenCalledWith(COMPANY_A);
-        expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
     });
 
     it('a roster failure still surfaces stored bases only', async () => {
@@ -110,7 +96,7 @@ describe('mode-aware roster merge', () => {
             }
             return { rows: [] };
         });
-        zenbookerClient.getTeamMembers.mockRejectedValue(new Error('forced roster outage'));
+        directoryQueries.listActiveTechnicians.mockRejectedValue(new Error('forced roster outage'));
         const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
         await expect(svc.list(COMPANY_A)).resolves.toEqual([expect.objectContaining({

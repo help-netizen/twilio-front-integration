@@ -3,8 +3,7 @@
  *
  * Business logic for technician day-off periods (technician_time_off, mig 167):
  *   • listTimeOff — range read with provider assigned_only scoping: a provider
- *     is forced onto his OWN ZB team-member id via the bridge
- *     (company_user_profiles.zenbooker_team_member_id); no bridge → [] —
+ *     is forced onto his OWN native technician id; no active technician → [] —
  *     deny-by-default (E-14), never tenant-wide.
  *   • createTimeOff — target 'technician' inserts ONE row (name snapshot from
  *     the client); target 'company' materializes K rows from the selected
@@ -18,10 +17,8 @@
 
 const crypto = require('crypto');
 const timeOffQueries = require('../db/timeOffQueries');
-const membershipQueries = require('../db/membershipQueries');
 const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const technicianRosterService = require('./technicianRosterService');
-const { getTechnicianDirectoryMode } = require('../config/featureFlags');
 
 const NOTE_MAX_LENGTH = 500;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,8 +42,8 @@ function parseInstant(value) {
 /**
  * List time-off records overlapping [from, to), optionally filtered by
  * technician. Provider (assigned_only) scope is enforced server-side: the
- * technician_id query parameter is overwritten by the caller's own bridged
- * ZB id; without a bridge mapping the result is [] (deny-by-default).
+ * technician_id query parameter is overwritten by the caller's own native
+ * technician id; without an active technician the result is [] (deny-by-default).
  *
  * @param {string} companyId - req.companyFilter?.company_id
  * @param {Object} params - { from, to, technicianId? } (UTC ISO strings)
@@ -66,21 +63,14 @@ async function listTimeOff(companyId, { from, to, technicianId } = {}, providerS
     let effectiveTechnicianId = technicianId ? String(technicianId) : undefined;
     if (providerScope?.assignedOnly) {
         // Provider sees ONLY his own blocks; request parameters never widen his
-        // visibility (S-8). ZB-DECOUPLE Phase E: resolve the provider's OWN id
-        // natively (crm_user → technician) in native mode — a native-only
-        // technician has no ZB bridge, so the legacy path denied him his own
-        // time-off. Legacy mode keeps the bridge. Both deny-by-default (E-14).
+        // visibility (S-8). Resolve the provider's OWN id natively
+        // (crm_user → technician) and deny by default when unresolved (E-14).
         if (!providerScope.userId) return [];
-        let ownId;
-        if (getTechnicianDirectoryMode(companyId) === 'native') {
-            const ownTechnician = await technicianDirectoryQueries.findActiveTechnicianByCrmUserId(
-                companyId,
-                providerScope.userId
-            );
-            ownId = ownTechnician ? String(ownTechnician.id) : null;
-        } else {
-            ownId = await membershipQueries.getZenbookerTeamMemberIdForUser(companyId, providerScope.userId);
-        }
+        const ownTechnician = await technicianDirectoryQueries.findActiveTechnicianByCrmUserId(
+            companyId,
+            providerScope.userId
+        );
+        const ownId = ownTechnician ? String(ownTechnician.id) : null;
         if (!ownId) return []; // no mapping → deny-by-default (E-14)
         effectiveTechnicianId = ownId;
     }

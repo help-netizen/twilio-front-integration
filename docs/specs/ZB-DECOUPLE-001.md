@@ -643,6 +643,17 @@ if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` 
   (e.g. `/api/team/field-workers`); update FE useProviders/useScheduleData/CustomTimeModal +
   albusto-mobile. ⚠ Keep the old path as a TEMPORARY alias until the native app ships the new one
   (separately deployed) — do NOT hard-cut.
-- **F5 — collapse directory mode + drop column (LAST, reviewed migration):** native-only path
-  (drop legacy/compare + allowlist + technicianRosterService ZB fetch + getZenbookerTeamMemberIdForUser);
-  migration DROP COLUMN `crm_users.zenbooker_team_member_id` (dormant since Phase E).
+- **F5 — collapse directory mode + drop column — DONE 2026-08-10 (tandem: Codex impl, Claude verify + migration).**
+  Native-only technician directory: `getTechnicianDirectoryMode` + the legacy/compare mode +
+  `TECHNICIAN_DIRECTORY_MODE`/`_COMPANY_IDS`/`FEATURE_ZENBOOKER_SYNC` removed; `technicianRosterService.listActive`
+  always `listNative` (legacy ZB fetch + `zenbookerClient` gone → **`zenbookerClient.js` DELETED**);
+  availability/timeOff own-scope + technicianDirectory guard native-only; `getZenbookerTeamMemberIdForUser`
+  + all `company_user_profiles.zenbooker_team_member_id` reads (membershipQueries, userService, routes/users)
+  removed. Native path preserved: is_provider/role_key projection, technician_id, listActiveFieldWorkerMemberships,
+  projectFromMemberships. Migration **244_drop_zenbooker_bridge_column.sql** DROPs the dormant column (was on
+  `company_user_profiles`, not crm_users; Postgres drops its partial indexes with it). Safe for all tenants —
+  prod-snapshot DB confirms only ABC (3) + Acme (1) have native techs, 0 elsewhere; legacy ZB fetch was dead
+  anyway. Verify: zero refs to zenbookerClient/mode/bridge; boot-safe (no dangling require); 25 targeted +
+  68 affected tests pass; leadsConvertSchedule 6/6; FE build ✓. (4 jobsService payment-rollup failures are
+  pre-existing DB-fixture, unrelated.) ⚠ `ZENBOOKER_*` env vars in prod/staging `.env` are now DEAD (no code
+  reads them) — remove at leisure.

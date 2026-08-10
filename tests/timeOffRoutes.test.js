@@ -4,8 +4,8 @@
  *
  * Style precedent: tests/slotEngineProxy.test.js — service + route in ONE suite
  * over a supertest mini-app with fake-auth middleware; REAL timeOffService +
- * timeOffQueries on top of a mocked db.query; zenbookerClient and the
- * provider-bridge (membershipQueries.getZenbookerTeamMemberIdForUser) mocked.
+ * timeOffQueries on top of a mocked db.query; the native roster and directory
+ * seams are mocked.
  */
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
@@ -13,7 +13,7 @@ jest.mock('../backend/src/db/marketplaceQueries', () => ({
     getPublishedAppByKey: jest.fn(),
     findActiveInstallation: jest.fn(),
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
+jest.mock('../backend/src/services/technicianRosterService', () => ({ listActive: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/services/jobsService', () => ({ listJobs: jest.fn() }));
 jest.mock('../backend/src/services/scheduleService', () => ({
@@ -24,20 +24,17 @@ jest.mock('../backend/src/services/scheduleService', () => ({
         work_days: [1, 2, 3, 4, 5],
     })),
 }));
-jest.mock('../backend/src/db/membershipQueries', () => ({
-    getZenbookerTeamMemberIdForUser: jest.fn(),
-}));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
     resolveExternalToUuid: jest.fn(),
     resolveUuidToExternal: jest.fn(),
+    findActiveTechnicianByCrmUserId: jest.fn(),
 }));
 
 const express = require('express');
 const request = require('supertest');
 
 const db = require('../backend/src/db/connection');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
-const membershipQueries = require('../backend/src/db/membershipQueries');
+const technicianRosterService = require('../backend/src/services/technicianRosterService');
 const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const scheduleRouter = require('../backend/src/routes/schedule');
 
@@ -113,10 +110,10 @@ beforeEach(() => {
     jest.clearAllMocks();
     selectRows = [];
     deleteRowCount = 1;
-    zenbookerClient.getTeamMembers.mockReset();
-    membershipQueries.getZenbookerTeamMemberIdForUser.mockReset().mockResolvedValue(null);
+    technicianRosterService.listActive.mockReset().mockResolvedValue([]);
     directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
     directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
+    directoryQueries.findActiveTechnicianByCrmUserId.mockReset().mockResolvedValue(null);
     db.query.mockReset().mockImplementation(async (sql, params) => {
         const s = String(sql);
         if (/INSERT INTO technician_time_off/i.test(s)) return { rows: rowsFromInsertParams(params) };
@@ -164,7 +161,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
             'user-1',           // created_by = crmUser.id, NOT sub 'kc'
         ]);
         expect(params).not.toContain('kc');
-        expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
+        expect(technicianRosterService.listActive).not.toHaveBeenCalled();
     });
 
     it('TC-DO-02: no crmUser → created_by strictly null, still 201', async () => {
@@ -187,7 +184,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
         });
         expect(res.status).toBe(201);
         expect(res.body.data.created[0].technician_id).toBe('no-such-tech-999');
-        expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
+        expect(technicianRosterService.listActive).not.toHaveBeenCalled();
     });
 });
 
@@ -195,7 +192,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
 
 describe('POST /api/schedule/time-off (company)', () => {
     it('TC-DO-03: K active techs → exactly K rows via ONE INSERT statement, shared batch_id, source=company', async () => {
-        zenbookerClient.getTeamMembers.mockResolvedValue([
+        technicianRosterService.listActive.mockResolvedValue([
             { id: 1234567, name: 'John Smith' },
             { id: 7654321, name: 'Jane Doe' },
             { id: 111, name: 'Bob' },
@@ -209,9 +206,8 @@ describe('POST /api/schedule/time-off (company)', () => {
         expect(res.status).toBe(201);
         expect(res.body.data.created).toHaveLength(3);
 
-        expect(zenbookerClient.getTeamMembers).toHaveBeenCalledTimes(1);
-        expect(zenbookerClient.getTeamMembers).toHaveBeenCalledWith(
-            { service_provider: true, deactivated: false }, COMPANY);
+        expect(technicianRosterService.listActive).toHaveBeenCalledTimes(1);
+        expect(technicianRosterService.listActive).toHaveBeenCalledWith(COMPANY);
 
         // Atomicity: exactly ONE multi-row INSERT statement.
         expect(insertCalls()).toHaveLength(1);
@@ -234,7 +230,7 @@ describe('POST /api/schedule/time-off (company)', () => {
     });
 
     it('TC-DO-04: empty roster → 400 NO_ACTIVE_TECHNICIANS, zero inserts', async () => {
-        zenbookerClient.getTeamMembers.mockResolvedValue([]);
+        technicianRosterService.listActive.mockResolvedValue([]);
         const res = await request(dispatcher()).post('/api/schedule/time-off').send({
             target: 'company', starts_at: future(1), ends_at: future(2),
         });
@@ -244,13 +240,13 @@ describe('POST /api/schedule/time-off (company)', () => {
         expect(insertCalls()).toHaveLength(0);
     });
 
-    it('TC-DO-05: ZB failure → 502 ZENBOOKER_UNAVAILABLE, zero inserts (atomicity)', async () => {
-        zenbookerClient.getTeamMembers.mockRejectedValue(new Error('ZB timeout'));
+    it('TC-DO-05: native roster failure → 500 INTERNAL, zero inserts (atomicity)', async () => {
+        technicianRosterService.listActive.mockRejectedValue(new Error('Roster unavailable'));
         const res = await request(dispatcher()).post('/api/schedule/time-off').send({
             target: 'company', starts_at: future(1), ends_at: future(2),
         });
-        expect(res.status).toBe(502);
-        expect(res.body.error.code).toBe('ZENBOOKER_UNAVAILABLE');
+        expect(res.status).toBe(500);
+        expect(res.body.error.code).toBe('INTERNAL');
         expect(insertCalls()).toHaveLength(0);
     });
 });
@@ -359,8 +355,8 @@ describe('GET /api/schedule/time-off', () => {
         expect(params).toEqual([COMPANY, FROM, TO, TECH_UUID]);
     });
 
-    it('TC-DO-13: provider (assigned_only, bridge exists) → forced onto OWN ZB id, foreign param ignored', async () => {
-        membershipQueries.getZenbookerTeamMemberIdForUser.mockResolvedValue('1234567');
+    it('TC-DO-13: provider (assigned_only) → forced onto OWN native technician, foreign param ignored', async () => {
+        directoryQueries.findActiveTechnicianByCrmUserId.mockResolvedValue({ id: TECH_UUID });
         const app = appWith({
             permissions: ['schedule.view'],
             scopes: { job_visibility: 'assigned_only' },
@@ -373,7 +369,7 @@ describe('GET /api/schedule/time-off', () => {
         expect(res.status).toBe(200);
         expect(res.body.data.time_off).toEqual(selectRows);
 
-        expect(membershipQueries.getZenbookerTeamMemberIdForUser).toHaveBeenCalledWith(COMPANY, PROVIDER_USER);
+        expect(directoryQueries.findActiveTechnicianByCrmUserId).toHaveBeenCalledWith(COMPANY, PROVIDER_USER);
         const [sql, params] = selectCalls()[0];
         expect(String(sql)).toMatch(/resolved_match_key = \$4::text/);
         expect(params[3]).toBe(TECH_UUID); // own canonical id wins
@@ -381,8 +377,8 @@ describe('GET /api/schedule/time-off', () => {
         expect(allParams).not.toContain('7654321'); // foreign id never reaches SQL
     });
 
-    it('TC-DO-14: provider WITHOUT bridge mapping → 200 [] (deny-by-default), no table read, not 500', async () => {
-        membershipQueries.getZenbookerTeamMemberIdForUser.mockResolvedValue(null);
+    it('TC-DO-14: provider without an active technician → 200 [] (deny-by-default), no table read, not 500', async () => {
+        directoryQueries.findActiveTechnicianByCrmUserId.mockResolvedValue(null);
         const app = appWith({
             permissions: ['schedule.view'],
             scopes: { job_visibility: 'assigned_only' },
@@ -394,7 +390,7 @@ describe('GET /api/schedule/time-off', () => {
         expect(anyTimeOffTableCalls()).toHaveLength(0); // not a single record handed out
     });
 
-    it('TC-DO-16: GET never calls ZB — deactivated tech row served as-is from the DB snapshot', async () => {
+    it('TC-DO-16: GET serves a deactivated technician row as-is from the DB snapshot', async () => {
         selectRows = [{
             id: ROW_ID, technician_id: 'deactivated-42', technician_name: 'Old Name Snapshot',
             starts_at: '2026-07-18T13:00:00.000Z', ends_at: '2026-07-19T13:00:00.000Z',
@@ -403,7 +399,7 @@ describe('GET /api/schedule/time-off', () => {
         const res = await request(viewer()).get(`/api/schedule/time-off?from=${FROM}&to=${TO}`);
         expect(res.status).toBe(200);
         expect(res.body.data.time_off[0].technician_name).toBe('Old Name Snapshot');
-        expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
+        expect(technicianRosterService.listActive).not.toHaveBeenCalled();
     });
 });
 
@@ -414,8 +410,8 @@ describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
     const TO = '2026-07-21T04:00:00.000Z';
 
     it('returns explicit time off and derived schedule gaps with distinct kinds', async () => {
-        zenbookerClient.getTeamMembers.mockResolvedValue([
-            { id: '1234567', first_name: 'John', last_name: 'Smith', service_provider: true },
+        technicianRosterService.listActive.mockResolvedValue([
+            { id: '1234567', name: 'John Smith', active: true, technician_uuid: TECH_UUID },
         ]);
         selectRows = [{
             id: ROW_ID,
@@ -447,11 +443,11 @@ describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
     });
 
     it('retains schedule.view RBAC and provider-own scoping', async () => {
-        zenbookerClient.getTeamMembers.mockResolvedValue([
-            { id: '1234567', name: 'John Smith', service_provider: true },
-            { id: '7654321', name: 'Jane Doe', service_provider: true },
+        technicianRosterService.listActive.mockResolvedValue([
+            { id: '1234567', name: 'John Smith', active: true, technician_uuid: TECH_UUID },
+            { id: '7654321', name: 'Jane Doe', active: true, technician_uuid: '22222222-2222-4222-8222-222222222222' },
         ]);
-        membershipQueries.getZenbookerTeamMemberIdForUser.mockResolvedValue('1234567');
+        directoryQueries.findActiveTechnicianByCrmUserId.mockResolvedValue({ id: TECH_UUID });
         const provider = appWith({
             permissions: ['schedule.view'],
             scopes: { job_visibility: 'assigned_only' },
@@ -471,7 +467,7 @@ describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
             `/api/schedule/unavailability?from=${FROM}&to=${TO}`
         );
         expect(res.status).toBe(403);
-        expect(zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
+        expect(technicianRosterService.listActive).not.toHaveBeenCalled();
     });
 });
 

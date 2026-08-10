@@ -13,8 +13,8 @@
  *
  * The two cases require opposite treatment of ../backend/src/db/marketplaceQueries
  * (real module for 070, mocked for 074), so each test drives its own module
- * registry via jest.resetModules() + jest.doMock() + require() — the same seam the
- * ragClient/zenbookerClient suites use, and mirroring tests/googleEmailMarketplace.test.js.
+ * registry via jest.resetModules() + jest.doMock() + require(), mirroring
+ * tests/googleEmailMarketplace.test.js.
  *
  * TC-RA-071 (SQL seed insert + ON CONFLICT no-op) and TC-RA-072 (rollback removes
  * exactly that row) are MANUAL/psql — no house precedent executes raw .sql under
@@ -309,18 +309,10 @@ describe('REPAIR-ADVISOR-001 — createDirectJob emits job.created (Group E)', (
             jest.doMock('../backend/src/services/contactDedupeService', () => ({
                 resolveContact: resolveContact || jest.fn(),
             }));
-            jest.doMock('../backend/src/services/zenbookerClient', () => ({
-                findTerritoryByPostalCode: jest.fn().mockResolvedValue('terr_01'),
-                createJob: createJob || jest.fn(),
-                getJob: jest.fn(),
-            }));
             jest.doMock('../backend/src/services/fsmService', () => ({}));
             jest.doMock('../backend/src/services/eventService', () => ({}));
             jest.doMock('../backend/src/db/membershipQueries', () => ({
                 resolveProviderUserIds: jest.fn().mockResolvedValue([]),
-            }));
-            jest.doMock('../backend/src/config/featureFlags', () => ({
-                isZenbookerSyncEnabled: () => false,
             }));
             // Observed seam: spy emit so we never hit domain_events.
             jest.doMock('../backend/src/services/eventBus', () => ({ emit }));
@@ -368,7 +360,7 @@ describe('REPAIR-ADVISOR-001 — createDirectJob emits job.created (Group E)', (
         const out = await svc.createDirectJob(COMPANY_A, CREATE_INPUT);
 
         // Return value is byte-for-byte the pre-existing shape (additive-only).
-        expect(out).toEqual({ job_id: JOB_ID, zenbooker_job_id: null, zb_warning: 'INVALID_ADDRESS' });
+        expect(out).toEqual({ job_id: JOB_ID, zenbooker_job_id: null, zb_warning: null });
 
         // Emitted once, with the fields the subscriber reads + the opts from §3.2.
         expect(emit).toHaveBeenCalledTimes(1);
@@ -401,7 +393,7 @@ describe('REPAIR-ADVISOR-001 — createDirectJob emits job.created (Group E)', (
         const out = await svc.createDirectJob(COMPANY_A, CREATE_INPUT);
 
         // Same success result despite the rejecting bus.
-        expect(out).toEqual({ job_id: JOB_ID, zenbooker_job_id: null, zb_warning: 'INVALID_ADDRESS' });
+        expect(out).toEqual({ job_id: JOB_ID, zenbooker_job_id: null, zb_warning: null });
         expect(emit).toHaveBeenCalledTimes(1);
 
         // The .catch(()=>{}) at the emit site swallowed the rejection (no unhandled).
@@ -437,11 +429,6 @@ describe('REPAIR-ADVISOR-001 — convertLead emits job.created only on the new-l
             jest.doMock('../backend/src/db/connection', () => ({
                 query: dbQuery,
                 pool: { connect: jest.fn().mockResolvedValue(client) },
-            }));
-            jest.doMock('../backend/src/services/zenbookerClient', () => ({
-                createJob: createJob || jest.fn(),
-                createJobFromLead: jest.fn(),
-                getJob: getJob || jest.fn(),
             }));
             jest.doMock('../backend/src/services/fsmService', () => ({}));
             jest.doMock('../backend/src/services/eventBus', () => ({ emit }));
@@ -556,14 +543,10 @@ describe('REPAIR-ADVISOR-001 — out-of-scope create paths stay note-free (Group
             jest.doMock('../backend/src/db/connection', () => ({
                 query: dbQuery, getClient: jest.fn(), pool: { connect: jest.fn() },
             }));
-            jest.doMock('../backend/src/services/zenbookerClient', () => ({}));
             jest.doMock('../backend/src/services/fsmService', () => ({}));
             jest.doMock('../backend/src/services/eventService', () => ({}));
             jest.doMock('../backend/src/db/membershipQueries', () => ({
                 resolveProviderUserIds: jest.fn().mockResolvedValue([]),
-            }));
-            jest.doMock('../backend/src/config/featureFlags', () => ({
-                isZenbookerSyncEnabled: () => false,
             }));
             jest.doMock('../backend/src/services/eventBus', () => ({ emit }));
             svc = require('../backend/src/services/jobsService');
@@ -577,7 +560,7 @@ describe('REPAIR-ADVISOR-001 — out-of-scope create paths stay note-free (Group
         jest.dontMock('../backend/src/db/connection');
     });
 
-    it('TC-RA-083: ZB-sync/agentWorker upsert (createJob) + scheduler enqueue emit no job.created', async () => {
+    it('TC-RA-083: generic createJob upsert emits no job.created', async () => {
         const emit = jest.fn().mockResolvedValue({});
         const dbQuery = jest.fn((sql) =>
             /INSERT INTO jobs/.test(sql)
@@ -586,12 +569,9 @@ describe('REPAIR-ADVISOR-001 — out-of-scope create paths stay note-free (Group
         );
         const svc = loadJobsService(emit, dbQuery);
 
-        // Generic upsert used by the Zenbooker webhook sync + the agentWorker handler.
+        // Generic upsert remains note-free.
         const job = await svc.createJob({ zenbookerJobId: 'zb-ext-1', companyId: COMPANY_A });
         expect(job).toBeTruthy();
-
-        // Scheduler enqueue path (marks a job for one-shot ZB sync) — also note-free.
-        await svc.enqueueZbJobSync(COMPANY_A, 99, {});
 
         expect(emit).not.toHaveBeenCalled();
     });

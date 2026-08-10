@@ -3,7 +3,7 @@
 // Run (worktree override is MANDATORY — root jest config ignores /.claude/worktrees/):
 //   npx jest --runTestsByPath tests/ragClient.test.js --testPathIgnorePatterns "/node_modules/"
 //
-// Mock seam mirrors tests/zenbookerClient.test.js: jest.doMock('axios', () => ({ create }))
+// Mock axios at the module boundary so no network call escapes the suite.
 // + jest.resetModules() + require() AFTER env is set (ragClient reads RAG_API_URL /
 // RAG_TIMEOUT_MS at module-eval time).
 

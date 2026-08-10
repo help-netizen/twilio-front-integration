@@ -14,15 +14,14 @@
  */
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
     resolveExternalToUuid: jest.fn(),
     resolveUuidToExternal: jest.fn(),
+    listActiveTechnicians: jest.fn(),
 }));
 
 const db = require('../backend/src/db/connection');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const googlePlacesService = require('../backend/src/services/googlePlacesService');
 const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const queries = require('../backend/src/db/technicianBaseLocationQueries');
@@ -40,13 +39,12 @@ function findInsert() {
 
 beforeEach(() => {
     db.query.mockReset();
-    zenbookerClient.getTeamMembers.mockReset();
     googlePlacesService.geocodeAddress.mockReset();
     directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
     directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
+    directoryQueries.listActiveTechnicians.mockReset().mockResolvedValue([]);
     // schema bootstrap (125 + 135) + default empty result
     db.query.mockResolvedValue({ rows: [] });
-    zenbookerClient.getTeamMembers.mockResolvedValue([]);
 });
 
 describe('upsert persists structured fields', () => {
@@ -182,9 +180,6 @@ describe('list() surfaces structured fields', () => {
             }
             return { rows: [] };
         });
-        // Degrade Zenbooker so the stored row passes straight through.
-        zenbookerClient.getTeamMembers.mockResolvedValue(null);
-
         const out = await svc.list(COMPANY_A);
         const row = out.find(r => r.tech_id === 'tech_1');
         expect(row).toMatchObject({
@@ -196,7 +191,11 @@ describe('list() surfaces structured fields', () => {
 
     it('emits null structured fields for roster techs without a stored base', async () => {
         db.query.mockResolvedValue({ rows: [] }); // no stored bases
-        zenbookerClient.getTeamMembers.mockResolvedValue([{ id: 'tech_9', first_name: 'Sam', last_name: 'P' }]);
+        directoryQueries.listActiveTechnicians.mockResolvedValue([{
+            id: TECH_UUID,
+            display_name: 'Sam P',
+            zenbooker_external_id: 'tech_9',
+        }]);
 
         const out = await svc.list(COMPANY_A);
         const row = out.find(r => r.tech_id === 'tech_9');

@@ -13,7 +13,7 @@ jest.mock('../backend/src/db/marketplaceQueries', () => ({
     getPublishedAppByKey: jest.fn(),
     findActiveInstallation: jest.fn(),
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
+jest.mock('../backend/src/services/technicianRosterService', () => ({ listActive: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/services/jobsService', () => ({ listJobs: jest.fn() }));
 jest.mock('../backend/src/services/scheduleService', () => ({
@@ -33,7 +33,7 @@ jest.mock('../backend/src/services/technicianServiceAreaService', () => ({
 }));
 
 const db = require('../backend/src/db/connection');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
+const technicianRosterService = require('../backend/src/services/technicianRosterService');
 const jobsService = require('../backend/src/services/jobsService');
 const scheduleService = require('../backend/src/services/scheduleService');
 const settingsService = require('../backend/src/services/slotEngineSettingsService');
@@ -120,9 +120,9 @@ beforeEach(() => {
         }
         return { rows: [] };
     });
-    zenbookerClient.getTeamMembers.mockReset().mockResolvedValue([
-        { id: '1234567', first_name: 'John', last_name: 'Smith', deactivated: false },
-        { id: '7654321', first_name: 'Jane', last_name: 'Doe', deactivated: false },
+    technicianRosterService.listActive.mockReset().mockResolvedValue([
+        { id: '1234567', name: 'John Smith', active: true },
+        { id: '7654321', name: 'Jane Doe', active: true },
     ]);
     jobsService.listJobs.mockReset().mockResolvedValue([]);
     scheduleService.getDispatchSettings.mockReset().mockResolvedValue({ timezone: TZ });

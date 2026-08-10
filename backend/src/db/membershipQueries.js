@@ -179,8 +179,7 @@ async function getMembershipWithProfile(userId, companyId) {
                 COALESCE(p.is_provider, false) as is_provider,
                 COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
                 COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
-                p.job_close_mode,
-                p.zenbooker_team_member_id
+                p.job_close_mode
          FROM company_memberships m
          JOIN crm_users u ON u.id = m.user_id
          LEFT JOIN company_user_profiles p ON p.membership_id = m.id
@@ -192,14 +191,9 @@ async function getMembershipWithProfile(userId, companyId) {
 
 /**
  * Resolve assignment-compatible technician ids to internal crm_users.id,
- * strictly inside one company. Legacy Zenbooker ids use the existing profile
- * bridge; native technician UUIDs (and mapped external ids) use the native
- * directory's crm_user_id link. The returned authorization plane remains
- * crm_users.id only.
- *
- * The bridge (company_user_profiles.zenbooker_team_member_id) is only an
- * integration mapping: unmapped external ids resolve to nothing and must not
- * grant visibility to any CRM user.
+ * strictly inside one company. Native technician UUIDs and mapped external ids
+ * use the native directory's crm_user_id link. The returned authorization plane
+ * remains crm_users.id only.
  *
  * @param {string} companyId - tenant company id (required)
  * @param {string[]} externalIds - roster compatibility ids
@@ -223,8 +217,7 @@ async function resolveProviderUserIds(companyId, externalIds) {
          WHERE m.company_id = $1
            AND m.status = 'active'
            AND (
-                p.zenbooker_team_member_id = ANY($2::text[])
-                OR t.id::text = ANY($2::text[])
+                t.id::text = ANY($2::text[])
                 OR e.external_id = ANY($2::text[])
            )`,
         [companyId, ids]
@@ -233,46 +226,15 @@ async function resolveProviderUserIds(companyId, externalIds) {
 }
 
 /**
- * Resolve one CRM user's Zenbooker team-member id inside one company —
- * the reverse direction of resolveProviderUserIds (TECH-DAYOFF-001, S-8:
- * provider assigned_only sees only his OWN time-off blocks).
- *
- * The bridge is company_user_profiles.zenbooker_team_member_id; users without
- * a mapping resolve to null and callers must treat that as deny-by-default
- * (empty result), never tenant-wide.
- *
- * @param {string} companyId - tenant company id (required)
- * @param {string} userId - crm_users.id
- * @returns {Promise<string|null>} ZB team-member TEXT id, or null when unmapped
- */
-async function getZenbookerTeamMemberIdForUser(companyId, userId) {
-    if (!companyId || !userId) return null;
-    const { rows } = await db.query(
-        `SELECT p.zenbooker_team_member_id
-         FROM company_user_profiles p
-         JOIN company_memberships m ON m.id = p.membership_id
-         WHERE m.company_id = $1
-           AND m.status = 'active'
-           AND m.user_id = $2
-           AND p.zenbooker_team_member_id IS NOT NULL
-         LIMIT 1`,
-        [companyId, String(userId)]
-    );
-    return rows[0] ? String(rows[0].zenbooker_team_member_id) : null;
-}
-
-/**
  * ZB-DECOUPLE C3b/E — the technician projection's source set: every ACTIVE
  * field worker in the company. A field worker is a user whose role is
  * `provider` OR who has the "Also works in the field" flag
  * (company_user_profiles.is_provider) set — owner 2026-08-09: office roles that
- * also run jobs become native technicians too, no Zenbooker link. Includes the
- * legacy ZB bridge id so the projection can ADOPT a pre-existing native
- * technician instead of minting a duplicate.
+ * also run jobs become native technicians too.
  */
 async function listActiveFieldWorkerMemberships(companyId) {
     const { rows } = await db.query(
-        `SELECT m.user_id, u.full_name, u.email, p.zenbooker_team_member_id
+        `SELECT m.user_id, u.full_name, u.email
          FROM company_memberships m
          JOIN crm_users u
            ON u.id = m.user_id
@@ -299,6 +261,5 @@ module.exports = {
     getUserProfile,
     getMembershipWithProfile,
     resolveProviderUserIds,
-    getZenbookerTeamMemberIdForUser,
     listActiveFieldWorkerMemberships,
 };

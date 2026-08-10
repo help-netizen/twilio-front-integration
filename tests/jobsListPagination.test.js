@@ -5,7 +5,6 @@ const PROVIDER_USER = '00000000-0000-0000-0000-00000000b102';
 const CURSOR_TS = '2026-07-18T15:00:00.654321Z';
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({
     logEvent: jest.fn(),

@@ -20,7 +20,6 @@ jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     deleteAttachment: jest.fn(async () => true),
     MAX_FILES_PER_NOTE: 5,
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 
 const noteAttachmentsService = require('../backend/src/services/noteAttachmentsService');

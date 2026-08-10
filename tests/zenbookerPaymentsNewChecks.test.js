@@ -2,7 +2,6 @@ jest.mock('../backend/src/db/connection', () => ({
     query: jest.fn(),
 }));
 
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 const mockLogFinancialActivity = jest.fn();
 jest.mock('../backend/src/services/financialActivityService', () => ({
     logFinancialActivity: (...args) => mockLogFinancialActivity(...args),

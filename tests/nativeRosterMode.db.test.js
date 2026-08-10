@@ -4,7 +4,6 @@ const { randomUUID } = require('crypto');
 const { spawnSync } = require('child_process');
 const db = require('../backend/src/db/connection');
 const membershipQueries = require('../backend/src/db/membershipQueries');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const rosterService = require('../backend/src/services/technicianRosterService');
 
 jest.setTimeout(30000);
@@ -45,18 +44,13 @@ function probeMigratedDatabase() {
 const databaseTest = probeMigratedDatabase() ? test : test.skip;
 
 describe('native technician roster mode against real PostgreSQL', () => {
-    databaseTest('returns mapped compatibility ids plus native-only technicians during a forced ZB outage', async () => {
+    databaseTest('returns mapped compatibility ids plus native-only technicians', async () => {
         const companyId = randomUUID();
         const mappedTechnicianId = randomUUID();
         const nativeOnlyTechnicianId = randomUUID();
         const inactiveTechnicianId = randomUUID();
         const zenbookerId = `zb-roster-${randomUUID()}`;
         const suffix = randomUUID();
-        const getTeamMembers = jest.spyOn(zenbookerClient, 'getTeamMembers')
-            .mockRejectedValue(new Error('forced Zenbooker outage'));
-
-        process.env.TECHNICIAN_DIRECTORY_MODE = 'native';
-        process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS = companyId;
         try {
             await db.query(
                 `INSERT INTO companies (id, name, slug, status, timezone)
@@ -94,11 +88,7 @@ describe('native technician roster mode against real PostgreSQL', () => {
                 },
             ]);
             expect(roster.map(technician => technician.id)).toContain(nativeOnlyTechnicianId);
-            expect(getTeamMembers).not.toHaveBeenCalled();
         } finally {
-            getTeamMembers.mockRestore();
-            delete process.env.TECHNICIAN_DIRECTORY_MODE;
-            delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
             await db.query('DELETE FROM technicians WHERE company_id = $1', [companyId]).catch(() => {});
             await db.query('DELETE FROM companies WHERE id = $1', [companyId]).catch(() => {});
         }
@@ -111,11 +101,6 @@ describe('native technician roster mode against real PostgreSQL', () => {
         const technicianB = randomUUID();
         const suffix = randomUUID();
         const sharedExternalId = `zb-roster-collision-${suffix}`;
-        const getTeamMembers = jest.spyOn(zenbookerClient, 'getTeamMembers')
-            .mockRejectedValue(new Error('forced Zenbooker outage'));
-
-        process.env.TECHNICIAN_DIRECTORY_MODE = 'native';
-        process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS = companyA;
         try {
             await db.query(
                 `INSERT INTO companies (id, name, slug, status, timezone)
@@ -151,11 +136,7 @@ describe('native technician roster mode against real PostgreSQL', () => {
                 technician_uuid: technicianA,
             }]);
             expect(roster.map(technician => technician.technician_uuid)).not.toContain(technicianB);
-            expect(getTeamMembers).not.toHaveBeenCalled();
         } finally {
-            getTeamMembers.mockRestore();
-            delete process.env.TECHNICIAN_DIRECTORY_MODE;
-            delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
             await db.query(
                 'DELETE FROM technicians WHERE company_id = ANY($1::uuid[])',
                 [[companyA, companyB]]
@@ -225,7 +206,5 @@ describe('native technician roster mode against real PostgreSQL', () => {
 });
 
 afterAll(async () => {
-    delete process.env.TECHNICIAN_DIRECTORY_MODE;
-    delete process.env.TECHNICIAN_DIRECTORY_COMPANY_IDS;
     try { await db.pool.end(); } catch (_) { /* already closed */ }
 });

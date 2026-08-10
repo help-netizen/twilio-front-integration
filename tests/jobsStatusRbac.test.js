@@ -29,9 +29,6 @@ jest.mock('../backend/src/db/connection', () => {
     const query = jest.fn();
     return { query, getClient: jest.fn(async () => ({ query, release: jest.fn() })) };
 });
-jest.mock('../backend/src/services/zenbookerClient', () => ({
-    cancelJob: jest.fn(async () => {}),
-}));
 jest.mock('../backend/src/services/fsmService', () => ({
     resolveTransition: jest.fn(async () => ({ valid: true })),
 }));

@@ -9,7 +9,6 @@ jest.mock('../backend/src/services/eventService', () => ({
     describeEvent: jest.fn(),
 }));
 jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn(async () => {}) }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1024,
     MAX_FILES_PER_NOTE: 5,

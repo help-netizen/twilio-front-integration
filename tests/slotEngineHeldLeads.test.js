@@ -19,7 +19,9 @@
  */
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
+jest.mock('../backend/src/services/technicianRosterService', () => ({
+    listActive: jest.fn().mockResolvedValue([]),
+}));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/services/jobsService', () => ({ listJobs: jest.fn() }));
 jest.mock('../backend/src/services/scheduleService', () => ({

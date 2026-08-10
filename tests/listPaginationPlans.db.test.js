@@ -3,7 +3,6 @@
 const PROD_COPY_URL = process.env.LIST_PAGINATION_PRODCOPY_URL || '';
 if (PROD_COPY_URL) process.env.DATABASE_URL = PROD_COPY_URL;
 
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));
 jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn() }));

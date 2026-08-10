@@ -60,7 +60,7 @@ function isValidEmail(email) {
  * ZB-DECOUPLE C3b — USERS-FIRST technician directory: after any membership
  * mutation (create / role change / status change / removal) the native
  * directory re-projects so «роль provider ⇔ активный техник» holds without any
- * manual linking. No-op in legacy mode; never fails the admin's request.
+ * manual linking. Never fails the admin's request.
  */
 async function projectTechnicians(companyId, context) {
     try {
@@ -276,19 +276,6 @@ router.patch('/:id', requireTenantAdmin, async (req, res) => {
                 });
             }
         }
-        if (profile && 'zenbooker_team_member_id' in profile) {
-            const v = profile.zenbooker_team_member_id;
-            const isValid = v === null || v === '' ||
-                (['string', 'number'].includes(typeof v) && String(v).trim().length <= 64);
-            if (!isValid) {
-                return res.status(422).json({
-                    code: 'VALIDATION_ERROR',
-                    message: 'zenbooker_team_member_id must be a string up to 64 chars or null',
-                    trace_id: req.traceId,
-                });
-            }
-        }
-
         const target = await userService.getManagedUser(userId, companyId);
         if (!target) {
             return res.status(404).json({
@@ -397,30 +384,6 @@ router.patch('/:id', requireTenantAdmin, async (req, res) => {
             throw dbErr;
         }
 
-        // Keep the internal job assignee mirror consistent with the new bridge
-        if (changes.providerBridgeChanged) {
-            try {
-                const jobsService = require('../services/jobsService');
-                await jobsService.refreshCompanyProviderMirror(companyId);
-            } catch (mirrorErr) {
-                console.error('[Users] Provider mirror refresh failed:', mirrorErr.message);
-            }
-            // ZB-DECOUPLE C3 (spec deferred #3): the native plane follows the
-            // bridge edit — technicians.crm_user_id re-links (or clears) so the
-            // native directory never drifts from the admin's ZB re-link.
-            try {
-                const directoryService = require('../services/technicianDirectoryService');
-                const sync = await directoryService.syncBridgeLink(companyId, userId, changes.newTeamMemberId);
-                if (!sync.linked && sync.reason === 'NO_NATIVE_TECHNICIAN') {
-                    console.warn('[Users] Bridge re-link has no native technician yet (pre-backfill):', {
-                        company_id: companyId, user_id: userId, external_id: changes.newTeamMemberId,
-                    });
-                }
-            } catch (nativeErr) {
-                console.error('[Users] Native directory bridge-sync failed:', nativeErr.message);
-            }
-        }
-
         // C3b: role changes re-project the directory (provider granted/revoked).
         await projectTechnicians(companyId, 'user-updated');
 
@@ -439,12 +402,6 @@ router.patch('/:id', requireTenantAdmin, async (req, res) => {
                 email_updated: emailChanged,
                 email_verification_reset: emailChanged,
                 linked_identity_providers: linkedIdentityProviders,
-                ...(changes.providerBridgeChanged ? {
-                    zenbooker_team_member_id: {
-                        from: changes.previousTeamMemberId,
-                        to: changes.newTeamMemberId,
-                    },
-                } : {}),
             },
             trace_id: req.traceId,
         });

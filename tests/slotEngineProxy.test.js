@@ -17,7 +17,7 @@ jest.mock('../backend/src/db/marketplaceQueries', () => ({
     getPublishedAppByKey: jest.fn(),
     findActiveInstallation: jest.fn(),
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({ getTeamMembers: jest.fn() }));
+jest.mock('../backend/src/services/technicianRosterService', () => ({ listActive: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/services/jobsService', () => ({ listJobs: jest.fn() }));
 jest.mock('../backend/src/services/scheduleService', () => ({
@@ -47,7 +47,7 @@ const express = require('express');
 const request = require('supertest');
 
 const marketplaceQueries = require('../backend/src/db/marketplaceQueries');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
+const technicianRosterService = require('../backend/src/services/technicianRosterService');
 const jobsService = require('../backend/src/services/jobsService');
 const marketplaceService = require('../backend/src/services/marketplaceService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
@@ -71,7 +71,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     marketplaceQueries.getPublishedAppByKey.mockReset();
     marketplaceQueries.findActiveInstallation.mockReset();
-    zenbookerClient.getTeamMembers.mockReset().mockResolvedValue([]);
+    technicianRosterService.listActive.mockReset().mockResolvedValue([]);
     jobsService.listJobs.mockReset().mockResolvedValue([]);
     // RS-2: settings resolve defaults to DEFAULTS so the existing snapshot/proxy tests
     // stay deterministic; integration cases below override per-test.
@@ -180,9 +180,9 @@ describe('snapshot mapping', () => {
             }
             return { rows: [] };
         });
-        zenbookerClient.getTeamMembers.mockResolvedValue([
-            { id: 'tech_001', first_name: 'Robert', last_name: 'Smith', deactivated: false },
-            { id: 'tech_002', name: 'Jane', deactivated: false },
+        technicianRosterService.listActive.mockResolvedValue([
+            { id: 'tech_001', name: 'Robert Smith', active: true },
+            { id: 'tech_002', name: 'Jane', active: true },
         ]);
         const techs = await slotEngineService._buildTechnicians(COMPANY);
         const t1 = techs.find(t => t.id === 'tech_001');
@@ -406,10 +406,10 @@ describe('TECHSLOT-001 §3: new_job.technician_id single-tech filter + ranking-c
 
     beforeEach(() => {
         dbConn.query.mockReset().mockResolvedValue({ rows: [] });
-        zenbookerClient.getTeamMembers.mockResolvedValue([
-            { id: 'A', first_name: 'Ann', deactivated: false },
-            { id: 'B', first_name: 'Bob', deactivated: false },
-            { id: 'C', first_name: 'Cid', deactivated: false },
+        technicianRosterService.listActive.mockResolvedValue([
+            { id: 'A', name: 'Ann', active: true },
+            { id: 'B', name: 'Bob', active: true },
+            { id: 'C', name: 'Cid', active: true },
         ]);
         global.fetch.mockResolvedValue({ ok: true, json: async () => ({ recommendations: [] }) });
     });
@@ -426,9 +426,9 @@ describe('TECHSLOT-001 §3: new_job.technician_id single-tech filter + ranking-c
     });
 
     it('TC-TS-01b: technician_id matches across string/number id types (String coercion)', async () => {
-        zenbookerClient.getTeamMembers.mockResolvedValue([
-            { id: 7, first_name: 'Numeric', deactivated: false },
-            { id: 'B', first_name: 'Bob', deactivated: false },
+        technicianRosterService.listActive.mockResolvedValue([
+            { id: 7, name: 'Numeric', active: true },
+            { id: 'B', name: 'Bob', active: true },
         ]);
         await slotEngineService.getRecommendations(COMPANY, {
             new_job: { lat: 42.35, lng: -71.09, technician_id: 7 },
