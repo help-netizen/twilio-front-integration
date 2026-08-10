@@ -139,6 +139,21 @@ export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
                         </span>
                     )}
                 </button>
+
+                {/* New lead — primary, out of the Filters sheet and on-view. Square,
+                    matches the gear; "+ New" stacks in two lines. */}
+                {canCreateLead && (
+                    <button
+                        type="button"
+                        onClick={onNewLead}
+                        aria-label="New lead"
+                        className="w-[44px] h-[44px] flex flex-col items-center justify-center shrink-0 leading-none transition-opacity hover:opacity-85"
+                        style={{ background: 'var(--blanc-accent)', color: '#fff', borderRadius: '14px', boxShadow: '0 6px 16px rgba(127, 66, 225, 0.25)' }}
+                    >
+                        <Plus className="size-4" strokeWidth={2.5} />
+                        <span className="text-[10px] font-semibold mt-0.5">New</span>
+                    </button>
+                )}
             </div>
 
             {/* ── Filters sheet ── */}
@@ -211,21 +226,7 @@ export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
                         </button>
                     )}
 
-                    {/* Actions */}
-                    {canCreateLead && (
-                        <div className="flex flex-col gap-2.5">
-                            <div style={eyebrow}>Actions</div>
-                            <button
-                                type="button"
-                                onClick={() => { close(); onNewLead(); }}
-                                className="flex items-center gap-3 w-full min-h-[52px] px-4 text-[15px] font-semibold transition-opacity hover:opacity-80"
-                                style={{ ...controlBtn, borderRadius: '16px', justifyContent: 'flex-start' }}
-                            >
-                                <Plus className="size-5" />
-                                <span>New lead</span>
-                            </button>
-                        </div>
-                    )}
+                    {/* New lead moved OUT to the always-visible primary button in the top bar. */}
                 </div>
             </BottomSheet>
         </>

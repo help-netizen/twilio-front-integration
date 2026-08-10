@@ -164,10 +164,9 @@ export function JobsPage() {
                             {canCreateJob && (
                                 <button
                                     onClick={() => setNewJobOpen(true)}
-                                    className="blanc-control-chip"
-                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                    className="blanc-control-chip-primary"
                                 >
-                                    <Plus className="size-3.5" />
+                                    <Plus className="size-4" />
                                     New Job
                                 </button>
                             )}

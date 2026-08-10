@@ -149,6 +149,21 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                         </span>
                     )}
                 </button>
+
+                {/* New job — primary, out of the Filters sheet and on-view. Square on
+                    mobile (matches the gear); "+ New" stacks in two lines. */}
+                {onNewJob && (
+                    <button
+                        type="button"
+                        onClick={onNewJob}
+                        aria-label="New job"
+                        className="w-[44px] h-[44px] flex flex-col items-center justify-center shrink-0 leading-none transition-opacity hover:opacity-85"
+                        style={{ background: 'var(--blanc-accent)', color: '#fff', borderRadius: '14px', boxShadow: '0 6px 16px rgba(127, 66, 225, 0.25)' }}
+                    >
+                        <Plus className="size-4" strokeWidth={2.5} />
+                        <span className="text-[10px] font-semibold mt-0.5">New</span>
+                    </button>
+                )}
                 </div>
             </div>
 
@@ -226,9 +241,7 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                     {hasDispatchActions && (
                         <div className="flex flex-col gap-2.5">
                             <div style={eyebrow}>Dispatch</div>
-                            {onNewJob && (
-                                <SheetAction onClick={() => { close(); onNewJob(); }} icon={<Plus className="size-5" />} label="New job" />
-                            )}
+                            {/* New job moved OUT to the always-visible primary button in the top bar. */}
                             {onTimeOff && (
                                 <SheetAction onClick={() => { close(); onTimeOff(); }} icon={<CalendarOff className="size-5" />} label="Time off" />
                             )}

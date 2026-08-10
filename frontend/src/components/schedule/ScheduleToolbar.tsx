@@ -29,10 +29,9 @@ export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ searchValue, o
                     <button
                         type="button"
                         onClick={onNewJob}
-                        className="blanc-control-chip"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        className="blanc-control-chip-primary"
                     >
-                        <Plus className="size-3.5" />
+                        <Plus className="size-4" />
                         New job
                     </button>
                 )}
