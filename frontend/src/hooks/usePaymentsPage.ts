@@ -15,11 +15,6 @@ import { exportPaymentsCSV } from './paymentExport';
 import { useAuthz } from './useAuthz';
 import { useDebouncedSearch } from './useDebouncedSearch';
 import { useLoadMoreList } from './useLoadMoreList';
-import {
-    zenbookerPaymentsApi,
-    zenbookerSyncResultMessage,
-    type ZenbookerSyncCursor,
-} from '../services/zenbookerPaymentsApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 const PAYMENTS_PAGE_SIZE = 50;
@@ -44,9 +39,6 @@ export function usePaymentsPage() {
     const [selectedId, setSelectedId] = useState<number | null>(urlPaymentId ? parseInt(urlPaymentId, 10) || null : null);
     const [detail, setDetail] = useState<PaymentDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
-    const [syncingMode, setSyncingMode] = useState<'range' | 'full_history' | null>(null);
-    const [syncResult, setSyncResult] = useState<string | null>(null);
-    const [fullHistoryCursor, setFullHistoryCursor] = useState<ZenbookerSyncCursor | null>(null);
     const [providerFilter, setProviderFilter] = useState('');
     const [paidFilter, setPaidFilter] = useState<'' | 'paid' | 'due'>('');
     const [filtersOpen, setFiltersOpen] = useState(false);
@@ -124,40 +116,6 @@ export function usePaymentsPage() {
         },
         getItemKey: paymentKey,
     });
-
-    const handleSync = useCallback(async () => {
-        setSyncingMode('range');
-        setSyncResult(null);
-        try {
-            const result = await zenbookerPaymentsApi.syncRange(dateFrom, dateTo);
-            setSyncResult(zenbookerSyncResultMessage(result));
-            await paymentsList.reset();
-        } catch (error) {
-            setSyncResult(`Sync error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        } finally {
-            setSyncingMode(null);
-        }
-    }, [dateFrom, dateTo, paymentsList.reset]);
-
-    const handleFullHistorySync = useCallback(async () => {
-        setSyncingMode('full_history');
-        setSyncResult(null);
-        try {
-            const result = await zenbookerPaymentsApi.syncFullHistory(fullHistoryCursor);
-            if (result.remaining) {
-                if (result.cursor == null) throw new Error('Progress was saved without a continuation cursor');
-                setFullHistoryCursor(result.cursor);
-            } else {
-                setFullHistoryCursor(null);
-            }
-            setSyncResult(zenbookerSyncResultMessage(result));
-            await paymentsList.reset();
-        } catch (error) {
-            setSyncResult(`Sync error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        } finally {
-            setSyncingMode(null);
-        }
-    }, [fullHistoryCursor, paymentsList.reset]);
 
     const fetchDetail = useCallback(async (paymentId: number) => {
         setDetailLoading(true);
@@ -276,12 +234,6 @@ export function usePaymentsPage() {
         handleCloseDetail,
         handleToggleDeposited,
 
-        syncing: syncingMode !== null,
-        syncingMode,
-        syncResult,
-        handleSync,
-        handleFullHistorySync,
-        fullHistoryRemaining: fullHistoryCursor != null,
         exporting,
         handleExportCSV,
     };

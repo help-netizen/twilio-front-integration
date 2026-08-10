@@ -5,7 +5,7 @@
 
 import {
     Loader2, Download, DollarSign, X,
-    RefreshCw, CalendarIcon,
+    CalendarIcon,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -196,19 +196,6 @@ export default function PaymentsPage() {
                             </Popover>
                         );
                     })()}
-                    {pm.syncResult && (<span style={{ fontSize: '12px', color: pm.syncResult.startsWith('Sync error') ? '#ef4444' : '#22c55e' }}>{pm.syncResult}</span>)}
-                    <button className="blanc-control-chip" onClick={pm.handleSync} disabled={pm.syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: pm.syncing ? 0.5 : 1 }}>
-                        <RefreshCw className={`size-3.5 ${pm.syncingMode === 'range' ? 'animate-spin' : ''}`} />
-                        {pm.syncingMode === 'range' ? 'Syncing…' : 'Sync'}
-                    </button>
-                    <button className="blanc-control-chip" onClick={pm.handleFullHistorySync} disabled={pm.syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: pm.syncing ? 0.5 : 1 }}>
-                        <RefreshCw className={`size-3.5 ${pm.syncingMode === 'full_history' ? 'animate-spin' : ''}`} />
-                        {pm.syncingMode === 'full_history'
-                            ? 'Syncing full history…'
-                            : pm.fullHistoryRemaining
-                                ? 'Continue full history'
-                                : 'Sync full history'}
-                    </button>
                     <button className="blanc-control-chip" onClick={pm.handleExportCSV} disabled={pm.rows.length === 0 || pm.exporting} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: (pm.rows.length === 0 || pm.exporting) ? 0.5 : 1 }}>
                         {pm.exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
                         {pm.exporting ? 'Exporting…' : 'Export'}

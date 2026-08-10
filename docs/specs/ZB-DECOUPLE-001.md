@@ -618,8 +618,14 @@ if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` 
   `routes/leads.js` + `jobSyncService.syncBlancStatusToZenbooker` (+ its export + the now-orphaned
   `zenbookerClient` require in jobSyncService; `handleJobWebhook` stays for F2a). Native jobs carry
   no zenbooker_job_id → was already no-op for them. C4b convert contract still 6/6.
-- **F3 — payments sync retire:** unmount `:226`, delete `routes/zenbooker/payments.js` +
-  `zenbookerPaymentsSyncService.syncPayments`; resolve reconcileJobLinks (keep-local decision).
+- **F3 — payments SYNC retire — DONE 2026-08-10.** ⚠ CRITICAL: `/api/zenbooker/payments` +
+  `zenbookerPaymentsSyncService` are the **LIVE Payments-page data layer** (GET list/`:id`/export,
+  PATCH deposited — via usePaymentsPage + paymentExport), NOT deletable. Only the SYNC path is
+  ZB-API. Removed: `POST /sync` route; FE Sync + Sync-full-history buttons (PaymentsPage) + sync
+  state/handlers/return (usePaymentsPage); `zenbookerPaymentsApi.ts`(+test). `reconcileJobLinks` =
+  SQL-only/LOCAL (never calls ZB) → KEPT (cli/reconcilePaymentJobLinks depends on it). Left dead for
+  F4: `syncPayments` + `isDefaultSyncCompany` (both use zenbookerClient). ⚠ Route/service NAME + path
+  `/api/zenbooker/payments` STAY — renaming is a separate FE-coordinated task (like F1). FE build ✓.
 - **F4 — sync services + client:** retire zenbookerSyncService/contactsSyncService/jobSyncService/
   zenbookerActivityService ZB-API pulls (preserve local logic); delete `zenbookerClient.js`; remove
   `ZENBOOKER_API_KEY`/`_API_BASE_URL`/`_TIMEOUT_MS`/`_DEFAULT_COMPANY_ID`/payments-budget vars.
