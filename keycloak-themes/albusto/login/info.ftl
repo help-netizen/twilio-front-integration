@@ -38,19 +38,14 @@
     </#if>
   </@layout.registrationLayout>
 <#else>
-  <#-- ===== TERMINAL: branded Albusto success page ===== -->
+  <#-- ===== TERMINAL: branded success page — action-agnostic copy.
+       Shown after ANY completed action (password update, email verify, OTP setup, …),
+       so do NOT claim a specific one like "email verified". ===== -->
   <@layout.registrationLayout displayMessage=false; section>
     <#if section = "header">
       <h1>You&rsquo;re all set &#127881;</h1>
-      <p class="lede">Welcome to Albusto — your email is verified and your account is ready.</p>
+      <p class="lede">Your account is ready — you can sign in now.</p>
     <#elseif section = "form">
-      <#if message?has_content && (message.summary)?has_content && message.type != 'success'>
-        <div class="alert alert--${message.type}">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
-          <span>${kcSanitize(message.summary)?no_esc}</span>
-        </div>
-      </#if>
-
       <a class="btn" href="${properties.appUrl!'https://app.albusto.com'}">Sign in to Albusto</a>
     </#if>
   </@layout.registrationLayout>
