@@ -6,8 +6,6 @@
  */
 
 const db = require('../db/connection');
-const zenbookerClient = require('./zenbookerClient');
-const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const fsmService = require('./fsmService');
 const eventBus = require('./eventBus');
 const { logJobActivity } = require('./jobActivityService');
@@ -1100,26 +1098,11 @@ async function claimLocalJobForConversion({
     }
 }
 
-async function persistZenbookerJobLink(localJobId, leadId, zenbookerJobId, companyId) {
-    await db.query(
-        `UPDATE jobs SET zenbooker_job_id = $1, updated_at = NOW()
-         WHERE id = $2 AND company_id = $3`,
-        [zenbookerJobId, localJobId, companyId]
-    );
-
-    await db.query(
-        `UPDATE leads SET zenbooker_job_id = $1, converted_to_job = true, status = 'Converted'
-         WHERE id = $2 AND company_id = $3`,
-        [zenbookerJobId, leadId, companyId]
-    );
-}
-
 /**
  * ZB-DECOUPLE C4b — native conversion schedule. When the wizard sends
  * overrides.schedule = { start_at, end_at, technician_ids? } the conversion is
  * FULLY native: the local job carries the schedule/assignment and NO Zenbooker
- * job is created (this flow stops feeding ZB; the remaining server-side push
- * paths retire in Phase E). technician_ids are validated on the mode-aware
+ * job is created. technician_ids are validated on the mode-aware
  * roster and stored as roster-compat ids — the same plane jobs.assigned_techs
  * has always used, so lanes/mirrors keep working unchanged.
  */
@@ -1198,8 +1181,8 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
     }
 
     // 2. Claim or create the local job row in Albusto.
-    // This makes conversion idempotent: a retry after Zenbooker/network failure
-    // reuses the same local job instead of inserting a duplicate.
+    // This makes conversion idempotent: a retry reuses the same local job instead
+    // of inserting a duplicate.
     const serviceName = overrides.service?.name || lead.JobType || 'General Service';
     const address = overrides.address
         ? [overrides.address.line1, overrides.address.line2, overrides.address.city, overrides.address.state, overrides.address.postal_code].filter(Boolean).join(', ')
@@ -1221,8 +1204,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         }
     }
 
-    // ZB-DECOUPLE C4b: a native schedule wins over any zb-payload-derived values
-    // and (below) suppresses the Zenbooker job creation entirely.
+    // ZB-DECOUPLE C4b: a native schedule wins over any legacy payload-derived values.
     const nativeSchedule = await resolveNativeSchedule(overrides.schedule, companyId);
     if (nativeSchedule) {
         initialStartDate = nativeSchedule.startISO;
@@ -1231,7 +1213,6 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
     }
 
     let zenbookerJobId = overrides.zenbooker_job_id || null;
-    let shouldSyncZenbookerDetail = !!zenbookerJobId;
 
     const claimedJob = await claimLocalJobForConversion({
         leadRow,
@@ -1260,7 +1241,6 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
     const localJobId = claimedJob.localJobId;
     const localJobCreated = claimedJob.localJobCreated;
     zenbookerJobId = claimedJob.zenbookerJobId;
-    shouldSyncZenbookerDetail = shouldSyncZenbookerDetail && !claimedJob.existingZenbookerJobId;
 
     if (localJobCreated) {
         console.log(`[ConvertLead] Local job created: ${localJobId}`);
@@ -1317,155 +1297,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         }
     }
 
-    // 3. Create Zenbooker job (if booking data provided or auto-create).
-    // ZB-DECOUPLE C4b: a NATIVE schedule short-circuits this whole section —
-    // native conversions never create (or auto-create) a Zenbooker job.
-    let zbWarning = null;
-
-    if (nativeSchedule) {
-        console.log(`[ConvertLead] Native schedule — no Zenbooker job for local job ${localJobId}`);
-    } else if (!zenbookerJobId && overrides.zb_job_payload) {
-        const zbPayload = { ...overrides.zb_job_payload };
-
-        const requestedProviders = Array.isArray(zbPayload.assigned_providers)
-            ? zbPayload.assigned_providers
-            : [];
-        let zenbookerProviders = [];
-        try {
-            zenbookerProviders = await technicianDirectoryQueries
-                .resolveCompatibilityIdsToExternal(companyId, 'zenbooker', requestedProviders);
-        } catch (err) {
-            console.warn('[ConvertLead] Technician external-id lookup failed; using ZB auto-assignment:', err.message);
-        }
-        if (zenbookerProviders.length > 0) {
-            zbPayload.assigned_providers = zenbookerProviders;
-            // Zenbooker rejects assigned_providers alongside assignment_method:auto.
-            delete zbPayload.assignment_method;
-        } else {
-            delete zbPayload.assigned_providers;
-            if (requestedProviders.length > 0) zbPayload.assignment_method = 'auto';
-        }
-
-        // Frontend sent full booking payload — create ZB job directly
-        try {
-            const zbResult = await zenbookerClient.createJob(zbPayload);
-            zenbookerJobId = zbResult.job_id;
-            await persistZenbookerJobLink(localJobId, leadRow.id, zenbookerJobId, companyId);
-            shouldSyncZenbookerDetail = true;
-            console.log(`[ConvertLead] Zenbooker job created from booking: ${zenbookerJobId}`);
-        } catch (err) {
-            const errData = err.response?.data;
-            // Zenbooker nests the reason under error.message (e.g. INVALID_ADDRESS);
-            // fall back through the common shapes so the real cause is surfaced.
-            const errMsg = errData?.error?.message || errData?.message || errData?.error || err.message;
-            console.error('[ConvertLead] Zenbooker booking error:', errData || err.message);
-            zbWarning = `Zenbooker job not created: ${errMsg}`;
-            // Don't fail — local job is already created
-        }
-    } else if (!zenbookerJobId) {
-        // No booking data — try auto-create from lead
-        try {
-            const zbResult = await zenbookerClient.createJobFromLead(lead);
-            zenbookerJobId = zbResult.job_id;
-            await persistZenbookerJobLink(localJobId, leadRow.id, zenbookerJobId, companyId);
-            shouldSyncZenbookerDetail = true;
-            console.log(`[ConvertLead] Zenbooker job created: ${zenbookerJobId}`);
-        } catch (err) {
-            if (err.message === 'ZENBOOKER_API_KEY is not configured') {
-                console.warn('[ConvertLead] Zenbooker not configured, skipping');
-            } else {
-                const errData = err.response?.data;
-                const errMsg = errData?.message || err.message;
-                console.error('[ConvertLead] Zenbooker error:', errData || err.message);
-                zbWarning = `Zenbooker job not created: ${errMsg}`;
-                // Don't fail — local job is already created
-            }
-        }
-    } else if (shouldSyncZenbookerDetail) {
-        console.log(`[ConvertLead] Using pre-created Zenbooker job: ${zenbookerJobId}`);
-    } else {
-        console.log(`[ConvertLead] Local job ${localJobId} is already linked to Zenbooker job: ${zenbookerJobId}`);
-    }
-
-    // 4. Update local job with ZB data and link contact
-    if (zenbookerJobId && shouldSyncZenbookerDetail) {
-        try {
-            let jobDetail = await zenbookerClient.getJob(zenbookerJobId);
-            // ZB may not assign job_number immediately — retry once after a short delay
-            if (!jobDetail?.job_number) {
-                console.log(`[ConvertLead] job_number not yet assigned, retrying in 2s...`);
-                await new Promise(r => setTimeout(r, 2000));
-                jobDetail = await zenbookerClient.getJob(zenbookerJobId);
-            }
-            console.log(`[ConvertLead] Fetched ZB job detail for sync:`, jobDetail?.job_number, jobDetail?.start_date);
-
-            // Sync ALL ZB fields back into local job (schedule, territory, techs, invoice, etc.)
-            await db.query(`
-                UPDATE jobs SET
-                    zenbooker_job_id = $1,
-                    job_number = COALESCE($3, job_number),
-                    start_date = COALESCE($4, start_date),
-                    end_date = COALESCE($5, end_date),
-                    territory = COALESCE($6, territory),
-                    assigned_techs = COALESCE($7::jsonb, assigned_techs),
-                    notes = COALESCE($8::jsonb, notes),
-                    invoice_total = COALESCE($9, invoice_total),
-                    invoice_status = COALESCE($10, invoice_status),
-                    zb_status = COALESCE($11, zb_status),
-                    zb_canceled = COALESCE($12, zb_canceled),
-                    zb_rescheduled = COALESCE($13, zb_rescheduled),
-                    zb_raw = $14::jsonb,
-                    updated_at = NOW()
-                WHERE id = $2 AND company_id = $15
-            `, [
-                zenbookerJobId,
-                localJobId,
-                jobDetail?.job_number || null,
-                jobDetail?.start_date || null,
-                // Use arrival window (2hrs) instead of service duration (1hr)
-                (jobDetail?.time_slot?.arrival_window_minutes && jobDetail?.start_date)
-                    ? new Date(new Date(jobDetail.start_date).getTime() + jobDetail.time_slot.arrival_window_minutes * 60000).toISOString()
-                    : (jobDetail?.end_date || null),
-                jobDetail?.territory?.name || null,
-                JSON.stringify(jobDetail?.assigned_providers || []),
-                JSON.stringify(jobDetail?.notes || []),
-                jobDetail?.invoice?.total || null,
-                jobDetail?.invoice?.status || null,
-                jobDetail?.status || 'scheduled',
-                !!jobDetail?.canceled,
-                !!jobDetail?.rescheduled,
-                JSON.stringify(jobDetail || {}),
-                companyId,
-            ]);
-
-            // Link ZB customer to Albusto contact
-            if (contactId) {
-                const zbCustomerId = jobDetail?.customer?.id;
-                if (zbCustomerId) {
-                    await db.query(
-                        `UPDATE contacts
-                         SET zenbooker_customer_id = COALESCE(NULLIF(zenbooker_customer_id, ''), $1),
-                             zenbooker_data = COALESCE(zenbooker_data, '{}'::jsonb) || jsonb_build_object('id', $1::text),
-                             zenbooker_sync_status = 'linked',
-                             zenbooker_synced_at = NOW()
-                         WHERE id = $2 AND company_id = $3`,
-                        [zbCustomerId, contactId, companyId]
-                    );
-                    console.log(`[ConvertLead] Linked contact ${contactId} to ZB customer ${zbCustomerId}`);
-                }
-            }
-        } catch (syncErr) {
-            // Fallback: at minimum save the zenbooker_job_id
-            console.warn(`[ConvertLead] Could not sync ZB job detail:`, syncErr.message);
-            await db.query(
-                `UPDATE jobs SET zenbooker_job_id = $1
-                 WHERE id = $2 AND company_id = $3`,
-                [zenbookerJobId, localJobId, companyId]
-            );
-        }
-    }
-
-    // 5. Mark lead as converted + sync overridden fields back to lead
+    // 3. Mark lead as converted + sync overridden fields back to lead
     const setClauses = [
         'converted_to_job = true',
         'status = $2',
@@ -1505,7 +1337,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         WHERE uuid = $1 AND company_id = $${pIdx}
     `, updateParams);
 
-    // 6. Add lead comments as job notes (syncs to Zenbooker)
+    // 4. Add lead comments as local job notes.
     try {
         const jobsService = require('./jobsService');
         const commentText = leadRow.comments?.trim();
@@ -1571,7 +1403,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         ClientId: String(leadRow.id),
         job_id: localJobId,
         zenbooker_job_id: zenbookerJobId,
-        zb_warning: zbWarning,
+        zb_warning: null,
         link: `/jobs/${localJobId}`,
     };
 }

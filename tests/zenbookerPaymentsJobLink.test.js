@@ -12,38 +12,16 @@
  */
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), getClient: jest.fn() }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({
-    ZENBOOKER_DEFAULT_COMPANY_ID: '00000000-0000-0000-0000-000000000001',
-    getPaymentReaderForCompany: jest.fn(),
-    getTransactions: jest.fn(),
-    getTransactionsPage: jest.fn(),
-    getInvoice: jest.fn(),
-    getJob: jest.fn(),
-}));
 
 const db = require('../backend/src/db/connection');
-const zb = require('../backend/src/services/zenbookerClient');
 const sync = require('../backend/src/services/zenbookerPaymentsSyncService');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
 const ZB_JOB_ID = '1781974323252x656275605619673900'; // shape from the real ZB API
 
-const reader = {
-    getTransactions: (...args) => zb.getTransactions(...args),
-    getTransactionsPage: (...args) => zb.getTransactionsPage(...args),
-    getInvoice: (...args) => zb.getInvoice(...args),
-    getJob: (...args) => zb.getJob(...args),
-};
-
 beforeEach(() => {
     db.query.mockReset();
     db.getClient.mockReset();
-    zb.getTransactions.mockReset();
-    zb.getTransactionsPage.mockReset();
-    zb.getInvoice.mockReset();
-    zb.getJob.mockReset();
-    zb.getPaymentReaderForCompany.mockReset();
-    zb.getPaymentReaderForCompany.mockResolvedValue(reader);
 });
 
 // ── job/invoice id resolution ────────────────────────────────────────────────
@@ -110,71 +88,6 @@ describe('assembleRow keeps the job link', () => {
         expect(row.job_id).toBe('');
         expect(row.missing_job_link).toBe(true);
         expect(row.tech).toBe('—');
-    });
-});
-
-// ── syncPayments fan-out ─────────────────────────────────────────────────────
-
-function fakeTxnClient() {
-    // Stands in for the reconcile transaction opened after the upserts.
-    return {
-        query: jest.fn((sql) =>
-            String(sql).includes('FILTER')
-                ? Promise.resolve({ rows: [{ still_missing_body: '0', still_no_job_id: '0' }], rowCount: 0 })
-                : Promise.resolve({ rowCount: 0 })),
-        release: jest.fn(),
-    };
-}
-
-describe('syncPayments resolves jobs beyond the invoice hop', () => {
-    it('fetches + links a job referenced directly on an invoice-less transaction', async () => {
-        zb.getTransactions.mockResolvedValue([{ id: 't1', job_id: ZB_JOB_ID, status: 'succeeded', amount_collected: '120.00' }]);
-        zb.getJob.mockResolvedValue({ id: ZB_JOB_ID, job_number: '#002202-4', service_name: 'Repair', assigned_providers: [{ id: 'p1', name: 'Tech A' }], status: 'complete' });
-        db.query.mockResolvedValue({ rows: [], rowCount: 1 });
-        db.getClient.mockResolvedValue(fakeTxnClient());
-
-        const res = await sync.syncPayments(COMPANY, '2026-06-01', '2026-06-30');
-
-        expect(zb.getInvoice).not.toHaveBeenCalled();        // no invoice id → no invoice fetch
-        expect(zb.getJob).toHaveBeenCalledWith(ZB_JOB_ID);   // resolved from txn.job_id
-        expect(res.unlinked).toBe(0);
-
-        const upsert = db.query.mock.calls.find(c => String(c[0]).includes('INSERT INTO zb_payments'));
-        expect(upsert[1][3]).toBe(ZB_JOB_ID);                // job_id param
-        expect(upsert[1][14]).toBe('Tech A');                // tech param
-    });
-
-    it('reports unlinked payments instead of swallowing the miss', async () => {
-        zb.getTransactions.mockResolvedValue([{ id: 't2', status: 'succeeded', amount_collected: '50.00' }]);
-        db.query.mockResolvedValue({ rows: [], rowCount: 1 });
-        db.getClient.mockResolvedValue(fakeTxnClient());
-
-        const res = await sync.syncPayments(COMPANY, '2026-06-01', '2026-06-30');
-
-        expect(zb.getJob).not.toHaveBeenCalled();
-        expect(res.unlinked).toBe(1);
-        expect(res.unresolved_job_id).toBe(1);
-    });
-
-    // Regression: a re-sync where getJob fails must NOT wipe the work-note
-    // images (and other job-body fields) already stored on the payment. The
-    // upsert guards them behind EXCLUDED.missing_job_link so a body-less run
-    // keeps the existing value instead of overwriting it with empties.
-    it('does not overwrite attachments/job_detail when the job body is missing', async () => {
-        zb.getTransactions.mockResolvedValue([{ id: 't3', status: 'succeeded', amount_collected: '75.00' }]);
-        db.query.mockResolvedValue({ rows: [], rowCount: 1 });
-        db.getClient.mockResolvedValue(fakeTxnClient());
-
-        await sync.syncPayments(COMPANY, '2026-06-01', '2026-06-30');
-
-        const upsert = db.query.mock.calls.find(c => String(c[0]).includes('INSERT INTO zb_payments'));
-        const sql = String(upsert[0]).replace(/\s+/g, ' ');
-        // body-derived columns keep the existing row value on a body-less run
-        expect(sql).toContain('attachments = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.attachments ELSE EXCLUDED.attachments END');
-        expect(sql).toContain('zb_raw_job = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.zb_raw_job ELSE EXCLUDED.zb_raw_job END');
-        expect(sql).toContain('job_detail = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.job_detail ELSE EXCLUDED.job_detail END');
-        // a body-less re-sync never regresses a previously-linked row to "missing"
-        expect(sql).toContain('missing_job_link = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.missing_job_link ELSE false END');
     });
 });
 

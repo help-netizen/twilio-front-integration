@@ -9,7 +9,6 @@ const multer = require('multer');
 const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const jobsService = require('../services/jobsService');
-const zenbookerClient = require('../services/zenbookerClient');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 const unitLabelScanService = require('../services/unitLabelScanService');
 const notesMutationService = require('../services/notesMutationService');
@@ -22,12 +21,10 @@ const rateMeService = require('../services/rateMeService');
 const { closePermissionError } = require('../services/jobTransitionPerms');
 const companyQueries = require('../db/companyQueries');
 const rateMeQueries = require('../db/rateMeQueries');
-const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
 const { resolveCompanyProxyE164 } = require('../services/messagingHelper');
 const { logJobActivity, userActor } = require('../services/jobActivityService');
-const { logZenbookerBatch } = require('../services/zenbookerActivityService');
 const { withTransaction } = require('../services/transactionService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
@@ -91,73 +88,6 @@ function normalizeCancelReason(input) {
 function jobUserActor(req) {
     return userActor(req.user?.crmUser?.id || null);
 }
-
-// ─── Sync Jobs from Zenbooker ────────────────────────────────────────────────
-
-router.post('/sync', requirePermission('jobs.edit'), async (req, res) => {
-    try {
-        const companyId = req.companyFilter?.company_id || null;
-        // Use per-tenant Zenbooker API key (falls back to global env var)
-        const zbClient = await zenbookerClient.getClientForCompany(companyId);
-        if (!zbClient) {
-            // Company hasn't connected its own Zenbooker (and isn't the default
-            // account owner) — nothing to sync, and we must not read another
-            // tenant's Zenbooker. Return a clean no-op instead of leaking/crashing.
-            return res.json({ ok: true, synced: 0, created: 0, message: 'Zenbooker is not connected for this company' });
-        }
-        const makeRequest = (url, params) => zbClient.get(url, { params });
-
-        console.log(`[Jobs Sync] Starting full sync from Zenbooker for company ${companyId}...`);
-        let totalSynced = 0;
-        let totalCreated = 0;
-        let cursor = 0;
-        const limit = 100;
-
-        while (true) {
-            const zbRes = await makeRequest('/jobs', { limit, cursor, sort_by: 'start_date', sort_order: 'desc' });
-            const zbData = zbRes.data;
-            const zbJobs = zbData.results || [];
-            if (zbJobs.length === 0) break;
-
-            for (const zbJob of zbJobs) {
-                try {
-                    let fullJob = zbJob;
-                    try {
-                        const fullRes = await makeRequest(`/jobs/${zbJob.id}`);
-                        fullJob = fullRes.data;
-                    } catch (fetchErr) {
-                        console.warn(`[Jobs Sync] Could not fetch full job ${zbJob.id}, using list data: ${fetchErr.message}`);
-                    }
-                    const result = await jobsService.syncFromZenbooker(
-                        zbJob.id, fullJob, companyId, 'sync_bulk'
-                    );
-                    totalSynced++;
-                    if (result.created) totalCreated++;
-                } catch (err) {
-                    console.warn(`[Jobs Sync] Failed to sync job ${zbJob.id}:`, err.message);
-                }
-            }
-
-            console.log(`[Jobs Sync] Batch: ${zbJobs.length} jobs processed (cursor=${cursor})`);
-            if (!zbData.has_more) break;
-            cursor = zbData.cursor || (cursor + zbJobs.length);
-        }
-
-        console.log(`[Jobs Sync] Done: ${totalSynced} synced, ${totalCreated} new`);
-        await logZenbookerBatch({
-            companyId,
-            entityType: 'job',
-            summary: {
-                count: totalSynced,
-                created_count: totalCreated,
-            },
-        });
-        res.json({ ok: true, data: { synced: totalSynced, created: totalCreated } });
-    } catch (err) {
-        console.error('[Jobs Sync] error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
-    }
-});
 
 // ─── Create Job (directly, no lead) ──────────────────────────────────────────
 
@@ -686,23 +616,30 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
     try {
         const realtimeService = require('../services/realtimeService');
 
-        // 1. Fetch local job to get ZB ID + current techs
+        // 1. Fetch the current local assignee mirror.
         const { rows } = await db.query(
-            `SELECT zenbooker_job_id, assigned_techs, assigned_provider_user_ids
+            `SELECT assigned_provider_user_ids
              FROM jobs
              WHERE id = $1 AND company_id = $2`,
             [jobId, companyId]
         );
         if (!rows.length) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const zbJobId = rows[0].zenbooker_job_id;
-        const currentTechs = rows[0].assigned_techs || [];
         const currentProviderUserIds = (rows[0].assigned_provider_user_ids || []).map(String);
         let freshAssignedProviders = null;
         let freshProviderMirror = null;
 
+        if (tech_id) {
+            const technician = await require('../services/technicianRosterService')
+                .requireActive(companyId, String(tech_id));
+            freshAssignedProviders = [{ id: String(technician.id), name: technician.name || '' }];
+            freshProviderMirror = await jobsService.resolveAssignedProviderUserIds(
+                companyId,
+                freshAssignedProviders
+            );
+        }
+
         // SCHED-ROUTE-VIS-001 (FR-1, S-8): capture the tech-day pairs this job
-        // occupies BEFORE the reschedule (and before the ZB-assign block below
-        // rewrites assigned_provider_user_ids) so the vacated day repairs too.
+        // occupies BEFORE the reschedule so the vacated day repairs too.
         let beforeTechDays = [];
         if (companyId) {
             try {
@@ -712,65 +649,7 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
             } catch { /* non-fatal */ }
         }
 
-        // 2. Reschedule in Zenbooker (if ZB job exists)
-        if (zbJobId) {
-            try {
-                await zenbookerClient.rescheduleJob(zbJobId, {
-                    start_date,
-                    arrival_window_minutes: Number(arrival_window_minutes),
-                });
-                console.log(`[Jobs API] Rescheduled ZB job ${zbJobId} → ${start_date}`);
-            } catch (zbErr) {
-                console.error(`[Jobs API] ZB reschedule error:`, zbErr.response?.data || zbErr.message);
-                return res.status(zbErr.response?.status || 500).json({
-                    ok: false,
-                    error: zbErr.response?.data?.error?.message || zbErr.message,
-                });
-            }
-
-            // 3. Reassign technician: unassign old + assign new
-            if (tech_id) {
-                try {
-                    const [externalTechId] = await technicianDirectoryQueries
-                        .resolveCompatibilityIdsToExternal(companyId, 'zenbooker', [tech_id]);
-                    if (!externalTechId) {
-                        console.log(`[Jobs API] Skipped ZB reassignment for native-only technician ${tech_id}`);
-                    } else {
-                        // Unassign all current ZB providers first. Native-only
-                        // compatibility UUIDs are omitted by the resolver.
-                        const oldTechIds = await technicianDirectoryQueries
-                            .resolveCompatibilityIdsToExternal(
-                                companyId,
-                                'zenbooker',
-                                currentTechs.map(t => t.id)
-                            );
-                        const unassign = oldTechIds.filter(id => id !== externalTechId);
-                        const payload = { assign: [externalTechId], notify: false };
-                        if (unassign.length > 0) payload.unassign = unassign;
-                        await zenbookerClient.assignProviders(zbJobId, payload);
-                        console.log(`[Jobs API] Reassigned ZB job ${zbJobId}: unassign=[${unassign}] assign=[${externalTechId}]`);
-
-                        // Immediately fetch updated job from ZB to get new assigned_providers
-                        try {
-                            const freshJob = await zenbookerClient.getJob(zbJobId);
-                            if (freshJob?.assigned_providers?.length > 0) {
-                                freshAssignedProviders = freshJob.assigned_providers;
-                                freshProviderMirror = await jobsService.resolveAssignedProviderUserIds(
-                                    companyId,
-                                    freshJob.assigned_providers
-                                );
-                            }
-                        } catch (fetchErr) {
-                            console.warn(`[Jobs API] Could not immediately sync techs:`, fetchErr.message);
-                        }
-                    }
-                } catch (assignErr) {
-                    console.warn(`[Jobs API] ZB assign error (non-fatal):`, assignErr.response?.data || assignErr.message);
-                }
-            }
-        }
-
-        // 4. Update local DB immediately with known data
+        // 2. Update the local DB immediately.
         const endDate = new Date(new Date(start_date).getTime() + Number(arrival_window_minutes) * 60000).toISOString();
         await withTransaction(async (client) => {
             if (freshAssignedProviders) {
@@ -780,14 +659,8 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
                          assigned_provider_user_ids = $2::jsonb,
                          updated_at = NOW()
                      WHERE id = $3 AND company_id = $4`,
-                    [
-                        JSON.stringify(freshAssignedProviders),
-                        freshProviderMirror,
-                        jobId,
-                        companyId,
-                    ]
+                    [JSON.stringify(freshAssignedProviders), freshProviderMirror, jobId, companyId]
                 );
-                console.log(`[Jobs API] Immediately updated assigned_techs for job ${jobId}`);
             }
             const { rowCount } = await client.query(
                 `UPDATE jobs
@@ -864,39 +737,13 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
                 .catch(e => console.error('[Jobs API] reschedule recalc failed (non-fatal):', e.message));
         }
 
-        // 5. Return updated job immediately (frontend gets instant response)
+        // 3. Return updated job immediately (frontend gets instant response)
         const updated = await jobsService.getJobById(jobId, companyId);
         res.json({ ok: true, data: updated });
-
-        // 6. Background: re-fetch from ZB to sync all fields (techs, status etc.)
-        //    Then emit SSE so frontend updates in-place
-        if (zbJobId) {
-            setImmediate(async () => {
-                try {
-                    await new Promise(r => setTimeout(r, 3000));
-                    const zbJob = await zenbookerClient.getJob(zbJobId);
-                    if (zbJob) {
-                        await jobsService.syncFromZenbooker(
-                            zbJobId,
-                            zbJob,
-                            companyId,
-                            'reschedule'
-                        );
-                        const synced = await jobsService.getJobById(jobId, companyId);
-                        realtimeService.publishJobUpdate(synced);
-                        console.log(`[Jobs API] Background ZB sync + SSE for job ${jobId}`);
-                    }
-                } catch (err) {
-                    console.warn('[Jobs API] Background ZB sync error:', err.message);
-                }
-            });
-        } else {
-            // No ZB — still emit SSE for immediate UI update
-            realtimeService.publishJobUpdate(updated);
-        }
+        realtimeService.publishJobUpdate(updated);
     } catch (err) {
         console.error('[Jobs API] Reschedule error:', err.message);
-        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
+        res.status(err.statusCode || err.httpStatus || 500).json({ ok: false, error: err.message });
     }
 });
 

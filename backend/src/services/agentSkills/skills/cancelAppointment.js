@@ -25,9 +25,8 @@
  *   - Cancel is free before the visit; the skill captures the reason and states no
  *     fee (Decided default A / ASK-WRITE-16).
  *
- * `cancelJob` already ZB-pushes (`zenbookerClient.cancelJob` + `forceSyncOnZbError`)
- * and pre-checks `zb_canceled` — so the ZB side-effect + recovery is inherited; this
- * skill adds only the ownership gate, the retention gate, the reason note, and the event.
+ * `cancelJob` performs the tenant-scoped local cancellation; this skill adds the
+ * ownership gate, the retention gate, the reason note, and the event.
  */
 
 'use strict';
@@ -121,10 +120,8 @@ async function run(companyId, verifiedContext, input) {
         return resultShapes.ok('That appointment is already canceled.', { success: true, status: 'That appointment is canceled.', alreadyCanceled: true });
     }
 
-    // --- The cancel. cancelJob already pushes ZB + recovers (forceSyncOnZbError); a
-    //     ZB failure it can't reconcile throws → the choke-point returns SAFE_FALLBACK
-    //     (E5). We only write the reason note + event AFTER a successful cancel, so a
-    //     cancel that didn't happen is never falsely audited.
+    // --- The cancel. We only write the reason note + event AFTER a successful
+    //     local cancellation, so a cancel that didn't happen is never falsely audited.
     await jobsService.cancelJob(jobId, companyId, aiActor('AI Phone'));
 
     // AR-5: reason note ("AI Phone") — MUST include the captured reason every time.

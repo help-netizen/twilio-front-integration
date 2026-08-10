@@ -2,7 +2,7 @@ const axios = require('axios');
 
 // =============================================================================
 // RAG Client — outbound KB "Repair Advisor" client (REPAIR-ADVISOR-001, §3.1)
-// Mirror of zenbookerClient.js: lazy axios singleton via getClient() + retryRequest.
+// Uses a lazy axios singleton via getClient() + retryRequest.
 //
 // ask({ question, filters }) → POST {RAG_API_URL}/ask → a normalized diagnostic
 // object, or `null`. Best-effort: NEVER throws — transport failure / timeout /
@@ -11,7 +11,7 @@ const axios = require('axios');
 // so the advisor is globally disabled by config (spec E-10 / FR-12).
 // =============================================================================
 
-// Read config at module-eval time (like zenbookerClient's constants). Tests set
+// Read config at module-eval time. Tests set
 // env before require() under jest.resetModules(), so a fresh RAG_API_URL is picked
 // up per case. Blank/unset ⇒ '' ⇒ inert. Default timeout 40s must exceed the
 // ~35s RAG budget; override with RAG_TIMEOUT_MS without a code change.
@@ -37,7 +37,7 @@ function getClient() {
 }
 
 // ─── Retry helper ─────────────────────────────────────────────────────────────
-// Copied from zenbookerClient.js:540 (same idiom): 4xx short-circuits immediately
+// 4xx short-circuits immediately
 // (except 429); otherwise retries up to maxRetries with exponential backoff.
 // ask() calls this with maxRetries=1 ⇒ a SINGLE attempt for every error class
 // (the retry branch only runs at maxRetries ≥ 2).

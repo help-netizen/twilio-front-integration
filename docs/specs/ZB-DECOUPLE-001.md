@@ -626,9 +626,19 @@ if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` 
   SQL-only/LOCAL (never calls ZB) → KEPT (cli/reconcilePaymentJobLinks depends on it). Left dead for
   F4: `syncPayments` + `isDefaultSyncCompany` (both use zenbookerClient). ⚠ Route/service NAME + path
   `/api/zenbooker/payments` STAY — renaming is a separate FE-coordinated task (like F1). FE build ✓.
-- **F4 — sync services + client:** retire zenbookerSyncService/contactsSyncService/jobSyncService/
-  zenbookerActivityService ZB-API pulls (preserve local logic); delete `zenbookerClient.js`; remove
-  `ZENBOOKER_API_KEY`/`_API_BASE_URL`/`_TIMEOUT_MS`/`_DEFAULT_COMPANY_ID`/payments-budget vars.
+- **F4 — remove all zenbookerClient callers — DONE 2026-08-10 (tandem: Codex impl, Claude verify).**
+  Deleted dead ZB services (zenbookerSyncService, contactsSyncService, jobSyncService,
+  zenbookerActivityService, cli/syncContacts + ZB maintenance scripts). Stripped the ZB-API push/pull
+  from live core services keeping local logic + provenance: leadsService.convertLead (ZB-create block —
+  local INSERT + resolveNativeSchedule intact), jobsService (removed enqueueZbJobSync/syncFromZenbooker/
+  forceSyncOnZbError — all ZB-only, uncalled; every local job fn kept), scheduleService (ZB reschedule/
+  assign push), routes/jobs.js, agentHandlers, outboundCallCancellation; removed syncPayments +
+  isDefaultSyncCompany from zenbookerPaymentsSyncService (kept the local data layer + reconcileJobLinks).
+  ⚠ Client + env RETAINED — the ONLY remaining `zenbookerClient` caller is `technicianRosterService`
+  (legacy-mode fetch); client.js + `ZENBOOKER_API_KEY/_BASE_URL/_TIMEOUT_MS/_DEFAULT_COMPANY_ID`/
+  payments-budget/`FEATURE_ZENBOOKER_SYNC` are deleted in F5 once the mode-collapse removes that last
+  call. Verify: no dangling require of deleted services (boot-safe), local writes preserved, unit
+  contracts C4b+C2 13/13, FE untouched. DB-integration verified on staging (real DB).
 - **F1 — rename team-members route (needs mobile coordination):** `:228` → native path
   (e.g. `/api/team/field-workers`); update FE useProviders/useScheduleData/CustomTimeModal +
   albusto-mobile. ⚠ Keep the old path as a TEMPORARY alias until the native app ships the new one

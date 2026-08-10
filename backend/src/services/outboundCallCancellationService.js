@@ -174,7 +174,7 @@ async function cancelLeadScenario({ client, companyId, rows, cause, copy }) {
         [companyId, ids, cause]
     );
     const changed = canceled.rows || [];
-    if (changed.length === 0) return { canceled: 0, marker: false, events: [], syncNotes: [] };
+    if (changed.length === 0) return { canceled: 0, marker: false, events: [] };
     if (changed.some((row) => !row.lead_uuid)) {
         throw new Error('cancel_note_target_missing:lead_call');
     }
@@ -184,7 +184,6 @@ async function cancelLeadScenario({ client, companyId, rows, cause, copy }) {
     return {
         canceled: changed.length,
         marker: false,
-        syncNotes: [],
         events: leadUuids.map((leadUuid) => ({
             aggregateType: 'lead',
             aggregateId: leadUuid,
@@ -237,8 +236,6 @@ async function cancelPartsScenario({ client, companyId, rows, cause, copy, conta
     let canceledCount = 0;
     let anyMarker = false;
     const events = [];
-    const syncNotes = [];
-
     for (const [jobId, jobRows] of byJob) {
         let flipped = 0;
         let marker = false;
@@ -269,7 +266,7 @@ async function cancelPartsScenario({ client, companyId, rows, cause, copy, conta
         anyMarker = anyMarker || marker;
 
         const noteText = copy.partsNote(contactAt) + (marker ? MIDFLIGHT_NOTE_SUFFIX : '');
-        syncNotes.push(await appendJobNote(client, companyId, jobId, noteText));
+        await appendJobNote(client, companyId, jobId, noteText);
         await stampPartsTask(client, companyId, jobId, jobRows, copy.partsStamp);
         events.push({
             aggregateType: 'job',
@@ -279,7 +276,7 @@ async function cancelPartsScenario({ client, companyId, rows, cause, copy, conta
         });
     }
 
-    return { canceled: canceledCount, marker: anyMarker, events, syncNotes };
+    return { canceled: canceledCount, marker: anyMarker, events };
 }
 
 const SCENARIO_HANDLERS = Object.freeze({
@@ -293,37 +290,6 @@ const SCENARIO_HANDLERS = Object.freeze({
         sideEffects: Object.freeze(['canceled_marker_for_dialing', 'part_arrived_call_task_stamp']),
     }),
 });
-
-async function syncJobNoteAfterCommit(companyId, note) {
-    if (!note.zenbookerJobId) return;
-    try {
-        const zenbookerClient = require('./zenbookerClient');
-        const response = await zenbookerClient.addJobNote(note.zenbookerJobId, { text: note.noteText });
-        const zbNoteId = response?.id
-            || response?.note?.id
-            || (Array.isArray(response?.job_notes)
-                ? response.job_notes[response.job_notes.length - 1]?.id
-                : null);
-        if (!zbNoteId) return;
-        await db.query(
-            `UPDATE jobs j
-             SET notes = (
-                 SELECT jsonb_agg(
-                     CASE WHEN elem->>'id' = $3
-                          THEN elem || jsonb_build_object('zb_note_id', $4::text)
-                          ELSE elem END
-                     ORDER BY ord
-                 )
-                 FROM jsonb_array_elements(j.notes) WITH ORDINALITY AS t(elem, ord)
-             ), updated_at = now()
-             WHERE j.company_id = $1 AND j.id = $2
-               AND jsonb_typeof(j.notes) = 'array'`,
-            [companyId, note.jobId, note.noteId, String(zbNoteId)]
-        );
-    } catch (err) {
-        console.warn('[outboundCallCancellation] Zenbooker note sync failed (non-fatal):', err && err.message);
-    }
-}
 
 /**
  * Cancel every active outbound attempt to this customer in this company.
@@ -342,7 +308,6 @@ async function cancel({ companyId, rawPhone, cause, contactAt } = {}) {
     let canceledCount = 0;
     let anyMarker = false;
     const events = [];
-    const syncNotes = [];
     try {
         client = await db.getClient();
         await client.query('BEGIN');
@@ -394,7 +359,6 @@ async function cancel({ companyId, rawPhone, cause, contactAt } = {}) {
             canceledCount += result.canceled;
             anyMarker = anyMarker || result.marker;
             events.push(...result.events);
-            syncNotes.push(...result.syncNotes);
         }
         await client.query('COMMIT');
     } catch (err) {
@@ -421,8 +385,6 @@ async function cancel({ companyId, rawPhone, cause, contactAt } = {}) {
             );
         } catch { /* non-fatal */ }
     }
-    for (const note of syncNotes) await syncJobNoteAfterCommit(companyId, note);
-
     console.log(
         `[outboundCallCancellation] ${cause} ${phone} → canceled=${canceledCount} marker=${anyMarker}`
     );

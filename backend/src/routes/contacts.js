@@ -4,7 +4,6 @@ const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const contactsService = require('../services/contactsService');
 const contactDedupeService = require('../services/contactDedupeService');
-const zenbookerSyncService = require('../services/zenbookerSyncService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 const notesMutationService = require('../services/notesMutationService');
 const { toE164 } = require('../utils/phoneUtils');
@@ -836,13 +835,6 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
 
         // Return updated contact
         res.json(successResponse({ contact: updated }, reqId));
-
-        // Async: push to Zenbooker if linked
-        if (zenbookerSyncService.FEATURE_ENABLED && updated.zenbooker_customer_id) {
-            zenbookerSyncService.syncContactToZenbooker(id, companyId).catch(err =>
-                console.error(`[ContactsAPI][${reqId}] Zenbooker sync error (non-blocking):`, err.message)
-            );
-        }
     } catch (err) {
         if (err.code === 'NOT_FOUND') {
             return res.status(404).json(errorResponse('NOT_FOUND', err.message, reqId));
@@ -953,17 +945,6 @@ router.patch('/:id/addresses/:addressId', requirePermission('contacts.edit'), as
 
         const addresses = await contactAddressService.getAddressesForContact(contactId);
         res.json(successResponse({ addresses }, reqId));
-
-        // Async: push address to Zenbooker if linked
-        if (zenbookerSyncService.FEATURE_ENABLED) {
-            zenbookerSyncService.syncAddressToZenbooker(
-                contactId,
-                addressId,
-                companyId
-            ).catch(err =>
-                console.error(`[ContactsAPI][${reqId}] Zenbooker address sync error (non-blocking):`, err.message)
-            );
-        }
     } catch (err) {
         if (err.code === 'NOT_FOUND') {
             return res.status(404).json(errorResponse('NOT_FOUND', err.message, reqId));

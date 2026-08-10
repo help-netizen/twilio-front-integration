@@ -68,15 +68,14 @@ function makeDependencies({ roster = [{ id: 'zb-live', name: 'Live Tech' }], sta
     const membershipQueries = {
         resolveProviderUserIds: jest.fn(async (_companyId, externalIds) => bridge ? bridge(externalIds[0]) : []),
     };
-    const zenbookerClient = {
-        getClientForCompany: jest.fn().mockResolvedValue({ companyScoped: true }),
-        getTeamMembers: jest.fn().mockResolvedValue(roster),
+    const rosterService = {
+        listActive: jest.fn().mockResolvedValue(roster),
     };
     return {
         db,
         directoryQueries,
         membershipQueries,
-        zenbookerClient,
+        rosterService,
         output: jest.fn(),
         query,
         client,
@@ -125,10 +124,7 @@ test('dry-run reports the plan and performs zero writes', async () => {
         writes_performed: 0,
         summary: { create_technicians: 1, create_external_identities: 1 },
     });
-    expect(deps.zenbookerClient.getTeamMembers).toHaveBeenCalledWith(
-        { service_provider: true, deactivated: false },
-        COMPANY
-    );
+    expect(deps.rosterService.listActive).toHaveBeenCalledWith(COMPANY);
     expectNoDataWrites(deps);
     expect(deps.query.mock.calls.every(([sql]) => /^\s*(?:SELECT|WITH)\b/.test(sql))).toBe(true);
     const [previewSql, previewParams] = deps.query.mock.calls.find(([sql]) => /AS repoint_rows/.test(sql));
@@ -171,13 +167,12 @@ test('apply repoints all eight config tables and includes affected rows in the t
 });
 
 describe('refusal guards abort before writes', () => {
-    test('no company-scoped client', async () => {
+    test('roster service refusal', async () => {
         const deps = makeDependencies();
-        deps.zenbookerClient.getClientForCompany.mockResolvedValue(null);
+        deps.rosterService.listActive.mockRejectedValue(new Error('company not available'));
         await expect(run(['--company-id', COMPANY, '--apply'], deps)).rejects.toMatchObject({
-            code: 'NO_COMPANY_SCOPED_CLIENT',
+            code: 'ROSTER_FETCH_FAILED',
         });
-        expect(deps.zenbookerClient.getTeamMembers).not.toHaveBeenCalled();
         expectNoDataWrites(deps);
     });
 
@@ -186,8 +181,8 @@ describe('refusal guards abort before writes', () => {
         ['unexpectedly empty', [], 'ROSTER_UNEXPECTEDLY_EMPTY'],
     ])('roster fetch %s', async (_label, outcome, code) => {
         const deps = makeDependencies();
-        if (outcome instanceof Error) deps.zenbookerClient.getTeamMembers.mockRejectedValue(outcome);
-        else deps.zenbookerClient.getTeamMembers.mockResolvedValue(outcome);
+        if (outcome instanceof Error) deps.rosterService.listActive.mockRejectedValue(outcome);
+        else deps.rosterService.listActive.mockResolvedValue(outcome);
         await expect(run(['--company-id', COMPANY, '--apply'], deps)).rejects.toMatchObject({ code });
         expectNoDataWrites(deps);
     });

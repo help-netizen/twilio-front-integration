@@ -598,16 +598,6 @@ async function createNewContact(
         ? await withTransaction(persist)
         : await persist(db);
 
-    // Async: auto-create in Zenbooker if feature is enabled
-    try {
-        const zenbookerSyncService = require('./zenbookerSyncService');
-        if (zenbookerSyncService.FEATURE_ENABLED) {
-            zenbookerSyncService.pushContactToZenbooker(contactId, companyId).catch(err =>
-                console.error(`[ContactDedupe] Zenbooker auto-create error (non-blocking):`, err.message)
-            );
-        }
-    } catch (e) { /* zenbookerSyncService not available */ }
-
     // Auto-adopt orphan timelines matching this contact's phone
     const phoneE164 = toE164(phone);
     if (phoneE164) {

@@ -5,9 +5,8 @@
  * Business logic for payment transactions, refunds, voids, and receipts.
  * Operates on the canonical payment_transactions / payment_receipts tables.
  *
- * NOTE: The legacy Zenbooker sync helpers (syncPayments, listPayments, etc.)
- * that previously lived here have been relocated to
- * services/zenbookerPaymentsSyncService.js to avoid confusion.
+ * NOTE: Frozen imported-payment reads remain in
+ * services/zenbookerPaymentsSyncService.js for the legacy Payments-page data layer.
  */
 
 const { randomUUID } = require('crypto');

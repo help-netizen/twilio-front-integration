@@ -16,8 +16,7 @@ const technicianRosterService = require('../services/technicianRosterService');
 
 // GET /api/zenbooker/services
 // ZB-DECOUPLE C4a (2026-08-09): GET /services and POST /jobs removed — zero
-// FE/mobile callers (native job creation goes through /api/jobs; the server-side
-// ZB job push lives in leadsService/zb_job_sync until Phase E retires it).
+// FE/mobile callers (native job creation goes through /api/jobs).
 
 // GET /api/zenbooker/team-members — Fetch service providers
 // ZB-DECOUPLE Phase C1 (spec deferred #1): this route used to call the ZB client

@@ -1,7 +1,7 @@
 /**
  * Jobs Service
  *
- * Local Albusto storage for Jobs with Zenbooker sync.
+ * Local Albusto storage for Jobs, including historical Zenbooker provenance.
  * A Job is created when a Lead is converted (status = 'Converted').
  *
  * FSM:
@@ -12,7 +12,6 @@
 
 const { randomUUID } = require('node:crypto');
 const db = require('../db/connection');
-const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
 const eventBus = require('./eventBus');
@@ -20,10 +19,7 @@ const { logJobActivity } = require('./jobActivityService');
 const { withTransaction } = require('./transactionService');
 const { deduplicateNotesByIdentity } = require('./noteDeduplication');
 const membershipQueries = require('../db/membershipQueries');
-const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const jobFinanceQueries = require('../db/jobFinanceQueries');
-const { resolveOrCreateContact } = require('./contactResolverService');
-const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -44,8 +40,7 @@ const {
 // Constants
 // =============================================================================
 
-// Human status changes are local-only: blanc_status is authoritative. The
-// legacy Zenbooker action routes remain below until the Phase 4 cleanup.
+// Human status changes are local-only: blanc_status is authoritative.
 
 // =============================================================================
 // Helpers
@@ -420,12 +415,6 @@ async function createManualJob(companyId, input = {}, activityActor = null) {
         }
     );
 
-    // C-12 / FR-001.4: best-effort, dedupe-guarded create back into ZenBooker
-    // during the wind-down (flag-gated; async so the HTTP save never blocks).
-    if (isZenbookerSyncEnabled() && !job.zenbooker_job_id) {
-        await enqueueZbJobSync(companyId, job.id, { address: input.zb_address || null })
-            .catch(e => console.error('[JobsService] zb sync enqueue failed (non-fatal):', e.message));
-    }
     await eventBus.emit(companyId, 'job.created', {
         id: job.id,
         job_id: job.id,
@@ -440,9 +429,8 @@ async function createManualJob(companyId, input = {}, activityActor = null) {
 }
 
 /**
- * Create a Job directly (no lead → job conversion path). Mirrors the ZenBooker
- * create + sync-back block of leadsService.convertLead, but starting from a small
- * structured input instead of a lead row.
+ * Create a Job directly in Albusto (no lead → job conversion path), starting from
+ * a small structured input.
  *
  * input = {
  *   contact: { contact_id:number } | { name:string, phone:string, email?:string },
@@ -452,12 +440,7 @@ async function createManualJob(companyId, input = {}, activityActor = null) {
  *   description?: string,
  * }
  *
- * Steps:
- *   a. Resolve the contact (existing id is company-scoped; otherwise dedupe).
- *   b. Build the ZB payload (territory from ZIP, custom service, arrival window).
- *   c. Try to create the ZB job. On success: fetch detail (retry once for
- *      job_number) and persist via createJob({ zbData }). On failure: create a
- *      local job with the input data and surface a zb_warning.
+ * Resolves the company-scoped contact, then creates the local job.
  *
  * @param {string} companyId  — ONLY from req.companyFilter (never req.companyId)
  * @param {Object} input
@@ -511,8 +494,7 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
         contactId = resolved.contact_id || null;
     }
 
-    // ── b. Build ZB payload ───────────────────────────────────────────────────
-    // Contact display data for the customer block + local fallback insert.
+    // ── b. Resolve contact display data and create the local job ──────────────
     let customerName = contactInput.name || null;
     let customerPhone = contactInput.phone || null;
     let customerEmail = contactInput.email || null;
@@ -528,104 +510,27 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
         }
     }
 
-    const territoryId = await zenbookerClient.findTerritoryByPostalCode(address.postal_code);
-
-    const customer = {};
-    if (customerName) customer.name = customerName;
-    if (customerPhone) customer.phone = customerPhone;
-    if (customerEmail) customer.email = customerEmail;
-
-    // zenbookerClient.createJob → ensureAddressState backfills state from the ZIP.
-    const zbAddress = { country: 'US' };
-    if (address.line1) zbAddress.line1 = address.line1;
-    if (address.line2) zbAddress.line2 = address.line2;
-    if (address.city) zbAddress.city = address.city;
-    if (address.state) zbAddress.state = address.state;
-    if (address.postal_code) zbAddress.postal_code = address.postal_code;
-
-    const zbPayload = {
-        territory_id: territoryId,
-        customer,
-        address: zbAddress,
-        services: [{
-            custom_service: {
-                name: jobType,
-                description,
-                price: 0,
-                duration: 120,
-                taxable: false,
-            },
-        }],
-        timeslot: { type: 'arrival_window', start: slot.start, end: slot.end },
-        sms_notifications: true,
-        email_notifications: true,
-    };
-    let zenbookerTechIds = [];
-    if (slot.tech_id) {
-        try {
-            zenbookerTechIds = await technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
-                companyId,
-                'zenbooker',
-                [slot.tech_id]
-            );
-        } catch (err) {
-            console.warn('[CreateDirectJob] Technician external-id lookup failed; using ZB auto-assignment:', err.message);
-        }
-    }
-    if (zenbookerTechIds.length > 0) {
-        // ZB rejects assigned_providers + assignment_method:'auto' together.
-        zbPayload.assigned_providers = zenbookerTechIds;
-    } else {
-        zbPayload.assignment_method = 'auto';
-    }
-
-    // ── c. Create ZB job; persist local job either way ────────────────────────
-    let zenbookerJobId = null;
-    let zbWarning = null;
-    let localJob = null;
-
-    try {
-        const zbResult = await zenbookerClient.createJob(zbPayload);
-        zenbookerJobId = zbResult.job_id;
-
-        // ZB may not assign job_number immediately — retry once after a short delay.
-        let detail = await zenbookerClient.getJob(zenbookerJobId);
-        if (!detail?.job_number) {
-            await new Promise(r => setTimeout(r, 2000));
-            detail = await zenbookerClient.getJob(zenbookerJobId);
-        }
-
-        localJob = await createJob({ contactId, zenbookerJobId, zbData: detail, companyId });
-        console.log(`[CreateDirectJob] Zenbooker job ${zenbookerJobId} created → local job ${localJob.id}`);
-    } catch (err) {
-        // ZB nests the reason under error.message (e.g. INVALID_ADDRESS).
-        const errData = err.response?.data;
-        zbWarning = errData?.error?.message || errData?.message || err.message;
-        console.error('[CreateDirectJob] Zenbooker create error:', errData || err.message);
-
-        // No ZB link — persist a local-only job with the input data
-        // (mirror of claimLocalJobForConversion's local insert shape).
-        const addressStr = [address.line1, address.line2, address.city, address.state, address.postal_code]
-            .filter(Boolean).join(', ') || null;
-        // No geocode in this path; the structured create input already carries the
-        // city, so persist it directly (TILE-CITY-001).
-        const cityValue = address.city || null;
-        const assignedTechs = slot.tech_id ? JSON.stringify([{ id: slot.tech_id }]) : '[]';
-        const { rows } = await db.query(`
-            INSERT INTO jobs (
-                contact_id, company_id, blanc_status, service_name,
-                customer_name, customer_phone, customer_email, address, city,
-                start_date, end_date, assigned_techs
-            ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
-            RETURNING *
-        `, [
-            contactId, companyId, jobType,
-            customerName, customerPhone, customerEmail, addressStr, cityValue,
-            slot.start || null, slot.end || null, assignedTechs,
-        ]);
-        localJob = rowToJob(rows[0]);
-        console.log(`[CreateDirectJob] Local job ${localJob.id} created without ZB link: ${zbWarning}`);
-    }
+    const addressStr = [address.line1, address.line2, address.city, address.state, address.postal_code]
+        .filter(Boolean).join(', ') || null;
+    // No geocode in this path; the structured create input already carries the
+    // city, so persist it directly (TILE-CITY-001).
+    const cityValue = address.city || null;
+    const assignedTechs = slot.tech_id ? JSON.stringify([{ id: String(slot.tech_id) }]) : '[]';
+    const assignedProviderUserIds = await resolveAssignedProviderUserIds(companyId, assignedTechs);
+    const { rows } = await db.query(`
+        INSERT INTO jobs (
+            contact_id, company_id, blanc_status, service_name, description,
+            customer_name, customer_phone, customer_email, address, city,
+            start_date, end_date, assigned_techs, assigned_provider_user_ids
+        ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb)
+        RETURNING *
+    `, [
+        contactId, companyId, jobType, description,
+        customerName, customerPhone, customerEmail, addressStr, cityValue,
+        slot.start || null, slot.end || null, assignedTechs, assignedProviderUserIds,
+    ]);
+    const localJob = rowToJob(rows[0]);
+    console.log(`[CreateDirectJob] Local job ${localJob.id} created`);
 
     // Merge shared fields into the local job's metadata (best-effort; never blocks
     // the create). lead_source lives under metadata.lead_source alongside the
@@ -691,9 +596,8 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
     }
 
     // SCHED-ROUTE-VIS-001 (FR-1, S-1..S-3): best-effort route recalc for the
-    // direct-create path — single point covering BOTH branches (ZB-success and
-    // local fallback; localJob is resolved either way). Job is new, so no
-    // beforeTechDays. Fire-and-forget: a failing recalc never breaks the create.
+    // direct-create path. Job is new, so no beforeTechDays. Fire-and-forget: a
+    // failing recalc never breaks the create.
     {
         const routeSeg = require('./routeSegmentService');
         routeSeg.recalcForJob(companyId, localJob.id, { coordsChanged: true })
@@ -706,26 +610,7 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
         }
     }
 
-    return { job_id: localJob.id, zenbooker_job_id: zenbookerJobId, zb_warning: zbWarning };
-}
-
-/**
- * Enqueue a one-shot ZenBooker sync for a locally-created job on the agentWorker
- * (kind='agent', FOR UPDATE SKIP LOCKED → processed once). Marks the job
- * zb_sync_status='pending'. The dedupe-guard lives in the handler (skips if a
- * zenbooker_job_id already exists). `parts.address` carries structured address
- * fields (line1/city/state/postal_code) captured at create time.
- */
-async function enqueueZbJobSync(companyId, jobId, parts = {}) {
-    await db.query(
-        `INSERT INTO tasks (company_id, kind, agent_type, agent_status, agent_input, status, title, created_by)
-         VALUES ($1,'agent','zb_job_sync','queued',$2::jsonb,'open',$3,'system')`,
-        [companyId, JSON.stringify({ job_id: jobId, ...parts }), `ZB sync job ${jobId}`]
-    );
-    await db.query(
-        `UPDATE jobs SET zb_sync_status='pending', updated_at=now() WHERE id=$1 AND company_id=$2`,
-        [jobId, companyId]
-    );
+    return { job_id: localJob.id, zenbooker_job_id: null, zb_warning: null };
 }
 
 async function getJobById(id, companyId = null, providerScope = null, { client = null, forUpdate = false } = {}) {
@@ -1217,10 +1102,8 @@ async function getJobBalanceDue(jobId, companyId) {
 /**
  * OUTBOUND-PARTS-CALL-CANCEL-001 (CC-02) — the leave-hook seam, symmetric to the
  * onPartArrived enter-hook below. Fired (fire-and-forget — NEVER awaited into the
- * caller's failure path) after ANY committed write that takes a job OUT of
- * 'Part arrived': updateBlancStatus, cancelJob, and the syncFromZenbooker
- * `zb_canceled` false→true flip (the sync cannot exit the
- * status via blanc_status — 'Part arrived' ∉ autoStatuses, preserved below).
+ * caller's failure path) after ANY committed local write that takes a job OUT of
+ * 'Part arrived': updateBlancStatus or cancelJob.
  * Cancels the queued robot call (pending flip / dialing marker), writes the FR-3
  * job note and stamps the task — all inside
  * partsCallService.cancelScheduledRobotCalls, which is idempotent and never
@@ -1363,7 +1246,7 @@ async function updateBlancStatus(jobId, newStatus, companyId, activityActor = nu
 }
 
 // =============================================================================
-// Sync — Inbound from Zenbooker webhook
+// Historical Zenbooker note helpers
 // =============================================================================
 
 /**
@@ -1455,207 +1338,6 @@ function mergeNotes(localNotes, zbNotes) {
     return [...merged, ...unechoed];
 }
 
-async function syncFromZenbooker(zbJobId, zbData, companyId, eventType = '') {
-    if (!companyId) {
-        const err = new Error('syncFromZenbooker requires companyId');
-        err.code = 'TENANT_CONTEXT_REQUIRED';
-        err.httpStatus = 403;
-        throw err;
-    }
-    const cols = zbJobToColumns(zbData);
-    const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled, eventType);
-
-    // Try to match ZB customer → Albusto contact
-    let contactId = null;
-    const zbCustomerId = zbData.customer?.id ? String(zbData.customer.id) : null;
-    if (zbCustomerId) {
-        const resolution = await resolveOrCreateContact({
-            companyId,
-            externalId: zbCustomerId,
-            contact: {
-                ...zbData.customer,
-                full_name: cols.customer_name,
-                phone: cols.customer_phone,
-                email: cols.customer_email,
-            },
-        });
-        contactId = resolution.contact_id;
-        console.log(`[JobsService] Resolved ZB customer ${zbCustomerId} → contact ${contactId}`);
-    }
-
-    // Check if job exists
-    const existing = await getJobByZbId(zbJobId, companyId);
-
-    // JOB-CONTACT-SYNC-001: ZB imports routinely create bare contacts (no
-    // phone/email) while the ZB job carries them — then inbound calls never
-    // match and Pulse timelines stay orphaned (prod case: job 1359 / timeline
-    // 2911). Enrich the matched contact from the ZB customer data.
-    // Fill-empty-only + never-steal; cheap no-op guard for the bulk-sync path.
-    const propagationCompanyId = companyId || existing?.company_id || null;
-    if (contactId && propagationCompanyId && (cols.customer_phone || cols.customer_email)) {
-        try {
-            const { propagateContactDetails } = require('./contactPropagationService');
-            await propagateContactDetails(propagationCompanyId, contactId,
-                { phone: cols.customer_phone || null, email: cols.customer_email || null },
-                { source: 'zb_sync' });
-        } catch (e) {
-            console.error('[JobsService] contact propagation failed (non-fatal):', e.message);
-        }
-    }
-
-    if (existing) {
-        // Zenbooker is the source of truth for schedule/customer/notes/etc.,
-        // but blanc_status is owned by Albusto — once a job exists locally, the
-        // sync never overwrites its status. Zenbooker has no direct equivalent
-        // for Albusto states like "Visit completed", "Waiting for parts",
-        // "Follow Up with Client", "Part arrived", so any status change comes
-        // through the Albusto UI, not the ZB webhook. The initial status is
-        // still set by the createJob path when a new job first arrives.
-        const shouldUpdateBlancStatus = !existing.blanc_status;
-        const effectiveBlancStatus = shouldUpdateBlancStatus ? newBlancStatus : existing.blanc_status;
-
-        // Merge notes: keep Albusto-side metadata (author, created, attachments) for notes
-        // that originated in Albusto and were echoed back by Zenbooker.
-        const incomingZbNotes = JSON.parse(cols.notes || '[]');
-        const mergedNotes = mergeNotes(existing.notes || [], incomingZbNotes);
-        cols.notes = JSON.stringify(mergedNotes);
-
-        // Internal assignee mirror (PF007): must mirror the EFFECTIVE techs value —
-        // when the incoming list is empty we keep the existing assigned_techs,
-        // so the mirror has to be computed from the kept value too.
-        const incomingTechs = JSON.parse(cols.assigned_techs || '[]');
-        const effectiveTechs = incomingTechs.length === 0 ? (existing.assigned_techs || []) : incomingTechs;
-        const effectiveCompanyId = companyId || existing.company_id || null;
-        const assignedProviderUserIds = await resolveAssignedProviderUserIds(effectiveCompanyId, effectiveTechs);
-
-        // SCHED-ROUTE-VIS-001 (FR-1, S-5/S-6): capture the tech-day pairs this
-        // job occupies BEFORE the UPDATE so a moved job repairs the day it left.
-        const routeSeg = require('./routeSegmentService');
-        let beforeTechDays = [];
-        try {
-            const routeQueries = require('../db/routeQueries');
-            const tz = await routeQueries.getCompanyTimezone(effectiveCompanyId);
-            beforeTechDays = await routeQueries.getTechDaysForJob(effectiveCompanyId, existing.id, tz);
-        } catch { /* non-fatal */ }
-        // coordsChanged ONLY on a real numeric delta — webhook echoes (S-6) and
-        // null-coords partial payloads (E-11) must NOT churn surviving pairs.
-        const coordsChanged = cols.lat != null && cols.lng != null &&
-            (Number(cols.lat) !== Number(existing.lat) || Number(cols.lng) !== Number(existing.lng));
-
-        // Update existing job + link contact if not already linked
-        await db.query(`
-            UPDATE jobs SET
-                zb_status = $1, zb_canceled = $2, zb_rescheduled = $3,
-                blanc_status = $4,
-                job_number = COALESCE($5, job_number),
-                service_name = COALESCE($6, service_name),
-                start_date = COALESCE($7, start_date),
-                end_date = COALESCE($8, end_date),
-                customer_name = COALESCE($9, customer_name),
-                customer_phone = COALESCE($10, customer_phone),
-                customer_email = COALESCE($11, customer_email),
-                address = COALESCE($12, address),
-                city = COALESCE($25, city),
-                territory = COALESCE($13, territory),
-                invoice_total = COALESCE($14, invoice_total),
-                invoice_status = COALESCE($15, invoice_status),
-                assigned_techs = CASE WHEN $16::jsonb = '[]'::jsonb THEN COALESCE(assigned_techs, '[]'::jsonb) ELSE $16::jsonb END,
-                notes = $17::jsonb,
-                zb_raw = $18::jsonb,
-                contact_id = COALESCE($20, contact_id),
-                lat = COALESCE($21, lat),
-                lng = COALESCE($22, lng),
-                company_id = COALESCE($23, company_id),
-                assigned_provider_user_ids = $24::jsonb,
-                updated_at = NOW()
-            WHERE zenbooker_job_id = $19 AND company_id = $23
-        `, [
-            cols.zb_status, cols.zb_canceled, cols.zb_rescheduled,
-            effectiveBlancStatus,
-            cols.job_number, cols.service_name, cols.start_date, cols.end_date,
-            cols.customer_name, cols.customer_phone, cols.customer_email, cols.address,
-            cols.territory, cols.invoice_total, cols.invoice_status,
-            cols.assigned_techs, cols.notes, cols.zb_raw,
-            zbJobId, contactId, cols.lat, cols.lng, companyId,
-            assignedProviderUserIds,
-            cols.city ?? null,
-        ]);
-
-        // CANCEL-001 leave-hook (CC-02 S3): the sync can never move a job out of
-        // 'Part arrived' via blanc_status (∉ autoStatuses — preserved above), so
-        // the ONLY sync-borne exit is the zb_canceled false→true FLIP (written
-        // unconditionally by the UPDATE). Fire exactly on that flip, scoped to
-        // the row being synced.
-        if (existing.blanc_status === 'Part arrived' && !existing.zb_canceled && cols.zb_canceled) {
-            fireRobotCallLeaveHook(existing.id, effectiveCompanyId, 'Canceled (Zenbooker)');
-        }
-
-        if (!shouldUpdateBlancStatus) {
-            console.log(`[JobsService] Synced job ${zbJobId}: preserved manual blanc_status "${existing.blanc_status}" (ZB would set "${newBlancStatus}")`);
-        } else {
-            console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${effectiveBlancStatus}`);
-        }
-
-        // SCHED-ROUTE-VIS-001 (FR-1, S-5/S-6): best-effort recalc after the
-        // UPDATE — fire-and-forget, never blocks/fails the sync.
-        routeSeg.recalcForJob(effectiveCompanyId, existing.id, { beforeTechDays, coordsChanged })
-            .catch(e => console.error('[JobsService] zb-sync recalc failed (non-fatal):', e.message));
-
-        return { updated: true, job_id: existing.id, blanc_status: effectiveBlancStatus };
-    } else {
-        // Create new job linked to contact
-        const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId, contactId });
-        console.log(`[JobsService] Created local job for zb_id=${zbJobId}, id=${job.id}, contact=${contactId}`);
-
-        // SCHED-ROUTE-VIS-001 (FR-1, S-4): ZB-ingested new job → best-effort
-        // recalc; async geocode when the address arrived without coordinates.
-        const routeSeg = require('./routeSegmentService');
-        routeSeg.recalcForJob(companyId || job.company_id, job.id, { coordsChanged: true })
-            .catch(e => console.error('[JobsService] zb-create recalc failed (non-fatal):', e.message));
-        if (job.address && String(job.address).trim() && (job.lat == null || job.lng == null)) {
-            routeSeg.enqueueGeocode(companyId || job.company_id, job.id)
-                .catch(e => console.error('[JobsService] zb-create geocode enqueue failed (non-fatal):', e.message));
-        }
-
-        // ZB auto-assigns providers asynchronously — re-fetch after delay to catch it
-        if ((!zbData.assigned_providers || zbData.assigned_providers.length === 0) && !zbData.unable_to_auto_assign) {
-            setImmediate(async () => {
-                try {
-                    await new Promise(r => setTimeout(r, 5000));
-                    const zbRefresh = await zenbookerClient.getJob(zbJobId);
-                    if (zbRefresh?.assigned_providers?.length > 0) {
-                        const refreshedMirror = await resolveAssignedProviderUserIds(
-                            companyId || job.company_id,
-                            zbRefresh.assigned_providers
-                        );
-                        await db.query(
-                            `UPDATE jobs SET assigned_techs = $1::jsonb, zb_raw = $2::jsonb, assigned_provider_user_ids = $3::jsonb, updated_at = NOW()
-                             WHERE zenbooker_job_id = $4 AND company_id = $5`,
-                            [
-                                JSON.stringify(zbRefresh.assigned_providers),
-                                JSON.stringify(zbRefresh),
-                                refreshedMirror,
-                                zbJobId,
-                                companyId,
-                            ]
-                        );
-                        console.log(`[JobsService] Delayed re-fetch: auto-assigned ${zbRefresh.assigned_providers.length} provider(s) for job ${job.id}`);
-                        // SCHED-ROUTE-VIS-001 (FR-1, S-7): techs just landed via the
-                        // delayed auto-assign — recalc. Pure addition of techs, so no
-                        // beforeTechDays/coordsChanged needed.
-                        routeSeg.recalcForJob(companyId || job.company_id, job.id, {})
-                            .catch(e => console.error('[JobsService] delayed-assign recalc failed (non-fatal):', e.message));
-                    }
-                } catch (err) {
-                    console.warn(`[JobsService] Delayed re-fetch error for ${zbJobId}:`, err.message);
-                }
-            });
-        }
-
-        return { updated: true, job_id: job.id, blanc_status: job.blanc_status, created: true };
-    }
-}
-
 // =============================================================================
 // Notes
 // =============================================================================
@@ -1681,58 +1363,17 @@ async function addNote(jobId, text, attachments = [], author = null, createdBy =
         }));
     }
 
-    let notes = [...(job.notes || []), note];
+    const notes = [...(job.notes || []), note];
     const updateSql = 'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3';
     const updateParams = [JSON.stringify(notes), jobId, companyId];
     await db.query(updateSql, updateParams);
-
-    // Also push text to Zenbooker if linked (attachments are local-only).
-    // Capture the resulting ZB note id so that when Zenbooker echoes this note back
-    // via job.note_added webhook, syncFromZenbooker can merge by id and preserve author.
-    if (job.zenbooker_job_id && text) {
-        try {
-            const resp = await zenbookerClient.addJobNote(job.zenbooker_job_id, { text });
-            // ZB response shape isn't documented in our codebase; try common layouts.
-            const zbId = resp?.id
-                || resp?.note?.id
-                || (Array.isArray(resp?.job_notes) ? resp.job_notes[resp.job_notes.length - 1]?.id : null);
-            if (zbId) {
-                note.zb_note_id = String(zbId);
-                notes = [...(job.notes || []), note];
-                await db.query(updateSql, [JSON.stringify(notes), jobId, companyId]);
-            }
-        } catch (err) {
-            console.error(`[JobsService] Note sync error:`, err.response?.data || err.message);
-        }
-    }
 
     return { notes };
 }
 
 // =============================================================================
-// Zenbooker pass-through actions (update local + call Zenbooker)
+// Local job actions
 // =============================================================================
-
-/**
- * Helper: when a ZB API action fails, force-sync the job from ZB to get correct state.
- * Throws a user-friendly error after syncing.
- */
-async function forceSyncOnZbError(job, action, error) {
-    console.warn(`[JobsService] ZB ${action} failed for ${job.zenbooker_job_id}: ${error.message}`);
-    console.log(`[JobsService] Force-syncing job ${job.id} from ZB...`);
-    try {
-        const zbJobData = await zenbookerClient.getJob(job.zenbooker_job_id);
-        if (zbJobData) {
-            await syncFromZenbooker(job.zenbooker_job_id, zbJobData, job.company_id);
-            console.log(`[JobsService] Force-sync completed for job ${job.id}`);
-        }
-    } catch (syncErr) {
-        console.error(`[JobsService] Force-sync failed for job ${job.id}: ${syncErr.message}`);
-    }
-    const err = new Error('An error occurred. Please refresh the page and try again in 5 seconds. If the problem persists, contact the developer.');
-    err.statusCode = 409;
-    throw err;
-}
 
 async function cancelJob(jobId, companyId, activityActor = null) {
     if (!companyId) {
@@ -1746,14 +1387,6 @@ async function cancelJob(jobId, companyId, activityActor = null) {
         throw Object.assign(new Error(`Job #${jobId} not found`), { statusCode: 404 });
     }
 
-    // Pre-check: skip ZB call if already canceled to avoid 4xx → forceSync → 409
-    if (job.zenbooker_job_id && !job.zb_canceled) {
-        try {
-            await zenbookerClient.cancelJob(job.zenbooker_job_id);
-        } catch (e) {
-            await forceSyncOnZbError(job, 'cancel', e);
-        }
-    }
     await mutateWithActivity(
         activityActor,
         {
@@ -1966,13 +1599,6 @@ async function updateJobLocation(
     await routeSeg.recalcForJob(companyId, jobId, { beforeTechDays, coordsChanged: true })
         .catch(e => console.error('[JobsService] recalc after location edit failed (non-fatal):', e.message));
 
-    // FR-002: best-effort push the edit to ZenBooker if linked + flag on. ZB has
-    // no generic job-address PATCH, so a not-yet-synced job is (re)enqueued for
-    // create with the new address; an already-synced job records the local edit.
-    if (isZenbookerSyncEnabled() && !job.zenbooker_job_id && job.zb_sync_status !== 'pending') {
-        await enqueueZbJobSync(companyId, jobId, {})   // handler falls back to job.address
-            .catch(e => console.error('[JobsService] zb sync re-enqueue failed (non-fatal):', e.message));
-    }
     return job;
 }
 
@@ -2013,7 +1639,6 @@ module.exports = {
     listJobs,
     getJobBalanceDue,
     updateBlancStatus,
-    syncFromZenbooker,
     mergeNotes,
     addNote,
     cancelJob,
@@ -2026,7 +1651,6 @@ module.exports = {
     getTagsForJob,
     updateCoords,
     updateJobLocation,
-    enqueueZbJobSync,
     getJobTransitions,
     resolveAssignedProviderUserIds,
     refreshCompanyProviderMirror,

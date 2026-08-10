@@ -5,7 +5,6 @@ const PROVIDER_USER = '00000000-0000-0000-0000-00000000d102';
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/contactDedupeService', () => ({}));
-jest.mock('../backend/src/services/zenbookerSyncService', () => ({}));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({ MAX_FILE_SIZE: 1024 }));
 jest.mock('../backend/src/services/notesMutationService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));

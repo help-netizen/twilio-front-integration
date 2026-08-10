@@ -105,7 +105,6 @@ const SQL_ALLOWLIST = new Map([
     ['R-natural-key:backend/src/services/inboxWorker.js:680', 'Pre-existing worker update uses only Twilio call SID; remediation deferred.'],
     ['R-natural-key:backend/src/services/inboxWorker.js:752', 'Pre-existing worker update uses only Twilio call SID; remediation deferred.'],
     ['R-natural-key:backend/src/services/inboxWorker.js:806', 'Pre-existing worker update uses only Twilio call SID; remediation deferred.'],
-    ['R-natural-key:backend/src/services/jobSyncService.js:142', 'Pre-existing job-sync write uses only lead UUID; remediation deferred.'],
     ['R-natural-key:backend/src/services/otpService.js:106', 'Signup/login OTP records are intentionally pre-tenant and have no company_id.'],
     ['R-natural-key:backend/src/services/reconcileStale.js:129', 'Pre-existing reconciler update uses only Twilio call SID; remediation deferred.'],
     ['R-natural-key:backend/src/services/reconcileStale.js:194', 'Pre-existing reconciler update uses only Twilio call SID; remediation deferred.'],

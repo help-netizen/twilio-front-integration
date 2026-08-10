@@ -6,12 +6,9 @@
  *    ignores unmapped external ids
  *  - jobsService.resolveAssignedProviderUserIds returns '[]' without a
  *    company and resolves through the bridge otherwise
- *  - jobSyncService.refreshAssigneeMirrorFromAssignment updates the mirror
- *    from assignment events using the job's own company
  */
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), pool: { connect: jest.fn() } }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));
 
@@ -19,7 +16,6 @@ const db = require('../backend/src/db/connection');
 const membershipQueries = require('../backend/src/db/membershipQueries');
 const technicianDirectoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const jobsService = require('../backend/src/services/jobsService');
-const jobSyncService = require('../backend/src/services/jobSyncService');
 
 const NATIVE_TECH = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const NATIVE_ONLY = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -140,53 +136,5 @@ describe('jobsService.refreshCompanyProviderMirror', () => {
         expect(sql).toContain('e.company_id = j2.company_id');
         expect(sql).toContain('native_m.user_id = t.crm_user_id');
         expect(params).toEqual(['company-1']);
-    });
-});
-
-describe('jobSyncService.refreshAssigneeMirrorFromAssignment', () => {
-    it('skips when the event payload has no assigned_providers array', async () => {
-        const res = await jobSyncService.refreshAssigneeMirrorFromAssignment(
-            'zb-job-1',
-            {},
-            'company-1'
-        );
-        expect(res).toEqual({ updated: false, reason: 'no_assignment_payload' });
-        expect(db.query).not.toHaveBeenCalled();
-    });
-
-    it('skips when the job is unknown locally', async () => {
-        db.query.mockResolvedValueOnce({ rows: [] });
-        const res = await jobSyncService.refreshAssigneeMirrorFromAssignment(
-            'zb-job-1',
-            { assigned_providers: [] },
-            'company-1'
-        );
-        expect(res).toEqual({ updated: false, reason: 'job_not_found' });
-    });
-
-    it('updates assigned_techs + mirror scoped to the job own company', async () => {
-        db.query
-            // job lookup
-            .mockResolvedValueOnce({ rows: [{ id: 42, company_id: 'company-1' }] })
-            // bridge resolution (inside resolveAssignedProviderUserIds)
-            .mockResolvedValueOnce({ rows: [{ user_id: 'uuid-1' }] })
-            // update
-            .mockResolvedValueOnce({ rowCount: 1 });
-
-        const res = await jobSyncService.refreshAssigneeMirrorFromAssignment('zb-job-1', {
-            assigned_providers: [{ id: 'zb-1', name: 'Tech' }],
-        }, 'company-1');
-
-        expect(res).toEqual({ updated: true, job_id: 42 });
-        const bridgeCall = db.query.mock.calls[1];
-        expect(bridgeCall[1]).toEqual(['company-1', ['zb-1']]);
-        const updateCall = db.query.mock.calls[2];
-        expect(updateCall[0]).toContain('assigned_provider_user_ids = $2::jsonb');
-        expect(updateCall[1]).toEqual([
-            JSON.stringify([{ id: 'zb-1', name: 'Tech' }]),
-            JSON.stringify(['uuid-1']),
-            42,
-            'company-1',
-        ]);
     });
 });

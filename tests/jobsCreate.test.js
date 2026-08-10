@@ -1,40 +1,30 @@
 /**
- * Tests for "create a Job directly" (no lead → job conversion path).
- *
- *   - Route POST /api/jobs: permission gate (jobs.create) + tenant context from
- *     req.companyFilter only.
- *   - jobsService.createDirectJob: company isolation on an existing contact_id,
- *     Zenbooker-failure fallback (local job still created + zb_warning), and the
- *     happy path (ZB job created → local job persisted).
- *
- * Mirrors tests/paymentsRoute.test.js (route + mocked service) and
- * tests/zenbookerJobCreate.test.js (axios/ZB mocking style).
+ * Tests for local-only direct Job creation after Zenbooker job traffic was
+ * decommissioned.
  */
+
+'use strict';
 
 const express = require('express');
 const http = require('http');
 
-// ─── Supertest-like helper (no extra dep) ─────────────────────────────────────
-
 function request(app, method, path, body = null) {
     return new Promise((resolve, reject) => {
         const server = app.listen(0, () => {
-            const port = server.address().port;
-            const options = {
+            const req = http.request({
                 hostname: '127.0.0.1',
-                port,
+                port: server.address().port,
                 path,
                 method: method.toUpperCase(),
                 headers: { 'Content-Type': 'application/json' },
-            };
-            const req = http.request(options, (res) => {
+            }, (res) => {
                 let data = '';
                 res.on('data', chunk => { data += chunk; });
                 res.on('end', () => {
                     server.close();
                     try {
                         resolve({ status: res.statusCode, body: JSON.parse(data) });
-                    } catch (e) {
+                    } catch {
                         resolve({ status: res.statusCode, body: data });
                     }
                 });
@@ -46,32 +36,21 @@ function request(app, method, path, body = null) {
     });
 }
 
-// =============================================================================
-// Route: POST /api/jobs — permission gate + tenant context (mocked service)
-// =============================================================================
-
 const mockCreateDirectJob = jest.fn();
-const mockSyncFromZenbooker = jest.fn();
 const mockLogJobActivity = jest.fn();
+const mockEventEmit = jest.fn(async () => {});
+
 jest.mock('../backend/src/services/jobsService', () => ({
-    createDirectJob: mockCreateDirectJob,
-    syncFromZenbooker: mockSyncFromZenbooker,
+    createDirectJob: (...args) => mockCreateDirectJob(...args),
 }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
-    userActor: (id) => ({ id, type: 'user', label: null, source: 'crm' }),
+    userActor: id => ({ id, type: 'user', label: null, source: 'crm' }),
     logJobActivity: (...args) => mockLogJobActivity(...args),
 }));
-// Stub the other modules the route file pulls in so requiring it is cheap.
-const mockZenbookerGet = jest.fn();
-jest.mock('../backend/src/services/zenbookerClient', () => ({
-    getClientForCompany: jest.fn(async () => ({ get: mockZenbookerGet })),
-}));
-const mockLogZenbookerBatch = jest.fn();
-jest.mock('../backend/src/services/zenbookerActivityService', () => ({
-    logZenbookerBatch: (...args) => mockLogZenbookerBatch(...args),
-}));
+jest.mock('../backend/src/services/eventBus', () => ({ emit: (...args) => mockEventEmit(...args) }));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
-    MAX_FILE_SIZE: 1, MAX_FILES_PER_NOTE: 1,
+    MAX_FILE_SIZE: 1,
+    MAX_FILES_PER_NOTE: 1,
 }));
 jest.mock('../backend/src/services/eventService', () => ({}));
 jest.mock('../backend/src/services/stripePaymentsService', () => ({
@@ -81,6 +60,12 @@ jest.mock('../backend/src/services/stripePaymentsService', () => ({
 const jobsRouter = require('../backend/src/routes/jobs');
 
 const COMPANY = '00000000-0000-0000-0000-00000000000a';
+const VALID_BODY = {
+    contact: { name: 'Jane Doe', phone: '+16175551234' },
+    address: { line1: '6 Cirrus Drive', city: 'Ashland', postal_code: '01721' },
+    slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z' },
+    job_type: 'Refrigerator repair',
+};
 
 function routeApp({ permissions = [], companyFilter = { company_id: COMPANY }, noTenant = false } = {}) {
     const app = express();
@@ -89,7 +74,6 @@ function routeApp({ permissions = [], companyFilter = { company_id: COMPANY }, n
         req.user = { sub: 'kc', email: 'u@x.com', crmUser: { id: 'u-1' } };
         req.authz = { scope: 'tenant', permissions, scopes: {} };
         req.companyFilter = noTenant ? undefined : companyFilter;
-        // Poison the legacy field: the route must never read it (PF007).
         req.companyId = 'LEGACY-DO-NOT-USE';
         next();
     });
@@ -97,112 +81,53 @@ function routeApp({ permissions = [], companyFilter = { company_id: COMPANY }, n
     return app;
 }
 
-const VALID_BODY = {
-    contact: { name: 'Jane Doe', phone: '+16175551234' },
-    address: { line1: '6 Cirrus Drive', city: 'Ashland', postal_code: '01721' },
-    slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z' },
-    job_type: 'Refrigerator repair',
-};
-
-describe('POST /api/jobs — permission + tenant context', () => {
+describe('POST /api/jobs — local route contract', () => {
     beforeEach(() => mockCreateDirectJob.mockReset());
 
-    test('P0: denies without jobs.create permission (403)', async () => {
+    test('denies without jobs.create permission', async () => {
         const res = await request(routeApp({ permissions: [] }), 'POST', '/', VALID_BODY);
-        // requirePermission denies before the handler — its body is { code, message }.
         expect(res.status).toBe(403);
         expect(res.body.code).toBe('ACCESS_DENIED');
         expect(mockCreateDirectJob).not.toHaveBeenCalled();
     });
 
-    test('uses req.companyFilter company, never req.companyId', async () => {
-        mockCreateDirectJob.mockResolvedValue({ job_id: 7, zenbooker_job_id: 'zb-7', zb_warning: null });
-        const res = await request(routeApp({ permissions: ['jobs.create'] }), 'POST', '/', VALID_BODY);
-        expect(res.status).toBe(200);
-        expect(res.body.ok).toBe(true);
-        expect(res.body.data).toEqual({ job_id: 7, zenbooker_job_id: 'zb-7', zb_warning: null });
-        expect(mockCreateDirectJob.mock.calls[0][0]).toBe(COMPANY);
-        expect(mockCreateDirectJob.mock.calls[0][2]).toEqual({
-            id: 'u-1',
-            type: 'user',
-            label: null,
-            source: 'crm',
+    test('uses req.companyFilter and returns the local-only result', async () => {
+        mockCreateDirectJob.mockResolvedValue({
+            job_id: 7,
+            zenbooker_job_id: null,
+            zb_warning: null,
         });
+        const res = await request(routeApp({ permissions: ['jobs.create'] }), 'POST', '/', VALID_BODY);
+
+        expect(res.status).toBe(200);
+        expect(res.body.data).toEqual({ job_id: 7, zenbooker_job_id: null, zb_warning: null });
+        expect(mockCreateDirectJob).toHaveBeenCalledWith(
+            COMPANY,
+            VALID_BODY,
+            { id: 'u-1', type: 'user', label: null, source: 'crm' }
+        );
     });
 
-    test('returns 403 when tenant context (companyFilter) is absent', async () => {
+    test('returns 403 when companyFilter is absent', async () => {
         const res = await request(
             routeApp({ permissions: ['jobs.create'], noTenant: true }),
-            'POST', '/', VALID_BODY
+            'POST',
+            '/',
+            VALID_BODY
         );
         expect(res.status).toBe(403);
-        expect(res.body.ok).toBe(false);
         expect(mockCreateDirectJob).not.toHaveBeenCalled();
     });
 
-    test('maps a thrown httpStatus through to the response', async () => {
-        const err = new Error('Contact not found');
-        err.httpStatus = 404;
-        mockCreateDirectJob.mockRejectedValue(err);
-        const res = await request(routeApp({ permissions: ['jobs.create'] }), 'POST', '/', VALID_BODY);
+    test('the removed bulk-import endpoint is not routable', async () => {
+        const res = await request(routeApp({ permissions: ['jobs.edit'] }), 'POST', '/sync');
         expect(res.status).toBe(404);
-        expect(res.body.ok).toBe(false);
-        expect(res.body.error).toBe('Contact not found');
     });
 });
 
-describe('POST /api/jobs/sync — coalesced Zenbooker activity', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-        mockZenbookerGet.mockImplementation(async url => {
-            if (url === '/jobs') {
-                return {
-                    data: {
-                        results: [{ id: 'zb-1' }, { id: 'zb-2' }],
-                        has_more: false,
-                    },
-                };
-            }
-            return { data: { id: url.split('/').pop() } };
-        });
-        mockSyncFromZenbooker
-            .mockResolvedValueOnce({ updated: true, created: true, job_id: 1 })
-            .mockResolvedValueOnce({ updated: true, created: false, job_id: 2 });
-        mockLogZenbookerBatch.mockResolvedValue({ ok: true });
-    });
-
-    test('writes one integration event for the run, not one per Job', async () => {
-        const res = await request(
-            routeApp({ permissions: ['jobs.edit'] }),
-            'POST',
-            '/sync'
-        );
-
-        expect(res.status).toBe(200);
-        expect(mockSyncFromZenbooker).toHaveBeenCalledTimes(2);
-        expect(mockLogZenbookerBatch).toHaveBeenCalledTimes(1);
-        expect(mockLogZenbookerBatch).toHaveBeenCalledWith({
-            companyId: COMPANY,
-            entityType: 'job',
-            summary: {
-                count: 2,
-                created_count: 1,
-            },
-        });
-    });
-});
-
-// =============================================================================
-// Service: jobsService.createDirectJob — isolation, ZB-failure, happy path
-// =============================================================================
-//
-// Isolated module registry so the real jobsService runs against mocked deps
-// (db / contactDedupeService / zenbookerClient) without disturbing the route
-// suite above. jest.isolateModules gives each test a fresh require graph.
-
-describe('jobsService.createDirectJob', () => {
-    function loadService({ dbQuery, resolveContact, createJob, getJob, resolveExternalIds }) {
-        let svc;
+describe('jobsService.createDirectJob local persistence', () => {
+    function loadService({ dbQuery, resolveContact, resolveProviderUserIds }) {
+        let service;
         jest.isolateModules(() => {
             jest.doMock('../backend/src/db/connection', () => ({
                 query: dbQuery,
@@ -212,214 +137,87 @@ describe('jobsService.createDirectJob', () => {
             jest.doMock('../backend/src/services/contactDedupeService', () => ({
                 resolveContact: resolveContact || jest.fn(),
             }));
-            jest.doMock('../backend/src/services/zenbookerClient', () => ({
-                findTerritoryByPostalCode: jest.fn().mockResolvedValue('terr_01'),
-                createJob: createJob || jest.fn(),
-                getJob: getJob || jest.fn(),
-            }));
-            jest.doMock('../backend/src/db/technicianDirectoryQueries', () => ({
-                resolveCompatibilityIdsToExternal: resolveExternalIds
-                    || jest.fn(async (_companyId, _source, ids) => ids),
+            jest.doMock('../backend/src/db/membershipQueries', () => ({
+                resolveProviderUserIds: resolveProviderUserIds || jest.fn(async () => []),
             }));
             jest.doMock('../backend/src/services/fsmService', () => ({}));
             jest.doMock('../backend/src/services/eventService', () => ({}));
-            jest.doMock('../backend/src/db/membershipQueries', () => ({
-                resolveProviderUserIds: jest.fn().mockResolvedValue([]),
+            jest.doMock('../backend/src/services/contactPropagationService', () => ({
+                propagateContactDetails: jest.fn(async () => {}),
             }));
-            jest.doMock('../backend/src/config/featureFlags', () => ({
-                isZenbookerSyncEnabled: () => false,
+            jest.doMock('../backend/src/services/routeSegmentService', () => ({
+                recalcForJob: jest.fn(async () => {}),
+                enqueueGeocode: jest.fn(async () => {}),
             }));
-            // jobsService is jest.mock()'d at the top of this file for the route
-            // suite; load the REAL implementation here so we exercise its logic.
-            svc = jest.requireActual('../backend/src/services/jobsService');
+            service = jest.requireActual('../backend/src/services/jobsService');
         });
-        return svc;
+        return service;
     }
 
-    beforeEach(() => {
-        mockLogJobActivity.mockReset();
-        mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
+    afterEach(() => {
+        jest.resetModules();
+        jest.dontMock('../backend/src/db/connection');
     });
 
-    afterEach(() => { jest.resetModules(); jest.dontMock('../backend/src/db/connection'); });
-
-    test('P0: rejects a contact_id from another company (404)', async () => {
-        // The company-scoped SELECT returns no rows → not found in THIS tenant.
+    test('rejects an existing contact from another company before any insert', async () => {
         const dbQuery = jest.fn().mockResolvedValue({ rows: [] });
-        const svc = loadService({ dbQuery });
+        const service = loadService({ dbQuery });
 
-        await expect(
-            svc.createDirectJob(COMPANY, {
-                contact: { contact_id: 999 },
-                address: { postal_code: '01721' },
-                slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z' },
-                job_type: 'Repair',
-            })
-        ).rejects.toMatchObject({ message: 'Contact not found', httpStatus: 404 });
+        await expect(service.createDirectJob(COMPANY, {
+            contact: { contact_id: 999 },
+            slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z' },
+        })).rejects.toMatchObject({ message: 'Contact not found', httpStatus: 404 });
 
-        // It must have queried contacts scoped by both id AND company_id.
-        const call = dbQuery.mock.calls[0];
-        expect(call[0]).toMatch(/FROM contacts WHERE id = \$1 AND company_id = \$2/);
-        expect(call[1]).toEqual([999, COMPANY]);
+        expect(dbQuery).toHaveBeenCalledWith(
+            'SELECT id FROM contacts WHERE id = $1 AND company_id = $2',
+            [999, COMPANY]
+        );
+        expect(dbQuery.mock.calls.some(([sql]) => /INSERT INTO jobs/.test(sql))).toBe(false);
     });
 
-    test('P0: Zenbooker failure → local job still created + zb_warning', async () => {
-        const zbErr = new Error('request failed');
-        zbErr.response = { data: { error: { message: 'INVALID_ADDRESS' } } };
-        const createJob = jest.fn().mockRejectedValue(zbErr);
-
-        // db.query is used for: (1) contact dedupe path is bypassed (new contact),
-        // (2) the fallback INSERT into jobs.
-        const dbQuery = jest.fn((sql) => {
+    test('creates the job locally with description, assignment, and provider mirror', async () => {
+        const dbQuery = jest.fn(async sql => {
             if (/INSERT INTO jobs/.test(sql)) {
-                return Promise.resolve({ rows: [{ id: 42, blanc_status: 'Submitted' }] });
+                return {
+                    rows: [{
+                        id: 42,
+                        company_id: COMPANY,
+                        contact_id: 5,
+                        blanc_status: 'Submitted',
+                        service_name: 'Refrigerator repair',
+                        description: 'door seal',
+                        address: '6 Cirrus Drive, Ashland, 01721',
+                        assigned_techs: [{ id: 'tech-7' }],
+                        assigned_provider_user_ids: ['user-7'],
+                        notes: [],
+                    }],
+                };
             }
-            return Promise.resolve({ rows: [] });
+            return { rows: [] };
         });
         const resolveContact = jest.fn().mockResolvedValue({ contact_id: 5, status: 'created' });
+        const resolveProviderUserIds = jest.fn().mockResolvedValue(['user-7']);
+        const service = loadService({ dbQuery, resolveContact, resolveProviderUserIds });
 
-        const svc = loadService({ dbQuery, resolveContact, createJob });
-
-        const out = await svc.createDirectJob(COMPANY, {
+        const result = await service.createDirectJob(COMPANY, {
             contact: { name: 'Jane Doe', phone: '+16175551234' },
             address: { line1: '6 Cirrus Drive', city: 'Ashland', postal_code: '01721' },
-            slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z', tech_id: 'prov-1' },
+            slot: {
+                start: '2026-07-01T14:00:00Z',
+                end: '2026-07-01T16:00:00Z',
+                tech_id: 'tech-7',
+            },
             job_type: 'Refrigerator repair',
             description: 'door seal',
         });
 
-        expect(createJob).toHaveBeenCalledTimes(1);
-        expect(out.job_id).toBe(42);
-        expect(out.zenbooker_job_id).toBeNull();
-        // ZB nests the reason under error.message — must surface it verbatim.
-        expect(out.zb_warning).toBe('INVALID_ADDRESS');
-
-        // The fallback insert ran, scoped to the company, with the input data.
-        const insertCall = dbQuery.mock.calls.find(c => /INSERT INTO jobs/.test(c[0]));
-        expect(insertCall).toBeTruthy();
-        const params = insertCall[1];
-        expect(params).toContain(COMPANY);
-        expect(params).toContain('Refrigerator repair');
-        expect(params).toContain('2026-07-01T14:00:00Z');
-    });
-
-    test('P1: happy path → ZB job created + local job persisted', async () => {
-        const createJobZb = jest.fn().mockResolvedValue({ job_id: 'zb-123' });
-        const getJob = jest.fn().mockResolvedValue({
-            job_number: 'JN-9001',
-            status: 'scheduled',
-            customer: { id: 'cust_1', name: 'Jane Doe' },
-            start_date: '2026-07-01T14:00:00Z',
-        });
-
-        // Local persist goes through jobsService.createJob → ON CONFLICT upsert.
-        const dbQuery = jest.fn((sql) => {
-            if (/INSERT INTO jobs/.test(sql)) {
-                return Promise.resolve({ rows: [{ id: 77, zenbooker_job_id: 'zb-123', blanc_status: 'Submitted' }] });
-            }
-            return Promise.resolve({ rows: [] });
-        });
-        const resolveContact = jest.fn().mockResolvedValue({ contact_id: 5, status: 'created' });
-
-        const svc = loadService({ dbQuery, resolveContact, createJob: createJobZb, getJob });
-
-        const actor = {
-            id: '10000000-0000-4000-8000-000000000001',
-            type: 'user',
-            label: null,
-            source: 'crm',
-        };
-        const out = await svc.createDirectJob(COMPANY, {
-            contact: { name: 'Jane Doe', phone: '+16175551234', email: 'jane@x.com' },
-            address: { line1: '6 Cirrus Drive', city: 'Ashland', postal_code: '01721' },
-            slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z' },
-            job_type: 'Refrigerator repair',
-        }, actor);
-
-        expect(createJobZb).toHaveBeenCalledTimes(1);
-        // Payload sanity: custom service + arrival window + auto assignment.
-        const payload = createJobZb.mock.calls[0][0];
-        expect(payload.territory_id).toBe('terr_01');
-        expect(payload.services[0].custom_service.name).toBe('Refrigerator repair');
-        expect(payload.timeslot).toEqual({ type: 'arrival_window', start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z' });
-        expect(payload.assignment_method).toBe('auto');
-        expect(payload.assigned_providers).toBeUndefined();
-
-        // job_number was present on first getJob → no retry needed.
-        expect(getJob).toHaveBeenCalledTimes(1);
-
-        expect(out).toEqual({ job_id: 77, zenbooker_job_id: 'zb-123', zb_warning: null });
-        expect(mockLogJobActivity).toHaveBeenCalledWith({
-            companyId: COMPANY,
-            action: 'job.created',
-            jobId: 77,
-            actor,
-            summary: { status: 'Submitted' },
-        });
-    });
-
-    test('P1: pre-assigned tech omits assignment_method (ZB rejects both)', async () => {
-        const createJobZb = jest.fn().mockResolvedValue({ job_id: 'zb-555' });
-        const getJob = jest.fn().mockResolvedValue({ job_number: 'JN-1', status: 'scheduled' });
-        const dbQuery = jest.fn((sql) =>
-            /INSERT INTO jobs/.test(sql)
-                ? Promise.resolve({ rows: [{ id: 88, blanc_status: 'Submitted' }] })
-                : Promise.resolve({ rows: [] })
-        );
-        const resolveContact = jest.fn().mockResolvedValue({ contact_id: 9, status: 'created' });
-
-        const svc = loadService({ dbQuery, resolveContact, createJob: createJobZb, getJob });
-
-        await svc.createDirectJob(COMPANY, {
-            contact: { name: 'Solo', phone: '+16175550000' },
-            address: { postal_code: '01721' },
-            slot: { start: '2026-07-01T14:00:00Z', end: '2026-07-01T16:00:00Z', tech_id: 'prov-7' },
-            job_type: 'Repair',
-        });
-
-        const payload = createJobZb.mock.calls[0][0];
-        expect(payload.assigned_providers).toEqual(['prov-7']);
-        expect(payload.assignment_method).toBeUndefined();
-    });
-
-    test('native-only tech UUID is never included in the mocked Zenbooker create payload', async () => {
-        const nativeOnlyUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-        const createJobZb = jest.fn().mockResolvedValue({ job_id: 'zb-556' });
-        const getJob = jest.fn().mockResolvedValue({ job_number: 'JN-2', status: 'scheduled' });
-        const resolveExternalIds = jest.fn().mockResolvedValue([]);
-        const dbQuery = jest.fn((sql) =>
-            /INSERT INTO jobs/.test(sql)
-                ? Promise.resolve({ rows: [{ id: 89, blanc_status: 'Submitted' }] })
-                : Promise.resolve({ rows: [] })
-        );
-        const resolveContact = jest.fn().mockResolvedValue({ contact_id: 9, status: 'created' });
-        const svc = loadService({
-            dbQuery,
-            resolveContact,
-            createJob: createJobZb,
-            getJob,
-            resolveExternalIds,
-        });
-
-        await svc.createDirectJob(COMPANY, {
-            contact: { name: 'Native', phone: '+16175550000' },
-            address: { postal_code: '01721' },
-            slot: {
-                start: '2026-07-01T14:00:00Z',
-                end: '2026-07-01T16:00:00Z',
-                tech_id: nativeOnlyUuid,
-            },
-            job_type: 'Repair',
-        });
-
-        expect(resolveExternalIds).toHaveBeenCalledWith(
-            COMPANY,
-            'zenbooker',
-            [nativeOnlyUuid]
-        );
-        const payload = createJobZb.mock.calls[0][0];
-        expect(payload.assigned_providers).toBeUndefined();
-        expect(payload.assignment_method).toBe('auto');
-        expect(JSON.stringify(payload)).not.toContain(nativeOnlyUuid);
+        expect(result).toEqual({ job_id: 42, zenbooker_job_id: null, zb_warning: null });
+        expect(resolveProviderUserIds).toHaveBeenCalledWith(COMPANY, ['tech-7']);
+        const [insertSql, insertParams] = dbQuery.mock.calls.find(([sql]) => /INSERT INTO jobs/.test(sql));
+        expect(insertSql).toContain('description');
+        expect(insertSql).toContain('assigned_provider_user_ids');
+        expect(insertParams).toContain('door seal');
+        expect(insertParams).toContain(JSON.stringify([{ id: 'tech-7' }]));
+        expect(insertParams).toContain(JSON.stringify(['user-7']));
     });
 });

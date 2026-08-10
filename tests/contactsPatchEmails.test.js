@@ -86,10 +86,6 @@ jest.mock('../backend/src/services/contactEmailMergeService', () => {
 jest.mock('../backend/src/services/timelineMergeService', () => ({
     mergeOrphanTimelines: jest.fn(async () => {}),
 }));
-jest.mock('../backend/src/services/zenbookerSyncService', () => ({
-    FEATURE_ENABLED: false,
-    syncContactToZenbooker: jest.fn(async () => {}),
-}));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
 // Unused-by-PATCH collaborators the router requires at module load.
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({ MAX_FILE_SIZE: 1, MAX_FILES_PER_NOTE: 1 }));

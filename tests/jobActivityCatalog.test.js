@@ -49,12 +49,3 @@ test('Job human activity actors never use a Keycloak sub', () => {
         expect(activityCalls).not.toContain('sub');
     }
 });
-
-test('Zenbooker sync/proxy paths are not given Phase 3 Job action names', () => {
-    const deferredSources = [
-        'routes/zenbooker/jobs.js',
-        'services/jobSyncService.js',
-    ].map(read).join('\n');
-    expect(deferredSources).not.toContain('logJobActivity');
-    expect(deferredSources).not.toContain("require('./jobActivityService')");
-});

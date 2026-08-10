@@ -11,14 +11,6 @@ jest.mock('../backend/src/db/connection', () => ({
         connect: jest.fn(),
     },
 }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({
-    createJob: jest.fn(),
-    createJobFromLead: jest.fn(),
-    getJob: jest.fn(),
-}));
-jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
-    resolveCompatibilityIdsToExternal: jest.fn(async (_companyId, _source, ids) => ids),
-}));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
@@ -29,8 +21,6 @@ jest.mock('../backend/src/services/leadContactActivityService', () => ({
 }));
 
 const db = require('../backend/src/db/connection');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
-const technicianDirectoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const leadsService = require('../backend/src/services/leadsService');
 
 function makeLeadRow(overrides = {}) {
@@ -113,14 +103,6 @@ describe('leadsService.convertLead idempotency', () => {
         mockClient.release.mockReset();
         db.pool.connect.mockResolvedValue(mockClient);
         mockLeadLookup();
-        zenbookerClient.createJob.mockResolvedValue({ job_id: 'zb-1131' });
-        zenbookerClient.createJobFromLead.mockResolvedValue({ job_id: 'zb-1131' });
-        zenbookerClient.getJob.mockResolvedValue({
-            job_number: '971346',
-            assigned_providers: [],
-            notes: [],
-            invoice: {},
-        });
         mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
         mockLogLeadContactActivity.mockResolvedValue({ ok: true, id: 2 });
     });
@@ -208,23 +190,8 @@ describe('leadsService.convertLead idempotency', () => {
         }, { client: mockClient });
     });
 
-    it('reuses an existing local job when retrying a conversion after Zenbooker failed', async () => {
+    it('reuses an existing local job when retrying a conversion', async () => {
         mockClaimExistingJob({ id: 1131, contact_id: 123, zenbooker_job_id: null });
-        zenbookerClient.createJob.mockResolvedValue({ job_id: 'zb-1131' });
-        zenbookerClient.getJob.mockResolvedValue({
-            job_number: '971346',
-            start_date: '2026-06-08T13:00:00Z',
-            end_date: '2026-06-08T15:00:00Z',
-            time_slot: { arrival_window_minutes: 120 },
-            territory: { name: 'Boston' },
-            assigned_providers: [],
-            notes: [],
-            invoice: {},
-            status: 'scheduled',
-            canceled: false,
-            rescheduled: false,
-            customer: { id: 'cust-1' },
-        });
 
         const result = await leadsService.convertLead('ABC123', {
             zb_job_payload: {
@@ -235,16 +202,15 @@ describe('leadsService.convertLead idempotency', () => {
 
         expect(result).toMatchObject({
             job_id: 1131,
-            zenbooker_job_id: 'zb-1131',
+            zenbooker_job_id: null,
             link: '/jobs/1131',
         });
-        expect(zenbookerClient.createJob).toHaveBeenCalledTimes(1);
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO jobs'))).toBe(false);
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('pg_advisory_xact_lock'))).toBe(true);
         expect(mockLogJobActivity).not.toHaveBeenCalled();
     });
 
-    it('returns an already linked local job without creating another Zenbooker job', async () => {
+    it('returns an already linked local job with its historical provenance', async () => {
         mockClaimExistingJob({ id: 1131, contact_id: 123, zenbooker_job_id: 'zb-existing' });
 
         const result = await leadsService.convertLead('ABC123', {
@@ -259,32 +225,17 @@ describe('leadsService.convertLead idempotency', () => {
             zenbooker_job_id: 'zb-existing',
             link: '/jobs/1131',
         });
-        expect(zenbookerClient.createJob).not.toHaveBeenCalled();
-        expect(zenbookerClient.getJob).not.toHaveBeenCalled();
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO jobs'))).toBe(false);
     });
 
-    it('never sends a native-only technician UUID in the Zenbooker booking payload', async () => {
-        const nativeOnlyUuid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    it('persists caller-supplied zenbooker_job_id provenance without an API lookup', async () => {
         mockClaimNewJob();
-        technicianDirectoryQueries.resolveCompatibilityIdsToExternal.mockResolvedValueOnce([]);
 
         await leadsService.convertLead('ABC123', {
-            zb_job_payload: {
-                territory_id: 'territory-1',
-                timeslot: { start: '2026-06-08T13:00:00Z', end: '2026-06-08T15:00:00Z' },
-                assigned_providers: [nativeOnlyUuid],
-            },
+            zenbooker_job_id: 'zb-provenance-1',
         }, 'company-1');
 
-        expect(technicianDirectoryQueries.resolveCompatibilityIdsToExternal).toHaveBeenCalledWith(
-            'company-1',
-            'zenbooker',
-            [nativeOnlyUuid]
-        );
-        const payload = zenbookerClient.createJob.mock.calls[0][0];
-        expect(payload.assigned_providers).toBeUndefined();
-        expect(payload.assignment_method).toBe('auto');
-        expect(JSON.stringify(payload)).not.toContain(nativeOnlyUuid);
+        const insert = mockClient.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO jobs'));
+        expect(insert[1][2]).toBe('zb-provenance-1');
     });
 });

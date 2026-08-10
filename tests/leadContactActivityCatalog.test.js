@@ -48,13 +48,8 @@ test('the Phase 4 Contact action catalog is wired with exact canonical keys', ()
     }
 });
 
-test('Phase 4 does not wire deferred Zenbooker Contact sync or system enrichment', () => {
-    for (const file of [
-        'services/zenbookerSyncService.js',
-        'services/contactPropagationService.js',
-    ]) {
-        expect(read(file)).not.toContain('logLeadContactActivity');
-    }
+test('Phase 4 does not wire system enrichment into human activity', () => {
+    expect(read('services/contactPropagationService.js')).not.toContain('logLeadContactActivity');
 });
 
 test('human Phase 4 activity actor construction never uses Keycloak sub', () => {

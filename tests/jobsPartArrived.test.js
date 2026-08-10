@@ -180,21 +180,6 @@ describe('fail-safe hook (S13)', () => {
 // exactly once with ({jobId}, companyId, {kind:'status_change', newStatus});
 // non-Part-arrived pre-states never fire; hook failure never fails the write.
 
-// Seed for syncFromZenbooker: getJobByZbId SELECT → the existing row; UPDATE → ok.
-function seedZbSync(existingRow) {
-    mockQuery.mockReset();
-    mockQuery.mockImplementation(async (sql) => {
-        const s = String(sql);
-        if (/UPDATE jobs/i.test(s)) return { rows: [], rowCount: 1 };
-        if (/FROM jobs WHERE zenbooker_job_id/i.test(s)) return { rows: existingRow ? [existingRow] : [] };
-        return { rows: [] };
-    });
-}
-
-function zbSyncUpdateCall() {
-    return mockQuery.mock.calls.find(c => /UPDATE jobs/i.test(String(c[0])) && /zb_status = \$1/.test(String(c[0])));
-}
-
 describe('CANCEL-001 leave-hooks (TC-CC-07 updateBlancStatus)', () => {
     test('Part arrived → Rescheduled fires cancel ONCE with ({jobId}, companyId, status_change cause)', async () => {
         seedJob({ fromStatus: 'Part arrived' });
@@ -282,50 +267,5 @@ describe('CANCEL-001 leave-hooks (TC-CC-08 cancelJob + FSM status writer)', () =
         const out = await jobsService.cancelJob(50, COMPANY);
         expect(out.blanc_status).toBe('Canceled');
         await new Promise((r) => setImmediate(r));
-    });
-});
-
-describe('CANCEL-001 leave-hooks (TC-CC-09 syncFromZenbooker zb_canceled flip)', () => {
-    const existingPartArrived = {
-        id: 50, company_id: COMPANY, blanc_status: 'Part arrived',
-        zenbooker_job_id: 'zb-1', zb_canceled: false, zb_status: 'scheduled',
-        assigned_techs: [], notes: [],
-    };
-
-    test('zb_canceled false→true flip → cancel with Canceled (Zenbooker); blanc_status PRESERVED in the UPDATE', async () => {
-        seedZbSync(existingPartArrived);
-        const res = await jobsService.syncFromZenbooker('zb-1', { status: 'scheduled', canceled: true }, COMPANY);
-
-        expect(mockCancelScheduledRobotCalls).toHaveBeenCalledTimes(1);
-        expect(mockCancelScheduledRobotCalls).toHaveBeenCalledWith(
-            { jobId: 50 }, COMPANY, { kind: 'status_change', newStatus: 'Canceled (Zenbooker)' }
-        );
-
-        // Regression pin (preserve path :1105-1120): the sync UPDATE keeps
-        // blanc_status = 'Part arrived' ($4) even though ZB says Canceled.
-        const upd = zbSyncUpdateCall();
-        expect(upd).toBeTruthy();
-        expect(upd[1][3]).toBe('Part arrived');
-        expect(upd[1][1]).toBe(true); // zb_canceled ($2) written true
-        expect(res.blanc_status).toBe('Part arrived');
-    });
-
-    test('incoming zb_canceled=false → no flip, no cancel', async () => {
-        seedZbSync(existingPartArrived);
-        await jobsService.syncFromZenbooker('zb-1', { status: 'scheduled', canceled: false }, COMPANY);
-        expect(mockCancelScheduledRobotCalls).not.toHaveBeenCalled();
-        expect(zbSyncUpdateCall()).toBeTruthy(); // sync itself still ran
-    });
-
-    test('existing zb_canceled already true → no flip, no cancel (idempotent re-sync)', async () => {
-        seedZbSync({ ...existingPartArrived, zb_canceled: true });
-        await jobsService.syncFromZenbooker('zb-1', { status: 'scheduled', canceled: true }, COMPANY);
-        expect(mockCancelScheduledRobotCalls).not.toHaveBeenCalled();
-    });
-
-    test('existing job NOT Part arrived → flip does not fire the hook', async () => {
-        seedZbSync({ ...existingPartArrived, blanc_status: 'Submitted' });
-        await jobsService.syncFromZenbooker('zb-1', { status: 'scheduled', canceled: true }, COMPANY);
-        expect(mockCancelScheduledRobotCalls).not.toHaveBeenCalled();
     });
 });

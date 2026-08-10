@@ -14,9 +14,6 @@ jest.mock('../backend/src/services/transactionService', () => ({
 jest.mock('../backend/src/services/leadContactActivityService', () => ({
     logLeadContactActivity: (...args) => mockLogLeadContactActivity(...args),
 }));
-jest.mock('../backend/src/services/zenbookerSyncService', () => ({
-    FEATURE_ENABLED: false,
-}));
 
 const contactDedupeService = require('../backend/src/services/contactDedupeService');
 

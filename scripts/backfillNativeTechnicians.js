@@ -12,7 +12,7 @@
 const connectionDb = require('../backend/src/db/connection');
 const defaultDirectoryQueries = require('../backend/src/db/technicianDirectoryQueries');
 const defaultMembershipQueries = require('../backend/src/db/membershipQueries');
-const defaultZenbookerClient = require('../backend/src/services/zenbookerClient');
+const defaultRosterService = require('../backend/src/services/technicianRosterService');
 
 const SOURCE = 'zenbooker';
 const COMPANY_BASE_SENTINEL = '__company__';
@@ -81,29 +81,10 @@ function parseArgs(argv) {
     return parsed;
 }
 
-async function fetchActiveRoster(companyId, zenbookerClient) {
-    let scopedClient;
-    try {
-        scopedClient = await zenbookerClient.getClientForCompany(companyId);
-    } catch (error) {
-        throw new BackfillRefusalError(
-            'NO_COMPANY_SCOPED_CLIENT',
-            `Company-scoped Zenbooker client could not be resolved: ${error.message}`
-        );
-    }
-    if (!scopedClient) {
-        throw new BackfillRefusalError(
-            'NO_COMPANY_SCOPED_CLIENT',
-            'No company-scoped Zenbooker client is configured'
-        );
-    }
-
+async function fetchActiveRoster(companyId, rosterService) {
     let members;
     try {
-        members = await zenbookerClient.getTeamMembers(
-            { service_provider: true, deactivated: false },
-            companyId
-        );
+        members = await rosterService.listActive(companyId);
     } catch (error) {
         throw new BackfillRefusalError(
             'ROSTER_FETCH_FAILED',
@@ -601,12 +582,12 @@ async function run(argv = process.argv.slice(2), dependencies = {}) {
     const database = dependencies.db || connectionDb;
     const directoryQueries = dependencies.directoryQueries || defaultDirectoryQueries;
     const membershipQueries = dependencies.membershipQueries || defaultMembershipQueries;
-    const zenbookerClient = dependencies.zenbookerClient || defaultZenbookerClient;
+    const rosterService = dependencies.rosterService || defaultRosterService;
     const output = dependencies.output || (value => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`));
 
     // Fetch and validate the active set before BEGIN. A missing, failed, empty,
     // or duplicate roster can therefore never reach a directory write.
-    const roster = await fetchActiveRoster(args.companyId, zenbookerClient);
+    const roster = await fetchActiveRoster(args.companyId, rosterService);
 
     let client = null;
     let transactionOpen = false;

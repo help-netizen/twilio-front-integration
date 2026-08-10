@@ -64,9 +64,6 @@
 'use strict';
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost/twilio_calls';
-// The harness must NEVER reach the real Zenbooker API (I01 asserts no ZB call;
-// zenbookerSyncService reads this at require time).
-process.env.FEATURE_ZENBOOKER_SYNC = 'false';
 
 const path = require('path');
 const crypto = require('crypto');
@@ -77,7 +74,6 @@ const db = require(path.join(ROOT, 'backend/src/db/connection'));
 const emailQueries = require(path.join(ROOT, 'backend/src/db/emailQueries'));
 const timelinesQueries = require(path.join(ROOT, 'backend/src/db/timelinesQueries'));
 const merge = require(path.join(ROOT, 'backend/src/services/contactEmailMergeService'));
-const zenbookerSyncService = require(path.join(ROOT, 'backend/src/services/zenbookerSyncService'));
 
 const COMPANY_A = '00000000-0000-0000-0000-000000000001'; // seed company (real dev data coexists)
 const COMPANY_B = 'c0000000-0000-4000-8000-0000000000f1'; // tagged, created+deleted here
@@ -570,8 +566,6 @@ CASE('TC-CM-I01', 's1', 'P0 S1 email-conflict FULL MERGE: 409 round-trip + compl
     const th = await mkEmailThread(COMPANY_A, { subject: 'CM1 S1 x', lastAt: new Date().toISOString() });
     const m1 = await mkEmailMessage(COMPANY_A, { threadId: th, fromEmail: addr, contactId: xAcme, timelineId: xTl, onTimeline: true });
     const m2 = await mkEmailMessage(COMPANY_A, { threadId: th, fromEmail: addr, contactId: xAcme, timelineId: xTl, onTimeline: true });
-
-    check(zenbookerSyncService.FEATURE_ENABLED === false, 'ZB sync must be OFF in the harness (no real API calls)');
 
     await settle();
     const before = await snapshotCM1();

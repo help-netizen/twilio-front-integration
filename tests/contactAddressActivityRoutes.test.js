@@ -33,7 +33,6 @@ jest.mock('../backend/src/services/contactAddressService', () => ({
 }));
 jest.mock('../backend/src/services/contactDedupeService', () => ({}));
 jest.mock('../backend/src/services/contactEmailMergeService', () => ({}));
-jest.mock('../backend/src/services/zenbookerSyncService', () => ({ FEATURE_ENABLED: false }));
 jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1,
     MAX_FILES_PER_NOTE: 1,

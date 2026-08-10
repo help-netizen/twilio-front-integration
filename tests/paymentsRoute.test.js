@@ -1,25 +1,19 @@
 /**
  * Tests for Zenbooker Payments API (Local DB-backed)
- * Tests GET / (list), GET /:id (detail), and POST /sync endpoints.
+ * Tests the retained local GET/detail/export/deposited endpoints.
  */
 
 // ─── Mock paymentsService BEFORE requiring the route ──────────────────────────
 
 const mockListPayments = jest.fn();
 const mockGetPaymentDetail = jest.fn();
-const mockSyncPayments = jest.fn();
-const mockIsDefaultSyncCompany = jest.fn(() => true);
 const mockListPaymentsForExport = jest.fn();
 const mockUpdateCheckDeposited = jest.fn();
 
-// The route imports services/zenbookerPaymentsSyncService (the Zenbooker sync
-// layer was relocated out of paymentsService). Mock the module the route
-// actually requires, or the real service runs and hits the live Zenbooker API.
+// Mock the local imported-payments data layer used by the route.
 jest.mock('../backend/src/services/zenbookerPaymentsSyncService', () => ({
     listPayments: mockListPayments,
     getPaymentDetail: mockGetPaymentDetail,
-    syncPayments: mockSyncPayments,
-    isDefaultSyncCompany: mockIsDefaultSyncCompany,
     listPaymentsForExport: mockListPaymentsForExport,
     updateCheckDeposited: mockUpdateCheckDeposited,
 }));
@@ -322,47 +316,9 @@ describe('Payments Route (DB-backed)', () => {
         });
     });
 
-    // ── POST /sync ────────────────────────────────────────────────────────────
-
-    describe('POST /sync', () => {
-        test('returns 400 when dates missing', async () => {
-            const res = await request(app, 'POST', '/sync', { date_from: '2026-02-01' });
-            expect(res.status).toBe(400);
-            expect(res.body.ok).toBe(false);
-        });
-
-        test('syncs payments and returns count', async () => {
-            mockSyncPayments.mockResolvedValue({ synced: 42, total_transactions: 42 });
-
-            const res = await request(app, 'POST', '/sync', {
-                date_from: '2026-02-01',
-                date_to: '2026-02-28',
-            });
-
-            expect(res.status).toBe(200);
-            expect(res.body.ok).toBe(true);
-            expect(res.body.data.synced).toBe(42);
-
-            expect(mockSyncPayments).toHaveBeenCalledWith(
-                TEST_COMPANY_ID,
-                '2026-02-01',
-                '2026-02-28',
-                { fullHistory: false, cursor: null },
-            );
-        });
-
-        test('returns error on sync failure', async () => {
-            mockSyncPayments.mockRejectedValue(new Error('ZB API down'));
-
-            const res = await request(app, 'POST', '/sync', {
-                date_from: '2026-02-01',
-                date_to: '2026-02-28',
-            });
-
-            expect(res.status).toBe(500);
-            expect(res.body.ok).toBe(false);
-            expect(res.body.error).toContain('ZB API down');
-        });
+    test('POST /sync is not routable', async () => {
+        const res = await request(app, 'POST', '/sync', {});
+        expect(res.status).toBe(404);
     });
 });
 

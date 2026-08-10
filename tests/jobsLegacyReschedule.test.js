@@ -24,7 +24,6 @@ jest.mock('../backend/src/services/jobActivityService', () => ({
     logJobActivity: (...args) => mockLogJobActivity(...args),
 }));
 
-jest.mock('../backend/src/services/zenbookerClient', () => ({}));
 jest.mock('../backend/src/services/realtimeService', () => ({
     publishJobUpdate: jest.fn(),
 }));
@@ -93,7 +92,7 @@ beforeEach(() => {
         assigned_techs: [],
     });
     mockDbQuery.mockResolvedValue({
-        rows: [{ zenbooker_job_id: null, assigned_techs: [] }],
+        rows: [{ assigned_provider_user_ids: [] }],
     });
     mockTxQuery.mockResolvedValue({ rows: [], rowCount: 1 });
     mockWithTransaction.mockImplementation(work => work({ query: mockTxQuery }));

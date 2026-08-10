@@ -39,7 +39,6 @@ jest.mock('../backend/src/services/jobsService', () => ({
     getJobById: jest.fn(),
     cancelJob: jest.fn(async () => ({ blanc_status: 'Canceled', zb_canceled: true })),
     addNote: jest.fn(async () => ({ notes: [] })),
-    syncFromZenbooker: jest.fn(async () => {}),
 }));
 jest.mock('../backend/src/services/scheduleService', () => ({
     rescheduleItem: jest.fn(async () => ({ entity_type: 'job', entity_id: 7, start_at: 'x', end_at: 'y', zb: { linked: true, pushed: true, skipped: null } })),

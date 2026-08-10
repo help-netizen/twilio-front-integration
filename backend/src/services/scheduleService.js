@@ -6,7 +6,6 @@
  */
 
 const scheduleQueries = require('../db/scheduleQueries');
-const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
 const { logJobActivity } = require('./jobActivityService');
 const { withTransaction } = require('./transactionService');
 const eventBus = require('./eventBus');
@@ -166,33 +165,13 @@ async function getScheduleItemDetail(companyId, entityType, entityId, providerSc
  * Reschedule a schedule item (update start/end times).
  *
  * SHARED function: the dispatcher-UI reschedule AND the voice `rescheduleAppointment`
- * skill (AGENT-SKILLS-001) both call this. The local Albusto write is AUTHORITATIVE
- * and synchronous — it lands first, so the dispatcher schedule reflects the new
- * window immediately (ASK-WRITE-08) — and existing callers keep their exact
- * throw/return contract:
+ * skill (AGENT-SKILLS-001) both call this. The local Albusto write is authoritative
+ * and synchronous, and existing callers keep their exact throw/return contract:
  *   - `NOT_FOUND` (404) when the row doesn't exist / isn't in this company,
  *   - `INVALID_ENTITY_TYPE` (400) for a bad type,
  *   - otherwise the result object `{ entity_type, entity_id, start_at, end_at, zb }`.
- *
- * AR-4 (the closed gap): for `entityType==='job'` on a ZB-linked job we now ALSO
- * push the reschedule to Zenbooker AFTER the committed local write, mirroring the
- * two disciplines already in this codebase:
- *   - `cancelJob`'s pre-check + `forceSyncOnZbError` (skip if not linked / already
- *     canceled; on ZB error, reconcile from ZB then throw the friendly 409) —
- *     BLOCKING-WITH-RECOVERY (spec §5.3): ZB is master, so a local-only reschedule
- *     that never reached the master is worse than a surfaced retry. This throw is
- *     the SAME "refresh and retry" 409 dispatcher callers already get from cancel,
- *     and the local row is already consistent with ZB (force-synced) — a ZB hiccup
- *     never loses the dispatcher's local reschedule, it asks them to retry.
- *   - `reassignItem`'s best-effort guard for the non-critical `job_rescheduled`
- *     provider push (stays best-effort / never fatal — ASK-WRITE-07).
- *
- * ZB outcome SIGNAL (so the skill layer can react without re-reading the job):
- *   - success / skipped → the returned object carries `zb: { linked, pushed, skipped }`.
- *   - failure → this throws the 409 (the skill catches it → graceful "teammate" shape).
- * `getClientForCompany` returns null for non-default tenants (ZB-ISO-001), so the ZB
- * push is default-company-only by construction — `zenbookerClient.rescheduleJob`
- * uses the env/default client.
+ * The legacy `zb` outcome field remains for compatibility, but no external write is
+ * attempted after Zenbooker decommissioning.
  */
 async function rescheduleItem(
     companyId,
@@ -255,116 +234,33 @@ async function rescheduleItem(
         throw new ScheduleServiceError('NOT_FOUND', `${entityType} ${entityId} not found`, 404);
     }
 
-    // Non-job entities have no ZB reschedule side-effect (ASK-WRITE-06): return early
-    // with a not-applicable ZB signal, preserving the classic contract byte-for-byte.
+    // Non-job entities retain the not-applicable compatibility signal.
     if (entityType !== 'job') {
         return { entity_type: entityType, entity_id: entityId, start_at: newStartAt, end_at: newEndAt, zb: { linked: false, pushed: false, skipped: 'not_a_job' } };
     }
 
-    // Read the job once for the typed-event assignee snapshot and the ZB
-    // reschedule linkage check below.
+    // Read the job once for the typed-event assignee snapshot and historical-link
+    // compatibility signal.
     const jobsService = require('./jobsService');
     let job = null;
     try {
         job = await jobsService.getJobById(entityId, companyId);
     } catch (err) {
-        // Reading the job for side-effects is itself best-effort; the authoritative
-        // local write already succeeded.
+        // The authoritative local write already succeeded.
         console.error('[Schedule] reschedule job read failed (non-fatal for local write):', err.message);
     }
 
-    // AR-4 ZB write-through (BLOCKING-WITH-RECOVERY). Skip if not linked / already
-    // canceled — same pre-check as cancelJob, so we never turn a "not linked" into a
-    // spurious ZB 4xx. On ZB error, reconcile the local row from the master (ZB) and
-    // THROW the friendly 409 (which the skill catches → graceful shape).
-    const zb = { linked: Boolean(job?.zenbooker_job_id), pushed: false, skipped: null };
-    if (job?.zenbooker_job_id && !job.zb_canceled) {
-        try {
-            const zenbookerClient = require('./zenbookerClient');
-            const startIso = toIsoOrNull(newStartAt) || newStartAt;
-            const payload = { start_date: startIso };
-            const arrivalWindow = arrivalWindowMinutes(newStartAt, newEndAt);
-            if (arrivalWindow != null) payload.arrival_window_minutes = arrivalWindow;
-            await zenbookerClient.rescheduleJob(job.zenbooker_job_id, payload);
-            zb.pushed = true;
-        } catch (e) {
-            // Blocking-with-recovery — reproduces jobsService.forceSyncOnZbError's
-            // discipline inline (that helper is private to jobsService and this seam
-            // lives in scheduleService): pull the master's truth into the local row,
-            // then surface the friendly 409 so the caller retries rather than
-            // silently diverging from ZB. ZB is master (ZB-ISO-001 / cancel precedent).
-            await forceSyncJobFromZbThen409(job, 'reschedule', e);
-        }
-    } else {
-        zb.skipped = job?.zenbooker_job_id ? 'zb_canceled' : 'not_linked';
-    }
+    const zb = {
+        linked: Boolean(job?.zenbooker_job_id),
+        pushed: false,
+        skipped: job?.zenbooker_job_id ? 'decommissioned' : 'not_linked',
+    };
 
     await recalcAfterJobChange(companyId, entityId, before);
     await emitJobEvent(companyId, 'job.rescheduled', entityId, {
         assignee_user_ids: (job?.assigned_provider_user_ids || []).map(String).filter(Boolean),
     }, activityActor);
     return { entity_type: entityType, entity_id: entityId, start_at: newStartAt, end_at: newEndAt, zb };
-}
-
-/**
- * Coerce a start value to an ISO 8601 string, or null if unparseable. ZB's
- * `POST /jobs/{id}/reschedule` requires `start_date` in ISO 8601.
- * @param {string|number|Date} value
- * @returns {string|null}
- */
-function toIsoOrNull(value) {
-    if (value == null) return null;
-    const d = value instanceof Date ? value : new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-/**
- * Derive the ZB arrival-window length (minutes) from the new start/end, if both
- * parse and end is after start. Returns null when it can't be computed (ZB then
- * keeps the job's existing window).
- * @param {string|number|Date} start
- * @param {string|number|Date} end
- * @returns {number|null}
- */
-function arrivalWindowMinutes(start, end) {
-    const s = toIsoOrNull(start);
-    const e = toIsoOrNull(end);
-    if (!s || !e) return null;
-    const mins = Math.round((new Date(e).getTime() - new Date(s).getTime()) / 60000);
-    return mins > 0 ? mins : null;
-}
-
-/**
- * Blocking-with-recovery on a ZB reschedule failure. Mirrors the (private)
- * `jobsService.forceSyncOnZbError` behavior using only exported building blocks, so
- * the ZB seam can stay inside scheduleService without editing jobsService:
- *   1. Pull the job's authoritative state from ZB (`zenbookerClient.getJob`) and
- *      write it back locally (`jobsService.syncFromZenbooker`) — the local row ends
- *      up consistent with the master, never silently diverged (spec §5.3 / E4).
- *   2. Throw the SAME friendly 409 the cancel path throws, so the caller (dispatcher
- *      UI or the reschedule skill) gets a "refresh and retry" signal.
- * The recovery read/sync is itself guarded; a recovery failure still throws the 409.
- * @param {{ id:number, zenbooker_job_id:string, company_id:string }} job
- * @param {string} action Label for logs (e.g. 'reschedule').
- * @param {Error} error The original ZB error.
- * @returns {Promise<never>} Always throws a 409.
- */
-async function forceSyncJobFromZbThen409(job, action, error) {
-    console.warn(`[Schedule] ZB ${action} failed for ${job.zenbooker_job_id}: ${error && error.message}`);
-    try {
-        const zenbookerClient = require('./zenbookerClient');
-        const jobsService = require('./jobsService');
-        const zbJobData = await zenbookerClient.getJob(job.zenbooker_job_id);
-        if (zbJobData) {
-            await jobsService.syncFromZenbooker(job.zenbooker_job_id, zbJobData, job.company_id);
-            console.log(`[Schedule] Force-sync completed for job ${job.id} after ZB ${action} failure`);
-        }
-    } catch (syncErr) {
-        console.error(`[Schedule] Force-sync failed for job ${job.id}: ${syncErr && syncErr.message}`);
-    }
-    const err = new Error('An error occurred. Please refresh the page and try again in 5 seconds. If the problem persists, contact the developer.');
-    err.statusCode = 409;
-    throw err;
 }
 
 /** Tech/day pairs a job currently belongs to (for repair-on-change). */
@@ -399,28 +295,21 @@ async function reassignItem(
     // SCHED-ROUTE-001: capture old technician/days so the vacated route repairs.
     const before = entityType === 'job' ? await captureJobTechDays(companyId, entityId) : null;
 
-    // Capture the job's current providers + ZB linkage BEFORE the write so we can
-    // push the assign/unassign diff to Zenbooker (fixes the bug where a card
-    // reassignment never reached ZB). assigned_techs ids are compatibility ids:
-    // legacy ZB ids or native technician UUIDs.
-    // Also resolve the NEW providers to internal user ids so the visibility mirror
+    // Capture the job's current providers before the write. Also resolve the new
+    // providers to internal user ids so the visibility mirror
     // (assigned_provider_user_ids) is refreshed → an assigned provider sees the job
     // on their own schedule immediately.
-    let oldTechIds = [];
     let oldProviderUserIds = [];
-    let zbJobId = null;
     let providerUserIds = null;
     if (entityType === 'job') {
         try {
             const jobsService = require('./jobsService');
             const job = await jobsService.getJobById(entityId, companyId);
-            oldTechIds = (job?.assigned_techs || []).map(t => String(t.id)).filter(Boolean);
             // MTECH-T2: internal assignee mirror (crm_users.id) BEFORE the write,
-            // so the reassign push targets only providers NEWLY added to the job.
+            // so assignment events target only providers newly added to the job.
             oldProviderUserIds = (job?.assigned_provider_user_ids || []).map(String).filter(Boolean);
-            zbJobId = job?.zenbooker_job_id || null;
             providerUserIds = await jobsService.resolveAssignedProviderUserIds(companyId, list);
-        } catch { /* best-effort — ZB push / mirror refresh skipped if we can't read it */ }
+        } catch { /* best-effort — mirror refresh skipped if we can't read it */ }
     }
 
     let updated;
@@ -471,49 +360,6 @@ async function reassignItem(
 
     if (!updated) {
         throw new ScheduleServiceError('NOT_FOUND', `${entityType} ${entityId} not found`, 404);
-    }
-
-    // Push the assignment change to Zenbooker. Best-effort: a ZB failure is logged
-    // but never rolls back the local reassignment.
-    if (entityType === 'job' && zbJobId) {
-        let oldZenbookerIds = null;
-        let newZenbookerIds = null;
-        try {
-            [oldZenbookerIds, newZenbookerIds] = await Promise.all([
-                technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
-                    companyId,
-                    'zenbooker',
-                    oldTechIds
-                ),
-                technicianDirectoryQueries.resolveCompatibilityIdsToExternal(
-                    companyId,
-                    'zenbooker',
-                    list.map(t => t.id)
-                ),
-            ]);
-        } catch (err) {
-            console.error('[Schedule] ZB technician identity lookup failed (non-fatal):', err.message);
-        }
-        // A requested native-only assignee has no ZB identity. Keep the local
-        // reassignment authoritative and make the ZB assignment side-effect a no-op.
-        const unresolvedAssignment = list.length > 0 && newZenbookerIds?.length === 0;
-        const assign = unresolvedAssignment || !newZenbookerIds || !oldZenbookerIds
-            ? []
-            : newZenbookerIds.filter(id => !oldZenbookerIds.includes(id));
-        const unassign = unresolvedAssignment || !newZenbookerIds || !oldZenbookerIds
-            ? []
-            : oldZenbookerIds.filter(id => !newZenbookerIds.includes(id));
-        if (assign.length || unassign.length) {
-            try {
-                const zenbookerClient = require('./zenbookerClient');
-                // ZB /jobs/:id/assign requires `notify` (else 400 MISSING_PARAMETER).
-                // Match the reschedule path (routes/jobs.js): dispatcher reassignment
-                // does not notify the provider via ZB.
-                await zenbookerClient.assignProviders(zbJobId, { assign, unassign, notify: false });
-            } catch (err) {
-                console.error('[Schedule] ZB assignProviders failed (non-fatal):', err.response?.data || err.message);
-            }
-        }
     }
 
     // Emit assignment changes once. The notification subscriber resolves live

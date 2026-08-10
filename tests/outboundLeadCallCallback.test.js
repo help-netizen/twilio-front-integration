@@ -14,10 +14,8 @@ jest.mock('../backend/src/db/connection', () => ({
     getClient: mockGetClient,
 }));
 jest.mock('../backend/src/services/eventService', () => ({ logEvent: jest.fn() }));
-jest.mock('../backend/src/services/zenbookerClient', () => ({ addJobNote: jest.fn() }));
 
 const eventService = require('../backend/src/services/eventService');
-const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const service = require('../backend/src/services/outboundCallCancellationService');
 
 const CO = '00000000-0000-0000-0000-000000000001';
@@ -136,7 +134,6 @@ beforeEach(() => {
     jest.clearAllMocks();
     mockGetClient.mockResolvedValue({ query: mockClientQuery, release: mockRelease });
     mockPoolQuery.mockResolvedValue({ rows: [], rowCount: 0 });
-    zenbookerClient.addJobNote.mockResolvedValue({});
     arrange();
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -311,20 +308,18 @@ describe('parts_visit declared side effects', () => {
         expect(eventService.logEvent).toHaveBeenCalledTimes(1);
     });
 
-    test('job note still syncs to Zenbooker after the local transaction commits', async () => {
+    test('a historically linked job note remains local after the transaction commits', async () => {
         arrange({ activeRows: [partsRow()], zenbookerJobId: 'ZB-5' });
-        zenbookerClient.addJobNote.mockResolvedValue({ id: 'ZBN-9' });
 
         await service.cancel({ companyId: CO, rawPhone: PHONE, cause: service.CAUSES.INBOUND_CALL, contactAt: AT });
 
-        expect(zenbookerClient.addJobNote).toHaveBeenCalledWith('ZB-5', {
-            text: `AI: robot call canceled — customer was already reached by phone (inbound call completed at ${AT}).`,
-        });
-        const [sql, params] = mockPoolQuery.mock.calls.find(([query]) => /UPDATE jobs j/.test(query));
-        expect(sql).toMatch(/j.company_id = \$1 AND j.id = \$2/);
-        expect(params[0]).toBe(CO);
-        expect(params[1]).toBe(5);
-        expect(params[3]).toBe('ZBN-9');
+        const localNote = findClientCall(/UPDATE jobs/);
+        expect(localNote[1][0]).toBe(CO);
+        expect(localNote[1][1]).toBe(5);
+        expect(localNote[1][3]).toBe(
+            `AI: robot call canceled — customer was already reached by phone (inbound call completed at ${AT}).`
+        );
+        expect(mockPoolQuery).not.toHaveBeenCalled();
     });
 });
 

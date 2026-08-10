@@ -84,9 +84,8 @@ describe('native technician backfill real PostgreSQL round-trip', () => {
         const radiusId = randomUUID();
         let foreignTechnicianId;
 
-        const zenbookerClient = {
-            getClientForCompany: jest.fn().mockResolvedValue({ companyScoped: true }),
-            getTeamMembers: jest.fn().mockImplementation(async (_params, companyId) => {
+        const rosterService = {
+            listActive: jest.fn().mockImplementation(async (companyId) => {
                 if (companyId !== companyA) throw new Error('unexpected company');
                 return [
                     { id: liveExternal, first_name: 'Live', last_name: 'Provider' },
@@ -94,7 +93,7 @@ describe('native technician backfill real PostgreSQL round-trip', () => {
                 ];
             }),
         };
-        const dependencies = { db, zenbookerClient, output: jest.fn() };
+        const dependencies = { db, rosterService, output: jest.fn() };
 
         try {
             await db.query(

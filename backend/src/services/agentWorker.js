@@ -59,7 +59,7 @@ async function processBatch() {
             // ADDITIVE + OPT-IN retry. Terminal ⇔ attempt_count+1 >= max_attempts.
             // Default max_attempts=1 → 0+1 >= 1 → terminal on the first failure +
             // one agent_task.failed emit = byte-for-byte the pre-retry behaviour, so
-            // job_geocode / route_calc / zb_job_sync / mcp_tool are unaffected. The
+            // job_geocode / route_calc / mcp_tool are unaffected. The
             // whole branch is wrapped so a retry-write hiccup never breaks the loop.
             try {
                 const errPayload = JSON.stringify({ error: err.message?.slice(0, 500) || String(err) });

@@ -13,9 +13,8 @@
  *   node backend/src/cli/reconcilePaymentJobLinks.js --company <uuid>
  *   node backend/src/cli/reconcilePaymentJobLinks.js --dry-run       # preview only
  *
- * Rows reported as "still_no_job_id" / "still_missing_job_body" are payments
- * whose ZB job isn't in the local jobs table yet — run the full job sync
- * (scripts/zb-jobs-sync-full.js) first, then re-run this.
+ * Rows reported as "still_no_job_id" / "still_missing_job_body" are historical
+ * payments whose job is not present in the local jobs table and cannot be healed.
  */
 
 require('dotenv').config();
@@ -63,7 +62,7 @@ async function main() {
 
     console.log(`[reconcilePaymentJobLinks] done — companies=${ids.length}`, totals);
     if (totals.still_no_job_id > 0 || totals.still_missing_job_body > 0) {
-        console.log('[reconcilePaymentJobLinks] some payments still lack a local job — sync jobs (scripts/zb-jobs-sync-full.js) then re-run.');
+        console.log('[reconcilePaymentJobLinks] some historical payments still lack a local job and require manual review.');
     }
 }
 

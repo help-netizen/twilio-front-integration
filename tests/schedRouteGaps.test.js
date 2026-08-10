@@ -2,23 +2,19 @@
  * SCHED-ROUTE-001 gap-closure coverage:
  *  - Gap 1/2: updateJobLocation → geocoding_status + recalc (+ async geocode).
  *  - Gap 3:   createManualJob resolves ZB-shaped assigned_techs → crm mirror.
- *  - Gap 4:   ZB best-effort sync — enqueue on create; handler dedupe/success/failure.
  *  - Feature flag default; retention SQL.
  */
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), pool: { end: jest.fn() } }));
 jest.mock('../backend/src/db/membershipQueries');
 jest.mock('../backend/src/db/routeQueries');
 jest.mock('../backend/src/services/routeSegmentService');
-jest.mock('../backend/src/services/zenbookerClient');
 
 const db = require('../backend/src/db/connection');
 const membershipQueries = require('../backend/src/db/membershipQueries');
 const routeQueries = require('../backend/src/db/routeQueries');
 const routeSeg = require('../backend/src/services/routeSegmentService');
-const zb = require('../backend/src/services/zenbookerClient');
 
 const jobsService = require('../backend/src/services/jobsService');
-const agentHandlers = require('../backend/src/services/agentHandlers');
 const flags = require('../backend/src/config/featureFlags');
 
 beforeEach(() => {
@@ -38,7 +34,7 @@ describe('feature flag default (C-12)', () => {
     });
 });
 
-describe('createManualJob (Gap 3 + Gap 4)', () => {
+describe('createManualJob (Gap 3)', () => {
     function mockInsertReturning(job) {
         db.query.mockImplementation(async (sql) => {
             if (/INSERT INTO jobs/.test(sql)) return { rows: [job] };
@@ -55,19 +51,6 @@ describe('createManualJob (Gap 3 + Gap 4)', () => {
         expect(insert[1]).toContain(JSON.stringify(['crm-1']));   // assigned_provider_user_ids
     });
 
-    it('enqueues a dedupe-guarded zb_job_sync when the flag is ON', async () => {
-        membershipQueries.resolveProviderUserIds.mockResolvedValue([]);
-        mockInsertReturning({ id: 5, zenbooker_job_id: null });
-        await jobsService.createManualJob('co', { service_name: 'x' });
-        expect(db.query.mock.calls.some(c => /INSERT INTO tasks/.test(c[0]) && /zb_job_sync/.test(JSON.stringify(c)))).toBe(true);
-    });
-
-    it('skips ZB sync when the flag is OFF', async () => {
-        process.env.FEATURE_ZENBOOKER_SYNC = '0';
-        mockInsertReturning({ id: 6, zenbooker_job_id: null });
-        await jobsService.createManualJob('co', { service_name: 'x' });
-        expect(db.query.mock.calls.some(c => /zb_job_sync/.test(JSON.stringify(c)))).toBe(false);
-    });
 });
 
 describe('updateJobLocation (Gap 1 + Gap 2)', () => {
@@ -96,36 +79,6 @@ describe('updateJobLocation (Gap 1 + Gap 2)', () => {
         const upd = db.query.mock.calls.find(c => /UPDATE jobs SET/.test(c[0]));
         expect(upd[1]).toContain('not_geocoded');
         expect(routeSeg.enqueueGeocode).toHaveBeenCalledWith('co', 1);
-    });
-});
-
-describe('zb_job_sync handler (Gap 4)', () => {
-    const task = (job_id, address) => ({ company_id: 'co', agent_input: { job_id, address } });
-
-    it('dedupe: a job already linked to ZenBooker is skipped (no createJob)', async () => {
-        db.query.mockResolvedValueOnce({ rows: [{ id: 1, zenbooker_job_id: 'ZB-EXISTING' }] });
-        const r = await agentHandlers.HANDLERS.zb_job_sync(task(1));
-        expect(r.skipped).toBe('already_synced');
-        expect(zb.createJob).not.toHaveBeenCalled();
-    });
-
-    it('success: creates in ZB once and stores zenbooker_job_id', async () => {
-        db.query.mockResolvedValueOnce({ rows: [{ id: 2, zenbooker_job_id: null, address: '1 Main', start_date: null }] });
-        zb.findTerritoryByPostalCode.mockResolvedValue('terr-1');
-        zb.createJob.mockResolvedValue({ job_id: 'ZB-NEW' });
-        const r = await agentHandlers.HANDLERS.zb_job_sync(task(2, { postal_code: '02118', city: 'Boston' }));
-        expect(zb.createJob).toHaveBeenCalledTimes(1);
-        expect(r).toMatchObject({ status: 'synced', zenbooker_job_id: 'ZB-NEW' });
-        expect(db.query.mock.calls.some(c => /zb_sync_status = 'synced'/.test(c[0]))).toBe(true);
-    });
-
-    it('failure: records failed, keeps local job, never throws', async () => {
-        db.query.mockResolvedValueOnce({ rows: [{ id: 3, zenbooker_job_id: null, address: 'x' }] });
-        zb.findTerritoryByPostalCode.mockResolvedValue(null);
-        zb.createJob.mockRejectedValue(new Error('ZB 500'));
-        const r = await agentHandlers.HANDLERS.zb_job_sync(task(3, {}));
-        expect(r.status).toBe('failed');
-        expect(db.query.mock.calls.some(c => /zb_sync_status = 'failed'/.test(c[0]))).toBe(true);
     });
 });
 

@@ -2,7 +2,7 @@
  * PF004 Payments API (canonical payment ledger)
  * Sprint 5: real implementations
  *
- * Separate from legacy /api/zenbooker/payments which remains for sync.
+ * Separate from legacy /api/zenbooker/payments, which serves frozen imported data.
  */
 const express = require('express');
 const router = express.Router();
