@@ -175,7 +175,13 @@
     right: 0;
     top: 100%;
     margin-top: 4px;
-    z-index: 50;
+    /* 150 === OVERLAY_Z.dropdown (overlayLayout.ts) — the canonical dropdown tier,
+       ABOVE modal(140)/its scrim by design, same as Radix Select/Popover. This inline
+       dropdown lives inside a panel/modal dialog; at the old z-50 it sat BELOW the
+       overlay tier, so during the open animation / an SSE re-render frame a click on a
+       candidate could hit-test onto the backdrop (Radix "click outside" → dialog
+       dismiss). Keeping it in the dropdown tier removes that overlap race. */
+    z-index: 150;
     background: var(--blanc-surface-strong);
     border: 1px solid var(--blanc-line-strong);
     border-radius: var(--blanc-radius-sm);
