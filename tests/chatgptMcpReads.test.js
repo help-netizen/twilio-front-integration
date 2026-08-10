@@ -1,5 +1,10 @@
 'use strict';
 
+const mockGetActiveSettings = jest.fn();
+jest.mock('../backend/src/services/callMaskingService', () => ({
+    getActiveSettings: (...args) => mockGetActiveSettings(...args),
+}));
+
 jest.mock('../backend/src/services/jobsService', () => ({
     listJobs: jest.fn(async () => ({ results: [] })),
     getJobById: jest.fn(async () => ({
@@ -76,6 +81,8 @@ const readService = require('../backend/src/services/chatgptMcpReadService');
 
 const COMPANY = 'company-a';
 const OWNER = 'owner-a';
+const CUSTOMER = '+16175550101';
+const MASKING_NUMBER = '+16175550202';
 const AUTHORITY = Object.freeze({
     companyId: COMPANY,
     companyTimezone: 'America/New_York',
@@ -299,6 +306,74 @@ describe('CHATGPT-CRM-MCP S1 read handlers', () => {
         ]) {
             expect(result.rows[0]).not.toHaveProperty(forbidden);
         }
+    });
+
+    test('masked owner receives no phone digits or call internals from MCP read outputs', async () => {
+        mockGetActiveSettings.mockResolvedValue({
+            call_masking_enabled: true,
+            call_masking_number: MASKING_NUMBER,
+        });
+        const maskedAuthority = {
+            ...AUTHORITY,
+            ownerPermissions: ['tasks.view', 'call_masking.use'],
+        };
+        queries.getContactHistory.mockResolvedValueOnce({
+            contact: { id: 21, phone_e164: CUSTOMER },
+            events: [{
+                id: 52,
+                direction: 'inbound',
+                duration_sec: 42,
+                from_number: CUSTOMER,
+                to_number: MASKING_NUMBER,
+                call_sid: 'CA-secret',
+                answered_by: 'ai',
+                recording_url: 'https://media.example.test/private',
+                transcript: 'Private transcript',
+                summary: 'Private summary',
+                sentimentScore: -1,
+            }],
+        });
+
+        const calls = await readService.execute('listCalls', maskedAuthority, {});
+        const history = await readService.execute(
+            'getContactHistory',
+            maskedAuthority,
+            { contact_id: 21 }
+        );
+        const unmasked = await readService.execute('listCalls', AUTHORITY, {});
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        mockGetActiveSettings.mockRejectedValueOnce(new Error('settings unavailable'));
+        const failedClosed = await readService.execute('listCalls', maskedAuthority, {});
+        warn.mockRestore();
+        const maskedJson = JSON.stringify({ calls, history, failedClosed });
+
+        expect(mockGetActiveSettings).toHaveBeenCalledTimes(3);
+        expect(mockGetActiveSettings).toHaveBeenCalledWith(COMPANY);
+        expect(maskedJson).not.toContain(CUSTOMER);
+        expect(maskedJson).not.toContain(MASKING_NUMBER);
+        expect(maskedJson).not.toContain('CA-secret');
+        expect(maskedJson).not.toContain('Private transcript');
+        expect(maskedJson).not.toContain('Private summary');
+        expect(calls.rows[0]).toMatchObject({
+            id: 51,
+            direction: 'inbound',
+            duration_sec: 297,
+            details_redacted: true,
+        });
+        expect(calls.rows[0]).not.toHaveProperty('answered_by');
+        expect(history.events[0]).toMatchObject({
+            id: 52,
+            direction: 'inbound',
+            duration_sec: 42,
+            details_redacted: true,
+        });
+        expect(history.events[0]).not.toHaveProperty('recording_url');
+        expect(history.events[0]).not.toHaveProperty('sentimentScore');
+        expect(unmasked.rows[0]).toMatchObject({
+            from_number: CUSTOMER,
+            to_number: MASKING_NUMBER,
+            answered_by: 'ai',
+        });
     });
 
     test('listEstimates forwards accepted-date filters with the trusted company timezone', async () => {

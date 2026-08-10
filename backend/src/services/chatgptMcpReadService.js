@@ -9,6 +9,7 @@ const tasksQueries = require('../db/tasksQueries');
 const queries = require('../db/chatgptMcpQueries');
 const { resolveProviderScope } = require('../middleware/providerScope');
 const { CrmServiceError } = require('./crmErrors');
+const { resolveMaskViewer, redactPulsePayload } = require('./pulseMaskingService');
 
 class ChatgptMcpReadError extends CrmServiceError {
     constructor(code, message, httpStatus = 400) {
@@ -304,7 +305,11 @@ async function execute(handler, context, args = {}) {
         default:
             throw new ChatgptMcpReadError('UNSUPPORTED_TOOL', 'Unsupported read handler', 404);
     }
-    return safeResult(result);
+    const maskViewer = await resolveMaskViewer({
+        authz: { permissions: context?.ownerPermissions },
+        companyFilter: { company_id: companyId },
+    });
+    return redactPulsePayload(safeResult(result), maskViewer);
 }
 
 module.exports = {
