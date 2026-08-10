@@ -53,7 +53,7 @@ subscriptions, immutable once submitted, re-pinned on version acceptance.
 
 ## 4. The secret
 
-`app_installation_secrets` (migration 238): company_id, installation_id,
+`app_installation_secrets` (migration 246): company_id, installation_id,
 connection_name, ciphertext (AES-256-GCM under `APP_SECRETS_KEY` from env),
 set_by, set_at. One row per (installation, connection).
 
@@ -86,7 +86,7 @@ reasons; a supplier 500 is the app's problem to handle, not a crashed run.
 ## 6. Budgets
 
 Egress calls are their own meter: `egress_calls_made` on app_runs
-(migration 238), **≤ 5 per run**, **≤ 500 per installation per day**. Breach
+(migration 246), **≤ 5 per run**, **≤ 500 per installation per day**. Breach
 refuses the call, not the run. Usage shows in run history like every other
 number.
 

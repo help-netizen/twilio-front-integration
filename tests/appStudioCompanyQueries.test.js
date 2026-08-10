@@ -30,11 +30,11 @@ describe('APP-STUDIO-GATE-002 company data access', () => {
     test('migration adds a non-null false default and rollback removes only the column', () => {
         const migrations = path.join(__dirname, '..', 'backend', 'db', 'migrations');
         const forward = fs.readFileSync(
-            path.join(migrations, '239_app_studio_per_company_gate.sql'),
+            path.join(migrations, '247_app_studio_per_company_gate.sql'),
             'utf8'
         );
         const rollback = fs.readFileSync(
-            path.join(migrations, 'rollback_239_app_studio_per_company_gate.sql'),
+            path.join(migrations, 'rollback_247_app_studio_per_company_gate.sql'),
             'utf8'
         );
 

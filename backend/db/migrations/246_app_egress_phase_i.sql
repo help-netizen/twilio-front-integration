@@ -1,4 +1,4 @@
--- Migration 238 — APP-EGRESS-001 Phase I: write-only installation secrets and egress metering.
+-- Migration 246 — APP-EGRESS-001 Phase I: write-only installation secrets and egress metering.
 
 CREATE TABLE IF NOT EXISTS app_installation_secrets (
     company_id         UUID NOT NULL,

@@ -15,7 +15,7 @@ const MIGRATION = fs.readFileSync(
         'backend',
         'db',
         'migrations',
-        '239_app_studio_per_company_gate.sql'
+        '247_app_studio_per_company_gate.sql'
     ),
     'utf8'
 );

@@ -1,4 +1,4 @@
--- Rollback 240 — turn App Studio back off for ABC Homes.
+-- Rollback 248 — turn App Studio back off for ABC Homes.
 
 UPDATE companies
    SET app_studio_enabled = false,
