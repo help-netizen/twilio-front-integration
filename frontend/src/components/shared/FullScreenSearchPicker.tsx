@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Loader2, Search, X } from 'lucide-react';
+import { FocusScope } from '@radix-ui/react-focus-scope';
 import { useKeyboardInset } from './NoteComposerOverlay';
 import { pushFloatingOverlay, popFloatingOverlay } from '../../lib/floatingOverlayLock';
 
@@ -14,9 +15,10 @@ interface FullScreenSearchPickerProps {
     /** Header title, shown next to the close X (e.g. "Change provider"). Optional. */
     title?: string;
     /**
-     * Auto-focus the search box (raising the keyboard) on open. DEFAULT false — the owner's
-     * rule for this pattern: the keyboard stays DOWN until the user taps search, so they see
-     * the whole list first and only summon the keyboard to narrow it.
+     * Auto-focus the search box (raising the keyboard) on open. DEFAULT true — the owner's
+     * current rule for this pattern: every picker of this kind opens already focused with the
+     * keyboard up, ready to type. Pass false only for a deliberate exception (open with the
+     * keyboard down so the whole list shows first).
      */
     autoFocusSearch?: boolean;
     /**
@@ -37,7 +39,7 @@ interface FullScreenSearchPickerProps {
  *
  * The owner's spec: a control that picks from a list which filters as you type. On mobile it
  * opens a FULL-SCREEN layer instead of a keyboard-covered dropdown / bottom sheet:
- *   1) full-page layer; the keyboard is NOT open by default (see autoFocusSearch);
+ *   1) full-page layer; opens focused with the keyboard UP by default (see autoFocusSearch);
  *   2) the search input is docked at the BOTTOM (composer-style, thumb-reachable) — you type
  *      RIGHT THERE, no floating hover input (unlike type A). A bottom-docked input rides just
  *      above the keyboard, so it's never covered;
@@ -52,7 +54,7 @@ interface FullScreenSearchPickerProps {
  * their existing popover/inline combobox.
  */
 export function FullScreenSearchPicker({
-    open, onClose, query, onQueryChange, placeholder, title, autoFocusSearch = false,
+    open, onClose, query, onQueryChange, placeholder, title, autoFocusSearch = true,
     onSave, saving, saveLabel = 'Save', children,
 }: FullScreenSearchPickerProps) {
     const keyboardInset = useKeyboardInset(open);
@@ -94,6 +96,22 @@ export function FullScreenSearchPicker({
     if (!open) return null;
 
     return createPortal(
+        // The picker portals to <body>, OUTSIDE the caller's overlay. When that caller is a
+        // MODAL Radix dialog (e.g. NewJobDialog), its focus-trap would yank focus back out of
+        // our search input the instant it lands — the field reads as "not tappable" and the
+        // keyboard never opens. A Radix FocusScope pushes onto the shared focus-scope stack,
+        // PAUSING the parent trap while we're open, so the input can hold focus and the keyboard
+        // can rise. onMountAutoFocus targets the docked SEARCH box (not the close X).
+        <FocusScope
+            asChild
+            trapped
+            loop
+            onMountAutoFocus={(e) => {
+                e.preventDefault();
+                if (autoFocusSearch) inputRef.current?.focus();
+            }}
+            onUnmountAutoFocus={(e) => e.preventDefault()}
+        >
         <div
             style={{
                 position: 'fixed',
@@ -176,7 +194,8 @@ export function FullScreenSearchPicker({
                     </button>
                 )}
             </div>
-        </div>,
+        </div>
+        </FocusScope>,
         document.body,
     );
 }
