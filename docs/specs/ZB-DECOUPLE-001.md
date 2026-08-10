@@ -603,8 +603,10 @@ if local it must be preserved (extract) since `cli/reconcilePaymentJobLinks.js` 
   `backend/src/services/zbJobsSyncCron.js` (confirmed dead — zero requires); unmount
   `src/server.js:298` + delete `routes/integrations-zenbooker.js`; drop `ZENBOOKER_WEBHOOK_SECRET`
   / `ZENBOOKER_WEBHOOK_COMPANY_ID`. Inbound ZB pushes are moot post-Phase-D.
-- **F2b — legacy lead→ZB status push:** remove `jobSyncService.syncBlancStatusToZenbooker` call
-  in `routes/leads.js:730` (+ the function). Native jobs carry no zenbooker_job_id → already no-op.
+- **F2b — legacy lead→ZB status push — DONE 2026-08-10:** removed the SubStatus→ZB push block in
+  `routes/leads.js` + `jobSyncService.syncBlancStatusToZenbooker` (+ its export + the now-orphaned
+  `zenbookerClient` require in jobSyncService; `handleJobWebhook` stays for F2a). Native jobs carry
+  no zenbooker_job_id → was already no-op for them. C4b convert contract still 6/6.
 - **F3 — payments sync retire:** unmount `:226`, delete `routes/zenbooker/payments.js` +
   `zenbookerPaymentsSyncService.syncPayments`; resolve reconcileJobLinks (keep-local decision).
 - **F4 — sync services + client:** retire zenbookerSyncService/contactsSyncService/jobSyncService/

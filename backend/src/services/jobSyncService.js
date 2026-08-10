@@ -26,7 +26,6 @@
  */
 
 const db = require('../db/connection');
-const zenbookerClient = require('./zenbookerClient');
 
 // =============================================================================
 // Constants
@@ -198,70 +197,11 @@ async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData, companyId
 // Outbound: Albusto → Zenbooker
 // =============================================================================
 
-/**
- * Sync a Albusto sub_status change to Zenbooker.
- * Called after PATCH /api/leads/:uuid when SubStatus changed on a converted lead.
- *
- * @param {string} leadUuid - Lead UUID
- * @param {string} newSubStatus - New Albusto sub_status value
- * @returns {{ synced: boolean, action?: string }}
- */
-async function syncBlancStatusToZenbooker(leadUuid, newSubStatus, companyId) {
-    if (!companyId) throw new Error('syncBlancStatusToZenbooker requires companyId');
-    // 1. Fetch lead to get zenbooker_job_id
-    const { rows } = await db.query(
-        `SELECT zenbooker_job_id FROM leads
-         WHERE uuid = $1 AND converted_to_job = true AND company_id = $2`,
-        [leadUuid, companyId]
-    );
-
-    if (rows.length === 0 || !rows[0].zenbooker_job_id) {
-        console.log(`[JobSync] Lead ${leadUuid} has no zenbooker_job_id, skipping outbound sync`);
-        return { synced: false, reason: 'no_job_id' };
-    }
-
-    const jobId = rows[0].zenbooker_job_id;
-
-    // 2. Map Albusto sub_status → Zenbooker API call
-    try {
-        switch (newSubStatus) {
-            case 'Job is Done':
-                // §6: Only the final "Job is Done" maps to Zenbooker "complete".
-                // "Waiting for parts" and "Visit completed" are Albusto-only operational
-                // states and do NOT trigger ZB markComplete.
-                await zenbookerClient.markJobComplete(jobId);
-                console.log(`[JobSync] Outbound: lead ${leadUuid} → markJobComplete (job=${jobId})`);
-                return { synced: true, action: 'mark_complete' };
-
-            case 'Submitted':
-                // §6: Map to Zenbooker "scheduled" — no direct API to set scheduled,
-                // but we don't need to call anything since this is the default state
-                console.log(`[JobSync] Outbound: lead ${leadUuid} → Submitted (no Zenbooker API needed)`);
-                return { synced: false, reason: 'no_api_for_scheduled' };
-
-            case 'Canceled':
-                await zenbookerClient.cancelJob(jobId);
-                console.log(`[JobSync] Outbound: lead ${leadUuid} → cancelJob (job=${jobId})`);
-                return { synced: true, action: 'cancel' };
-
-            default:
-                // Follow Up with Client, Visit completed, Rescheduled — no automatic Zenbooker action
-                console.log(`[JobSync] Outbound: sub_status='${newSubStatus}' has no Zenbooker mapping`);
-                return { synced: false, reason: 'no_mapping' };
-        }
-    } catch (err) {
-        console.error(`[JobSync] Outbound sync error for lead ${leadUuid}, job ${jobId}:`,
-            err.response?.data || err.message);
-        throw err;
-    }
-}
-
 // =============================================================================
 // Exports
 // =============================================================================
 module.exports = {
     handleJobWebhook,
-    syncBlancStatusToZenbooker,
     refreshAssigneeMirrorFromAssignment,
     BLANC_JOB_STATUSES,
     EVENT_TO_STATUS,
