@@ -430,16 +430,42 @@ async function reassignJob(
         .filter(a => a && a.id != null && String(a.id) !== '')
         .map(a => ({ id: String(a.id), name: a.name || '' }))
         .filter(a => (seen.has(a.id) ? false : (seen.add(a.id), true)));
-    const sets = ['assigned_techs = $3::jsonb', 'updated_at = NOW()'];
-    const params = [entityId, companyId, JSON.stringify(techs)];
-    if (providerUserIds != null) {
-        params.push(providerUserIds);
-        sets.push(`assigned_provider_user_ids = $${params.length}::jsonb`);
-    }
+    // OB-58: derive the visibility mirror (assigned_provider_user_ids) INLINE and
+    // atomically from the NEW assigned_techs — the two columns can then never drift.
+    // The old contract required the caller to pre-resolve `providerUserIds` and pass
+    // it; `reassignItem` did so inside a try/catch that SILENTLY swallowed resolver
+    // errors → it then called this with null → the mirror was left STALE while
+    // assigned_techs was replaced → the assigned provider's own schedule (which
+    // filters on the mirror) silently dropped the job. Computing it here removes that
+    // whole class of drift. Derivation matches refreshCompanyProviderMirror +
+    // membershipQueries.resolveProviderUserIds (native technicians.id OR ZB external
+    // id → active company_memberships.user_id). `providerUserIds` is accepted for
+    // backward-compat but no longer trusted for the write.
+    void providerUserIds;
     const runner = client || db;
     const { rows } = await runner.query(
-        `UPDATE jobs SET ${sets.join(', ')} WHERE id = $1 AND company_id = $2 RETURNING *`,
-        params
+        `UPDATE jobs j
+            SET assigned_techs = $3::jsonb,
+                assigned_provider_user_ids = COALESCE((
+                    SELECT jsonb_agg(DISTINCT to_jsonb(m.user_id::text))
+                             FILTER (WHERE m.user_id IS NOT NULL)
+                    FROM jsonb_array_elements($3::jsonb) AS tech(value)
+                    LEFT JOIN technician_external_identities e
+                      ON e.company_id = j.company_id
+                     AND e.source = 'zenbooker'
+                     AND e.external_id = tech.value->>'id'
+                    LEFT JOIN technicians t
+                      ON t.company_id = j.company_id
+                     AND (t.id::text = tech.value->>'id' OR t.id = e.technician_id)
+                    LEFT JOIN company_memberships m
+                      ON m.company_id = j.company_id
+                     AND m.user_id = t.crm_user_id
+                     AND m.status = 'active'
+                ), '[]'::jsonb),
+                updated_at = NOW()
+          WHERE j.id = $1 AND j.company_id = $2
+          RETURNING *`,
+        [entityId, companyId, JSON.stringify(techs)]
     );
     return rows[0] || null;
 }
