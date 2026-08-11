@@ -147,11 +147,23 @@ function buildWindowedJobAttributions(matchResults, jobs) {
         }
     }
 
-    return jobs.flatMap(job => {
-        const owner = ownersByJob.get(String(job.job_id));
-        if (!owner) return [];
+    // Emit ONE attribution per unique job — a job can appear in `jobs` multiple
+    // times (the same job is reachable through several duplicate contacts of the
+    // same person), and flat-mapping over `jobs` would produce duplicate
+    // (owner-lead, job) rows → a PK violation on elocal/lsa_job_attributions. The
+    // full-volume eLocal backfill exposed this once the adapter stopped dropping
+    // records. ownersByJob is already keyed by job_id, so iterate it.
+    const jobRowById = new Map();
+    for (const job of jobs) {
+        const key = String(job.job_id);
+        if (!jobRowById.has(key)) jobRowById.set(key, job);
+    }
+    const attributions = [];
+    for (const [jobId, owner] of ownersByJob) {
+        const job = jobRowById.get(jobId);
+        if (!job) continue;
         const evidence = owner.result.selectedEvidence;
-        return [{
+        attributions.push({
             itemId: owner.result.itemId,
             matchedJobId: job.job_id,
             matchedContactId: job.contact_id,
@@ -159,8 +171,9 @@ function buildWindowedJobAttributions(matchResults, jobs) {
             evidenceLeadId: evidence.crm_lead_id || null,
             matchMethod: evidence.match_method,
             matchConfidence: Number(evidence.match_confidence),
-        }];
-    });
+        });
+    }
+    return attributions;
 }
 
 module.exports = {
