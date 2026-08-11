@@ -94,6 +94,12 @@ export function JobOpsSection({
         try {
             await applyMutation.mutateAsync({ entityId: job.id, event: action.event });
             toast.success(`${action.label} — done`);
+            // Refresh the open card immediately from the initiating click — the FSM
+            // apply only invalidates react-query keys, but useJobDetail holds the job
+            // in local state and otherwise updates only when an SSE event happens to
+            // arrive. Refetch here (same as the header dropdown's afterMutation) so the
+            // status pill/actions reflect the change without waiting on SSE or a reload.
+            onNotified?.(job.id);
             // FSM-SYSTEM-TRANSITIONS-001: "On the way" is a plain transition (status
             // already changed above). If the target carries the arrival_eta op and the
             // user can message, offer the notify-ETA modal afterwards — closing it never

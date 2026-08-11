@@ -10,6 +10,7 @@ const { requirePermission } = require('../middleware/authorization');
 const fsmService = require('../services/fsmService');
 const jobsService = require('../services/jobsService');
 const eventService = require('../services/eventService');
+const realtimeService = require('../services/realtimeService');
 const { userActor } = require('../services/jobActivityService');
 const { getProviderScope } = require('../middleware/providerScope');
 const { closePermissionError } = require('../services/jobTransitionPerms');
@@ -325,6 +326,14 @@ async function applyTransitionHandler(req, res) {
       op: applied.result.op || null,
       fallback: Boolean(applied.result.fallback),
     } });
+
+    // Broadcast the status change over SSE so EVERY open client refreshes without a
+    // reload — the FSM apply path otherwise never emitted 'job.updated' (only PATCH
+    // /jobs/:id/status did), so button-driven transitions went unseen until refresh.
+    // Fire-and-forget, after the response (mirrors the reschedule route).
+    if (machineKey === 'job') {
+      realtimeService.publishJobUpdate({ company_id: companyId });
+    }
   } catch (err) {
     const status = err.httpStatus || err.statusCode || 500;
     if (status >= 500) console.error('[FSM] apply error:', err);
