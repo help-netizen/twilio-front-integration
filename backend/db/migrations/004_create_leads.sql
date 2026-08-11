@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS leads (
     job_type            VARCHAR(80),
     job_source          VARCHAR(80),
     referral_company    VARCHAR(120),
+    -- Google Click ID (attribution). Historically bolted on by migration 081;
+    -- kept here in the canonical table so any from-scratch rebuild has it even if
+    -- migrations are applied selectively (see LEAD-CHANNEL-ANALYTICS-001 incident
+    -- 2026-08-11, where a rebuilt prod DB was missing this column).
+    gclid               TEXT,
     timezone            VARCHAR(50),
     lead_notes          TEXT,
     comments            TEXT,
@@ -60,6 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_lead_date_time ON leads(lead_date_time DESC
 CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone) WHERE phone IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_leads_serial_id ON leads(serial_id);
 CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_leads_gclid ON leads(gclid) WHERE gclid IS NOT NULL;
 
 COMMENT ON TABLE leads IS 'Self-contained leads storage (Workiz-compatible schema)';
 
