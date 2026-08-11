@@ -49,7 +49,8 @@ async function getConnectionById(companyId, connectionId, client = null) {
 
 async function ensureGoogleAdsChannel(companyId, client = null) {
     requireCompanyId(companyId);
-    const { rows } = await queryFor(client)(
+    const query = queryFor(client);
+    const { rows } = await query(
         `INSERT INTO lead_source_channels (
             company_id,
             channel_key,
@@ -73,6 +74,34 @@ async function ensureGoogleAdsChannel(companyId, client = null) {
             metadata = lead_source_channels.metadata || EXCLUDED.metadata,
             updated_at = NOW()
          RETURNING *`,
+        [companyId]
+    );
+    await query(
+        `WITH duplicate AS (
+             SELECT id
+             FROM lead_source_channels
+             WHERE company_id = $1
+               AND channel_key = 'source_89e8a431de55c3822053e36c5eb21d06'
+         )
+         UPDATE lead_source_aliases alias
+         SET channel_id = $2,
+             updated_at = NOW()
+         FROM duplicate
+         WHERE alias.company_id = $1
+           AND alias.channel_id = duplicate.id
+           AND alias.normalized_source = 'google ads'`,
+        [companyId, rows[0].id]
+    );
+    await query(
+        `UPDATE lead_source_channels
+         SET is_active = false,
+             metadata = COALESCE(metadata, '{}'::JSONB) || jsonb_build_object(
+                 'merged_into_channel_key', 'google_ads',
+                 'google_lsa_attribution_001_merged', true
+             ),
+             updated_at = NOW()
+         WHERE company_id = $1
+           AND channel_key = 'source_89e8a431de55c3822053e36c5eb21d06'`,
         [companyId]
     );
     return rows[0];
@@ -403,6 +432,164 @@ async function commitPerformanceChunk({
     }
 }
 
+async function commitLsaLeads({
+    companyId,
+    connectionId,
+    customerId,
+    rows,
+    now,
+    expectedLeaseExpiresAt,
+}) {
+    requireCompanyId(companyId);
+    requireConnectionId(connectionId);
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        const locked = await client.query(
+            `SELECT id
+             FROM google_ads_connections
+             WHERE company_id = $1
+               AND id = $2
+               AND customer_id = $3
+               AND status = 'connected'
+               AND last_sync_status = 'running'
+               AND sync_lease_expires_at = $4::TIMESTAMPTZ
+             FOR UPDATE`,
+            [companyId, connectionId, customerId, expectedLeaseExpiresAt]
+        );
+        if (!locked.rows[0]) {
+            const error = new Error('Google Ads sync claim is no longer active.');
+            error.code = 'SYNC_CLAIM_LOST';
+            throw error;
+        }
+
+        await client.query(
+            `DELETE FROM google_lsa_job_attributions attribution
+             USING google_lsa_leads lsa
+             WHERE attribution.company_id = $1
+               AND lsa.company_id = $1
+               AND lsa.connection_id = $2
+               AND attribution.lsa_lead_id = lsa.id`,
+            [companyId, connectionId]
+        );
+        await client.query(
+            `UPDATE google_lsa_leads
+             SET match_status = 'pending',
+                 matched_contact_id = NULL,
+                 matched_lead_id = NULL,
+                 matched_call_id = NULL,
+                 match_method = NULL,
+                 match_confidence = NULL,
+                 matched_at = NULL
+             WHERE company_id = $1
+               AND connection_id = $2`,
+            [companyId, connectionId]
+        );
+
+        const persisted = [];
+        for (const row of rows) {
+            const result = await client.query(
+                `INSERT INTO google_lsa_leads (
+                    company_id,
+                    connection_id,
+                    external_account_id,
+                    external_lead_id,
+                    resource_name,
+                    lead_type,
+                    phone_e164,
+                    normalized_phone,
+                    provider_created_at,
+                    provider_creation_date_time,
+                    lead_charged,
+                    lead_status,
+                    first_seen_at,
+                    last_seen_at
+                 )
+                 VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8,
+                    $9::TIMESTAMPTZ, $10, $11, $12, $13::TIMESTAMPTZ, $13::TIMESTAMPTZ
+                 )
+                 ON CONFLICT (company_id, resource_name) DO UPDATE SET
+                    connection_id = EXCLUDED.connection_id,
+                    external_account_id = EXCLUDED.external_account_id,
+                    external_lead_id = EXCLUDED.external_lead_id,
+                    lead_type = EXCLUDED.lead_type,
+                    phone_e164 = EXCLUDED.phone_e164,
+                    normalized_phone = EXCLUDED.normalized_phone,
+                    provider_created_at = EXCLUDED.provider_created_at,
+                    provider_creation_date_time = EXCLUDED.provider_creation_date_time,
+                    lead_charged = EXCLUDED.lead_charged,
+                    lead_status = EXCLUDED.lead_status,
+                    last_seen_at = EXCLUDED.last_seen_at
+                 RETURNING *`,
+                [
+                    companyId,
+                    connectionId,
+                    customerId,
+                    row.external_lead_id,
+                    row.resource_name,
+                    row.lead_type,
+                    row.phone_e164,
+                    row.normalized_phone,
+                    row.provider_created_at,
+                    row.provider_creation_date_time,
+                    row.lead_charged,
+                    row.lead_status,
+                    now,
+                ]
+            );
+            persisted.push(result.rows[0]);
+        }
+
+        const providerTimes = rows
+            .map(row => new Date(row.provider_created_at).getTime())
+            .filter(Number.isFinite);
+        const syncedFromAt = providerTimes.length > 0
+            ? new Date(Math.min(...providerTimes))
+            : null;
+        const syncedThroughAt = providerTimes.length > 0
+            ? new Date(Math.max(...providerTimes))
+            : null;
+        const updated = await client.query(
+            `UPDATE google_ads_connections
+             SET lsa_synced_from_at = $5::TIMESTAMPTZ,
+                 lsa_synced_through_at = $6::TIMESTAMPTZ,
+                 lsa_last_synced_at = $7::TIMESTAMPTZ,
+                 lsa_last_lead_count = $8,
+                 updated_at = NOW()
+             WHERE company_id = $1
+               AND id = $2
+               AND customer_id = $3
+               AND status = 'connected'
+               AND last_sync_status = 'running'
+               AND sync_lease_expires_at = $4::TIMESTAMPTZ
+             RETURNING id`,
+            [
+                companyId,
+                connectionId,
+                customerId,
+                expectedLeaseExpiresAt,
+                syncedFromAt,
+                syncedThroughAt,
+                now,
+                rows.length,
+            ]
+        );
+        if (!updated.rows[0]) {
+            const error = new Error('Google Ads sync claim is no longer active.');
+            error.code = 'SYNC_CLAIM_LOST';
+            throw error;
+        }
+        await client.query('COMMIT');
+        return persisted;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
 async function failSync({
     companyId,
     connectionId,
@@ -443,6 +630,7 @@ async function failSync({
 
 module.exports = {
     claimConnection,
+    commitLsaLeads,
     commitPerformanceChunk,
     disconnectConnection,
     ensureGoogleAdsChannel,

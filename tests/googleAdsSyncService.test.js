@@ -54,12 +54,14 @@ function claimedConnection(overrides = {}) {
 function syncDependencies(connection = claimedConnection()) {
     const queries = {
         claimConnection: jest.fn().mockResolvedValue(connection),
+        commitLsaLeads: jest.fn().mockResolvedValue([]),
         commitPerformanceChunk: jest.fn().mockResolvedValue({}),
         refreshLease: jest.fn().mockResolvedValue(true),
         failSync: jest.fn().mockResolvedValue({}),
     };
     const adapter = {
         refreshAccessToken: jest.fn().mockResolvedValue('access-private'),
+        fetchLocalServicesLeads: jest.fn().mockResolvedValue([]),
         fetchCampaignPerformance: jest.fn().mockResolvedValue([{
             external_campaign_id: '44',
             external_campaign_name: 'Search',
@@ -71,7 +73,13 @@ function syncDependencies(connection = claimedConnection()) {
             conversions_value: '100',
         }]),
     };
-    return { queries, adapter, now: () => NOW };
+    const lsaAttribution = {
+        matchCompany: jest.fn().mockResolvedValue({
+            matchedLeads: 0,
+            attributedJobs: 0,
+        }),
+    };
+    return { queries, adapter, lsaAttribution, now: () => NOW };
 }
 
 describe('Google Ads leased synchronization', () => {
@@ -81,6 +89,29 @@ describe('Google Ads leased synchronization', () => {
 
         expect(result).toEqual({ status: 'ok', ranges: 25, rows: 25 });
         expect(deps.adapter.refreshAccessToken).toHaveBeenCalledTimes(1);
+        expect(deps.adapter.fetchLocalServicesLeads).toHaveBeenCalledWith({
+            customerId: '1234567890',
+            developerToken: 'developer-secret',
+            accessToken: 'access-private',
+            accountTimezone: 'America/New_York',
+        });
+        expect(deps.queries.commitLsaLeads).toHaveBeenCalledWith(
+            expect.objectContaining({
+                companyId: COMPANY_A,
+                connectionId: CONNECTION_A,
+                customerId: '1234567890',
+                rows: [],
+                expectedLeaseExpiresAt: expect.any(Date),
+            })
+        );
+        expect(deps.lsaAttribution.matchCompany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                companyId: COMPANY_A,
+                connectionId: CONNECTION_A,
+                expectedLeaseExpiresAt: expect.any(Date),
+            }),
+            {}
+        );
         expect(deps.adapter.fetchCampaignPerformance).toHaveBeenCalledTimes(25);
         expect(deps.queries.commitPerformanceChunk).toHaveBeenCalledTimes(25);
         expect(deps.adapter.fetchCampaignPerformance.mock.calls[0][0])
@@ -131,6 +162,7 @@ describe('Google Ads leased synchronization', () => {
             expect.any(Date)
         );
         expect(deps.adapter.refreshAccessToken).not.toHaveBeenCalled();
+        expect(deps.adapter.fetchLocalServicesLeads).not.toHaveBeenCalled();
         expect(deps.adapter.fetchCampaignPerformance).not.toHaveBeenCalled();
     });
 

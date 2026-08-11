@@ -9,6 +9,7 @@ const {
     executeQuery,
     fetchAccountMetadata,
     fetchCampaignPerformance,
+    fetchLocalServicesLeads,
     refreshAccessToken,
 } = require('../backend/src/services/googleAdsAdapter');
 
@@ -160,6 +161,109 @@ describe('Google Ads v23 adapter', () => {
             code: 'UNSUPPORTED_CURRENCY',
             httpStatus: 422,
         });
+    });
+
+    test('LSA query maps single-object phone details, pagination, and local timestamps', async () => {
+        axios.post
+            .mockResolvedValueOnce({
+                data: {
+                    results: [{
+                        localServicesLead: {
+                            resourceName: 'customers/1234567890/localServicesLeads/lead-1',
+                            leadType: 'PHONE_CALL',
+                            contactDetails: { phoneNumber: '(617) 555-0101' },
+                            leadStatus: 'ACTIVE',
+                            creationDateTime: '2026-08-10 09:30:15.123456',
+                            leadCharged: true,
+                        },
+                    }],
+                    nextPageToken: 'lsa-page-2',
+                },
+            })
+            .mockResolvedValueOnce({
+                data: {
+                    results: [{
+                        localServicesLead: {
+                            resourceName: 'customers/1234567890/localServicesLeads/lead-2',
+                            leadType: 'MESSAGE',
+                            contactDetails: {},
+                            leadStatus: 'NEW',
+                            creationDateTime: '2026-08-10 10:00:00',
+                            leadCharged: false,
+                        },
+                    }],
+                },
+            });
+
+        await expect(fetchLocalServicesLeads({
+            ...CREDS,
+            accessToken: 'access-private',
+            accountTimezone: 'America/New_York',
+        })).resolves.toEqual([
+            {
+                external_account_id: '1234567890',
+                external_lead_id: 'lead-1',
+                resource_name: 'customers/1234567890/localServicesLeads/lead-1',
+                lead_type: 'PHONE_CALL',
+                phone_e164: '+16175550101',
+                normalized_phone: '6175550101',
+                provider_created_at: new Date('2026-08-10T13:30:15.123Z'),
+                provider_creation_date_time: '2026-08-10 09:30:15.123456',
+                lead_charged: true,
+                lead_status: 'ACTIVE',
+            },
+            {
+                external_account_id: '1234567890',
+                external_lead_id: 'lead-2',
+                resource_name: 'customers/1234567890/localServicesLeads/lead-2',
+                lead_type: 'MESSAGE',
+                phone_e164: null,
+                normalized_phone: null,
+                provider_created_at: new Date('2026-08-10T14:00:00.000Z'),
+                provider_creation_date_time: '2026-08-10 10:00:00',
+                lead_charged: false,
+                lead_status: 'NEW',
+            },
+        ]);
+
+        const query = axios.post.mock.calls[0][1].query;
+        expect(query).toContain('local_services_lead.contact_details');
+        expect(query).toContain('local_services_lead.lead_charged');
+        expect(axios.post.mock.calls[1][1]).toEqual({
+            query,
+            pageToken: 'lsa-page-2',
+        });
+    });
+
+    test('LSA query rejects a nonexistent local timestamp without exposing payload data', async () => {
+        axios.post.mockResolvedValueOnce({
+            data: {
+                results: [{
+                    localServicesLead: {
+                        resourceName: 'customers/1234567890/localServicesLeads/private-id',
+                        leadType: 'PHONE_CALL',
+                        contactDetails: { phoneNumber: '+16175559999' },
+                        creationDateTime: '2026-03-08 02:30:00',
+                    },
+                }],
+            },
+        });
+
+        let error;
+        try {
+            await fetchLocalServicesLeads({
+                ...CREDS,
+                accessToken: 'access-private',
+                accountTimezone: 'America/New_York',
+            });
+        } catch (caught) {
+            error = caught;
+        }
+        expect(error).toMatchObject({
+            code: 'GOOGLE_ADS_QUERY_FAILED',
+            message: 'Google Ads returned an invalid Local Services Ads creation time.',
+        });
+        expect(JSON.stringify(error)).not.toMatch(/private-id|6175559999/);
     });
 
     test('invalid server-generated date is rejected before GAQL is sent', async () => {

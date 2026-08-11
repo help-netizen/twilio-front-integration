@@ -3,6 +3,7 @@
 const googleAdsQueries = require('../db/googleAdsQueries');
 const googleAdsAdapter = require('./googleAdsAdapter');
 const googleAdsConnectionService = require('./googleAdsConnectionService');
+const googleLsaAttributionService = require('./googleLsaAttributionService');
 const { decryptRefreshToken } = require('./googleAdsCredentials');
 const { localDateInTZ } = require('../utils/companyTime');
 
@@ -90,6 +91,8 @@ function reconnectRequired(code) {
 async function syncCompany(companyId, connectionId, dependencies = {}) {
     const queries = dependencies.queries || googleAdsQueries;
     const adapter = dependencies.adapter || googleAdsAdapter;
+    const lsaAttribution = dependencies.lsaAttribution
+        || googleLsaAttributionService;
     const startedAt = nowFrom(dependencies);
     let leaseExpiresAt = new Date(startedAt.getTime() + LEASE_MS);
 
@@ -110,6 +113,26 @@ async function syncCompany(companyId, connectionId, dependencies = {}) {
             ...shared,
             refreshToken,
         });
+        const lsaRows = await adapter.fetchLocalServicesLeads({
+            customerId: connection.customer_id,
+            developerToken: shared.developerToken,
+            accessToken,
+            accountTimezone: connection.account_timezone,
+        });
+        await queries.commitLsaLeads({
+            companyId,
+            connectionId,
+            customerId: connection.customer_id,
+            rows: lsaRows,
+            now: nowFrom(dependencies),
+            expectedLeaseExpiresAt: leaseExpiresAt,
+        });
+        await lsaAttribution.matchCompany({
+            companyId,
+            connectionId,
+            expectedLeaseExpiresAt: leaseExpiresAt,
+            now: nowFrom(dependencies),
+        }, dependencies.lsaDependencies || {});
         const ranges = buildRanges(connection, startedAt);
         let rowCount = 0;
 

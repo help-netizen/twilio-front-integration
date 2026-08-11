@@ -1,6 +1,10 @@
 'use strict';
 
 const axios = require('axios');
+const {
+    normalizeUsPhone,
+    parseProviderCreationDateTime,
+} = require('./googleLsaAttributionService');
 
 const API_VERSION = 'v23';
 const API_BASE_URL = `https://googleads.googleapis.com/${API_VERSION}`;
@@ -259,6 +263,83 @@ async function fetchCampaignPerformance(params) {
     return results.map(mapCampaignDay);
 }
 
+function mapLocalServicesLead(result, customerId, accountTimezone) {
+    const lead = result?.localServicesLead || {};
+    const resourceName = typeof lead.resourceName === 'string'
+        ? lead.resourceName
+        : '';
+    const resourcePrefix = `customers/${customerId}/localServicesLeads/`;
+    const externalLeadId = resourceName.startsWith(resourcePrefix)
+        ? resourceName.slice(resourcePrefix.length)
+        : '';
+    const leadType = typeof lead.leadType === 'string' ? lead.leadType : '';
+    const creationDateTime = typeof lead.creationDateTime === 'string'
+        ? lead.creationDateTime
+        : '';
+    if (!externalLeadId || !leadType || !creationDateTime) {
+        throw new GoogleAdsAdapterError(
+            'GOOGLE_ADS_QUERY_FAILED',
+            'Google Ads returned an invalid Local Services Ads lead.'
+        );
+    }
+
+    let providerCreatedAt;
+    try {
+        providerCreatedAt = parseProviderCreationDateTime(
+            creationDateTime,
+            accountTimezone
+        );
+    } catch {
+        throw new GoogleAdsAdapterError(
+            'GOOGLE_ADS_QUERY_FAILED',
+            'Google Ads returned an invalid Local Services Ads creation time.'
+        );
+    }
+    const phone = normalizeUsPhone(
+        lead.contactDetails?.phoneNumber
+    );
+    return {
+        external_account_id: customerId,
+        external_lead_id: externalLeadId,
+        resource_name: resourceName,
+        lead_type: leadType,
+        phone_e164: phone?.phoneE164 || null,
+        normalized_phone: phone?.normalizedPhone || null,
+        provider_created_at: providerCreatedAt,
+        provider_creation_date_time: creationDateTime,
+        lead_charged: lead.leadCharged === true,
+        lead_status: typeof lead.leadStatus === 'string'
+            ? lead.leadStatus
+            : null,
+    };
+}
+
+async function fetchLocalServicesLeads(params) {
+    requireParam(params.accountTimezone, 'account timezone');
+    const accessToken = params.accessToken || await refreshAccessToken(params);
+    const query = `
+        SELECT
+          local_services_lead.resource_name,
+          local_services_lead.lead_type,
+          local_services_lead.contact_details,
+          local_services_lead.lead_status,
+          local_services_lead.creation_date_time,
+          local_services_lead.lead_charged
+        FROM local_services_lead
+        ORDER BY local_services_lead.creation_date_time ASC
+    `;
+    const results = await executeQuery({
+        ...params,
+        accessToken,
+        query,
+    });
+    return results.map(result => mapLocalServicesLead(
+        result,
+        params.customerId,
+        params.accountTimezone
+    ));
+}
+
 module.exports = {
     API_BASE_URL,
     API_VERSION,
@@ -267,6 +348,7 @@ module.exports = {
     executeQuery,
     fetchAccountMetadata,
     fetchCampaignPerformance,
+    fetchLocalServicesLeads,
     refreshAccessToken,
     validateDate,
 };

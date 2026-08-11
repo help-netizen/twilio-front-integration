@@ -16,6 +16,10 @@ const MIGRATION = fs.readFileSync(
     path.join(__dirname, '../backend/db/migrations/214_google_ads_connector.sql'),
     'utf8'
 );
+const LSA_MIGRATION = fs.readFileSync(
+    path.join(__dirname, '../backend/db/migrations/251_google_lsa_attribution.sql'),
+    'utf8'
+);
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
 const TAG = `google-ads-${Date.now()}-${process.pid}`;
@@ -96,6 +100,7 @@ function performanceRow({
 function syncAdapter(implementation = null) {
     return {
         refreshAccessToken: jest.fn().mockResolvedValue('access-private'),
+        fetchLocalServicesLeads: jest.fn().mockResolvedValue([]),
         fetchCampaignPerformance: jest.fn().mockImplementation(
             implementation || (async ({ endDate }) => [
                 performanceRow({ date: endDate }),
@@ -147,6 +152,16 @@ function pgDateString(value) {
 
 async function clearConnectorFixtures() {
     await db.query(
+        `DELETE FROM google_lsa_job_attributions
+         WHERE company_id IN ($1, $2)`,
+        [COMPANY_A, COMPANY_B]
+    );
+    await db.query(
+        `DELETE FROM google_lsa_leads
+         WHERE company_id IN ($1, $2)`,
+        [COMPANY_A, COMPANY_B]
+    );
+    await db.query(
         `DELETE FROM lead_source_performance_daily
          WHERE company_id IN ($1, $2)`,
         [COMPANY_A, COMPANY_B]
@@ -180,6 +195,7 @@ beforeAll(async () => {
     process.env.GOOGLE_ADS_TOKEN_ENCRYPTION_KEY = 'd'.repeat(64);
 
     await db.query(MIGRATION);
+    await db.query(LSA_MIGRATION);
     await db.query(
         `INSERT INTO companies (id, name, slug, timezone)
          VALUES
