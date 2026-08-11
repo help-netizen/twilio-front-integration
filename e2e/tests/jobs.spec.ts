@@ -2,6 +2,7 @@ import { expect, test } from '../fixtures/test';
 import { ApiClient, type CleanupEntity } from '../fixtures/api';
 import { hasAdmin, JOBS_NATIVE, JOBS_BLOCKED_REASON } from '../fixtures/env';
 import { JobsPage } from '../pages/JobsPage';
+import { JobPanel } from '../pages/JobPanel';
 
 function jobIdFromUrl(url: string): number {
     const match = url.match(/\/jobs\/(\d+)/);
