@@ -12,6 +12,7 @@ import { FloatingTextField } from '../shared/FloatingTextField';
 import { sendReceipt, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import * as paymentsApi from '../../services/paymentsCanonicalApi';
 
 interface Props {
@@ -40,6 +41,7 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
     const [paymentDate, setPaymentDate] = useState(todayLocal);
     const [memo, setMemo] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const isMobile = useIsMobile();
 
     // Initialize form state once per open. Keying on `outstanding` too would
     // re-run this AFTER a successful payment (onSuccess refetches → outstanding
@@ -106,7 +108,7 @@ export function JobRecordPaymentDialog({ open, onOpenChange, jobId, outstanding,
     };
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
             <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle
