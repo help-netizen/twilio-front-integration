@@ -40,8 +40,6 @@ interface PulseContactPanelProps {
     onAddressesChanged?: () => void; onContactChanged?: () => void; onTasksChanged?: () => void;
 }
 
-const ZENBOOKER_BASE_URL = 'https://zenbooker.com';
-
 /* No background cards — clean flat layout, content breathes */
 
 export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: jobsProp, focusSection, onAddressesChanged, onContactChanged, onTasksChanged }: PulseContactPanelProps) {
@@ -120,10 +118,6 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: j
         finally { setEmailSaving(false); }
     };
 
-    const zbLink = contact.zenbooker_id
-        ? `${ZENBOOKER_BASE_URL}/app?view=customers&customer=${contact.zenbooker_id}`
-        : null;
-
     if (loading) return <div className="p-5 space-y-4"><Skeleton className="h-8 w-48" /><Skeleton className="h-4 w-36" /><Skeleton className="h-4 w-56" /><Skeleton className="h-20 w-full" /></div>;
 
     return (
@@ -134,16 +128,11 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: j
                 <div>
                     {/* Type label */}
                     <span className="text-[10px] font-semibold uppercase tracking-widest mb-1 inline-block" style={{ color: 'var(--blanc-success)', letterSpacing: '0.12em' }}>Contact</span>
-                    {/* Name + ZB + Edit */}
+                    {/* Name + Edit */}
                     <div className="flex items-center gap-2 mb-1">
                         <h2 className="font-bold text-2xl leading-tight truncate" style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>
                             {contact.full_name || 'Unknown'}
                         </h2>
-                        {zbLink && (
-                            <a href={zbLink} target="_blank" rel="noopener noreferrer" title="Open in Zenbooker" className="inline-flex items-center justify-center shrink-0 rounded-md transition-colors hover:bg-muted/60" style={{ width: 22, height: 22 }}>
-                                <span className="text-[9px] font-bold leading-none" style={{ color: 'var(--blanc-ink-3)' }}>ZB</span>
-                            </a>
-                        )}
                         <button onClick={() => setEditOpen(true)} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors shrink-0" style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-3)' }}>Edit</button>
                     </div>
                     {contact.company_name && <p className="text-sm mb-3" style={{ color: 'var(--blanc-ink-3)' }}>{contact.company_name}</p>}

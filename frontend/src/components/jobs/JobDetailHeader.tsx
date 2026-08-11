@@ -1,4 +1,4 @@
-import { ExternalLink, ChevronDown, RotateCcw, MoreVertical, Copy } from 'lucide-react';
+import { ChevronDown, RotateCcw, MoreVertical, Copy } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -80,23 +80,6 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy, on
                     Job
                     {(job.job_number || job.id) && (
                         <span className="font-mono">#{job.job_number || job.id}</span>
-                    )}
-                    {job.zenbooker_job_id && (
-                        <span className="inline-flex items-center gap-0.5">
-                            <span>ZB</span>
-                            <a
-                                href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                aria-label={`Open job #${job.job_number || job.id} in Zenbooker`}
-                                title="Open in Zenbooker"
-                                className="inline-flex items-center transition-opacity hover:opacity-70"
-                                style={{ color: 'var(--blanc-info)' }}
-                                onClick={e => e.stopPropagation()}
-                            >
-                                <ExternalLink className="size-2.5" />
-                            </a>
-                        </span>
                     )}
                 </span>
 

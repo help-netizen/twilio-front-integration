@@ -198,17 +198,13 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
                     pathname: '/settings/integrations',
                     exact: true,
                     search: { tab: 'marketplace' },
-                    fallbackForSearch: { tab: ['marketplace', 'api-keys', 'zenbooker'] },
+                    fallbackForSearch: { tab: ['marketplace', 'api-keys'] },
                 }],
             },
             {
                 id: 'app-studio', label: 'App Studio', to: '/settings/app-studio',
                 permissions: ['tenant.integrations.manage'], tenantRoles: ['tenant_admin'],
                 requiresCompanyFlag: 'app_studio_enabled',
-            },
-            {
-                id: 'zenbooker', label: 'Zenbooker', to: '/settings/integrations?tab=zenbooker', permissions: ['tenant.integrations.manage'],
-                matches: [{ pathname: '/settings/integrations', exact: true, search: { tab: 'zenbooker' } }],
             },
             { id: 'google-email', label: 'Google Email', to: '/settings/integrations/google-email', permissions: ['tenant.integrations.manage'] },
             {
