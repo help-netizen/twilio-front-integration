@@ -26,6 +26,30 @@ export interface AnalyticsKpis {
     ad_spend_cents: number;
     roas: number | null;
     marketing_contribution_cents: number;
+
+    // GOOGLE-LSA-ATTRIBUTION-001 — Google is mostly phone calls (Local Services
+    // Ads); LSA leads are phone-matched to CRM and attributed by job_id. Spend is
+    // split so LSA ROAS pairs LSA revenue with LSA spend (search stays separate).
+    google_lsa_ad_spend_cents: number;
+    google_other_ad_spend_cents: number;
+    google_lsa_windowed_revenue_cents: number;
+    google_lsa_ltv_cents: number;
+    google_lsa_roas: number | null;
+    google_lsa_ltv_roas: number | null;
+
+    // ELOCAL-ATTRIBUTION-001 — pay-per-call network. Spend = BILLABLE only
+    // (UNBILLABLE = refunded/free). CPA = billable spend / converted, two lenses.
+    elocal_call_count: number;
+    elocal_billable_call_count: number;
+    elocal_unbillable_call_count: number;
+    elocal_matched_call_count: number;
+    elocal_billable_ad_spend_cents: number;
+    elocal_booked_conversions: number;
+    elocal_completed_conversions: number;
+    elocal_windowed_revenue_cents: number;
+    elocal_cpa_booked_cents: number | null;
+    elocal_cpa_completed_cents: number | null;
+    elocal_roas: number | null;
 }
 
 export interface FunnelStage {

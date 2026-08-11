@@ -8,6 +8,7 @@ import {
     fetchAnalyticsBreakdown,
     fetchAnalyticsDataQuality,
     type AnalyticsSummary,
+    type AnalyticsKpis,
     type AnalyticsBreakdown,
     type BreakdownDimension,
     type BreakdownRow,
@@ -125,6 +126,7 @@ export default function AnalyticsPage() {
             ) : (
                 <>
                     <KpiRow data={summaryQ.data} />
+                    <ChannelPerformance data={summaryQ.data} />
                     <FunnelCard data={summaryQ.data} />
                 </>
             )}
@@ -212,6 +214,108 @@ function KpiRow({ data }: { data: AnalyticsSummary }) {
                 valueColor={k.marketing_contribution_cents >= 0 ? OK : DANGER}
             />
         </div>
+    );
+}
+
+/* ── channel performance (GOOGLE-LSA / ELOCAL phone-matched attribution) ──── */
+function ChannelPerformance({ data }: { data: AnalyticsSummary }) {
+    const k = data.kpis;
+    const hasGoogle =
+        k.google_lsa_ad_spend_cents > 0 || k.google_other_ad_spend_cents > 0 || k.google_lsa_windowed_revenue_cents > 0;
+    const hasElocal = k.elocal_call_count > 0 || k.elocal_billable_ad_spend_cents > 0;
+    if (!hasGoogle && !hasElocal) return null;
+    return (
+        <Card title="Channel performance" right={<span style={{ fontSize: 12, color: INK3 }}>ad channels · calls phone-matched to jobs</span>}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {hasGoogle && <GooglePerf k={k} />}
+                {hasElocal && <ElocalPerf k={k} />}
+            </div>
+        </Card>
+    );
+}
+
+function ProviderPanel({ name, tag, headline, headlineSub, positive, children }: {
+    name: string; tag: string; headline: string; headlineSub: string; positive: boolean | null; children: ReactNode;
+}) {
+    const headColor = positive === null ? INK3 : positive ? OK : DANGER;
+    return (
+        <div style={{ background: 'rgba(25,25,25,0.03)', borderRadius: 16, padding: '15px 17px' }}>
+            <div className="flex items-start justify-between gap-3" style={{ marginBottom: 4 }}>
+                <div>
+                    <div style={{ fontSize: 14.5, fontWeight: 700, color: INK1, fontFamily: HEAD_FONT }}>{name}</div>
+                    <div style={{ fontSize: 11, color: INK3, marginTop: 1 }}>{tag}</div>
+                </div>
+                <div style={{ textAlign: 'right', flex: 'none' }}>
+                    <div className="mono" style={{ fontSize: 25, fontWeight: 800, lineHeight: 1, fontFamily: HEAD_FONT, color: headColor }}>{headline}</div>
+                    <div style={{ fontSize: 10, color: INK3, marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{headlineSub}</div>
+                </div>
+            </div>
+            <div style={{ marginTop: 8 }}>{children}</div>
+        </div>
+    );
+}
+
+function StatRow({ label, hint, value, sub, valueColor }: {
+    label: string; hint?: string; value: string; sub?: string; valueColor?: string;
+}) {
+    return (
+        <div className="flex items-baseline justify-between gap-3" style={{ padding: '7px 0', borderTop: `1px solid ${LINE}` }}>
+            <span style={{ fontSize: 12.5, color: INK2 }}>
+                {label}
+                {hint && <span style={{ fontSize: 11, color: INK3 }}> · {hint}</span>}
+            </span>
+            <span className="mono" style={{ fontSize: 13.5, fontWeight: 700, color: valueColor || INK1, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {value}
+                {sub && <span style={{ fontSize: 11, fontWeight: 500, color: INK3, marginLeft: 6 }}>{sub}</span>}
+            </span>
+        </div>
+    );
+}
+
+function GooglePerf({ k }: { k: AnalyticsKpis }) {
+    const roas = k.google_lsa_roas;
+    return (
+        <ProviderPanel
+            name="Google — Local Services"
+            tag="pay-per-call · phone-matched"
+            headline={roas !== null ? `${roas.toFixed(1)}×` : '—'}
+            headlineSub="rev ÷ LSA spend"
+            positive={roas === null ? null : roas >= 1}
+        >
+            <StatRow label="LSA spend" value={fmtMoney(k.google_lsa_ad_spend_cents)} />
+            <StatRow label="Attributed revenue" hint="windowed" value={fmtMoney(k.google_lsa_windowed_revenue_cents)} />
+            <StatRow
+                label="Customer lifetime value"
+                value={fmtMoney(k.google_lsa_ltv_cents)}
+                sub={k.google_lsa_ltv_roas !== null ? `${k.google_lsa_ltv_roas.toFixed(1)}×` : undefined}
+            />
+            {k.google_other_ad_spend_cents > 0 && (
+                <StatRow label="Search campaigns" hint="not yet attributed" value={fmtMoney(k.google_other_ad_spend_cents)} valueColor={INK3} />
+            )}
+        </ProviderPanel>
+    );
+}
+
+function ElocalPerf({ k }: { k: AnalyticsKpis }) {
+    const roas = k.elocal_roas;
+    return (
+        <ProviderPanel
+            name="eLocal"
+            tag="pay-per-call · phone-matched"
+            headline={roas !== null ? `${roas.toFixed(1)}×` : '—'}
+            headlineSub="rev ÷ billable spend"
+            positive={roas === null ? null : roas >= 1}
+        >
+            <StatRow label="Billable spend" hint={k.elocal_unbillable_call_count > 0 ? `${fmtCount(k.elocal_unbillable_call_count)} refunded` : undefined} value={fmtMoney(k.elocal_billable_ad_spend_cents)} sub={`${fmtCount(k.elocal_billable_call_count)} calls`} />
+            <StatRow label="Calls matched" value={`${fmtCount(k.elocal_matched_call_count)} / ${fmtCount(k.elocal_call_count)}`} />
+            <StatRow label="Converted" value={`${fmtCount(k.elocal_booked_conversions)}`} sub={`booked · ${fmtCount(k.elocal_completed_conversions)} completed`} />
+            <StatRow
+                label="Cost per converted"
+                value={k.elocal_cpa_booked_cents !== null ? fmtMoney(k.elocal_cpa_booked_cents) : '—'}
+                sub={k.elocal_cpa_completed_cents !== null ? `${fmtMoney(k.elocal_cpa_completed_cents)} completed` : 'booked'}
+            />
+            <StatRow label="Attributed revenue" hint="windowed" value={fmtMoney(k.elocal_windowed_revenue_cents)} />
+        </ProviderPanel>
     );
 }
 
