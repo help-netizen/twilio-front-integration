@@ -1,4 +1,4 @@
--- Roll back migration 246 (APP-EGRESS-001 Phase I). Safe to run repeatedly.
+-- Roll back migration 250 (APP-EGRESS-001 Phase I). Safe to run repeatedly.
 
 DROP TABLE IF EXISTS app_installation_secrets;
 

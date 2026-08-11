@@ -45,11 +45,11 @@ const WRITE_ROLLBACK = fs.readFileSync(
     'utf8'
 );
 const EGRESS_SCHEMA = fs.readFileSync(
-    path.join(MIGRATIONS, '246_app_egress_phase_i.sql'),
+    path.join(MIGRATIONS, '250_app_egress_phase_i.sql'),
     'utf8'
 );
 const EGRESS_ROLLBACK = fs.readFileSync(
-    path.join(MIGRATIONS, 'rollback_246_app_egress_phase_i.sql'),
+    path.join(MIGRATIONS, 'rollback_250_app_egress_phase_i.sql'),
     'utf8'
 );
 const ROLE_SEED = fs.readFileSync(path.join(MIGRATIONS, '050_seed_role_configs.sql'), 'utf8');
@@ -589,7 +589,7 @@ async function snapshotCompanyB(client, fixture) {
 }
 
 describe('APP-GW-001 real PostgreSQL gateway matrix', () => {
-    databaseTest('migration 246 applies twice and rollback/forward restores secrets plus egress metering', async () => {
+    databaseTest('migration 250 applies twice and rollback/forward restores secrets plus egress metering', async () => {
         const client = await db.pool.connect();
         try {
             await client.query('BEGIN');
