@@ -834,7 +834,7 @@ describe('PF007: FSM route authorization', () => {
     expect(eventBusMock.emit).not.toHaveBeenCalled();
   });
 
-  it('apply updates blanc_status and fires the transition op in one transaction', async () => {
+  it('apply enters On the way without messages.send or an SMS side effect', async () => {
     const job = {
       id: 1,
       blanc_status: 'Submitted',
@@ -846,15 +846,15 @@ describe('PF007: FSM route authorization', () => {
     db.query.mockResolvedValue({ rows: [{ scxml_source: JOB_SCXML, version_number: 1 }] });
 
     const res = await fsmRequest(
-      fsmApp({ permissions: ['jobs.view', 'jobs.edit', 'messages.send'] }),
-      'POST', '/job/apply', { entityId: 1, event: 'TO_ON_THE_WAY', eta_minutes: 25 }
+      fsmApp({ permissions: ['jobs.view', 'jobs.edit'] }),
+      'POST', '/job/apply', { entityId: 1, event: 'TO_ON_THE_WAY' }
     );
 
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({
       previousState: 'Submitted',
       newState: 'On the way',
-      op: 'notify_on_the_way',
+      op: 'arrival_eta',
       fallback: false,
     });
     expect(jobsServiceMock.updateBlancStatus).toHaveBeenCalledWith(
@@ -868,10 +868,7 @@ describe('PF007: FSM route authorization', () => {
         resolvedTransition: expect.objectContaining({ event: 'TO_ON_THE_WAY' }),
       })
     );
-    expect(runTransitionOpMock).toHaveBeenCalledWith(
-      'notify_on_the_way',
-      expect.objectContaining({ companyId: FSM_COMPANY, etaMinutes: 25 })
-    );
+    expect(runTransitionOpMock).not.toHaveBeenCalled();
     expect(db.query.mock.calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']));
   });
 
@@ -946,5 +943,38 @@ describe('PF007: FSM route authorization', () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.data.map(a => a.event)).toEqual(['GO']);
+  });
+
+  it('GET /:machineKey/actions surfaces target op without messages.send', async () => {
+    const SYSTEM_TARGET_SCXML = `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" xmlns:blanc="https://blanc.app/fsm"
+       initial="Custom_source" blanc:machine="job" blanc:title="T">
+  <state id="Custom_source" blanc:statusName="Custom source">
+    <transition event="GO_ON_THE_WAY" target="On_the_way" blanc:action="true"
+                blanc:button="false" blanc:variant="neutral" blanc:label="On the way"/>
+  </state>
+  <state id="On_the_way" blanc:statusName="On the way"
+         blanc:system="on_the_way" blanc:op="arrival_eta"/>
+</scxml>`;
+    db.query.mockResolvedValue({
+      rows: [{ scxml_source: SYSTEM_TARGET_SCXML, version_number: 1 }],
+    });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view'], roleKey: 'provider' }),
+      'GET', '/job/actions?state=' + encodeURIComponent('Custom source')
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([
+      expect.objectContaining({
+        event: 'GO_ON_THE_WAY',
+        target: 'On the way',
+        button: false,
+        variant: 'neutral',
+        system: 'on_the_way',
+        op: 'arrival_eta',
+      }),
+    ]);
   });
 });

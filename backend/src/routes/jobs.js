@@ -804,6 +804,8 @@ router.post('/:id/eta/estimate', requirePermission('messages.send'), async (req,
 });
 
 // POST /:id/eta/notify — SMS first (primary), then status (best-effort).
+// With body.skip_status=true this is notify-only; the normal FSM transition has
+// already changed status and this endpoint must not perform a second write.
 router.post('/:id/eta/notify', requirePermission('messages.send'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
@@ -834,6 +836,10 @@ router.post('/:id/eta/notify', requirePermission('messages.send'), async (req, r
                 code: sendErr.code,
                 message: sendErr.message,
             });
+        }
+
+        if (req.body?.skip_status === true) {
+            return res.json({ ok: true, data: { sent: true } });
         }
 
         // SMS sent (primary success). Advance status best-effort — no SMS rollback.

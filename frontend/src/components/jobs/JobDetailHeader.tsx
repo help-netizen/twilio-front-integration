@@ -4,7 +4,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { BLANC_STATUSES, BLANC_STATUS_COLORS } from './jobHelpers';
-import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
+import { useFsmStates, useFsmActions, targetCarriesArrivalEta } from '../../hooks/useFsmActions';
 import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -16,6 +16,9 @@ interface JobDetailHeaderProps {
     onBlancStatusChange: (id: number, s: string) => void;
     onCancel: (id: number) => void;
     onCopy?: () => void;
+    /** FSM-SYSTEM-TRANSITIONS-001: after a plain transition into an arrival_eta
+     *  status, open the notify-ETA modal (panel-owned). Never gates the change. */
+    onRequestEta?: (id: number) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -29,7 +32,7 @@ function hexToRgba(hex: string, alpha: number) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: JobDetailHeaderProps) {
+export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy, onRequestEta }: JobDetailHeaderProps) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
     const { data: fsmData } = useFsmStates('job', true);
@@ -45,6 +48,18 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
     );
     const unreachable = allStatuses.filter(s => s !== job.blanc_status && !allowedTargets.has(s));
     const canReset = initialState && job.blanc_status !== initialState;
+
+    // Perform the transition, then — if entering this status carries the arrival_eta
+    // op (FSM-SYSTEM-TRANSITIONS-001) and the user can message — ask the panel to open
+    // the notify-ETA modal. The transition always happens; closing the modal never
+    // undoes it. Same behaviour as the JobOpsSection "On the way" button.
+    const changeStatus = (target: string) => {
+        if (target === 'Canceled') { onCancel(job.id); return; }
+        onBlancStatusChange(job.id, target);
+        if (targetCarriesArrivalEta(fsmActions, target) && hasPermission('messages.send')) {
+            onRequestEta?.(job.id);
+        }
+    };
 
     // Title = the job type (service), matching the list tile (JobMobileCard) so
     // the card and the list read consistently. The customer stays in the Contact
@@ -142,13 +157,7 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                         {reachable.map(s => (
                             <DropdownMenuItem
                                 key={s}
-                                onClick={() => {
-                                    if (s === 'Canceled') {
-                                        onCancel(job.id);
-                                        return;
-                                    }
-                                    onBlancStatusChange(job.id, s);
-                                }}
+                                onClick={() => changeStatus(s)}
                             >
                                 {s}
                             </DropdownMenuItem>

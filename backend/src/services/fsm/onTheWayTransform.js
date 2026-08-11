@@ -2,17 +2,15 @@
  * ONWAY-001 — pure SCXML transform for the "On the way" job status.
  *
  * Extracted as a DB-free, unit-testable pure function (TASK-ONWAY-1 / consumed by
- * TASK-ONWAY-3). It mirrors EXACTLY the two `replace()` passes performed by the
- * SQL migration `backend/db/migrations/127_job_fsm_on_the_way.sql`.
+ * TASK-ONWAY-3). Its original structure mirrors the two `replace()` passes in
+ * migration 127, while its emitted metadata follows the current canonical FSM.
  *
  * IMPORTANT — why this is a parallel implementation, not a shared module:
  *   The migration runner (`apply_migrations.js`) executes plain `.sql` files via
  *   `db.query(sql)` — it does NOT run JS, so a migration cannot `require()` this
- *   helper. The migration therefore keeps the same logic inline as SQL `replace()`
- *   calls, and this helper holds the byte-identical transform so tests can assert
- *   the injected state/transitions and idempotency without a database.
- *   Keep the two in lockstep: any edit here must be mirrored in migration 127
- *   (and the `073` seed / `fsm/job.scxml` canonical source), and vice-versa.
+ *   helper. Historical migration 127 remains immutable; migration 249 reconciles
+ *   its published output to the state-op scheme. Keep this helper in lockstep with
+ *   the `073` seed and `fsm/job.scxml` canonical source.
  *
  * Transitions added (ONWAY-001 §5.5):
  *   Into On the way:  TO_ON_THE_WAY     Submitted   → On_the_way
@@ -21,6 +19,7 @@
  *   Out of On the way: TO_CANCELED        On_the_way → Canceled
  *
  * State id is `On_the_way` (SCXML id rules); status name / label is `On the way`.
+ * The state carries the arrival ETA operation; inbound edges remain plain buttons.
  * Additive only — no existing state or transition is removed or altered.
  */
 
@@ -33,7 +32,7 @@ const ON_THE_WAY_MARKER = 'id="On_the_way"';
 // (A) The new state block, injected immediately BEFORE the `<final id="Canceled" …/>`
 //     marker. Indentation matches the neighboring states in `fsm/job.scxml`.
 const ON_THE_WAY_STATE_BLOCK =
-`  <state id="On_the_way" blanc:label="On the way" blanc:statusName="On the way">
+`  <state id="On_the_way" blanc:label="On the way" blanc:statusName="On the way" blanc:system="on_the_way" blanc:op="arrival_eta">
     <transition event="TO_VISIT_COMPLETED" target="Visit_completed" blanc:action="true" blanc:button="true" blanc:label="Visit completed" blanc:order="1" />
     <transition event="TO_CANCELED" target="Canceled" blanc:action="true" blanc:label="Cancel" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to cancel this job?" />
   </state>
@@ -48,7 +47,7 @@ const CANCELED_FINAL_MARKER = '  <final id="Canceled" blanc:label="Canceled" />'
 const SUBMITTED_OPEN = '  <state id="Submitted" blanc:label="Submitted">';
 const RESCHEDULED_OPEN = '  <state id="Rescheduled" blanc:label="Rescheduled">';
 const INBOUND_TRANSITION =
-'\n    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:button="true" blanc:op="notify_on_the_way" blanc:label="On the way" blanc:order="0" />';
+'\n    <transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:button="true" blanc:label="On the way" blanc:order="0" />';
 
 /**
  * Inject the "On the way" state + inbound transitions into a job SCXML source.

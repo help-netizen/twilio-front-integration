@@ -35,10 +35,18 @@ describe('parseSCXML', () => {
       // Submitted has 4 outgoing transitions (ONWAY-001 added TO_ON_THE_WAY)
       const submitted = graph.states.get('Submitted');
       expect(submitted.transitions).toHaveLength(4);
+      expect(submitted.system).toBe('start');
+
+      expect(graph.states.get('On_the_way')).toMatchObject({
+        system: 'on_the_way', op: 'arrival_eta',
+      });
+      expect(graph.states.get('Visit_completed').system).toBe('visit_completed');
+      expect(graph.states.get('Job_is_Done').system).toBe('job_done');
 
       const toOnTheWay = submitted.transitions.find(t => t.event === 'TO_ON_THE_WAY');
       expect(toOnTheWay).toBeDefined();
       expect(toOnTheWay.target).toBe('On_the_way');
+      expect(toOnTheWay).toMatchObject({ system: 'on_the_way', op: 'arrival_eta' });
 
       const toFollowUp = submitted.transitions.find(t => t.event === 'TO_FOLLOW_UP');
       expect(toFollowUp).toBeDefined();
@@ -160,14 +168,14 @@ describe('parseSCXML', () => {
       expect(tr.roles).toEqual(['agent', 'admin']);
     });
 
-    test('extracts button, variant, and op while preserving unset defaults', () => {
+    test('keeps button/variant on edges and gets op/system from the target state', () => {
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <scxml xmlns="http://www.w3.org/2005/07/scxml" xmlns:blanc="https://blanc.app/fsm" initial="A">
   <state id="A">
-    <transition event="PROMOTE" target="B" blanc:action="true" blanc:button="false" blanc:variant="neutral" blanc:op="notify_on_the_way"/>
+    <transition event="PROMOTE" target="B" blanc:action="true" blanc:button="false" blanc:variant="neutral" blanc:op="legacy_edge_op"/>
     <transition event="DEFAULTS" target="C" blanc:action="true"/>
   </state>
-  <state id="B"/>
+  <state id="B" blanc:system="on_the_way" blanc:op="arrival_eta"/>
   <state id="C"/>
 </scxml>`;
       const transitions = parseSCXML(xml).states.get('A').transitions;
@@ -175,9 +183,12 @@ describe('parseSCXML', () => {
       expect(transitions[0]).toMatchObject({
         button: false,
         variant: 'neutral',
-        op: 'notify_on_the_way',
+        system: 'on_the_way',
+        op: 'arrival_eta',
       });
-      expect(transitions[1]).toMatchObject({ button: null, variant: null, op: null });
+      expect(transitions[1]).toMatchObject({
+        button: null, variant: null, system: null, op: null,
+      });
     });
   });
 });
@@ -372,12 +383,13 @@ describe('resolveTransition', () => {
     expect(result.event).toBe('TO_FOLLOW_UP');
   });
 
-  test('returns the parsed operation carried by the resolved transition', async () => {
+  test('returns the target state operation and system identity', async () => {
     const result = await resolveTransition(COMPANY, MACHINE, 'Submitted', 'TO_ON_THE_WAY');
-    expect(result.op).toBe('notify_on_the_way');
+    expect(result).toMatchObject({ op: 'arrival_eta', system: 'on_the_way' });
     expect(result.transition).toMatchObject({
       button: true,
-      op: 'notify_on_the_way',
+      op: 'arrival_eta',
+      system: 'on_the_way',
     });
   });
 
@@ -504,7 +516,8 @@ describe('getAvailableActions', () => {
     expect(byEvent.TO_ON_THE_WAY).toMatchObject({
       button: true,
       variant: 'primary',
-      op: 'notify_on_the_way',
+      op: 'arrival_eta',
+      system: 'on_the_way',
     });
     expect(byEvent.TO_FOLLOW_UP).toMatchObject({ button: true, variant: 'secondary', op: null });
     expect(byEvent.TO_WAITING_PARTS).toMatchObject({ button: true, variant: 'secondary' });
@@ -615,6 +628,7 @@ describe('getAvailableActions', () => {
       expect(result.actions.length).toBeGreaterThan(0);
       expect(result.actions.every(action => action.button === true && action.variant === 'neutral')).toBe(true);
       expect(result.actions.every(action => action.op === null)).toBe(true);
+      expect(result.actions.every(action => action.system === null)).toBe(true);
     } finally {
       db.query = originalQuery;
     }
@@ -625,6 +639,36 @@ describe('getAvailableActions', () => {
     const followUp = result.actions.find(a => a.event === 'TO_FOLLOW_UP');
     expect(followUp.label).toBe('Follow up');
     expect(followUp.targetStatusName).toBe('Follow Up with Client');
+  });
+
+  test('surfaces arrival_eta from every inbound edge, including an arbitrary source', async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:blanc="https://blanc.app/fsm"
+       initial="Custom_source" blanc:machine="job">
+  <state id="Custom_source" blanc:label="Custom source">
+    <transition event="ENTER_ON_THE_WAY" target="On_the_way"
+                blanc:action="true" blanc:button="false" blanc:variant="neutral"
+                blanc:label="On the way"/>
+  </state>
+  <state id="On_the_way" blanc:label="On the way" blanc:statusName="On the way"
+         blanc:system="on_the_way" blanc:op="arrival_eta"/>
+</scxml>`;
+    graphCache.set('any-source:job', parseSCXML(xml));
+
+    const result = await getAvailableActions('any-source', 'job', 'Custom source', []);
+
+    expect(result.actions).toEqual([
+      expect.objectContaining({
+        event: 'ENTER_ON_THE_WAY',
+        targetStatusName: 'On the way',
+        button: false,
+        variant: 'neutral',
+        system: 'on_the_way',
+        op: 'arrival_eta',
+      }),
+    ]);
+    graphCache.delete('any-source:job');
   });
 });
 

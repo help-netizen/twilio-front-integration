@@ -18,8 +18,27 @@ export interface FsmAction {
     button: boolean;
     /** Button visual weight: primary | secondary | success | danger | neutral. Server-defaulted. */
     variant: string;
-    /** Optional side-effect hook fired on apply (e.g. 'notify_on_the_way'). */
+    /** FSM-SYSTEM-TRANSITIONS-001: behaviour carried by the TARGET STATE this action
+     *  enters (not the edge). 'arrival_eta' → after the plain status change, open the
+     *  notify-ETA modal. Robust to the FSM editor: the behaviour lives on the state. */
     op: string | null;
+    /** The target's reserved-status kind, when it is a system status
+     *  (start | on_the_way | visit_completed | job_done). */
+    system?: string | null;
+}
+
+/**
+ * FSM-SYSTEM-TRANSITIONS-001: does entering `target` from the current state carry
+ * the arrival-ETA behaviour? True when an available action into that target declares
+ * `op === 'arrival_eta'` (the "On the way" system status). This is the ONLY source of
+ * truth — no hardcoded status list. Callers use it to decide whether, after a plain
+ * status change, to open the notify-ETA modal.
+ */
+export function targetCarriesArrivalEta(
+    actions: FsmAction[] | undefined,
+    target: string,
+): boolean {
+    return (actions || []).some(a => a.target === target && a.op === 'arrival_eta');
 }
 
 export interface TransitionResult {

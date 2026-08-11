@@ -97,28 +97,30 @@ describe('FSM apply handler', () => {
         conversationsService.sendMessage.mockResolvedValue({ id: 'message-1' });
     });
 
-    test('updates status and fires notify_on_the_way before the transaction commits', async () => {
+    test('transition into On the way is plain, sends no SMS, and needs no messages.send', async () => {
         const transition = {
             event: 'TO_ON_THE_WAY',
             targetStatusName: 'On the way',
             action: true,
             roles: [],
-            op: 'notify_on_the_way',
+            button: true,
+            op: 'arrival_eta',
+            system: 'on_the_way',
         };
         fsmService.resolveTransition.mockResolvedValue({
             valid: true,
             targetState: 'On the way',
             event: 'TO_ON_THE_WAY',
             transition,
-            op: 'notify_on_the_way',
+            op: 'arrival_eta',
+            system: 'on_the_way',
         });
         const res = response();
 
         await applyTransitionHandler(request({
             entityId: 5,
             event: 'TO_ON_THE_WAY',
-            eta_minutes: 20,
-        }), res);
+        }, ['jobs.edit']), res);
 
         expect(res.statusCode).toBe(200);
         expect(jobsService.updateBlancStatus).toHaveBeenCalledWith(
@@ -128,15 +130,9 @@ describe('FSM apply handler', () => {
             expect.objectContaining({ id: 'crm-user', type: 'user' }),
             expect.objectContaining({ client, job: JOB, resolvedTransition: expect.objectContaining({ transition }) })
         );
-        expect(runTransitionOp).toHaveBeenCalledWith(
-            'notify_on_the_way',
-            expect.objectContaining({ client, companyId: COMPANY, etaMinutes: 20 })
-        );
-        expect(conversationsService.sendMessage).toHaveBeenCalledWith('conversation-1', {
-            companyId: COMPANY,
-            body: 'Hi! Your technician Taylor from ABC Homes is on the way and should arrive in about 20 minutes.',
-            author: 'agent',
-        });
+        expect(res.body.data).toMatchObject({ op: 'arrival_eta' });
+        expect(runTransitionOp).not.toHaveBeenCalled();
+        expect(conversationsService.sendMessage).not.toHaveBeenCalled();
         expect(client.query.mock.calls.map(([sql]) => sql)).toEqual(['BEGIN', 'COMMIT']);
     });
 
@@ -289,13 +285,14 @@ describe('FSM apply handler', () => {
         expect(jobsService.updateBlancStatus).not.toHaveBeenCalled();
     });
 
-    test('preserves messages.send for the retained ETA-SMS operation', async () => {
+    test('does not execute target-state operations inside apply', async () => {
         const transition = {
             event: 'TO_ON_THE_WAY',
             targetStatusName: 'On the way',
             action: true,
             roles: [],
-            op: 'notify_on_the_way',
+            op: 'arrival_eta',
+            system: 'on_the_way',
         };
         fsmService.resolveTransition.mockResolvedValue({
             valid: true,
@@ -303,16 +300,18 @@ describe('FSM apply handler', () => {
             event: transition.event,
             transition,
             op: transition.op,
+            system: transition.system,
         });
         const res = response();
 
         await applyTransitionHandler(
-            request({ entityId: 5, event: transition.event, eta_minutes: 20 }, ['jobs.edit']),
+            request({ entityId: 5, event: transition.event }, ['jobs.edit']),
             res
         );
 
-        expect(res.statusCode).toBe(403);
-        expect(jobsService.updateBlancStatus).not.toHaveBeenCalled();
+        expect(res.statusCode).toBe(200);
+        expect(jobsService.updateBlancStatus).toHaveBeenCalledTimes(1);
         expect(runTransitionOp).not.toHaveBeenCalled();
+        expect(conversationsService.sendMessage).not.toHaveBeenCalled();
     });
 });

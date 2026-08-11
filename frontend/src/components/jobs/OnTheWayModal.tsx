@@ -1,11 +1,12 @@
 /**
- * OnTheWayModal — ONWAY-001
+ * OnTheWayModal — ONWAY-001 · FSM-SYSTEM-TRANSITIONS-001
  *
- * From a pre-visit job (Submitted / Rescheduled) a technician notifies the
- * customer that they're en route. On open the modal does ONE geolocation fix
- * (8s timeout). With a fix + a usable job address it shows a pre-selected
- * "Google ETA · ~N min" option; otherwise it falls back to preset tiles plus a
- * custom-minutes entry. "Notify client" sends the SMS and advances the job.
+ * Opens AFTER a plain FSM transition into the "On the way" system status has
+ * already changed the job's status. The modal is notify-only: the technician
+ * optionally sends the customer an arrival-time SMS, or just closes it — closing
+ * never reverts the status. On open it does ONE geolocation fix (8s timeout);
+ * with a fix + a usable job address it shows a pre-selected "Google ETA · ~N min"
+ * option, otherwise preset tiles plus a custom-minutes entry.
  *
  * State ladder (§2.1):
  *   (a) Requesting location — spinner + "Finding your location…" (tiles usable).
@@ -43,17 +44,11 @@ interface Props {
     onClose: () => void;
     job: LocalJob;
     onDone: () => void;
-    /**
-     * FSM-JOB-ACTIONS-001: when provided, the modal only COLLECTS the ETA and hands the chosen
-     * minutes to the caller — which applies the FSM transition (the backend sends the ETA SMS as
-     * the `notify_on_the_way` op). Omitted → legacy self-send via notifyEta.
-     */
-    onConfirm?: (minutes: number) => Promise<void> | void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function OnTheWayModal({ open, onClose, job, onDone, onConfirm }: Props) {
+export function OnTheWayModal({ open, onClose, job, onDone }: Props) {
     const [locating, setLocating] = useState(false);
     const [googleEta, setGoogleEta] = useState<number | null>(null); // state (b) when non-null
     const [etaUnavailable, setEtaUnavailable] = useState(false);     // state (c)
@@ -150,34 +145,23 @@ export function OnTheWayModal({ open, onClose, job, onDone, onConfirm }: Props) 
         if (chosenMinutes == null || sending) return;
         setSending(true);
         try {
-            if (onConfirm) {
-                // FSM path: the caller applies the transition, which sends the ETA SMS server-side.
-                await onConfirm(chosenMinutes);
-            } else {
-                const result = await notifyEta(job.id, chosenMinutes);
-                if (result.warning) {
-                    toast.success("SMS sent, but the job status didn't update. You can change it manually.");
-                } else {
-                    toast.success("Customer notified — you're marked On the way.");
-                }
-            }
+            // Notify-only: the status was already changed by the FSM transition
+            // that opened this modal, so the server just sends the SMS.
+            await notifyEta(job.id, chosenMinutes, { skipStatus: true });
+            toast.success('Customer notified — they know you’re on the way.');
             onClose();
             onDone();
         } catch (err) {
-            if (onConfirm) {
-                toast.error(err instanceof Error ? err.message : "Couldn't complete the action.");
-            } else {
-                const code = err instanceof EtaNotifyError ? err.code : null;
-                toast.error(
-                    code === 'NO_PHONE' ? 'No phone number on file for this customer.' :
-                    code === 'NO_PROXY' ? 'No sending number configured for your company.' :
-                    code === 'WALLET_BLOCKED' ? 'Messaging is paused — top up your balance.' :
-                    "Couldn't send the message. Please try again.",
-                );
-            }
+            const code = err instanceof EtaNotifyError ? err.code : null;
+            toast.error(
+                code === 'NO_PHONE' ? 'No phone number on file for this customer.' :
+                code === 'NO_PROXY' ? 'No sending number configured for your company.' :
+                code === 'WALLET_BLOCKED' ? 'Messaging is paused — top up your balance.' :
+                "Couldn't send the message. Please try again.",
+            );
             setSending(false); // keep modal open so the user can retry
         }
-    }, [chosenMinutes, sending, job.id, onClose, onDone, onConfirm]);
+    }, [chosenMinutes, sending, job.id, onClose, onDone]);
 
     // ── Render ──
     return (

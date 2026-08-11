@@ -44,6 +44,7 @@ function getFallbackJobActions(currentState) {
         button: true,
         variant: 'neutral',
         op: null,
+        system: null,
     }));
 }
 
@@ -59,6 +60,7 @@ function resolveFallbackJobTransition(currentState, eventOrTarget) {
         event: action.event,
         transition: action,
         op: null,
+        system: null,
     };
 }
 

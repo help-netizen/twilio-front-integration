@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import { JobDetailHeader } from './JobDetailHeader';
 import { JobOpsSection } from './JobStatusTags';
+import { OnTheWayModal } from './OnTheWayModal';
 import { JobInfoSections } from './JobInfoSections';
 import { JobMetadataSection } from './JobMetadataSection';
 import { JobFinancialsTab } from './JobFinancialsTab';
@@ -48,6 +49,10 @@ export function JobDetailPanel({
     const [cancelOpen, setCancelOpen] = useState(false);
     const [cancelReason, setCancelReason] = useState('');
     const [cancelSubmitting, setCancelSubmitting] = useState(false);
+    // FSM-SYSTEM-TRANSITIONS-001: the notify-ETA modal opens after a plain transition
+    // into an arrival_eta status (from the header dropdown or the ops button). The
+    // status has already changed; the modal only offers to notify the customer.
+    const [etaOpen, setEtaOpen] = useState(false);
     const { hasAnyPermission } = useAuthz();
     const isMobile = useIsMobile();
     // Finance surface renders only with finance visibility (PF007)
@@ -76,7 +81,7 @@ export function JobDetailPanel({
         if (!open) setCancelReason('');
     };
 
-    const opsProps = { job, allTags, onTagsChange, onCancel: requestCancel, onNotified };
+    const opsProps = { job, allTags, onTagsChange, onCancel: requestCancel, onNotified, onRequestEta: () => setEtaOpen(true) };
 
     return (
         <div className="flex flex-col md:flex-row h-full overflow-hidden">
@@ -90,6 +95,7 @@ export function JobDetailPanel({
                     onBlancStatusChange={onBlancStatusChange}
                     onCancel={requestCancel}
                     onCopy={onCopy}
+                    onRequestEta={() => setEtaOpen(true)}
                 />
 
                 {/* Ops: status + tags + action chips — all in one compact band */}
@@ -191,6 +197,13 @@ export function JobDetailPanel({
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <OnTheWayModal
+                open={etaOpen}
+                onClose={() => setEtaOpen(false)}
+                job={job}
+                onDone={() => onNotified?.(job.id)}
+            />
         </div>
     );
 }

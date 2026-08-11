@@ -15,7 +15,6 @@ const { getProviderScope } = require('../middleware/providerScope');
 const { closePermissionError } = require('../services/jobTransitionPerms');
 const { withTransaction } = require('../services/transactionService');
 const { resolveFallbackJobTransition } = require('../services/jobWorkflowFallback');
-const { runTransitionOp } = require('../services/fsmTransitionOps');
 
 /**
  * Server-derived roles for FSM action filtering (PF007-HARDENING-001):
@@ -230,7 +229,7 @@ async function applyTransitionHandler(req, res) {
   try {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;
-    const { entityId, event, reason, eta_minutes: etaMinutes } = req.body || {};
+    const { entityId, event, reason } = req.body || {};
 
     if (!entityId || !event) {
       return res.status(400).json({ ok: false, error: 'entityId and event are required' });
@@ -276,10 +275,6 @@ async function applyTransitionHandler(req, res) {
       if (!req.user?._devMode) {
         const permErr = closePermissionError(req.authz?.permissions || [], result.targetState);
         if (permErr) throw applyError(permErr.status, permErr.error, 'ACCESS_DENIED');
-        if (result.op === 'notify_on_the_way'
-            && !(req.authz?.permissions || []).includes('messages.send')) {
-          throw applyError(403, 'Insufficient permissions to send messages', 'ACCESS_DENIED');
-        }
       }
 
       let cancelReason = null;
@@ -290,23 +285,13 @@ async function applyTransitionHandler(req, res) {
       }
 
       const actor = userActor(req.user?.crmUser?.id || null);
-      const updatedJob = await jobsService.updateBlancStatus(
+      await jobsService.updateBlancStatus(
         parseInt(entityId, 10),
         result.targetState,
         companyId,
         actor,
         { client, job: currentJob, resolvedTransition: result }
       );
-
-      if (result.op) {
-        await runTransitionOp(result.op, {
-          job: updatedJob || { ...currentJob, blanc_status: result.targetState },
-          companyId,
-          etaMinutes,
-          activityActor: actor,
-          client,
-        });
-      }
 
       return {
         currentState: currentJob.blanc_status,
@@ -415,7 +400,6 @@ router.get('/:machineKey/actions', requirePermission('jobs.view', 'fsm.viewer'),
     if (machineKey === 'job' && !req.user?._devMode) {
       const perms = req.authz?.permissions || [];
       actions = actions.filter(a => !closePermissionError(perms, a.target));
-      actions = actions.filter(a => a.op !== 'notify_on_the_way' || perms.includes('messages.send'));
     }
 
     res.json({ ok: true, data: actions });

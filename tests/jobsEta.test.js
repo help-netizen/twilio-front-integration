@@ -387,6 +387,41 @@ describe('POST /api/jobs/:id/eta/notify', () => {
             .toBeLessThan(mockUpdateBlancStatus.mock.invocationCallOrder[0]);
     });
 
+    test.each(['Submitted', 'On the way'])(
+        'FSM-SYSTEM-TRANSITIONS notify-only: sends and audits but leaves %s unchanged',
+        async (blancStatus) => {
+            primeHappy({ blanc_status: blancStatus });
+
+            const res = await request(
+                routeApp(),
+                'POST',
+                '/5/eta/notify',
+                { eta_minutes: 25, skip_status: true }
+            );
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ ok: true, data: { sent: true } });
+            expect(mockSendMessage).toHaveBeenCalledTimes(1);
+            expect(mockLogJobActivity).toHaveBeenCalledTimes(1);
+            expect(mockUpdateBlancStatus).not.toHaveBeenCalled();
+        }
+    );
+
+    test('notify-only still requires messages.send', async () => {
+        primeHappy({ blanc_status: 'On the way' });
+
+        const res = await request(
+            routeApp({ permissions: [] }),
+            'POST',
+            '/5/eta/notify',
+            { eta_minutes: 25, skip_status: true }
+        );
+
+        expect(res.status).toBe(403);
+        expect(mockSendMessage).not.toHaveBeenCalled();
+        expect(mockUpdateBlancStatus).not.toHaveBeenCalled();
+    });
+
     test('TC-NOT-004: NO_PHONE (null) → 422, no send, no status', async () => {
         primeHappy({ customer_phone: null });
         const res = await request(routeApp(), 'POST', '/5/eta/notify', { eta_minutes: 25 });
@@ -623,6 +658,8 @@ describe('ONWAY-001 FSM — injectOnTheWay transform', () => {
         // New state present with the canonical id.
         expect(scxml).toContain('id="On_the_way"');
         expect(scxml).toContain('blanc:statusName="On the way"');
+        expect(scxml).toContain('blanc:system="on_the_way"');
+        expect(scxml).toContain('blanc:op="arrival_eta"');
         // Out-of-state transitions.
         expect(scxml).toContain('event="TO_VISIT_COMPLETED" target="Visit_completed"');
         expect(scxml).toContain('event="TO_CANCELED" target="Canceled"');
@@ -635,6 +672,9 @@ describe('ONWAY-001 FSM — injectOnTheWay transform', () => {
         );
         expect(submittedBlock).toContain('event="TO_ON_THE_WAY" target="On_the_way"');
         expect(rescheduledBlock).toContain('event="TO_ON_THE_WAY" target="On_the_way"');
+        expect(submittedBlock).toContain('blanc:button="true"');
+        expect(rescheduledBlock).toContain('blanc:button="true"');
+        expect(scxml).not.toContain('blanc:op="notify_on_the_way"');
     });
 
     test('TC-FSM-transform: idempotent — second pass is a no-op (changed:false)', () => {

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 import {
     Plus, Navigation, Play, CheckCircle2, X, Ban, RotateCcw, ArrowRight, Wrench, PhoneCall,
     type LucideIcon,
@@ -9,7 +9,6 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { TagBadge } from './jobHelpers';
-import { OnTheWayModal } from './OnTheWayModal';
 import { JobRateMeBlock } from './JobRateMeBlock';
 import { useAuthz } from '../../hooks/useAuthz';
 import { useFsmActions, useApplyTransition, useFsmStates, type FsmAction } from '../../hooks/useFsmActions';
@@ -24,6 +23,9 @@ interface JobOpsSectionProps {
     onCancel: (id: number) => void;
     /** Refresh the job after the "On the way" notification (afterMutation). */
     onNotified?: (id: number) => void;
+    /** FSM-SYSTEM-TRANSITIONS-001: open the notify-ETA modal after a plain transition
+     *  into an arrival_eta status (the panel owns the modal). */
+    onRequestEta?: (id: number) => void;
 }
 
 // FSM-JOB-ACTIONS-001 — job status buttons are rendered from the per-company FSM's
@@ -38,7 +40,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
 function actionIcon(action: FsmAction): ReactNode {
     const Named = action.icon ? ICON_MAP[action.icon] : undefined;
     const Ico = Named
-        || (action.op === 'notify_on_the_way' ? Navigation
+        || (action.op === 'arrival_eta' ? Navigation
             : action.variant === 'success' ? CheckCircle2
                 : action.variant === 'danger' ? Ban
                     : undefined);
@@ -67,11 +69,9 @@ function variantStyle(variant: string): CSSProperties {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobOpsSection({
-    job, allTags, onTagsChange, onCancel, onNotified,
+    job, allTags, onTagsChange, onCancel, onNotified, onRequestEta,
 }: JobOpsSectionProps) {
     const { hasPermission } = useAuthz();
-    // The notify_on_the_way action pending its ETA modal (the apply fires on confirm).
-    const [onWayAction, setOnWayAction] = useState<FsmAction | null>(null);
 
     const { data: fsmActions } = useFsmActions('job', job.blanc_status);
     const applyMutation = useApplyTransition('job');
@@ -88,14 +88,19 @@ export function JobOpsSection({
 
     const runAction = async (action: FsmAction) => {
         if (applyMutation.isPending) return;
-        // "On the way" collects an ETA in the modal; the apply (op) sends the SMS on confirm.
-        if (action.op === 'notify_on_the_way') { setOnWayAction(action); return; }
         // Cancel keeps its dedicated reason dialog (always-available terminal action).
         if (action.target === 'Canceled') { onCancel(job.id); return; }
         if (action.confirm && !window.confirm(action.confirmText || `${action.label}?`)) return;
         try {
             await applyMutation.mutateAsync({ entityId: job.id, event: action.event });
             toast.success(`${action.label} — done`);
+            // FSM-SYSTEM-TRANSITIONS-001: "On the way" is a plain transition (status
+            // already changed above). If the target carries the arrival_eta op and the
+            // user can message, offer the notify-ETA modal afterwards — closing it never
+            // reverts the status.
+            if (action.op === 'arrival_eta' && hasPermission('messages.send')) {
+                onRequestEta?.(job.id);
+            }
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Action failed');
         }
@@ -193,19 +198,6 @@ export function JobOpsSection({
                 canSend={hasPermission('messages.send')}
                 onSent={onNotified}
             />
-
-            {/* ── "On the way" ETA modal — collects minutes, then applies the FSM transition ── */}
-            {onWayAction && (
-                <OnTheWayModal
-                    open={!!onWayAction}
-                    onClose={() => setOnWayAction(null)}
-                    job={job}
-                    onDone={() => { onNotified?.(job.id); setOnWayAction(null); }}
-                    onConfirm={async (minutes) => {
-                        await applyMutation.mutateAsync({ entityId: job.id, event: onWayAction.event, eta_minutes: minutes });
-                    }}
-                />
-            )}
         </div>
     );
 }

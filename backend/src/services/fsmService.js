@@ -46,6 +46,8 @@ function parseSCXML(xmlString) {
     for (const tr of state.transitions) {
       const targetState = states.get(tr.target);
       tr.targetStatusName = targetState ? targetState.statusName : tr.target;
+      tr.system = targetState ? targetState.system : null;
+      tr.op = targetState ? targetState.op : null;
     }
   }
 
@@ -59,6 +61,8 @@ function parseStateNode(node, isFinal) {
   const id = node['@_id'];
   const label = node['@_blanc:label'] || id.replace(/_/g, ' ');
   const statusName = node['@_blanc:statusName'] || label;
+  const system = node['@_blanc:system'] || null;
+  const op = node['@_blanc:op'] || null;
 
   const transitions = [];
   const transitionNodes = normalizeToArray(node.transition);
@@ -70,7 +74,6 @@ function parseStateNode(node, isFinal) {
       action: parseBool(tr['@_blanc:action']),
       button: parseOptionalBool(tr['@_blanc:button']),
       variant: tr['@_blanc:variant'] || null,
-      op: tr['@_blanc:op'] || null,
       label: tr['@_blanc:label'] || null,
       icon: tr['@_blanc:icon'] || null,
       confirm: parseBool(tr['@_blanc:confirm']),
@@ -81,7 +84,7 @@ function parseStateNode(node, isFinal) {
     });
   }
 
-  return { id, statusName, label, isFinal, transitions };
+  return { id, statusName, label, system, op, isFinal, transitions };
 }
 
 /**
@@ -675,12 +678,14 @@ async function resolveTransition(companyId, machineKey, currentState, eventOrTar
   }
 
   if (transition) {
+    const resolvedTarget = graph.states.get(transition.target);
     return {
       valid: true,
       targetState: transition.targetStatusName || transition.target,
       event: transition.event,
       transition,
-      op: transition.op,
+      op: resolvedTarget ? resolvedTarget.op : null,
+      system: resolvedTarget ? resolvedTarget.system : null,
     };
   }
 
@@ -749,7 +754,8 @@ async function getAvailableActions(companyId, machineKey, currentState, userRole
       action: tr.action,
       button: tr.button == null ? true : tr.button,
       variant,
-      op: tr.op,
+      op: target ? target.op : null,
+      system: target ? target.system : null,
     };
   });
 

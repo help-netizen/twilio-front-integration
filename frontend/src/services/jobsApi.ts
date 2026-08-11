@@ -293,16 +293,29 @@ export async function estimateEta(id: number, origin: { lat: number; lng: number
 }
 
 /**
- * Notify the customer (outbound SMS) that the technician is on the way and
- * advance the job to "On the way". Returns `data` plus any non-blocking
- * `warning`. On failure throws an {@link EtaNotifyError} carrying the backend
- * `code` (NO_PHONE / NO_PROXY / WALLET_BLOCKED / SMS_FAILED / invalid_eta).
+ * Notify the customer (outbound SMS) that the technician is on the way.
+ *
+ * FSM-SYSTEM-TRANSITIONS-001: entering "On the way" is now a plain FSM transition
+ * that has ALREADY changed the status by the time this runs, so the modal passes
+ * `skipStatus: true` and this becomes notify-only — the server sends the SMS and
+ * does not touch the status. The legacy combined behaviour (send + advance to
+ * "On the way") remains available when `skipStatus` is omitted.
+ *
+ * On failure throws an {@link EtaNotifyError} carrying the backend `code`
+ * (NO_PHONE / NO_PROXY / WALLET_BLOCKED / SMS_FAILED / invalid_eta).
  */
-export async function notifyEta(id: number, etaMinutes: number): Promise<EtaNotifyResult> {
+export async function notifyEta(
+    id: number,
+    etaMinutes: number,
+    opts?: { skipStatus?: boolean },
+): Promise<EtaNotifyResult> {
     const res = await authedFetch(`${JOBS_BASE}/${id}/eta/notify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eta_minutes: etaMinutes }),
+        body: JSON.stringify({
+            eta_minutes: etaMinutes,
+            ...(opts?.skipStatus ? { skip_status: true } : {}),
+        }),
     });
     let json: any = {};
     try { json = await res.json(); } catch { /* non-JSON body */ }
