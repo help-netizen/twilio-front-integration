@@ -67,6 +67,7 @@ describe('eLocal leased synchronization', () => {
             ranges: 25,
             calls: 25,
             webLeads: 0,
+            skippedCalls: 0,
             matchedLeads: 1,
             attributedJobs: 2,
         });

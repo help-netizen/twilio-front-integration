@@ -199,6 +199,7 @@ async function fetchCampaignResults(params) {
     const httpClient = params.httpClient || axios;
     const callsById = new Map();
     const webLeads = [];
+    let skippedCalls = 0;
     for (const campaignId of campaignIds) {
         const calls = await fetchResultType({
             campaignId,
@@ -209,7 +210,19 @@ async function fetchCampaignResults(params) {
             httpClient,
         });
         for (const record of calls) {
-            const mapped = mapCall(record, campaignId);
+            let mapped;
+            try {
+                mapped = mapCall(record, campaignId);
+            } catch {
+                // Tolerate an individual malformed record (missing supply-event
+                // status / call_date_time / call_id, or an unparseable cost)
+                // instead of aborting the whole range. Throwing here silently
+                // dropped EVERY other call in the same 30-day chunk — the eLocal
+                // backfill undercount (2026-08-11): a 90-day window returned 130
+                // calls instead of 401 because a few chunks each had one bad row.
+                skippedCalls += 1;
+                continue;
+            }
             if (!callsById.has(mapped.external_call_id)) {
                 callsById.set(mapped.external_call_id, mapped);
             }
@@ -228,7 +241,7 @@ async function fetchCampaignResults(params) {
         left.call_at.getTime() - right.call_at.getTime()
         || left.external_call_id.localeCompare(right.external_call_id)
     ));
-    return { calls, webLeads };
+    return { calls, webLeads, skippedCalls };
 }
 
 module.exports = {

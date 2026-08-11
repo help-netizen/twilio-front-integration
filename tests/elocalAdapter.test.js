@@ -104,6 +104,36 @@ describe('eLocal adapter', () => {
         });
     });
 
+    test('tolerates individual malformed records instead of aborting the range', async () => {
+        // A chunk containing one bad record (missing supply_event_status) must
+        // still return the good calls — not silently drop the whole range. This
+        // is the eLocal backfill undercount fix (2026-08-11): a 90-day window
+        // returned 130 of 401 calls because a few chunks each had one bad row.
+        const httpClient = {
+            get: jest.fn(async (url) => {
+                if (url.endsWith('/calls.json')) {
+                    return { data: { calls: [
+                        providerCall({ call_id: 'good-1' }),
+                        providerCall({ call_id: 'bad-status', supply_event_status: undefined }),
+                        providerCall({ call_id: 'good-2', call_date_time: '2026-08-11T10:00:00.000Z' }),
+                    ] } };
+                }
+                return { data: { web_leads: [] } };
+            }),
+        };
+
+        const result = await fetchCampaignResults({
+            campaignIds: [CAMPAIGN_A],
+            apiKey: 'private-api-key',
+            startDate: '2026-05-14',
+            endDate: '2026-08-11',
+            httpClient,
+        });
+
+        expect(result.calls.map(c => c.external_call_id).sort()).toEqual(['good-1', 'good-2']);
+        expect(result.skippedCalls).toBe(1);
+    });
+
     test('provider failures expose no API key or caller phone', async () => {
         const httpClient = {
             get: jest.fn().mockRejectedValue(Object.assign(

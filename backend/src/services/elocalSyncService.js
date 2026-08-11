@@ -106,6 +106,7 @@ async function syncCompany(companyId, connectionId, dependencies = {}) {
         const ranges = buildRanges(connection, startedAt);
         let callCount = 0;
         let webLeadCount = 0;
+        let skippedCalls = 0;
         for (const range of ranges) {
             const result = await adapter.fetchCampaignResults({
                 campaignIds: connection.campaign_ids,
@@ -115,6 +116,7 @@ async function syncCompany(companyId, connectionId, dependencies = {}) {
             });
             callCount += result.calls.length;
             webLeadCount += result.webLeads.length;
+            skippedCalls += result.skippedCalls || 0;
             await queries.commitCallsChunk({
                 companyId,
                 connectionId,
@@ -152,6 +154,7 @@ async function syncCompany(companyId, connectionId, dependencies = {}) {
             ranges: ranges.length,
             calls: callCount,
             webLeads: webLeadCount,
+            skippedCalls,
             matchedLeads: matchResult.matchedLeads,
             attributedJobs: matchResult.attributedJobs,
         };
