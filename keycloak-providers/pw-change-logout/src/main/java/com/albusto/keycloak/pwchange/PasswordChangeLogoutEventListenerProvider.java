@@ -5,19 +5,25 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.UriInfo;
+
 import org.jboss.logging.Logger;
+import org.keycloak.common.ClientConnection;
 import org.keycloak.events.Details;
 import org.keycloak.events.Event;
 import org.keycloak.events.EventListenerProvider;
 import org.keycloak.events.EventType;
 import org.keycloak.events.admin.AdminEvent;
 import org.keycloak.events.admin.OperationType;
+import org.keycloak.models.KeycloakContext;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.UserSessionProvider;
 import org.keycloak.models.credential.PasswordCredentialModel;
+import org.keycloak.services.managers.AuthenticationManager;
 
 public final class PasswordChangeLogoutEventListenerProvider implements EventListenerProvider {
     private static final Logger LOG = Logger.getLogger(PasswordChangeLogoutEventListenerProvider.class);
@@ -135,7 +141,7 @@ public final class PasswordChangeLogoutEventListenerProvider implements EventLis
 
             for (UserSessionModel userSession : sessionsToRemove) {
                 try {
-                    sessions.removeUserSession(realm, userSession);
+                    logoutSession(realm, userSession);
                 } catch (Exception e) {
                     LOG.errorf(e, "Failed to revoke online session %s for user %s",
                             userSession.getId(), user.getId());
@@ -144,6 +150,41 @@ public final class PasswordChangeLogoutEventListenerProvider implements EventLis
         } catch (Exception e) {
             LOG.errorf(e, "Failed to enumerate online sessions for user %s", user.getId());
         }
+    }
+
+    /**
+     * Terminates one online session AND notifies every client that registered an OIDC
+     * Back-Channel Logout URL (a signed logout_token POST), so a protected resource can
+     * revoke a still-valid access token on its very next request instead of waiting for the
+     * token to expire. AuthenticationManager.backchannelLogout performs BOTH the client
+     * notification and the session removal, so callers must not also call removeUserSession.
+     *
+     * The emitted logout token is session-specific (carries `sid`), so only the sessions
+     * enumerated by the caller — every session except the one that just changed the
+     * password — are torn down; the current session survives.
+     *
+     * If the active request context lacks the URI/connection/headers backchannelLogout
+     * needs to mint the token, fall back to a silent removal so a password change can never
+     * fail: the session is still invalidated, just without the instant notification (it
+     * lapses when its access token expires).
+     */
+    private void logoutSession(RealmModel realm, UserSessionModel userSession) {
+        KeycloakContext context = session.getContext();
+        UriInfo uriInfo = context != null ? context.getUri() : null;
+        ClientConnection connection = context != null ? context.getConnection() : null;
+        HttpHeaders headers = context != null ? context.getRequestHeaders() : null;
+
+        if (uriInfo == null || connection == null || headers == null) {
+            LOG.warnf("No request context while revoking session %s; removing it without a "
+                    + "back-channel logout notification", userSession.getId());
+            session.sessions().removeUserSession(realm, userSession);
+            return;
+        }
+
+        // logoutBroker=true also propagates the logout to linked identity providers
+        // (e.g. Google SSO), matching a full password-change security posture.
+        AuthenticationManager.backchannelLogout(session, realm, userSession, uriInfo, connection,
+                headers, true);
     }
 
     private void revokeOfflineSessions(UserSessionProvider sessions, RealmModel realm, UserModel user) {
