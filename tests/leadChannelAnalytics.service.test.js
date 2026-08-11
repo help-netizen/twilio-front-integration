@@ -13,16 +13,18 @@ const TECH_2 = '00000000-0000-4000-8000-000000000002';
 function cohortFact(overrides = {}) {
     return {
         id: '1',
-        converted: true,
+        lead_count: 1,
+        converted_count: 1,
         channel_key: 'source_google',
         channel_label: 'Google Ads',
         channel_attributed: true,
         area_key: 'area_downtown',
         area_label: 'Downtown',
-        visit_completed: true,
-        job_done: true,
+        visit_completed_count: 1,
+        jobs_done_count: 1,
         revenue_net_cents: '10000',
         call_cost_cents: '124',
+        google_lsa_windowed_revenue_cents: '0',
         technicians: [
             { key: TECH_1, label: 'Ada Technician' },
             { key: TECH_2, label: 'Grace Technician' },
@@ -71,14 +73,18 @@ describe('leadChannelAnalyticsService response math', () => {
                     cohortFact(),
                     cohortFact({
                         id: '2',
-                        converted: false,
-                        visit_completed: false,
-                        job_done: false,
+                        converted_count: 0,
+                        visit_completed_count: 0,
+                        jobs_done_count: 0,
                         revenue_net_cents: '0',
                         call_cost_cents: '0',
                         technicians: [],
                     }),
                 ],
+            })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({
+                rows: [{ channel_id: null, revenue_net_cents: '0' }],
             });
 
         const result = await analytics.getSummary(COMPANY_ID, PERIOD);
@@ -94,6 +100,12 @@ describe('leadChannelAnalyticsService response math', () => {
                 ad_spend_cents: 0,
                 roas: null,
                 marketing_contribution_cents: 9876,
+                google_lsa_ad_spend_cents: 0,
+                google_other_ad_spend_cents: 0,
+                google_lsa_windowed_revenue_cents: 0,
+                google_lsa_ltv_cents: 0,
+                google_lsa_roas: null,
+                google_lsa_ltv_roas: null,
             },
             funnel: [
                 { stage: 'leads', count: 2, conv_pct: 100 },
@@ -111,7 +123,12 @@ describe('leadChannelAnalyticsService response math', () => {
     });
 
     test('technician split de-duplicates assignees and reconciles exactly', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [cohortFact()] });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [cohortFact()] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({
+                rows: [{ channel_id: null, revenue_net_cents: '0' }],
+            });
 
         const result = await analytics.getBreakdown(COMPANY_ID, {
             ...PERIOD,

@@ -99,7 +99,19 @@ const COHORT_FACTS_SQL = `
         FROM companies
         WHERE id = $1
     ),
-    cohort AS (
+    google_channel AS (
+        SELECT
+            ch.id,
+            ch.channel_key,
+            ch.display_name
+        FROM lead_source_channels ch
+        JOIN company_context cc
+          ON cc.id = ch.company_id
+        WHERE ch.company_id = $1
+          AND ch.channel_key = 'google_ads'
+          AND ch.is_active = true
+    ),
+    lead_cohort AS (
         SELECT
             l.id,
             l.contact_id,
@@ -108,41 +120,53 @@ const COHORT_FACTS_SQL = `
                 l.converted_at IS NOT NULL
                 OR l.converted_to_job = true
                 OR LOWER(BTRIM(COALESCE(l.status, ''))) = 'converted'
+                OR EXISTS (
+                    SELECT 1
+                    FROM jobs converted_job
+                    WHERE converted_job.company_id = $1
+                      AND converted_job.lead_id = l.id
+                )
             ) AS converted,
             CASE
-                WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL THEN ch2.id
+                WHEN lsa_evidence.has_lsa THEN gch.id
+                WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL THEN gch.id
                 ELSE ch.id
             END AS channel_id,
             COALESCE(
                 CASE
-                    WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
-                        THEN ch2.channel_key
+                    WHEN lsa_evidence.has_lsa THEN 'google_ads'
+                    WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL
+                        THEN gch.channel_key
                 END,
                 ch.channel_key,
                 'unattributed'
             ) AS channel_key,
             COALESCE(
                 CASE
-                    WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
-                        THEN ch2.display_name
+                    WHEN lsa_evidence.has_lsa THEN 'Google Ads'
+                    WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL
+                        THEN gch.display_name
                 END,
                 ch.display_name,
                 'Unattributed'
             ) AS channel_label,
             (
-                CASE
-                    WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
-                        THEN ch2.id
-                    ELSE ch.id
-                END IS NOT NULL
-                AND COALESCE(
+                lsa_evidence.has_lsa
+                OR (
                     CASE
-                        WHEN l.gclid IS NOT NULL AND ch2.id IS NOT NULL
-                            THEN ch2.channel_key
-                    END,
-                    ch.channel_key,
-                    'unattributed'
-                ) <> 'unattributed'
+                        WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL
+                            THEN gch.id
+                        ELSE ch.id
+                    END IS NOT NULL
+                    AND COALESCE(
+                        CASE
+                            WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL
+                                THEN gch.channel_key
+                        END,
+                        ch.channel_key,
+                        'unattributed'
+                    ) <> 'unattributed'
+                )
             ) AS channel_attributed,
             CASE
                 WHEN NULLIF(BTRIM(st.area), '') IS NULL
@@ -164,10 +188,19 @@ const COHORT_FACTS_SQL = `
           ON ch.company_id = $1
          AND ch.id = lsa.channel_id
          AND ch.is_active = true
-        LEFT JOIN lead_source_channels ch2
-          ON ch2.company_id = $1
-         AND ch2.channel_key = 'google_ads'
-         AND ch2.is_active = true
+        LEFT JOIN google_channel gch
+          ON true
+        LEFT JOIN LATERAL (
+            SELECT true AS has_lsa
+            FROM jobs attributed_job
+            JOIN google_lsa_job_attributions attribution
+              ON attribution.company_id = $1
+             AND attribution.matched_job_id = attributed_job.id
+             AND attribution.match_confidence >= 90
+            WHERE attributed_job.company_id = $1
+              AND attributed_job.lead_id = l.id
+            LIMIT 1
+        ) lsa_evidence ON true
         LEFT JOIN service_territories st
           ON st.company_id = $1
          AND st.zip = SPLIT_PART(BTRIM(COALESCE(l.postal_code, '')), '-', 1)
@@ -175,40 +208,95 @@ const COHORT_FACTS_SQL = `
           AND l.created_at >= ($2::date AT TIME ZONE cc.timezone)
           AND l.created_at < (($3::date + 1) AT TIME ZONE cc.timezone)
     ),
-    job_stats AS (
+    lsa_jobs AS (
         SELECT
+            j.id AS job_id,
             j.lead_id,
-            BOOL_OR(
-                j.visit_completed_at IS NOT NULL
-                OR LOWER(REPLACE(BTRIM(COALESCE(j.blanc_status, '')), '_', ' '))
-                    IN ('visit completed', 'job is done')
-            ) AS visit_completed,
-            BOOL_OR(
-                j.repair_done_at IS NOT NULL
-                OR LOWER(REPLACE(BTRIM(COALESCE(j.blanc_status, '')), '_', ' '))
-                    = 'job is done'
-            ) AS job_done
+            gch.id AS channel_id,
+            'google_ads'::TEXT AS channel_key,
+            'Google Ads'::TEXT AS channel_label,
+            true AS channel_attributed,
+            CASE
+                WHEN NULLIF(BTRIM(st.area), '') IS NULL
+                    THEN 'outside_configured_area'
+                ELSE 'area_' || MD5(LOWER(BTRIM(st.area)))
+            END AS area_key,
+            CASE
+                WHEN NULLIF(BTRIM(st.area), '') IS NULL
+                    THEN 'Outside configured areas'
+                ELSE BTRIM(st.area)
+            END AS area_label,
+            true AS is_lsa,
+            j.visit_completed_at,
+            j.repair_done_at,
+            j.blanc_status,
+            j.zb_status,
+            j.assigned_provider_user_ids
+        FROM google_lsa_job_attributions attribution
+        JOIN google_lsa_leads lsa_lead
+          ON lsa_lead.company_id = $1
+         AND lsa_lead.id = attribution.lsa_lead_id
+        JOIN jobs j
+          ON j.company_id = $1
+         AND j.id = attribution.matched_job_id
+        JOIN company_context cc
+          ON cc.id = lsa_lead.company_id
+        LEFT JOIN google_channel gch
+          ON true
+        LEFT JOIN leads owning_lead
+          ON owning_lead.company_id = $1
+         AND owning_lead.id = j.lead_id
+        LEFT JOIN service_territories st
+          ON st.company_id = $1
+         AND st.zip = SPLIT_PART(
+             BTRIM(COALESCE(owning_lead.postal_code, '')),
+             '-',
+             1
+         )
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+          AND lsa_lead.lead_type = 'PHONE_CALL'
+          AND lsa_lead.provider_created_at
+                >= ($2::date AT TIME ZONE cc.timezone)
+          AND lsa_lead.provider_created_at
+                < (($3::date + 1) AT TIME ZONE cc.timezone)
+    ),
+    fallback_jobs AS (
+        SELECT
+            j.id AS job_id,
+            j.lead_id,
+            c.channel_id,
+            c.channel_key,
+            c.channel_label,
+            c.channel_attributed,
+            c.area_key,
+            c.area_label,
+            false AS is_lsa,
+            j.visit_completed_at,
+            j.repair_done_at,
+            j.blanc_status,
+            j.zb_status,
+            j.assigned_provider_user_ids
         FROM jobs j
-        JOIN cohort c
+        JOIN lead_cohort c
           ON c.id = j.lead_id
         WHERE j.company_id = $1
-        GROUP BY j.lead_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM google_lsa_job_attributions attribution
+              WHERE attribution.company_id = $1
+                AND attribution.matched_job_id = j.id
+                AND attribution.match_confidence >= 90
+          )
     ),
-    invoice_attribution AS (
-        SELECT
-            i.id AS invoice_id,
-            COALESCE(i.lead_id, ij.lead_id) AS lead_id
-        FROM invoices i
-        LEFT JOIN jobs ij
-          ON ij.company_id = $1
-         AND ij.id = i.job_id
-        JOIN cohort c
-          ON c.id = COALESCE(i.lead_id, ij.lead_id)
-        WHERE i.company_id = $1
+    job_acquisition AS (
+        SELECT * FROM lsa_jobs
+        UNION ALL
+        SELECT * FROM fallback_jobs
     ),
-    revenue_by_lead AS (
+    revenue_by_job AS (
         SELECT
-            ia.lead_id,
+            ja.job_id,
             ROUND(
                 (
                     SUM(
@@ -230,12 +318,12 @@ const COHORT_FACTS_SQL = `
                     )
                 ) * 100
             )::bigint AS revenue_net_cents
-        FROM invoice_attribution ia
-        JOIN payment_transactions pt
+        FROM job_acquisition ja
+        LEFT JOIN payment_transactions pt
           ON pt.company_id = $1
-         AND pt.invoice_id = ia.invoice_id
+         AND pt.job_id = ja.job_id
          AND pt.voided_at IS NULL
-        GROUP BY ia.lead_id
+        GROUP BY ja.job_id
     ),
     company_calls AS (
         SELECT
@@ -264,7 +352,7 @@ const COHORT_FACTS_SQL = `
                 tenant_lead.id DESC
             LIMIT 1
         ) chosen ON true
-        JOIN cohort c
+        JOIN lead_cohort c
           ON c.id = chosen.lead_id
     ),
     call_cost_by_lead AS (
@@ -274,12 +362,12 @@ const COHORT_FACTS_SQL = `
         FROM call_attribution ca
         GROUP BY ca.lead_id
     ),
-    job_technicians AS (
+    lead_job_technicians AS (
         SELECT DISTINCT
             j.lead_id,
             tech.tech_id
         FROM jobs j
-        JOIN cohort c
+        JOIN lead_cohort c
           ON c.id = j.lead_id
         CROSS JOIN LATERAL jsonb_array_elements_text(
             CASE
@@ -303,36 +391,197 @@ const COHORT_FACTS_SQL = `
                 )
                 ORDER BY jt.tech_id
             ) AS technicians
-        FROM job_technicians jt
+        FROM lead_job_technicians jt
         LEFT JOIN crm_users cu
           ON cu.company_id = $1
          AND cu.id::text = jt.tech_id
         GROUP BY jt.lead_id
+    ),
+    job_technicians AS (
+        SELECT DISTINCT
+            ja.job_id,
+            tech.tech_id
+        FROM job_acquisition ja
+        CROSS JOIN LATERAL jsonb_array_elements_text(
+            CASE
+                WHEN jsonb_typeof(ja.assigned_provider_user_ids) = 'array'
+                    THEN ja.assigned_provider_user_ids
+                ELSE '[]'::jsonb
+            END
+        ) tech(tech_id)
+        WHERE NULLIF(BTRIM(tech.tech_id), '') IS NOT NULL
+    ),
+    technicians_by_job AS (
+        SELECT
+            jt.job_id,
+            jsonb_agg(
+                jsonb_build_object(
+                    'key', jt.tech_id,
+                    'label', COALESCE(NULLIF(BTRIM(cu.full_name), ''),
+                                      NULLIF(BTRIM(cu.email), ''),
+                                      jt.tech_id)
+                )
+                ORDER BY jt.tech_id
+            ) AS technicians
+        FROM job_technicians jt
+        LEFT JOIN crm_users cu
+          ON cu.company_id = $1
+         AND cu.id::text = jt.tech_id
+        GROUP BY jt.job_id
     )
     SELECT
-        c.id,
-        (c.converted OR js.lead_id IS NOT NULL) AS converted,
+        'lead:' || c.id::TEXT AS id,
+        1::INTEGER AS lead_count,
+        CASE WHEN c.converted THEN 1 ELSE 0 END::INTEGER AS converted_count,
         c.channel_id,
         c.channel_key,
         c.channel_label,
         c.channel_attributed,
         c.area_key,
         c.area_label,
-        COALESCE(js.visit_completed, false) AS visit_completed,
-        COALESCE(js.job_done, false) AS job_done,
-        COALESCE(rbl.revenue_net_cents, 0)::bigint AS revenue_net_cents,
+        0::INTEGER AS visit_completed_count,
+        0::INTEGER AS jobs_done_count,
+        0::BIGINT AS revenue_net_cents,
         COALESCE(ccbl.call_cost_cents, 0)::bigint AS call_cost_cents,
+        0::BIGINT AS google_lsa_windowed_revenue_cents,
         COALESCE(tbl.technicians, '[]'::jsonb) AS technicians
-    FROM cohort c
-    LEFT JOIN job_stats js
-      ON js.lead_id = c.id
-    LEFT JOIN revenue_by_lead rbl
-      ON rbl.lead_id = c.id
+    FROM lead_cohort c
     LEFT JOIN call_cost_by_lead ccbl
       ON ccbl.lead_id = c.id
     LEFT JOIN technicians_by_lead tbl
       ON tbl.lead_id = c.id
-    ORDER BY c.id
+    UNION ALL
+    SELECT
+        'job:' || ja.job_id::TEXT AS id,
+        0::INTEGER AS lead_count,
+        0::INTEGER AS converted_count,
+        ja.channel_id,
+        ja.channel_key,
+        ja.channel_label,
+        ja.channel_attributed,
+        ja.area_key,
+        ja.area_label,
+        CASE
+            WHEN ja.visit_completed_at IS NOT NULL
+              OR LOWER(REPLACE(BTRIM(COALESCE(ja.blanc_status, '')), '_', ' '))
+                    IN ('visit completed', 'job is done')
+              OR LOWER(REPLACE(BTRIM(COALESCE(ja.zb_status, '')), '_', '-'))
+                    IN ('in-progress', 'complete')
+                THEN 1
+            ELSE 0
+        END::INTEGER AS visit_completed_count,
+        CASE
+            WHEN ja.repair_done_at IS NOT NULL
+              OR LOWER(REPLACE(BTRIM(COALESCE(ja.blanc_status, '')), '_', ' '))
+                    = 'job is done'
+              OR LOWER(BTRIM(COALESCE(ja.zb_status, ''))) = 'complete'
+                THEN 1
+            ELSE 0
+        END::INTEGER AS jobs_done_count,
+        COALESCE(rbj.revenue_net_cents, 0)::BIGINT AS revenue_net_cents,
+        0::BIGINT AS call_cost_cents,
+        CASE
+            WHEN ja.is_lsa THEN COALESCE(rbj.revenue_net_cents, 0)
+            ELSE 0
+        END::BIGINT AS google_lsa_windowed_revenue_cents,
+        COALESCE(tbj.technicians, '[]'::jsonb) AS technicians
+    FROM job_acquisition ja
+    LEFT JOIN revenue_by_job rbj
+      ON rbj.job_id = ja.job_id
+    LEFT JOIN technicians_by_job tbj
+      ON tbj.job_id = ja.job_id
+    ORDER BY id
+`;
+
+const LSA_LTV_SQL = `
+    WITH company_context AS (
+        SELECT
+            id,
+            COALESCE(NULLIF(timezone, ''), $4) AS timezone
+        FROM companies
+        WHERE id = $1
+    ),
+    lsa_cohort AS (
+        SELECT
+            lsa.id,
+            lsa.matched_contact_id
+        FROM google_lsa_leads lsa
+        JOIN company_context cc
+          ON cc.id = lsa.company_id
+        WHERE lsa.company_id = $1
+          AND lsa.lead_type = 'PHONE_CALL'
+          AND lsa.match_status = 'matched'
+          AND lsa.match_confidence >= 90
+          AND lsa.matched_contact_id IS NOT NULL
+          AND lsa.provider_created_at
+                >= ($2::date AT TIME ZONE cc.timezone)
+          AND lsa.provider_created_at
+                < (($3::date + 1) AT TIME ZONE cc.timezone)
+    ),
+    acquired_contacts AS (
+        SELECT cohort.matched_contact_id AS contact_id
+        FROM lsa_cohort cohort
+        UNION
+        SELECT attribution.matched_contact_id AS contact_id
+        FROM google_lsa_job_attributions attribution
+        JOIN lsa_cohort cohort
+          ON cohort.id = attribution.lsa_lead_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+          AND attribution.matched_contact_id IS NOT NULL
+    ),
+    lifetime_jobs AS (
+        SELECT j.id AS job_id
+        FROM jobs j
+        JOIN acquired_contacts acquired
+          ON acquired.contact_id = j.contact_id
+        WHERE j.company_id = $1
+        UNION
+        SELECT attribution.matched_job_id AS job_id
+        FROM google_lsa_job_attributions attribution
+        JOIN lsa_cohort cohort
+          ON cohort.id = attribution.lsa_lead_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+    )
+    SELECT
+        (
+            SELECT ch.id
+            FROM lead_source_channels ch
+            WHERE ch.company_id = $1
+              AND ch.channel_key = 'google_ads'
+              AND ch.is_active = true
+            LIMIT 1
+        ) AS channel_id,
+        COALESCE(
+            ROUND(
+                (
+                    SUM(
+                        CASE
+                            WHEN pt.transaction_type = 'payment'
+                             AND pt.status = 'completed'
+                                THEN pt.amount
+                            ELSE 0
+                        END
+                    )
+                    -
+                    SUM(
+                        CASE
+                            WHEN pt.transaction_type = 'refund'
+                             AND pt.status = 'completed'
+                                THEN ABS(pt.amount)
+                            ELSE 0
+                        END
+                    )
+                ) * 100
+            ),
+            0
+        )::BIGINT AS revenue_net_cents
+    FROM lifetime_jobs lifetime_job
+    LEFT JOIN payment_transactions pt
+      ON pt.company_id = $1
+     AND pt.job_id = lifetime_job.job_id
+     AND pt.voided_at IS NULL
 `;
 
 function asInteger(value) {
@@ -354,9 +603,10 @@ function normalizeTechnicians(value) {
 function normalizeFact(row) {
     return {
         id: row.id,
-        converted: row.converted === true,
-        visitCompleted: row.visit_completed === true,
-        jobDone: row.job_done === true,
+        leadCount: asInteger(row.lead_count),
+        convertedCount: asInteger(row.converted_count),
+        visitCompletedCount: asInteger(row.visit_completed_count),
+        jobsDoneCount: asInteger(row.jobs_done_count),
         channelAttributed: row.channel_attributed === true,
         channel: {
             id: row.channel_id || null,
@@ -367,6 +617,9 @@ function normalizeFact(row) {
         technicians: normalizeTechnicians(row.technicians),
         revenueNetCents: asInteger(row.revenue_net_cents),
         callCostCents: asInteger(row.call_cost_cents),
+        googleLsaWindowedRevenueCents: asInteger(
+            row.google_lsa_windowed_revenue_cents
+        ),
     };
 }
 
@@ -379,10 +632,31 @@ async function loadCohortFacts(companyId, period) {
     return rows.map(normalizeFact);
 }
 
+function emptyLsaLtvSnapshot() {
+    return {
+        channel_id: null,
+        revenue_net_cents: 0,
+    };
+}
+
+async function loadLsaLtvSnapshot(companyId, period) {
+    requireCompanyId(companyId);
+    const { rows } = await db.query(
+        LSA_LTV_SQL,
+        [companyId, period.from, period.to, DEFAULT_TIMEZONE]
+    );
+    return {
+        channel_id: rows[0]?.channel_id || null,
+        revenue_net_cents: asInteger(rows[0]?.revenue_net_cents),
+    };
+}
+
 function emptyCostSnapshot() {
     return {
         channels: [],
         total_cost_cents: 0,
+        google_lsa_ad_spend_cents: 0,
+        google_other_ad_spend_cents: 0,
     };
 }
 
@@ -396,7 +670,17 @@ async function loadCostSnapshot(companyId, period) {
              COALESCE(ch.is_active, false) AS is_active,
              ROUND(
                  SUM(perf.cost_micros)::numeric / 10000
-             )::bigint AS cost_cents
+             )::bigint AS cost_cents,
+             ROUND(
+                 SUM(
+                     CASE
+                         WHEN ch.channel_key = 'google_ads'
+                          AND perf.external_campaign_name ILIKE '%localservices%'
+                             THEN perf.cost_micros
+                         ELSE 0
+                     END
+                 )::numeric / 10000
+             )::bigint AS google_lsa_ad_spend_cents
          FROM lead_source_performance_daily perf
          LEFT JOIN lead_source_channels ch
            ON ch.company_id = $1
@@ -421,11 +705,25 @@ async function loadCostSnapshot(companyId, period) {
         channel_label: row.channel_label || null,
         is_active: row.is_active === true,
         cost_cents: asInteger(row.cost_cents),
+        google_lsa_ad_spend_cents: asInteger(
+            row.google_lsa_ad_spend_cents
+        ),
+        google_other_ad_spend_cents: row.channel_key === 'google_ads'
+            ? asInteger(row.cost_cents) - asInteger(row.google_lsa_ad_spend_cents)
+            : 0,
     }));
     return {
         channels,
         total_cost_cents: channels.reduce(
             (total, channel) => total + channel.cost_cents,
+            0
+        ),
+        google_lsa_ad_spend_cents: channels.reduce(
+            (total, channel) => total + channel.google_lsa_ad_spend_cents,
+            0
+        ),
+        google_other_ad_spend_cents: channels.reduce(
+            (total, channel) => total + channel.google_other_ad_spend_cents,
             0
         ),
     };
@@ -471,12 +769,14 @@ function percent(numerator, denominator) {
 
 function totalsForFacts(facts) {
     return facts.reduce((totals, fact) => {
-        totals.leads += 1;
-        totals.converted += fact.converted ? 1 : 0;
-        totals.visitCompleted += fact.visitCompleted ? 1 : 0;
-        totals.jobsDone += fact.jobDone ? 1 : 0;
+        totals.leads += fact.leadCount;
+        totals.converted += fact.convertedCount;
+        totals.visitCompleted += fact.visitCompletedCount;
+        totals.jobsDone += fact.jobsDoneCount;
         totals.revenueNetCents += fact.revenueNetCents;
         totals.callCostCents += fact.callCostCents;
+        totals.googleLsaWindowedRevenueCents +=
+            fact.googleLsaWindowedRevenueCents;
         return totals;
     }, {
         leads: 0,
@@ -485,6 +785,7 @@ function totalsForFacts(facts) {
         jobsDone: 0,
         revenueNetCents: 0,
         callCostCents: 0,
+        googleLsaWindowedRevenueCents: 0,
     });
 }
 
@@ -493,7 +794,34 @@ function roasFor(revenueNetCents, adSpendCents) {
     return revenueNetCents / adSpendCents;
 }
 
-function summaryKpis(totals, costSnapshot = emptyCostSnapshot()) {
+function lsaKpis(
+    windowedRevenueCents,
+    ltvRevenueCents,
+    costSnapshot = emptyCostSnapshot()
+) {
+    return {
+        google_lsa_ad_spend_cents:
+            costSnapshot.google_lsa_ad_spend_cents,
+        google_other_ad_spend_cents:
+            costSnapshot.google_other_ad_spend_cents,
+        google_lsa_windowed_revenue_cents: windowedRevenueCents,
+        google_lsa_ltv_cents: ltvRevenueCents,
+        google_lsa_roas: roasFor(
+            windowedRevenueCents,
+            costSnapshot.google_lsa_ad_spend_cents
+        ),
+        google_lsa_ltv_roas: roasFor(
+            ltvRevenueCents,
+            costSnapshot.google_lsa_ad_spend_cents
+        ),
+    };
+}
+
+function summaryKpis(
+    totals,
+    costSnapshot = emptyCostSnapshot(),
+    lsaLtvSnapshot = emptyLsaLtvSnapshot()
+) {
     const adSpendCents = costSnapshot.total_cost_cents;
     return {
         leads: totals.leads,
@@ -506,6 +834,11 @@ function summaryKpis(totals, costSnapshot = emptyCostSnapshot()) {
         roas: roasFor(totals.revenueNetCents, adSpendCents),
         marketing_contribution_cents:
             totals.revenueNetCents - totals.callCostCents - adSpendCents,
+        ...lsaKpis(
+            totals.googleLsaWindowedRevenueCents,
+            lsaLtvSnapshot.revenue_net_cents,
+            costSnapshot
+        ),
     };
 }
 
@@ -537,14 +870,15 @@ function funnelForTotals(totals) {
 async function getSummary(companyId, query = {}) {
     const period = parsePeriod(query.from, query.to);
     requireCompanyId(companyId);
-    const [timezone, facts, costSnapshot] = await Promise.all([
+    const [timezone, facts, costSnapshot, lsaLtvSnapshot] = await Promise.all([
         getCompanyTimezone(companyId),
         loadCohortFacts(companyId, period),
         loadCostSnapshot(companyId, period),
+        loadLsaLtvSnapshot(companyId, period),
     ]);
     const totals = totalsForFacts(facts);
     return {
-        kpis: summaryKpis(totals, costSnapshot),
+        kpis: summaryKpis(totals, costSnapshot, lsaLtvSnapshot),
         funnel: funnelForTotals(totals),
         period: { ...period, timezone },
     };
@@ -575,6 +909,10 @@ function emptyBreakdownAccumulator(target) {
             revenueNetCents: 0,
             callCostCents: 0,
             adSpendCents: 0,
+            googleLsaAdSpendCents: 0,
+            googleOtherAdSpendCents: 0,
+            googleLsaWindowedRevenueCents: 0,
+            googleLsaLtvCents: 0,
         },
         allocated: {},
     };
@@ -626,6 +964,7 @@ function allocateAdSpendToFacts(facts, costSnapshot = emptyCostSnapshot()) {
     for (const channelCost of costSnapshot.channels) {
         const eligibleFacts = allocatedFacts.filter(fact => (
             channelCost.is_active
+            && fact.leadCount > 0
             && fact.channelAttributed
             && fact.channel.id === channelCost.channel_id
         ));
@@ -677,7 +1016,8 @@ function buildBreakdownRows(
     dimension,
     totals,
     costSnapshot = emptyCostSnapshot(),
-    spendAllocation = allocateAdSpendToFacts(facts, costSnapshot)
+    spendAllocation = allocateAdSpendToFacts(facts, costSnapshot),
+    lsaLtvSnapshot = emptyLsaLtvSnapshot()
 ) {
     const accumulators = new Map();
     for (const fact of spendAllocation.facts) {
@@ -693,12 +1033,14 @@ function buildBreakdownRows(
                 accumulators.set(target.key, emptyBreakdownAccumulator(target));
             }
             const row = accumulators.get(target.key);
-            row.raw.leads += weight;
-            row.raw.converted += fact.converted ? weight : 0;
-            row.raw.visitCompleted += fact.visitCompleted ? weight : 0;
-            row.raw.jobsDone += fact.jobDone ? weight : 0;
+            row.raw.leads += fact.leadCount * weight;
+            row.raw.converted += fact.convertedCount * weight;
+            row.raw.visitCompleted += fact.visitCompletedCount * weight;
+            row.raw.jobsDone += fact.jobsDoneCount * weight;
             row.raw.revenueNetCents += fact.revenueNetCents * weight;
             row.raw.callCostCents += fact.callCostCents * weight;
+            row.raw.googleLsaWindowedRevenueCents +=
+                fact.googleLsaWindowedRevenueCents * weight;
             if (dimension !== 'channel') {
                 row.raw.adSpendCents += fact.allocatedAdCostCents * weight;
             }
@@ -708,14 +1050,37 @@ function buildBreakdownRows(
     if (dimension === 'channel') {
         for (const channelCost of costSnapshot.channels) {
             let row = Array.from(accumulators.values()).find(
-                candidate => candidate.channelId === channelCost.channel_id
+                candidate => (
+                    candidate.channelId === channelCost.channel_id
+                    || candidate.key === channelCost.channel_key
+                )
             );
             if (!row && channelCost.cost_cents !== 0) {
                 const target = costTarget(channelCost);
                 row = emptyBreakdownAccumulator(target);
                 accumulators.set(target.key, row);
             }
-            if (row) row.raw.adSpendCents = channelCost.cost_cents;
+            if (row) {
+                row.raw.adSpendCents = channelCost.cost_cents;
+                row.raw.googleLsaAdSpendCents =
+                    channelCost.google_lsa_ad_spend_cents;
+                row.raw.googleOtherAdSpendCents =
+                    channelCost.google_other_ad_spend_cents;
+            }
+        }
+
+        let googleRow = accumulators.get('google_ads');
+        if (!googleRow && lsaLtvSnapshot.revenue_net_cents !== 0) {
+            googleRow = emptyBreakdownAccumulator({
+                id: lsaLtvSnapshot.channel_id,
+                key: 'google_ads',
+                label: 'Google Ads',
+            });
+            accumulators.set('google_ads', googleRow);
+        }
+        if (googleRow) {
+            googleRow.raw.googleLsaLtvCents =
+                lsaLtvSnapshot.revenue_net_cents;
         }
     }
 
@@ -742,6 +1107,12 @@ function buildBreakdownRows(
         'callCostCents',
         totals.callCostCents
     );
+    allocateInteger(
+        rows,
+        'googleLsaWindowedRevenueCents',
+        'googleLsaWindowedRevenueCents',
+        totals.googleLsaWindowedRevenueCents
+    );
     const allocatedDimensionSpend = dimension === 'channel'
         ? costSnapshot.total_cost_cents
         : spendAllocation.allocated_cost_cents;
@@ -757,13 +1128,15 @@ function buildBreakdownRows(
         key: row.key,
         label: row.label,
         leads: row.allocated.leads,
+        converted: row.allocated.converted,
+        visit_completed: row.allocated.visitCompleted,
         jobs_done: row.allocated.jobsDone,
         revenue_net_cents: row.allocated.revenueNetCents,
         ad_spend_cents: hasObservedSpend ? row.allocated.adSpendCents : null,
         // A zero-lead synthetic row is unattributed spend (also surfaced as
         // unallocated_spend_cents); a 0× ROAS would falsely imply a measured
         // return, so ROAS is null there. Real rows (leads > 0, revenue 0) keep 0×.
-        roas: row.allocated.leads === 0
+        roas: row.allocated.leads === 0 && row.allocated.revenueNetCents === 0
             ? null
             : roasFor(
                 row.allocated.revenueNetCents,
@@ -773,6 +1146,19 @@ function buildBreakdownRows(
             row.allocated.revenueNetCents
             - row.allocated.callCostCents
             - row.allocated.adSpendCents,
+        google_lsa_ad_spend_cents: row.raw.googleLsaAdSpendCents,
+        google_other_ad_spend_cents: row.raw.googleOtherAdSpendCents,
+        google_lsa_windowed_revenue_cents:
+            row.allocated.googleLsaWindowedRevenueCents,
+        google_lsa_ltv_cents: row.raw.googleLsaLtvCents,
+        google_lsa_roas: roasFor(
+            row.allocated.googleLsaWindowedRevenueCents,
+            row.raw.googleLsaAdSpendCents
+        ),
+        google_lsa_ltv_roas: roasFor(
+            row.raw.googleLsaLtvCents,
+            row.raw.googleLsaAdSpendCents
+        ),
         funnel_counts: {
             leads: row.allocated.leads,
             converted: row.allocated.converted,
@@ -797,9 +1183,10 @@ async function getBreakdown(companyId, query = {}) {
         );
     }
 
-    const [facts, costSnapshot] = await Promise.all([
+    const [facts, costSnapshot, lsaLtvSnapshot] = await Promise.all([
         loadCohortFacts(companyId, period),
         loadCostSnapshot(companyId, period),
+        loadLsaLtvSnapshot(companyId, period),
     ]);
     const totals = totalsForFacts(facts);
     const spendAllocation = allocateAdSpendToFacts(facts, costSnapshot);
@@ -813,7 +1200,8 @@ async function getBreakdown(companyId, query = {}) {
             query.dimension,
             totals,
             costSnapshot,
-            spendAllocation
+            spendAllocation,
+            lsaLtvSnapshot
         ),
         totals: {
             leads: totals.leads,
@@ -825,6 +1213,11 @@ async function getBreakdown(companyId, query = {}) {
                 totals.revenueNetCents
                 - totals.callCostCents
                 - dimensionAdSpendCents,
+            ...lsaKpis(
+                totals.googleLsaWindowedRevenueCents,
+                lsaLtvSnapshot.revenue_net_cents,
+                costSnapshot
+            ),
             funnel_counts: {
                 leads: totals.leads,
                 converted: totals.converted,
@@ -872,7 +1265,7 @@ async function getStandaloneNetCents(companyId, period) {
          JOIN company_context cc
            ON cc.id = pt.company_id
          WHERE pt.company_id = $1
-           AND pt.invoice_id IS NULL
+           AND pt.job_id IS NULL
            AND pt.voided_at IS NULL
            AND COALESCE(pt.processed_at, pt.created_at)
                  >= ($2::date AT TIME ZONE cc.timezone)
@@ -897,10 +1290,18 @@ async function getDataQuality(companyId, query = {}) {
         loadCostSnapshot(companyId, period),
         loadConnectedSources(companyId),
     ]);
-    const attributed = facts.filter(fact => fact.channelAttributed).length;
+    const leadFacts = facts.filter(fact => fact.leadCount > 0);
+    const attributed = leadFacts.reduce(
+        (count, fact) => count + (fact.channelAttributed ? fact.leadCount : 0),
+        0
+    );
+    const leadCount = leadFacts.reduce(
+        (count, fact) => count + fact.leadCount,
+        0
+    );
     const spendAllocation = allocateAdSpendToFacts(facts, costSnapshot);
     return {
-        attribution_coverage_pct: percent(attributed, facts.length),
+        attribution_coverage_pct: percent(attributed, leadCount),
         unallocated_spend_cents: spendAllocation.unallocated_cost_cents,
         tax_basis_unknown_cents: taxBasisUnknownCents,
         connected_sources: connectedSources,

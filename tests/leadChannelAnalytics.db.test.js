@@ -33,6 +33,17 @@ const CONNECTOR_MIGRATION = fs.readFileSync(
     ),
     'utf8'
 );
+const LSA_MIGRATION = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '251_google_lsa_attribution.sql'
+    ),
+    'utf8'
+);
 
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
@@ -221,22 +232,24 @@ async function insertFixtures() {
 
     const jobs = await db.query(
         `INSERT INTO jobs
-            (lead_id, contact_id, company_id, blanc_status,
+            (lead_id, contact_id, company_id, zenbooker_job_id, blanc_status,
              assigned_provider_user_ids, created_at, updated_at)
          VALUES
-            ($1, $2, $3, 'Job is Done', $4::jsonb,
+            ($1, $2, $3, $4, 'Job is Done', $5::jsonb,
              '2026-07-11T14:00:00Z', '2026-07-12T14:00:00Z'),
-            ($5, $6, $7, 'Job is Done', $8::jsonb,
+            ($6, $7, $8, $9, 'Job is Done', $10::jsonb,
              '2026-07-11T14:00:00Z', '2026-07-12T14:00:00Z')
          RETURNING id, company_id`,
         [
             leadA,
             contactA,
             COMPANY_A,
+            `${TAG}-zb-job-a`,
             JSON.stringify([TECH_A_1, TECH_A_2, TECH_A_1]),
             leadB,
             contactB,
             COMPANY_B,
+            `${TAG}-zb-job-b`,
             JSON.stringify([TECH_B]),
         ]
     );
@@ -355,6 +368,24 @@ async function resetSpendFixtures() {
         [companyIds]
     );
     await db.query(
+        `DELETE FROM payment_transactions
+         WHERE company_id = ANY($1::uuid[])
+           AND external_source LIKE $2`,
+        [companyIds, `${TAG}-phase3%`]
+    );
+    await db.query(
+        `DELETE FROM jobs
+         WHERE company_id = ANY($1::uuid[])
+           AND job_number LIKE $2`,
+        [companyIds, `${TAG}-phase3%`]
+    );
+    await db.query(
+        `DELETE FROM leads
+         WHERE company_id = ANY($1::uuid[])
+           AND first_name = 'Phase 3 Analytics'`,
+        [companyIds]
+    );
+    await db.query(
         `DELETE FROM leads
          WHERE company_id = $1
            AND first_name = 'Phase B Allocation'`,
@@ -402,7 +433,8 @@ async function seedSpend(
     companyId,
     channelId,
     costMicros,
-    campaignId = 'shared-campaign'
+    campaignId = 'shared-campaign',
+    campaignName = 'Shared campaign label'
 ) {
     await db.query(
         `INSERT INTO lead_source_performance_daily (
@@ -420,12 +452,12 @@ async function seedSpend(
              'google_ads',
              'shared-account',
              $2,
-             'Shared campaign label',
+             $5,
              $3,
              '2026-07-10',
              $4
          )`,
-        [companyId, campaignId, channelId, costMicros]
+        [companyId, campaignId, channelId, costMicros, campaignName]
     );
 }
 
@@ -439,12 +471,171 @@ async function markLeadAsGoogleClick(leadId, companyId) {
     );
 }
 
+async function seedLsaConnection(companyId, channelId, customerId) {
+    const { rows } = await db.query(
+        `INSERT INTO google_ads_connections (
+             company_id,
+             channel_id,
+             customer_id,
+             status,
+             last_sync_status,
+             account_timezone
+         )
+         VALUES ($1, $2, $3, 'connected', 'ok', 'America/New_York')
+         RETURNING id`,
+        [companyId, channelId, customerId]
+    );
+    return rows[0].id;
+}
+
+async function seedMatchedLsaLead({
+    companyId,
+    connectionId,
+    contactId,
+    leadId,
+    externalId,
+    providerCreatedAt = '2026-07-10T14:00:00Z',
+}) {
+    const { rows } = await db.query(
+        `INSERT INTO google_lsa_leads (
+             company_id,
+             connection_id,
+             external_account_id,
+             external_lead_id,
+             resource_name,
+             lead_type,
+             phone_e164,
+             normalized_phone,
+             provider_created_at,
+             provider_creation_date_time,
+             match_status,
+             matched_contact_id,
+             matched_lead_id,
+             match_method,
+             match_confidence,
+             matched_at
+         )
+         VALUES (
+             $1,
+             $2,
+             $3,
+             $4,
+             $5,
+             'PHONE_CALL',
+             $6,
+             RIGHT($6, 10),
+             $7,
+             '2026-07-10 10:00:00.000000',
+             'matched',
+             $8,
+             $9,
+             'nearby_call_contact',
+             100,
+             $7
+         )
+         RETURNING id`,
+        [
+            companyId,
+            connectionId,
+            `account-${externalId}`,
+            externalId,
+            `customers/analytics/localServicesLeads/${externalId}`,
+            SHARED_PHONE,
+            providerCreatedAt,
+            contactId,
+            leadId,
+        ]
+    );
+    return rows[0].id;
+}
+
+async function attributeLsaJob({ companyId, lsaLeadId, jobId, contactId, leadId }) {
+    await db.query(
+        `INSERT INTO google_lsa_job_attributions (
+             company_id,
+             lsa_lead_id,
+             matched_job_id,
+             matched_contact_id,
+             evidence_lead_id,
+             match_method,
+             match_confidence
+         )
+         VALUES ($1, $2, $3, $4, $5, 'nearby_call_contact', 100)`,
+        [companyId, lsaLeadId, jobId, contactId, leadId]
+    );
+}
+
+async function seedPhase3Job({
+    companyId,
+    contactId,
+    leadId = null,
+    suffix,
+    zbStatus = 'scheduled',
+    amount = null,
+}) {
+    const { rows } = await db.query(
+        `INSERT INTO jobs (
+             company_id,
+             contact_id,
+             lead_id,
+             job_number,
+             blanc_status,
+             zb_status,
+             created_at,
+             updated_at
+         )
+         VALUES (
+             $1,
+             $2,
+             $3,
+             $4,
+             'Submitted',
+             $5,
+             '2026-08-05T14:00:00Z',
+             '2026-08-05T14:00:00Z'
+         )
+         RETURNING id`,
+        [companyId, contactId, leadId, `${TAG}-phase3-${suffix}`, zbStatus]
+    );
+    const jobId = rows[0].id;
+    if (amount !== null) {
+        await db.query(
+            `INSERT INTO payment_transactions (
+                 company_id,
+                 contact_id,
+                 job_id,
+                 transaction_type,
+                 payment_method,
+                 status,
+                 amount,
+                 processed_at,
+                 external_source
+             )
+             VALUES (
+                 $1,
+                 $2,
+                 $3,
+                 'payment',
+                 'cash',
+                 'completed',
+                 $4,
+                 '2026-08-06T14:00:00Z',
+                 $5
+             )`,
+            [companyId, contactId, jobId, amount, `${TAG}-phase3-${suffix}`]
+        );
+    }
+    return jobId;
+}
+
 beforeAll(async () => {
     if (!DATABASE.ready) return;
     await db.query(MIGRATION);
     await db.query(MIGRATION);
     await db.query(CONNECTOR_MIGRATION);
     await db.query(CONNECTOR_MIGRATION);
+    await db.query(LSA_MIGRATION);
+    await db.query(LSA_MIGRATION);
     await insertFixtures();
     dbReady = true;
 });
@@ -556,7 +747,7 @@ describe('LEAD-CHANNEL-ANALYTICS-001 migration and durable milestones', () => {
 });
 
 describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () => {
-    databaseTest('no connector or spend preserves the existing endpoint bytes', async () => {
+    databaseTest('no connector or spend preserves existing keys and adds LSA lenses', async () => {
         const [summary, channel, quality] = await Promise.all([
             invokeEndpoint(COMPANY_A, '/summary', { from: FROM, to: TO }),
             invokeEndpoint(COMPANY_A, '/breakdown', {
@@ -573,11 +764,17 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 converted: 1,
                 visit_completed: 1,
                 jobs_done: 1,
-                revenue_net_cents: 10000,
+                revenue_net_cents: 11234,
                 call_cost_cents: 124,
                 ad_spend_cents: 0,
                 roas: null,
-                marketing_contribution_cents: 9876,
+                marketing_contribution_cents: 11110,
+                google_lsa_ad_spend_cents: 0,
+                google_other_ad_spend_cents: 0,
+                google_lsa_windowed_revenue_cents: 0,
+                google_lsa_ltv_cents: 0,
+                google_lsa_roas: null,
+                google_lsa_ltv_roas: null,
             },
             funnel: [
                 { stage: 'leads', count: 1, conv_pct: 100 },
@@ -597,11 +794,19 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 key: SEEDED_GOOGLE_ADS_KEY,
                 label: 'Google Ads',
                 leads: 1,
+                converted: 1,
+                visit_completed: 1,
                 jobs_done: 1,
-                revenue_net_cents: 10000,
+                revenue_net_cents: 11234,
                 ad_spend_cents: null,
                 roas: null,
-                marketing_contribution_cents: 9876,
+                marketing_contribution_cents: 11110,
+                google_lsa_ad_spend_cents: 0,
+                google_other_ad_spend_cents: 0,
+                google_lsa_windowed_revenue_cents: 0,
+                google_lsa_ltv_cents: 0,
+                google_lsa_roas: null,
+                google_lsa_ltv_roas: null,
                 funnel_counts: {
                     leads: 1,
                     converted: 1,
@@ -612,10 +817,16 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
             totals: {
                 leads: 1,
                 jobs_done: 1,
-                revenue_net_cents: 10000,
+                revenue_net_cents: 11234,
                 ad_spend_cents: 0,
                 roas: null,
-                marketing_contribution_cents: 9876,
+                marketing_contribution_cents: 11110,
+                google_lsa_ad_spend_cents: 0,
+                google_other_ad_spend_cents: 0,
+                google_lsa_windowed_revenue_cents: 0,
+                google_lsa_ltv_cents: 0,
+                google_lsa_roas: null,
+                google_lsa_ltv_roas: null,
                 funnel_counts: {
                     leads: 1,
                     converted: 1,
@@ -627,12 +838,12 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         expect(JSON.stringify(quality.body)).toBe(JSON.stringify({
             attribution_coverage_pct: 100,
             unallocated_spend_cents: 0,
-            tax_basis_unknown_cents: 1234,
+            tax_basis_unknown_cents: 0,
             connected_sources: [],
         }));
     });
 
-    databaseTest('summary uses acquisition cohort, mature milestones, invoice net, and call cost', async () => {
+    databaseTest('a ZB job invoice-null payment uses job-keyed net revenue', async () => {
         const response = await invokeEndpoint(COMPANY_A, '/summary', {
             from: FROM,
             to: TO,
@@ -645,11 +856,17 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 converted: 1,
                 visit_completed: 1,
                 jobs_done: 1,
-                revenue_net_cents: 10000,
+                revenue_net_cents: 11234,
                 call_cost_cents: 124,
                 ad_spend_cents: 0,
                 roas: null,
-                marketing_contribution_cents: 9876,
+                marketing_contribution_cents: 11110,
+                google_lsa_ad_spend_cents: 0,
+                google_other_ad_spend_cents: 0,
+                google_lsa_windowed_revenue_cents: 0,
+                google_lsa_ltv_cents: 0,
+                google_lsa_roas: null,
+                google_lsa_ltv_roas: null,
             },
             funnel: [
                 { stage: 'leads', count: 1, conv_pct: 100 },
@@ -663,6 +880,38 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 timezone: 'America/New_York',
             },
         });
+
+        await db.query(
+            `INSERT INTO payment_transactions (
+                 company_id,
+                 contact_id,
+                 job_id,
+                 transaction_type,
+                 payment_method,
+                 status,
+                 amount,
+                 processed_at,
+                 external_source,
+                 voided_at
+             )
+             VALUES
+                ($1, $2, $3, 'refund', 'cash', 'completed', 2.00,
+                 '2026-07-17T14:00:00Z', $4, NULL),
+                ($1, $2, $3, 'payment', 'cash', 'completed', 99.00,
+                 '2026-07-17T14:00:00Z', $5, '2026-07-18T14:00:00Z')`,
+            [
+                COMPANY_A,
+                contactA,
+                jobA,
+                `${TAG}-phase3-refund`,
+                `${TAG}-phase3-voided`,
+            ]
+        );
+        const net = await analytics.getSummary(COMPANY_A, {
+            from: FROM,
+            to: TO,
+        });
+        expect(net.kpis.revenue_net_cents).toBe(11034);
     });
 
     databaseTest('multi-tech equal split reconciles every metric to company totals', async () => {
@@ -677,10 +926,10 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         expect(response.body.rows).toHaveLength(2);
         expect(response.body.rows.map(row => row.leads)).toEqual([0.5, 0.5]);
         expect(response.body.rows.map(row => row.jobs_done)).toEqual([0.5, 0.5]);
-        expect(response.body.rows.map(row => row.revenue_net_cents)).toEqual([5000, 5000]);
+        expect(response.body.rows.map(row => row.revenue_net_cents)).toEqual([5617, 5617]);
         expect(response.body.rows.map(
             row => row.marketing_contribution_cents
-        )).toEqual([4938, 4938]);
+        )).toEqual([5555, 5555]);
 
         const sum = key => response.body.rows.reduce(
             (total, row) => total + row[key],
@@ -699,7 +948,7 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         );
     });
 
-    databaseTest('standalone payments are excluded from contribution and surfaced as unknown tax basis', async () => {
+    databaseTest('only payments without a job remain unknown tax basis', async () => {
         const quality = await invokeEndpoint(COMPANY_A, '/data-quality', {
             from: FROM,
             to: TO,
@@ -713,11 +962,193 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         expect(quality.body).toEqual({
             attribution_coverage_pct: 100,
             unallocated_spend_cents: 0,
-            tax_basis_unknown_cents: 1234,
+            tax_basis_unknown_cents: 0,
             connected_sources: [],
         });
-        expect(summary.kpis.revenue_net_cents).toBe(10000);
-        expect(summary.kpis.marketing_contribution_cents).toBe(9876);
+        expect(summary.kpis.revenue_net_cents).toBe(11234);
+        expect(summary.kpis.marketing_contribution_cents).toBe(11110);
+    });
+
+    databaseTest('LSA precedence owns each job once and exposes windowed, LTV, and spend lenses', async () => {
+        const googleChannel = await ensureChannel(COMPANY_A);
+        const connectionId = await seedLsaConnection(
+            COMPANY_A,
+            googleChannel,
+            '1111111111'
+        );
+        const lsaLeadId = await seedMatchedLsaLead({
+            companyId: COMPANY_A,
+            connectionId,
+            contactId: contactA,
+            leadId: leadA,
+            externalId: `${TAG}-phase3-a`,
+        });
+        const leadlessWindowedJob = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'windowed',
+            amount: 25,
+        });
+        await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'lifetime',
+            amount: 50,
+        });
+        await markLeadAsGoogleClick(leadA, COMPANY_A);
+        await attributeLsaJob({
+            companyId: COMPANY_A,
+            lsaLeadId,
+            jobId: jobA,
+            contactId: contactA,
+            leadId: leadA,
+        });
+        await attributeLsaJob({
+            companyId: COMPANY_A,
+            lsaLeadId,
+            jobId: leadlessWindowedJob,
+            contactId: contactA,
+            leadId: null,
+        });
+        await seedSpend(
+            COMPANY_A,
+            googleChannel,
+            9000000,
+            'lsa-campaign',
+            'Boston LocalServices Calls'
+        );
+        await seedSpend(
+            COMPANY_A,
+            googleChannel,
+            6000000,
+            'search-campaign',
+            'Boston Search Calls'
+        );
+
+        const [summary, breakdown] = await Promise.all([
+            analytics.getSummary(COMPANY_A, { from: FROM, to: TO }),
+            analytics.getBreakdown(COMPANY_A, {
+                dimension: 'channel',
+                from: FROM,
+                to: TO,
+            }),
+        ]);
+
+        expect(summary.kpis).toMatchObject({
+            leads: 1,
+            revenue_net_cents: 13734,
+            ad_spend_cents: 1500,
+            google_lsa_ad_spend_cents: 900,
+            google_other_ad_spend_cents: 600,
+            google_lsa_windowed_revenue_cents: 13734,
+            google_lsa_ltv_cents: 18734,
+            google_lsa_roas: 13734 / 900,
+            google_lsa_ltv_roas: 18734 / 900,
+        });
+        expect(summary.kpis.google_lsa_ltv_cents).toBeGreaterThan(
+            summary.kpis.google_lsa_windowed_revenue_cents
+        );
+
+        const google = breakdown.rows.find(row => row.key === 'google_ads');
+        expect(google).toMatchObject({
+            leads: 1,
+            revenue_net_cents: 13734,
+            google_lsa_ad_spend_cents: 900,
+            google_other_ad_spend_cents: 600,
+            google_lsa_windowed_revenue_cents: 13734,
+            google_lsa_ltv_cents: 18734,
+            google_lsa_roas: 13734 / 900,
+            google_lsa_ltv_roas: 18734 / 900,
+        });
+        expect(breakdown.totals.revenue_net_cents).toBe(13734);
+    });
+
+    databaseTest("zb_status='complete' counts the job as visit-completed and done", async () => {
+        const { rows } = await db.query(
+            `INSERT INTO leads (
+                 uuid,
+                 company_id,
+                 contact_id,
+                 first_name,
+                 phone,
+                 postal_code,
+                 job_source,
+                 status,
+                 converted_to_job,
+                 created_at,
+                 updated_at
+             )
+             VALUES (
+                 $1,
+                 $2,
+                 $3,
+                 'Phase 3 Analytics',
+                 $4,
+                 '02108',
+                 'Google Ads',
+                 'New',
+                 false,
+                 '2026-07-20T14:00:00Z',
+                 '2026-07-20T14:00:00Z'
+             )
+             RETURNING id`,
+            [`${TAG.slice(-10)}z`, COMPANY_A, contactA, SHARED_PHONE]
+        );
+        await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: rows[0].id,
+            suffix: 'zb-complete',
+            zbStatus: 'complete',
+        });
+
+        const summary = await analytics.getSummary(COMPANY_A, {
+            from: FROM,
+            to: TO,
+        });
+
+        expect(summary.kpis).toMatchObject({
+            leads: 2,
+            converted: 2,
+            visit_completed: 2,
+            jobs_done: 2,
+            revenue_net_cents: 11234,
+        });
+    });
+
+    databaseTest('T-foreign/T-blast: foreign LSA ownership and LTV never enter company A', async () => {
+        const foreignGoogleChannel = await ensureChannel(COMPANY_B);
+        const foreignConnectionId = await seedLsaConnection(
+            COMPANY_B,
+            foreignGoogleChannel,
+            '2222222222'
+        );
+        const foreignLsaLeadId = await seedMatchedLsaLead({
+            companyId: COMPANY_B,
+            connectionId: foreignConnectionId,
+            contactId: contactB,
+            leadId: leadB,
+            externalId: `${TAG}-phase3-b`,
+        });
+        await attributeLsaJob({
+            companyId: COMPANY_B,
+            lsaLeadId: foreignLsaLeadId,
+            jobId: jobB,
+            contactId: contactB,
+            leadId: leadB,
+        });
+
+        const summary = await analytics.getSummary(COMPANY_A, {
+            from: FROM,
+            to: TO,
+        });
+
+        expect(summary.kpis).toMatchObject({
+            leads: 1,
+            revenue_net_cents: 11234,
+            google_lsa_windowed_revenue_cents: 0,
+            google_lsa_ltv_cents: 0,
+        });
     });
 
     databaseTest('T-blast: same-source/phone company B never appears in any endpoint', async () => {
@@ -750,12 +1181,12 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         expect(payload).not.toContain(TECH_B);
 
         const channel = responses[1].body;
-        expect(channel.totals.revenue_net_cents).toBe(10000);
+        expect(channel.totals.revenue_net_cents).toBe(11234);
         expect(channel.totals.leads).toBe(1);
         const area = responses[2].body;
         expect(area.rows).toHaveLength(1);
         expect(area.rows[0].label).toBe('Downtown');
-        expect(responses[4].body.tax_basis_unknown_cents).toBe(1234);
+        expect(responses[4].body.tax_basis_unknown_cents).toBe(0);
     });
 
     databaseTest('SAB-LCA-COST-COMPANY: summary spend scan cannot cross tenant boundaries', async () => {
@@ -776,11 +1207,11 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
 
         expect(response.statusCode).toBe(200);
         expect(response.body.kpis).toMatchObject({
-            revenue_net_cents: 10000,
+            revenue_net_cents: 11234,
             call_cost_cents: 124,
             ad_spend_cents: 2500,
-            roas: 4,
-            marketing_contribution_cents: 7376,
+            roas: 11234 / 2500,
+            marketing_contribution_cents: 8610,
         });
     });
 
@@ -810,20 +1241,28 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         );
         expect(googleAds).toMatchObject({
             leads: 1,
-            revenue_net_cents: 10000,
+            revenue_net_cents: 11234,
             ad_spend_cents: 2500,
-            roas: 4,
-            marketing_contribution_cents: 7376,
+            roas: 11234 / 2500,
+            marketing_contribution_cents: 8610,
         });
         expect(zeroLead).toEqual({
             key: 'phase_b_zero_lead',
             label: 'Zero-lead paid channel',
             leads: 0,
+            converted: 0,
+            visit_completed: 0,
             jobs_done: 0,
             revenue_net_cents: 0,
             ad_spend_cents: 1000,
             roas: null,
             marketing_contribution_cents: -1000,
+            google_lsa_ad_spend_cents: 0,
+            google_other_ad_spend_cents: 0,
+            google_lsa_windowed_revenue_cents: 0,
+            google_lsa_ltv_cents: 0,
+            google_lsa_roas: null,
+            google_lsa_ltv_roas: null,
             funnel_counts: {
                 leads: 0,
                 converted: 0,
@@ -833,9 +1272,9 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         });
         expect(breakdown.body.totals).toMatchObject({
             ad_spend_cents: 3500,
-            marketing_contribution_cents: 6376,
+            marketing_contribution_cents: 7610,
         });
-        expect(breakdown.body.totals.roas).toBeCloseTo(10000 / 3500);
+        expect(breakdown.body.totals.roas).toBeCloseTo(11234 / 3500);
         expect(
             breakdown.body.rows.reduce(
                 (total, row) => total + row.ad_spend_cents,
@@ -901,7 +1340,7 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
 
         for (const breakdown of [area.body, technician.body]) {
             expect(breakdown.totals.ad_spend_cents).toBe(1001);
-            expect(breakdown.totals.marketing_contribution_cents).toBe(8875);
+            expect(breakdown.totals.marketing_contribution_cents).toBe(10109);
             expect(
                 breakdown.rows.reduce(
                     (total, row) => total + row.ad_spend_cents,
@@ -913,7 +1352,7 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                     (total, row) => total + row.marketing_contribution_cents,
                     0
                 )
-            ).toBe(8875);
+            ).toBe(10109);
         }
 
         expect(area.body.rows.map(row => row.ad_spend_cents).sort()).toEqual([
@@ -925,7 +1364,7 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
             row => row.label === 'Outside configured areas'
         );
         expect(downtown.marketing_contribution_cents).toBe(
-            10000 - 124 - downtown.ad_spend_cents
+            11234 - 124 - downtown.ad_spend_cents
         );
         expect(outside.marketing_contribution_cents).toBe(
             -outside.ad_spend_cents
@@ -1016,7 +1455,7 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
             key: 'google_ads',
             label: 'Google Ads',
             leads: 1,
-            revenue_net_cents: 10000,
+            revenue_net_cents: 11234,
             ad_spend_cents: null,
         });
         expect(breakdown.body.rows[0].key).not.toBe(SEEDED_GOOGLE_ADS_KEY);
