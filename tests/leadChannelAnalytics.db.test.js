@@ -44,6 +44,17 @@ const LSA_MIGRATION = fs.readFileSync(
     ),
     'utf8'
 );
+const ELOCAL_MIGRATION = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '252_elocal_attribution.sql'
+    ),
+    'utf8'
+);
 
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
@@ -358,6 +369,11 @@ async function cleanupFixtures() {
 async function resetSpendFixtures() {
     const companyIds = [COMPANY_A, COMPANY_B];
     await db.query(
+        `DELETE FROM elocal_connections
+         WHERE company_id = ANY($1::uuid[])`,
+        [companyIds]
+    );
+    await db.query(
         `DELETE FROM lead_source_performance_daily
          WHERE company_id = ANY($1::uuid[])`,
         [companyIds]
@@ -400,7 +416,7 @@ async function resetSpendFixtures() {
     await db.query(
         `DELETE FROM lead_source_channels
          WHERE company_id = ANY($1::uuid[])
-           AND channel_key IN ('google_ads', 'phase_b_zero_lead')`,
+           AND channel_key IN ('google_ads', 'elocal', 'phase_b_zero_lead')`,
         [companyIds]
     );
 }
@@ -565,6 +581,108 @@ async function attributeLsaJob({ companyId, lsaLeadId, jobId, contactId, leadId 
     );
 }
 
+async function seedElocalConnection(companyId, channelId, suffix) {
+    const { rows } = await db.query(
+        `INSERT INTO elocal_connections (
+             company_id,
+             channel_id,
+             campaign_ids,
+             api_key_reference,
+             status,
+             last_sync_status
+         )
+         VALUES ($1, $2, $3::TEXT[], 'ELOCAL_API_KEY', 'connected', 'ok')
+         RETURNING id`,
+        [companyId, channelId, [`${TAG}-campaign-${suffix}`]]
+    );
+    return rows[0].id;
+}
+
+async function seedElocalLead({
+    companyId,
+    connectionId,
+    contactId,
+    leadId,
+    suffix,
+    billable,
+    costCents,
+}) {
+    const { rows } = await db.query(
+        `INSERT INTO elocal_leads (
+             company_id,
+             connection_id,
+             campaign_id,
+             external_call_id,
+             caller_phone_e164,
+             normalized_phone,
+             cost_cents,
+             supply_event_status,
+             billable,
+             call_at,
+             match_status,
+             matched_contact_id,
+             matched_lead_id,
+             match_method,
+             match_confidence,
+             matched_at
+         )
+         VALUES (
+             $1,
+             $2,
+             $3,
+             $4,
+             $5,
+             RIGHT($5, 10),
+             $6,
+             $7,
+             $8,
+             '2026-07-10T14:00:00Z',
+             'matched',
+             $9,
+             $10,
+             'nearby_call_contact',
+             100,
+             '2026-07-10T14:00:00Z'
+         )
+         RETURNING id`,
+        [
+            companyId,
+            connectionId,
+            `${TAG}-campaign-${suffix}`,
+            `${TAG}-call-${suffix}`,
+            SHARED_PHONE,
+            costCents,
+            billable ? 'BILLABLE' : 'UNBILLABLE',
+            billable,
+            contactId,
+            leadId,
+        ]
+    );
+    return rows[0].id;
+}
+
+async function attributeElocalJob({
+    companyId,
+    elocalLeadId,
+    jobId,
+    contactId,
+    leadId,
+}) {
+    await db.query(
+        `INSERT INTO elocal_job_attributions (
+             company_id,
+             elocal_lead_id,
+             matched_job_id,
+             matched_contact_id,
+             evidence_lead_id,
+             match_method,
+             match_confidence
+         )
+         VALUES ($1, $2, $3, $4, $5, 'nearby_call_contact', 100)`,
+        [companyId, elocalLeadId, jobId, contactId, leadId]
+    );
+}
+
 async function seedPhase3Job({
     companyId,
     contactId,
@@ -636,6 +754,8 @@ beforeAll(async () => {
     await db.query(CONNECTOR_MIGRATION);
     await db.query(LSA_MIGRATION);
     await db.query(LSA_MIGRATION);
+    await db.query(ELOCAL_MIGRATION);
+    await db.query(ELOCAL_MIGRATION);
     await insertFixtures();
     dbReady = true;
 });
@@ -775,6 +895,17 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 google_lsa_ltv_cents: 0,
                 google_lsa_roas: null,
                 google_lsa_ltv_roas: null,
+                elocal_call_count: 0,
+                elocal_billable_call_count: 0,
+                elocal_unbillable_call_count: 0,
+                elocal_matched_call_count: 0,
+                elocal_billable_ad_spend_cents: 0,
+                elocal_booked_conversions: 0,
+                elocal_completed_conversions: 0,
+                elocal_windowed_revenue_cents: 0,
+                elocal_cpa_booked_cents: null,
+                elocal_cpa_completed_cents: null,
+                elocal_roas: null,
             },
             funnel: [
                 { stage: 'leads', count: 1, conv_pct: 100 },
@@ -807,6 +938,17 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 google_lsa_ltv_cents: 0,
                 google_lsa_roas: null,
                 google_lsa_ltv_roas: null,
+                elocal_call_count: 0,
+                elocal_billable_call_count: 0,
+                elocal_unbillable_call_count: 0,
+                elocal_matched_call_count: 0,
+                elocal_billable_ad_spend_cents: 0,
+                elocal_booked_conversions: 0,
+                elocal_completed_conversions: 0,
+                elocal_windowed_revenue_cents: 0,
+                elocal_cpa_booked_cents: null,
+                elocal_cpa_completed_cents: null,
+                elocal_roas: null,
                 funnel_counts: {
                     leads: 1,
                     converted: 1,
@@ -827,6 +969,17 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 google_lsa_ltv_cents: 0,
                 google_lsa_roas: null,
                 google_lsa_ltv_roas: null,
+                elocal_call_count: 0,
+                elocal_billable_call_count: 0,
+                elocal_unbillable_call_count: 0,
+                elocal_matched_call_count: 0,
+                elocal_billable_ad_spend_cents: 0,
+                elocal_booked_conversions: 0,
+                elocal_completed_conversions: 0,
+                elocal_windowed_revenue_cents: 0,
+                elocal_cpa_booked_cents: null,
+                elocal_cpa_completed_cents: null,
+                elocal_roas: null,
                 funnel_counts: {
                     leads: 1,
                     converted: 1,
@@ -867,6 +1020,17 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
                 google_lsa_ltv_cents: 0,
                 google_lsa_roas: null,
                 google_lsa_ltv_roas: null,
+                elocal_call_count: 0,
+                elocal_billable_call_count: 0,
+                elocal_unbillable_call_count: 0,
+                elocal_matched_call_count: 0,
+                elocal_billable_ad_spend_cents: 0,
+                elocal_booked_conversions: 0,
+                elocal_completed_conversions: 0,
+                elocal_windowed_revenue_cents: 0,
+                elocal_cpa_booked_cents: null,
+                elocal_cpa_completed_cents: null,
+                elocal_roas: null,
             },
             funnel: [
                 { stage: 'leads', count: 1, conv_pct: 100 },
@@ -1061,6 +1225,138 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
             google_lsa_ltv_roas: 18734 / 900,
         });
         expect(breakdown.totals.revenue_net_cents).toBe(13734);
+    });
+
+    databaseTest('eLocal exposes BILLABLE spend, both CPA lenses, and job-keyed windowed revenue', async () => {
+        const [elocalChannelA, elocalChannelB] = await Promise.all([
+            ensureChannel(COMPANY_A, 'elocal', 'eLocal'),
+            ensureChannel(COMPANY_B, 'elocal', 'eLocal'),
+        ]);
+        const [connectionA, connectionB] = await Promise.all([
+            seedElocalConnection(COMPANY_A, elocalChannelA, 'a'),
+            seedElocalConnection(COMPANY_B, elocalChannelB, 'b'),
+        ]);
+        const [billableLead, unbillableLead, foreignLead] = await Promise.all([
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: connectionA,
+                contactId: contactA,
+                leadId: leadA,
+                suffix: 'billable',
+                billable: true,
+                costCents: 10000,
+            }),
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: connectionA,
+                contactId: contactA,
+                leadId: leadA,
+                suffix: 'unbillable',
+                billable: false,
+                costCents: 9000,
+            }),
+            seedElocalLead({
+                companyId: COMPANY_B,
+                connectionId: connectionB,
+                contactId: contactB,
+                leadId: leadB,
+                suffix: 'foreign',
+                billable: true,
+                costCents: 999900,
+            }),
+        ]);
+        await db.query(
+            `UPDATE jobs
+             SET zb_status = 'complete'
+             WHERE company_id = $1
+               AND id = $2`,
+            [COMPANY_A, jobA]
+        );
+        await Promise.all([
+            attributeElocalJob({
+                companyId: COMPANY_A,
+                elocalLeadId: billableLead,
+                jobId: jobA,
+                contactId: contactA,
+                leadId: leadA,
+            }),
+            attributeElocalJob({
+                companyId: COMPANY_B,
+                elocalLeadId: foreignLead,
+                jobId: jobB,
+                contactId: contactB,
+                leadId: leadB,
+            }),
+        ]);
+        const sameContactUnattributedJob = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'elocal-unowned',
+            amount: 50,
+        });
+
+        const [summary, breakdown, quality] = await Promise.all([
+            analytics.getSummary(COMPANY_A, { from: FROM, to: TO }),
+            analytics.getBreakdown(COMPANY_A, {
+                dimension: 'channel',
+                from: FROM,
+                to: TO,
+            }),
+            analytics.getDataQuality(COMPANY_A, { from: FROM, to: TO }),
+        ]);
+
+        expect(summary.kpis).toMatchObject({
+            leads: 1,
+            revenue_net_cents: 11234,
+            ad_spend_cents: 10000,
+            elocal_call_count: 2,
+            elocal_billable_call_count: 1,
+            elocal_unbillable_call_count: 1,
+            elocal_matched_call_count: 2,
+            elocal_billable_ad_spend_cents: 10000,
+            elocal_booked_conversions: 1,
+            elocal_completed_conversions: 1,
+            elocal_windowed_revenue_cents: 11234,
+            elocal_cpa_booked_cents: 10000,
+            elocal_cpa_completed_cents: 10000,
+            elocal_roas: 11234 / 10000,
+        });
+        expect(summary.kpis.elocal_windowed_revenue_cents).not.toBe(16234);
+
+        const elocal = breakdown.rows.find(row => row.key === 'elocal');
+        expect(elocal).toMatchObject({
+            leads: 1,
+            revenue_net_cents: 11234,
+            ad_spend_cents: 10000,
+            elocal_billable_ad_spend_cents: 10000,
+            elocal_booked_conversions: 1,
+            elocal_completed_conversions: 1,
+            elocal_windowed_revenue_cents: 11234,
+            elocal_cpa_booked_cents: 10000,
+            elocal_cpa_completed_cents: 10000,
+            elocal_roas: 11234 / 10000,
+        });
+        expect(breakdown.totals.revenue_net_cents).toBe(11234);
+        expect(quality.connected_sources).toEqual([{
+            key: 'elocal',
+            label: 'eLocal',
+            status: 'connected',
+            last_synced_at: null,
+            synced_from_date: null,
+            synced_through_date: null,
+        }]);
+        expect(JSON.stringify(quality.connected_sources)).not.toContain('campaign');
+        expect(JSON.stringify(quality.connected_sources)).not.toContain('API_KEY');
+
+        const persisted = await db.query(
+            `SELECT id
+             FROM jobs
+             WHERE company_id = $1
+               AND id = $2`,
+            [COMPANY_A, sameContactUnattributedJob]
+        );
+        expect(persisted.rows).toHaveLength(1);
+        expect(unbillableLead).toBeTruthy();
     });
 
     databaseTest("zb_status='complete' counts the job as visit-completed and done", async () => {
@@ -1263,6 +1559,17 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
             google_lsa_ltv_cents: 0,
             google_lsa_roas: null,
             google_lsa_ltv_roas: null,
+            elocal_call_count: 0,
+            elocal_billable_call_count: 0,
+            elocal_unbillable_call_count: 0,
+            elocal_matched_call_count: 0,
+            elocal_billable_ad_spend_cents: 0,
+            elocal_booked_conversions: 0,
+            elocal_completed_conversions: 0,
+            elocal_windowed_revenue_cents: 0,
+            elocal_cpa_booked_cents: null,
+            elocal_cpa_completed_cents: null,
+            elocal_roas: null,
             funnel_counts: {
                 leads: 0,
                 converted: 0,

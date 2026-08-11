@@ -14,6 +14,7 @@ const actions = require('./ruleActions');
 const schedulerRegistry = require('./schedulerRegistry');
 require('./inspectorScheduler').registerScheduler(schedulerRegistry);
 require('./googleAdsSyncService').registerScheduler(schedulerRegistry);
+require('./elocalSyncService').registerScheduler(schedulerRegistry);
 require('./taskNotificationScheduler').registerScheduler(schedulerRegistry);
 require('./savedCardCleanupScheduler').registerScheduler(schedulerRegistry);
 require('./appScheduleWorker').registerScheduler(schedulerRegistry);

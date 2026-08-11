@@ -25,6 +25,7 @@ function cohortFact(overrides = {}) {
         revenue_net_cents: '10000',
         call_cost_cents: '124',
         google_lsa_windowed_revenue_cents: '0',
+        elocal_windowed_revenue_cents: '0',
         technicians: [
             { key: TECH_1, label: 'Ada Technician' },
             { key: TECH_2, label: 'Grace Technician' },
@@ -85,6 +86,19 @@ describe('leadChannelAnalyticsService response math', () => {
             .mockResolvedValueOnce({ rows: [] })
             .mockResolvedValueOnce({
                 rows: [{ channel_id: null, revenue_net_cents: '0' }],
+            })
+            .mockResolvedValueOnce({
+                rows: [{
+                    channel_id: null,
+                    call_count: '0',
+                    billable_call_count: '0',
+                    unbillable_call_count: '0',
+                    matched_call_count: '0',
+                    billable_spend_cents: '0',
+                    booked_conversion_count: '0',
+                    completed_conversion_count: '0',
+                    revenue_net_cents: '0',
+                }],
             });
 
         const result = await analytics.getSummary(COMPANY_ID, PERIOD);
@@ -106,6 +120,17 @@ describe('leadChannelAnalyticsService response math', () => {
                 google_lsa_ltv_cents: 0,
                 google_lsa_roas: null,
                 google_lsa_ltv_roas: null,
+                elocal_call_count: 0,
+                elocal_billable_call_count: 0,
+                elocal_unbillable_call_count: 0,
+                elocal_matched_call_count: 0,
+                elocal_billable_ad_spend_cents: 0,
+                elocal_booked_conversions: 0,
+                elocal_completed_conversions: 0,
+                elocal_windowed_revenue_cents: 0,
+                elocal_cpa_booked_cents: null,
+                elocal_cpa_completed_cents: null,
+                elocal_roas: null,
             },
             funnel: [
                 { stage: 'leads', count: 2, conv_pct: 100 },
@@ -128,6 +153,19 @@ describe('leadChannelAnalyticsService response math', () => {
             .mockResolvedValueOnce({ rows: [] })
             .mockResolvedValueOnce({
                 rows: [{ channel_id: null, revenue_net_cents: '0' }],
+            })
+            .mockResolvedValueOnce({
+                rows: [{
+                    channel_id: null,
+                    call_count: '0',
+                    billable_call_count: '0',
+                    unbillable_call_count: '0',
+                    matched_call_count: '0',
+                    billable_spend_cents: '0',
+                    booked_conversion_count: '0',
+                    completed_conversion_count: '0',
+                    revenue_net_cents: '0',
+                }],
             });
 
         const result = await analytics.getBreakdown(COMPANY_ID, {

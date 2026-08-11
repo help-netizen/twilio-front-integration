@@ -111,6 +111,18 @@ const COHORT_FACTS_SQL = `
           AND ch.channel_key = 'google_ads'
           AND ch.is_active = true
     ),
+    elocal_channel AS (
+        SELECT
+            ch.id,
+            ch.channel_key,
+            ch.display_name
+        FROM lead_source_channels ch
+        JOIN company_context cc
+          ON cc.id = ch.company_id
+        WHERE ch.company_id = $1
+          AND ch.channel_key = 'elocal'
+          AND ch.is_active = true
+    ),
     lead_cohort AS (
         SELECT
             l.id,
@@ -129,12 +141,14 @@ const COHORT_FACTS_SQL = `
             ) AS converted,
             CASE
                 WHEN lsa_evidence.has_lsa THEN gch.id
+                WHEN elocal_evidence.has_elocal THEN ech.id
                 WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL THEN gch.id
                 ELSE ch.id
             END AS channel_id,
             COALESCE(
                 CASE
                     WHEN lsa_evidence.has_lsa THEN 'google_ads'
+                    WHEN elocal_evidence.has_elocal THEN 'elocal'
                     WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL
                         THEN gch.channel_key
                 END,
@@ -144,6 +158,7 @@ const COHORT_FACTS_SQL = `
             COALESCE(
                 CASE
                     WHEN lsa_evidence.has_lsa THEN 'Google Ads'
+                    WHEN elocal_evidence.has_elocal THEN 'eLocal'
                     WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL
                         THEN gch.display_name
                 END,
@@ -152,6 +167,7 @@ const COHORT_FACTS_SQL = `
             ) AS channel_label,
             (
                 lsa_evidence.has_lsa
+                OR elocal_evidence.has_elocal
                 OR (
                     CASE
                         WHEN l.gclid IS NOT NULL AND gch.id IS NOT NULL
@@ -190,6 +206,8 @@ const COHORT_FACTS_SQL = `
          AND ch.is_active = true
         LEFT JOIN google_channel gch
           ON true
+        LEFT JOIN elocal_channel ech
+          ON true
         LEFT JOIN LATERAL (
             SELECT true AS has_lsa
             FROM jobs attributed_job
@@ -201,6 +219,24 @@ const COHORT_FACTS_SQL = `
               AND attributed_job.lead_id = l.id
             LIMIT 1
         ) lsa_evidence ON true
+        LEFT JOIN LATERAL (
+            SELECT true AS has_elocal
+            FROM jobs attributed_job
+            JOIN elocal_job_attributions attribution
+              ON attribution.company_id = $1
+             AND attribution.matched_job_id = attributed_job.id
+             AND attribution.match_confidence >= 90
+            WHERE attributed_job.company_id = $1
+              AND attributed_job.lead_id = l.id
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM google_lsa_job_attributions lsa_attribution
+                  WHERE lsa_attribution.company_id = $1
+                    AND lsa_attribution.matched_job_id = attributed_job.id
+                    AND lsa_attribution.match_confidence >= 90
+              )
+            LIMIT 1
+        ) elocal_evidence ON true
         LEFT JOIN service_territories st
           ON st.company_id = $1
          AND st.zip = SPLIT_PART(BTRIM(COALESCE(l.postal_code, '')), '-', 1)
@@ -212,6 +248,7 @@ const COHORT_FACTS_SQL = `
         SELECT
             j.id AS job_id,
             j.lead_id,
+            j.contact_id,
             gch.id AS channel_id,
             'google_ads'::TEXT AS channel_key,
             'Google Ads'::TEXT AS channel_label,
@@ -226,7 +263,7 @@ const COHORT_FACTS_SQL = `
                     THEN 'Outside configured areas'
                 ELSE BTRIM(st.area)
             END AS area_label,
-            true AS is_lsa,
+            'google_lsa'::TEXT AS attribution_source,
             j.visit_completed_at,
             j.repair_done_at,
             j.blanc_status,
@@ -261,17 +298,78 @@ const COHORT_FACTS_SQL = `
           AND lsa_lead.provider_created_at
                 < (($3::date + 1) AT TIME ZONE cc.timezone)
     ),
+    elocal_jobs AS (
+        SELECT
+            j.id AS job_id,
+            j.lead_id,
+            j.contact_id,
+            ech.id AS channel_id,
+            'elocal'::TEXT AS channel_key,
+            'eLocal'::TEXT AS channel_label,
+            true AS channel_attributed,
+            CASE
+                WHEN NULLIF(BTRIM(st.area), '') IS NULL
+                    THEN 'outside_configured_area'
+                ELSE 'area_' || MD5(LOWER(BTRIM(st.area)))
+            END AS area_key,
+            CASE
+                WHEN NULLIF(BTRIM(st.area), '') IS NULL
+                    THEN 'Outside configured areas'
+                ELSE BTRIM(st.area)
+            END AS area_label,
+            'elocal'::TEXT AS attribution_source,
+            j.visit_completed_at,
+            j.repair_done_at,
+            j.blanc_status,
+            j.zb_status,
+            j.assigned_provider_user_ids
+        FROM elocal_job_attributions attribution
+        JOIN elocal_leads provider_lead
+          ON provider_lead.company_id = $1
+         AND provider_lead.id = attribution.elocal_lead_id
+        JOIN jobs j
+          ON j.company_id = $1
+         AND j.id = attribution.matched_job_id
+        JOIN company_context cc
+          ON cc.id = provider_lead.company_id
+        LEFT JOIN elocal_channel ech
+          ON true
+        LEFT JOIN leads owning_lead
+          ON owning_lead.company_id = $1
+         AND owning_lead.id = j.lead_id
+        LEFT JOIN service_territories st
+          ON st.company_id = $1
+         AND st.zip = SPLIT_PART(
+             BTRIM(COALESCE(owning_lead.postal_code, '')),
+             '-',
+             1
+         )
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+          AND provider_lead.call_at
+                >= ($2::date AT TIME ZONE cc.timezone)
+          AND provider_lead.call_at
+                < (($3::date + 1) AT TIME ZONE cc.timezone)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM google_lsa_job_attributions lsa_attribution
+              WHERE lsa_attribution.company_id = $1
+                AND lsa_attribution.matched_job_id = j.id
+                AND lsa_attribution.match_confidence >= 90
+          )
+    ),
     fallback_jobs AS (
         SELECT
             j.id AS job_id,
             j.lead_id,
+            j.contact_id,
             c.channel_id,
             c.channel_key,
             c.channel_label,
             c.channel_attributed,
             c.area_key,
             c.area_label,
-            false AS is_lsa,
+            'fallback'::TEXT AS attribution_source,
             j.visit_completed_at,
             j.repair_done_at,
             j.blanc_status,
@@ -288,9 +386,18 @@ const COHORT_FACTS_SQL = `
                 AND attribution.matched_job_id = j.id
                 AND attribution.match_confidence >= 90
           )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM elocal_job_attributions attribution
+              WHERE attribution.company_id = $1
+                AND attribution.matched_job_id = j.id
+                AND attribution.match_confidence >= 90
+          )
     ),
     job_acquisition AS (
         SELECT * FROM lsa_jobs
+        UNION ALL
+        SELECT * FROM elocal_jobs
         UNION ALL
         SELECT * FROM fallback_jobs
     ),
@@ -444,6 +551,7 @@ const COHORT_FACTS_SQL = `
         0::BIGINT AS revenue_net_cents,
         COALESCE(ccbl.call_cost_cents, 0)::bigint AS call_cost_cents,
         0::BIGINT AS google_lsa_windowed_revenue_cents,
+        0::BIGINT AS elocal_windowed_revenue_cents,
         COALESCE(tbl.technicians, '[]'::jsonb) AS technicians
     FROM lead_cohort c
     LEFT JOIN call_cost_by_lead ccbl
@@ -481,9 +589,15 @@ const COHORT_FACTS_SQL = `
         COALESCE(rbj.revenue_net_cents, 0)::BIGINT AS revenue_net_cents,
         0::BIGINT AS call_cost_cents,
         CASE
-            WHEN ja.is_lsa THEN COALESCE(rbj.revenue_net_cents, 0)
+            WHEN ja.attribution_source = 'google_lsa'
+                THEN COALESCE(rbj.revenue_net_cents, 0)
             ELSE 0
         END::BIGINT AS google_lsa_windowed_revenue_cents,
+        CASE
+            WHEN ja.attribution_source = 'elocal'
+                THEN COALESCE(rbj.revenue_net_cents, 0)
+            ELSE 0
+        END::BIGINT AS elocal_windowed_revenue_cents,
         COALESCE(tbj.technicians, '[]'::jsonb) AS technicians
     FROM job_acquisition ja
     LEFT JOIN revenue_by_job rbj
@@ -584,6 +698,97 @@ const LSA_LTV_SQL = `
      AND pt.voided_at IS NULL
 `;
 
+const ELOCAL_METRICS_SQL = `
+    WITH company_context AS (
+        SELECT
+            id,
+            COALESCE(NULLIF(timezone, ''), $4) AS timezone
+        FROM companies
+        WHERE id = $1
+    ),
+    provider_cohort AS (
+        SELECT
+            provider.id,
+            provider.cost_cents,
+            provider.billable,
+            provider.match_status
+        FROM elocal_leads provider
+        JOIN company_context cc
+          ON cc.id = provider.company_id
+        WHERE provider.company_id = $1
+          AND provider.call_at >= ($2::date AT TIME ZONE cc.timezone)
+          AND provider.call_at < (($3::date + 1) AT TIME ZONE cc.timezone)
+    ),
+    eligible_attributions AS (
+        SELECT DISTINCT
+            attribution.elocal_lead_id,
+            attribution.matched_job_id
+        FROM elocal_job_attributions attribution
+        JOIN provider_cohort cohort
+          ON cohort.id = attribution.elocal_lead_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+          AND NOT EXISTS (
+              SELECT 1
+              FROM google_lsa_job_attributions lsa_attribution
+              WHERE lsa_attribution.company_id = $1
+                AND lsa_attribution.matched_job_id = attribution.matched_job_id
+                AND lsa_attribution.match_confidence >= 90
+          )
+    ),
+    provider_summary AS (
+        SELECT
+            COUNT(*)::INTEGER AS call_count,
+            COUNT(*) FILTER (WHERE cohort.billable)::INTEGER
+                AS billable_call_count,
+            COUNT(*) FILTER (WHERE NOT cohort.billable)::INTEGER
+                AS unbillable_call_count,
+            COUNT(*) FILTER (
+                WHERE cohort.match_status = 'matched'
+            )::INTEGER AS matched_call_count,
+            COALESCE(
+                SUM(cohort.cost_cents) FILTER (WHERE cohort.billable),
+                0
+            )::BIGINT AS billable_spend_cents
+        FROM provider_cohort cohort
+    ),
+    conversion_summary AS (
+        SELECT
+            COUNT(DISTINCT eligible.elocal_lead_id)::INTEGER
+                AS booked_conversion_count,
+            COUNT(DISTINCT eligible.elocal_lead_id) FILTER (
+                WHERE job.zb_status = 'complete'
+                   OR LOWER(REPLACE(
+                        BTRIM(COALESCE(job.blanc_status, '')),
+                        '_',
+                        ' '
+                   )) = 'job is done'
+            )::INTEGER AS completed_conversion_count
+        FROM eligible_attributions eligible
+        JOIN jobs job
+          ON job.company_id = $1
+         AND job.id = eligible.matched_job_id
+    )
+    SELECT
+        (
+            SELECT ch.id
+            FROM lead_source_channels ch
+            WHERE ch.company_id = $1
+              AND ch.channel_key = 'elocal'
+              AND ch.is_active = true
+            LIMIT 1
+        ) AS channel_id,
+        provider.call_count,
+        provider.billable_call_count,
+        provider.unbillable_call_count,
+        provider.matched_call_count,
+        provider.billable_spend_cents,
+        conversion.booked_conversion_count,
+        conversion.completed_conversion_count
+    FROM provider_summary provider
+    CROSS JOIN conversion_summary conversion
+`;
+
 function asInteger(value) {
     const number = Number(value || 0);
     return Number.isFinite(number) ? Math.round(number) : 0;
@@ -620,6 +825,9 @@ function normalizeFact(row) {
         googleLsaWindowedRevenueCents: asInteger(
             row.google_lsa_windowed_revenue_cents
         ),
+        elocalWindowedRevenueCents: asInteger(
+            row.elocal_windowed_revenue_cents
+        ),
     };
 }
 
@@ -651,50 +859,140 @@ async function loadLsaLtvSnapshot(companyId, period) {
     };
 }
 
+function emptyElocalSnapshot() {
+    return {
+        channel_id: null,
+        call_count: 0,
+        billable_call_count: 0,
+        unbillable_call_count: 0,
+        matched_call_count: 0,
+        billable_spend_cents: 0,
+        booked_conversion_count: 0,
+        completed_conversion_count: 0,
+    };
+}
+
+async function loadElocalSnapshot(companyId, period) {
+    requireCompanyId(companyId);
+    const { rows } = await db.query(
+        ELOCAL_METRICS_SQL,
+        [companyId, period.from, period.to, DEFAULT_TIMEZONE]
+    );
+    const row = rows[0];
+    if (!row) return emptyElocalSnapshot();
+    return {
+        channel_id: row.channel_id || null,
+        call_count: asInteger(row.call_count),
+        billable_call_count: asInteger(row.billable_call_count),
+        unbillable_call_count: asInteger(row.unbillable_call_count),
+        matched_call_count: asInteger(row.matched_call_count),
+        billable_spend_cents: asInteger(row.billable_spend_cents),
+        booked_conversion_count: asInteger(row.booked_conversion_count),
+        completed_conversion_count: asInteger(row.completed_conversion_count),
+    };
+}
+
 function emptyCostSnapshot() {
     return {
         channels: [],
         total_cost_cents: 0,
         google_lsa_ad_spend_cents: 0,
         google_other_ad_spend_cents: 0,
+        elocal_billable_ad_spend_cents: 0,
     };
 }
 
 async function loadCostSnapshot(companyId, period) {
     requireCompanyId(companyId);
     const result = await db.query(
-        `SELECT
-             perf.channel_id,
-             ch.channel_key,
-             ch.display_name AS channel_label,
-             COALESCE(ch.is_active, false) AS is_active,
-             ROUND(
-                 SUM(perf.cost_micros)::numeric / 10000
-             )::bigint AS cost_cents,
-             ROUND(
-                 SUM(
-                     CASE
-                         WHEN ch.channel_key = 'google_ads'
-                          AND perf.external_campaign_name ILIKE '%localservices%'
-                             THEN perf.cost_micros
-                         ELSE 0
-                     END
-                 )::numeric / 10000
-             )::bigint AS google_lsa_ad_spend_cents
-         FROM lead_source_performance_daily perf
-         LEFT JOIN lead_source_channels ch
-           ON ch.company_id = $1
-          AND ch.id = perf.channel_id
-         WHERE perf.company_id = $1
-           AND perf.performance_date >= $2::date
-           AND perf.performance_date <= $3::date
-         GROUP BY
-             perf.channel_id,
-             ch.channel_key,
-             ch.display_name,
-             ch.is_active
-         ORDER BY perf.channel_id`,
-        [companyId, period.from, period.to]
+        `WITH company_context AS (
+             SELECT
+                 id,
+                 COALESCE(NULLIF(timezone, ''), $4) AS timezone
+             FROM companies
+             WHERE id = $1
+         ),
+         cost_rows AS (
+             SELECT
+                 perf.channel_id,
+                 ch.channel_key,
+                 ch.display_name AS channel_label,
+                 COALESCE(ch.is_active, false) AS is_active,
+                 ROUND(
+                     SUM(perf.cost_micros)::numeric / 10000
+                 )::bigint AS cost_cents,
+                 ROUND(
+                     SUM(
+                         CASE
+                             WHEN ch.channel_key = 'google_ads'
+                              AND perf.external_campaign_name
+                                    ILIKE '%localservices%'
+                                 THEN perf.cost_micros
+                             ELSE 0
+                         END
+                     )::numeric / 10000
+                 )::bigint AS google_lsa_ad_spend_cents,
+                 0::BIGINT AS elocal_billable_ad_spend_cents
+             FROM lead_source_performance_daily perf
+             LEFT JOIN lead_source_channels ch
+               ON ch.company_id = $1
+              AND ch.id = perf.channel_id
+             WHERE perf.company_id = $1
+               AND perf.performance_date >= $2::date
+               AND perf.performance_date <= $3::date
+               AND COALESCE(ch.channel_key, '') NOT IN (
+                    'elocal',
+                    'source_04a1ea464d394d519efd30a5988341f8',
+                    'source_88cdf671ddacd95240fc98b1eef48ec2'
+               )
+             GROUP BY
+                 perf.channel_id,
+                 ch.channel_key,
+                 ch.display_name,
+                 ch.is_active
+             UNION ALL
+             SELECT
+                 connection.channel_id,
+                 ch.channel_key,
+                 ch.display_name AS channel_label,
+                 ch.is_active,
+                 COALESCE(SUM(provider.cost_cents), 0)::BIGINT AS cost_cents,
+                 0::BIGINT AS google_lsa_ad_spend_cents,
+                 COALESCE(SUM(provider.cost_cents), 0)::BIGINT
+                    AS elocal_billable_ad_spend_cents
+             FROM elocal_leads provider
+             JOIN elocal_connections connection
+               ON connection.company_id = $1
+              AND connection.id = provider.connection_id
+             JOIN lead_source_channels ch
+               ON ch.company_id = $1
+              AND ch.id = connection.channel_id
+             JOIN company_context cc
+               ON cc.id = provider.company_id
+             WHERE provider.company_id = $1
+               AND provider.billable = true
+               AND provider.call_at >= ($2::date AT TIME ZONE cc.timezone)
+               AND provider.call_at < (($3::date + 1) AT TIME ZONE cc.timezone)
+             GROUP BY
+                 connection.channel_id,
+                 ch.channel_key,
+                 ch.display_name,
+                 ch.is_active
+         )
+         SELECT
+             channel_id,
+             channel_key,
+             channel_label,
+             is_active,
+             SUM(cost_cents)::BIGINT AS cost_cents,
+             SUM(google_lsa_ad_spend_cents)::BIGINT
+                AS google_lsa_ad_spend_cents,
+             SUM(elocal_billable_ad_spend_cents)::BIGINT
+                AS elocal_billable_ad_spend_cents
+         FROM cost_rows
+         GROUP BY channel_id, channel_key, channel_label, is_active
+         ORDER BY channel_id`,
+        [companyId, period.from, period.to, DEFAULT_TIMEZONE]
     );
     const rows = result?.rows || [];
     if (rows.length === 0) return emptyCostSnapshot();
@@ -711,6 +1009,9 @@ async function loadCostSnapshot(companyId, period) {
         google_other_ad_spend_cents: row.channel_key === 'google_ads'
             ? asInteger(row.cost_cents) - asInteger(row.google_lsa_ad_spend_cents)
             : 0,
+        elocal_billable_ad_spend_cents: asInteger(
+            row.elocal_billable_ad_spend_cents
+        ),
     }));
     return {
         channels,
@@ -724,6 +1025,12 @@ async function loadCostSnapshot(companyId, period) {
         ),
         google_other_ad_spend_cents: channels.reduce(
             (total, channel) => total + channel.google_other_ad_spend_cents,
+            0
+        ),
+        elocal_billable_ad_spend_cents: channels.reduce(
+            (total, channel) => (
+                total + channel.elocal_billable_ad_spend_cents
+            ),
             0
         ),
     };
@@ -744,17 +1051,30 @@ async function loadConnectedSources(companyId) {
     requireCompanyId(companyId);
     const result = await db.query(
         `SELECT
+             'google_ads'::TEXT AS key,
+             'Google Ads'::TEXT AS label,
              status,
              last_synced_at,
              synced_from_date,
              synced_through_date
          FROM google_ads_connections
-         WHERE company_id = $1`,
+         WHERE company_id = $1
+         UNION ALL
+         SELECT
+             'elocal'::TEXT AS key,
+             'eLocal'::TEXT AS label,
+             status,
+             last_synced_at,
+             synced_from_date,
+             synced_through_date
+         FROM elocal_connections
+         WHERE company_id = $1
+         ORDER BY key`,
         [companyId]
     );
     return (result?.rows || []).map(row => ({
-        key: 'google_ads',
-        label: 'Google Ads',
+        key: row.key,
+        label: row.label,
         status: row.status,
         last_synced_at: normalizeTimestamp(row.last_synced_at),
         synced_from_date: normalizeDateOnly(row.synced_from_date),
@@ -777,6 +1097,8 @@ function totalsForFacts(facts) {
         totals.callCostCents += fact.callCostCents;
         totals.googleLsaWindowedRevenueCents +=
             fact.googleLsaWindowedRevenueCents;
+        totals.elocalWindowedRevenueCents +=
+            fact.elocalWindowedRevenueCents;
         return totals;
     }, {
         leads: 0,
@@ -786,12 +1108,18 @@ function totalsForFacts(facts) {
         revenueNetCents: 0,
         callCostCents: 0,
         googleLsaWindowedRevenueCents: 0,
+        elocalWindowedRevenueCents: 0,
     });
 }
 
 function roasFor(revenueNetCents, adSpendCents) {
     if (!adSpendCents) return null;
     return revenueNetCents / adSpendCents;
+}
+
+function cpaFor(adSpendCents, conversionCount) {
+    if (!conversionCount) return null;
+    return Math.round(adSpendCents / conversionCount);
 }
 
 function lsaKpis(
@@ -817,10 +1145,39 @@ function lsaKpis(
     };
 }
 
+function elocalKpis(
+    windowedRevenueCents,
+    snapshot = emptyElocalSnapshot()
+) {
+    return {
+        elocal_call_count: snapshot.call_count,
+        elocal_billable_call_count: snapshot.billable_call_count,
+        elocal_unbillable_call_count: snapshot.unbillable_call_count,
+        elocal_matched_call_count: snapshot.matched_call_count,
+        elocal_billable_ad_spend_cents: snapshot.billable_spend_cents,
+        elocal_booked_conversions: snapshot.booked_conversion_count,
+        elocal_completed_conversions: snapshot.completed_conversion_count,
+        elocal_windowed_revenue_cents: windowedRevenueCents,
+        elocal_cpa_booked_cents: cpaFor(
+            snapshot.billable_spend_cents,
+            snapshot.booked_conversion_count
+        ),
+        elocal_cpa_completed_cents: cpaFor(
+            snapshot.billable_spend_cents,
+            snapshot.completed_conversion_count
+        ),
+        elocal_roas: roasFor(
+            windowedRevenueCents,
+            snapshot.billable_spend_cents
+        ),
+    };
+}
+
 function summaryKpis(
     totals,
     costSnapshot = emptyCostSnapshot(),
-    lsaLtvSnapshot = emptyLsaLtvSnapshot()
+    lsaLtvSnapshot = emptyLsaLtvSnapshot(),
+    elocalSnapshot = emptyElocalSnapshot()
 ) {
     const adSpendCents = costSnapshot.total_cost_cents;
     return {
@@ -838,6 +1195,10 @@ function summaryKpis(
             totals.googleLsaWindowedRevenueCents,
             lsaLtvSnapshot.revenue_net_cents,
             costSnapshot
+        ),
+        ...elocalKpis(
+            totals.elocalWindowedRevenueCents,
+            elocalSnapshot
         ),
     };
 }
@@ -870,15 +1231,27 @@ function funnelForTotals(totals) {
 async function getSummary(companyId, query = {}) {
     const period = parsePeriod(query.from, query.to);
     requireCompanyId(companyId);
-    const [timezone, facts, costSnapshot, lsaLtvSnapshot] = await Promise.all([
+    const [
+        timezone,
+        facts,
+        costSnapshot,
+        lsaLtvSnapshot,
+        elocalSnapshot,
+    ] = await Promise.all([
         getCompanyTimezone(companyId),
         loadCohortFacts(companyId, period),
         loadCostSnapshot(companyId, period),
         loadLsaLtvSnapshot(companyId, period),
+        loadElocalSnapshot(companyId, period),
     ]);
     const totals = totalsForFacts(facts);
     return {
-        kpis: summaryKpis(totals, costSnapshot, lsaLtvSnapshot),
+        kpis: summaryKpis(
+            totals,
+            costSnapshot,
+            lsaLtvSnapshot,
+            elocalSnapshot
+        ),
         funnel: funnelForTotals(totals),
         period: { ...period, timezone },
     };
@@ -913,6 +1286,14 @@ function emptyBreakdownAccumulator(target) {
             googleOtherAdSpendCents: 0,
             googleLsaWindowedRevenueCents: 0,
             googleLsaLtvCents: 0,
+            elocalCallCount: 0,
+            elocalBillableCallCount: 0,
+            elocalUnbillableCallCount: 0,
+            elocalMatchedCallCount: 0,
+            elocalBillableAdSpendCents: 0,
+            elocalBookedConversions: 0,
+            elocalCompletedConversions: 0,
+            elocalWindowedRevenueCents: 0,
         },
         allocated: {},
     };
@@ -1017,7 +1398,8 @@ function buildBreakdownRows(
     totals,
     costSnapshot = emptyCostSnapshot(),
     spendAllocation = allocateAdSpendToFacts(facts, costSnapshot),
-    lsaLtvSnapshot = emptyLsaLtvSnapshot()
+    lsaLtvSnapshot = emptyLsaLtvSnapshot(),
+    elocalSnapshot = emptyElocalSnapshot()
 ) {
     const accumulators = new Map();
     for (const fact of spendAllocation.facts) {
@@ -1041,6 +1423,8 @@ function buildBreakdownRows(
             row.raw.callCostCents += fact.callCostCents * weight;
             row.raw.googleLsaWindowedRevenueCents +=
                 fact.googleLsaWindowedRevenueCents * weight;
+            row.raw.elocalWindowedRevenueCents +=
+                fact.elocalWindowedRevenueCents * weight;
             if (dimension !== 'channel') {
                 row.raw.adSpendCents += fact.allocatedAdCostCents * weight;
             }
@@ -1066,6 +1450,8 @@ function buildBreakdownRows(
                     channelCost.google_lsa_ad_spend_cents;
                 row.raw.googleOtherAdSpendCents =
                     channelCost.google_other_ad_spend_cents;
+                row.raw.elocalBillableAdSpendCents =
+                    channelCost.elocal_billable_ad_spend_cents;
             }
         }
 
@@ -1081,6 +1467,39 @@ function buildBreakdownRows(
         if (googleRow) {
             googleRow.raw.googleLsaLtvCents =
                 lsaLtvSnapshot.revenue_net_cents;
+        }
+
+        let elocalRow = Array.from(accumulators.values()).find(
+            candidate => (
+                candidate.channelId === elocalSnapshot.channel_id
+                || candidate.key === 'elocal'
+            )
+        );
+        const hasElocalMetrics = Object.entries(elocalSnapshot).some(
+            ([key, value]) => key !== 'channel_id' && value !== 0
+        );
+        if (!elocalRow && hasElocalMetrics) {
+            elocalRow = emptyBreakdownAccumulator({
+                id: elocalSnapshot.channel_id,
+                key: 'elocal',
+                label: 'eLocal',
+            });
+            accumulators.set('elocal', elocalRow);
+        }
+        if (elocalRow) {
+            elocalRow.raw.elocalCallCount = elocalSnapshot.call_count;
+            elocalRow.raw.elocalBillableCallCount =
+                elocalSnapshot.billable_call_count;
+            elocalRow.raw.elocalUnbillableCallCount =
+                elocalSnapshot.unbillable_call_count;
+            elocalRow.raw.elocalMatchedCallCount =
+                elocalSnapshot.matched_call_count;
+            elocalRow.raw.elocalBillableAdSpendCents =
+                elocalSnapshot.billable_spend_cents;
+            elocalRow.raw.elocalBookedConversions =
+                elocalSnapshot.booked_conversion_count;
+            elocalRow.raw.elocalCompletedConversions =
+                elocalSnapshot.completed_conversion_count;
         }
     }
 
@@ -1112,6 +1531,12 @@ function buildBreakdownRows(
         'googleLsaWindowedRevenueCents',
         'googleLsaWindowedRevenueCents',
         totals.googleLsaWindowedRevenueCents
+    );
+    allocateInteger(
+        rows,
+        'elocalWindowedRevenueCents',
+        'elocalWindowedRevenueCents',
+        totals.elocalWindowedRevenueCents
     );
     const allocatedDimensionSpend = dimension === 'channel'
         ? costSnapshot.total_cost_cents
@@ -1159,6 +1584,28 @@ function buildBreakdownRows(
             row.raw.googleLsaLtvCents,
             row.raw.googleLsaAdSpendCents
         ),
+        elocal_call_count: row.raw.elocalCallCount,
+        elocal_billable_call_count: row.raw.elocalBillableCallCount,
+        elocal_unbillable_call_count: row.raw.elocalUnbillableCallCount,
+        elocal_matched_call_count: row.raw.elocalMatchedCallCount,
+        elocal_billable_ad_spend_cents:
+            row.raw.elocalBillableAdSpendCents,
+        elocal_booked_conversions: row.raw.elocalBookedConversions,
+        elocal_completed_conversions: row.raw.elocalCompletedConversions,
+        elocal_windowed_revenue_cents:
+            row.allocated.elocalWindowedRevenueCents,
+        elocal_cpa_booked_cents: cpaFor(
+            row.raw.elocalBillableAdSpendCents,
+            row.raw.elocalBookedConversions
+        ),
+        elocal_cpa_completed_cents: cpaFor(
+            row.raw.elocalBillableAdSpendCents,
+            row.raw.elocalCompletedConversions
+        ),
+        elocal_roas: roasFor(
+            row.allocated.elocalWindowedRevenueCents,
+            row.raw.elocalBillableAdSpendCents
+        ),
         funnel_counts: {
             leads: row.allocated.leads,
             converted: row.allocated.converted,
@@ -1183,10 +1630,16 @@ async function getBreakdown(companyId, query = {}) {
         );
     }
 
-    const [facts, costSnapshot, lsaLtvSnapshot] = await Promise.all([
+    const [
+        facts,
+        costSnapshot,
+        lsaLtvSnapshot,
+        elocalSnapshot,
+    ] = await Promise.all([
         loadCohortFacts(companyId, period),
         loadCostSnapshot(companyId, period),
         loadLsaLtvSnapshot(companyId, period),
+        loadElocalSnapshot(companyId, period),
     ]);
     const totals = totalsForFacts(facts);
     const spendAllocation = allocateAdSpendToFacts(facts, costSnapshot);
@@ -1201,7 +1654,8 @@ async function getBreakdown(companyId, query = {}) {
             totals,
             costSnapshot,
             spendAllocation,
-            lsaLtvSnapshot
+            lsaLtvSnapshot,
+            elocalSnapshot
         ),
         totals: {
             leads: totals.leads,
@@ -1217,6 +1671,10 @@ async function getBreakdown(companyId, query = {}) {
                 totals.googleLsaWindowedRevenueCents,
                 lsaLtvSnapshot.revenue_net_cents,
                 costSnapshot
+            ),
+            ...elocalKpis(
+                totals.elocalWindowedRevenueCents,
+                elocalSnapshot
             ),
             funnel_counts: {
                 leads: totals.leads,
