@@ -30,6 +30,9 @@ jest.mock('../backend/src/services/userService', () => ({
 jest.mock('../backend/src/services/auditService', () => ({
     log: jest.fn(async () => {}),
 }));
+jest.mock('../backend/src/services/sessionRevocationService', () => ({
+    isAccessTokenRevoked: jest.fn(async () => false),
+}));
 jest.mock('../backend/src/services/authorizationService', () => ({
     buildDevAuthzContext: jest.fn(),
     resolveAuthzContext: jest.fn(async () => ({
@@ -58,6 +61,7 @@ const authDeviceRouter = require('../backend/src/routes/authDevice');
 function claims(overrides = {}) {
     return {
         sub: 'mobile-sub-a',
+        iat: 1_700_000_000,
         email: 'tech-a@example.test',
         azp: 'crm-mobile',
         realm_access: { roles: ['company_member'] },

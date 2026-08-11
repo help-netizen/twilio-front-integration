@@ -30,6 +30,27 @@ function rawFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respons
     });
 }
 
+function dispatchSessionExpired(): void {
+    window.dispatchEvent(new CustomEvent('auth:session-expired'));
+}
+
+async function readUnauthorizedCode(res: Response): Promise<string | undefined> {
+    try { return (await res.clone().json())?.code; } catch { return undefined; }
+}
+
+async function retryAfterTwoFactor(
+    input: RequestInfo | URL,
+    init?: RequestInit
+): Promise<Response> {
+    await requireTwoFactor();
+    const retried = await rawFetch(input, init);
+    if (retried.status === 401
+        && await readUnauthorizedCode(retried) !== 'PHONE_VERIFICATION_REQUIRED') {
+        dispatchSessionExpired();
+    }
+    return retried;
+}
+
 /**
  * Wrapper around fetch() that auto-injects Authorization header.
  * Drop-in replacement for window.fetch — same signature.
@@ -53,11 +74,9 @@ export async function authedFetch(
         return res;
     }
     if (res.status === 401) {
-        let code: string | undefined;
-        try { code = (await res.clone().json())?.code; } catch { /* non-JSON 401 */ }
+        const code = await readUnauthorizedCode(res);
         if (code === 'PHONE_VERIFICATION_REQUIRED') {
-            await requireTwoFactor();        // resolves once the device is trusted
-            return rawFetch(input, init);    // retry once with the new cookie
+            return retryAfterTwoFactor(input, init);
         }
         // A generic 401 on a cold page load is usually a token race / near-expiry,
         // not a dead session. Force-refresh the token and retry once before
@@ -66,7 +85,21 @@ export async function authedFetch(
             try {
                 await getKeycloak().updateToken(-1); // force refresh
                 res = await rawFetch(input, init);   // retry once with the fresh token
-            } catch { /* refresh failed → genuine session end, return the 401 */ }
+            } catch {
+                dispatchSessionExpired();            // refresh failed → genuine session end
+                return res;
+            }
+
+            if (res.status === 401) {
+                // Preserve the device-verification ordering even if the token
+                // refresh changes the backend's first applicable auth gate.
+                if (await readUnauthorizedCode(res) === 'PHONE_VERIFICATION_REQUIRED') {
+                    return retryAfterTwoFactor(input, init);
+                }
+                dispatchSessionExpired();            // refreshed token was still rejected
+            }
+        } else {
+            dispatchSessionExpired();
         }
     }
     return res;

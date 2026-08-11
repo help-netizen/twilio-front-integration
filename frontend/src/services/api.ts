@@ -78,7 +78,9 @@ apiClient.interceptors.response.use(
                     original.headers = original.headers || {};
                     original.headers.Authorization = h.Authorization;
                 }
-                return await apiClient.request(original); // retry once with a fresh token
+                // Do not await inside this try: the retried 401 is handled by the
+                // interceptor's __authRetried branch, which dispatches exactly once.
+                return apiClient.request(original); // retry once with a fresh token
             } catch {
                 console.warn('[API] 401 — token refresh failed, session expired');
                 window.dispatchEvent(new CustomEvent('auth:session-expired'));

@@ -43,6 +43,7 @@ const appRuntimeDevTokensRouter = require('../backend/src/routes/appRuntimeDevTo
 const appStudioRouter = require('../backend/src/routes/appStudio');
 const appViewsRouter = require('../backend/src/routes/appViews');
 const authRouter = require('../backend/src/routes/auth');
+const backchannelLogoutRouter = require('../backend/src/routes/backchannelLogout');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
 const { requirePermission, requirePlatformRole } = require('../backend/src/middleware/authorization');
@@ -90,6 +91,11 @@ app.use('/api/billing/webhook', express.raw({ type: '*/*', limit: '1mb' }),
 // body, mounted before express.json and SEPARATE from the platform billing webhook.
 app.use('/api/stripe-payments/webhook', express.raw({ type: '*/*', limit: '1mb' }),
     require('../backend/src/routes/stripePaymentsWebhook'));
+
+// AUTH-BACKCHANNEL-001: Keycloak authenticates this machine callback with the
+// signed logout_token. Keep the narrow form parser before the global 2 MB parser
+// and before the authenticated /api/auth mounts below.
+app.use('/api/auth/backchannel-logout', requestId, backchannelLogoutRouter);
 
 // EMAIL-TIMELINE-001 (TASK-ET-5): Gmail Pub/Sub inbound push. UNAUTHENTICATED by
 // user (Pub/Sub can't carry our JWT) — token/OIDC verification happens inside the

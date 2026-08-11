@@ -135,6 +135,7 @@ const PUBLIC_ROUTE_FILES = new Map([
     ['backend/src/routes/chatgptMcpResourceMetadata.js', 'Public RFC 9728 metadata contains no tenant, installation, or user data.'],
     ['backend/src/routes/auth.js', 'Authenticated role-neutral self-context endpoint; returns only the caller context.'],
     ['backend/src/routes/authDevice.js', 'Authenticated role-neutral 2FA/trusted-device flow for the current caller.'],
+    ['backend/src/routes/backchannelLogout.js', 'Public OIDC callback validates the signed RS256 logout token before writing realm-scoped revocation state.'],
     ['backend/src/routes/billingWebhook.js', 'Stripe HMAC signature is verified before webhook processing.'],
     ['backend/src/routes/crmMcpPublic.js', 'Disabled by default; timing-safe bearer token, env-bound tenant/user, and writes off by default.'],
     ['backend/src/routes/devices.js', 'Authenticated role-neutral device self-service scoped to caller, company, and token.'],

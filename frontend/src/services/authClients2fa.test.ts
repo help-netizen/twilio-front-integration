@@ -11,7 +11,7 @@
  * These tests pin the contract for BOTH clients:
  *   1. 401 PHONE_VERIFICATION_REQUIRED → requireTwoFactor() + ONE retry,
  *      and NEVER an `auth:session-expired` dispatch.
- *   2. A generic 401 still ends in `auth:session-expired` (axios path).
+ *   2. A generic 401 ends in exactly one `auth:session-expired` dispatch.
  *
  * Any future auth-flow change MUST keep both clients in lockstep (memory:
  * bug22-axios-2fa-loop).
@@ -60,6 +60,7 @@ beforeEach(() => {
 
 afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     requireTwoFactor.mockClear();
     updateToken.mockClear();
     isNativeWebViewAuthMode.mockClear();
@@ -113,7 +114,31 @@ describe('axios client: 401 PHONE_VERIFICATION_REQUIRED', () => {
 
         await expect(client.get('/calls')).rejects.toBeTruthy();
         const dispatched = dispatchEvent.mock.calls.map(([e]) => (e as CustomEvent).type);
-        expect(dispatched).toContain('auth:session-expired');
+        expect(dispatched.filter(type => type === 'auth:session-expired')).toHaveLength(1);
+        expect(requireTwoFactor).not.toHaveBeenCalled();
+    });
+
+    it('dispatches session-expired once when a refreshed token is also rejected', async () => {
+        updateToken.mockResolvedValueOnce(true);
+        const api = await import('./api');
+        const client = (api as any).apiClient ?? (api as any).default;
+        let calls = 0;
+
+        client.defaults.adapter = async (config: any) => {
+            calls += 1;
+            const error: any = new Error('Request failed with status code 401');
+            error.config = config;
+            error.response = { status: 401, data: { code: 'SESSION_REVOKED' }, config };
+            error.isAxiosError = true;
+            throw error;
+        };
+
+        await expect(client.get('/calls')).rejects.toBeTruthy();
+
+        const dispatched = dispatchEvent.mock.calls.map(([e]) => (e as CustomEvent).type);
+        expect(calls).toBe(2);
+        expect(updateToken).toHaveBeenCalledTimes(1);
+        expect(dispatched.filter(type => type === 'auth:session-expired')).toHaveLength(1);
         expect(requireTwoFactor).not.toHaveBeenCalled();
     });
 });
@@ -192,8 +217,43 @@ describe('authedFetch: 401 PHONE_VERIFICATION_REQUIRED', () => {
         expect(requireTwoFactor).toHaveBeenCalledTimes(1);
         const dispatched = dispatchEvent.mock.calls.map(([e]) => (e as CustomEvent).type);
         expect(dispatched).not.toContain('auth:session-expired');
+    });
+});
 
-        vi.unstubAllGlobals();
+describe('authedFetch: generic 401', () => {
+    it('dispatches session-expired once when token refresh fails', async () => {
+        const { authedFetch } = await import('./apiClient');
+        const fetchMock = vi.fn(async () => (
+            new Response(JSON.stringify({ code: 'SESSION_REVOKED' }), { status: 401 })
+        ));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const response = await authedFetch('/api/calls');
+
+        const dispatched = dispatchEvent.mock.calls.map(([e]) => (e as CustomEvent).type);
+        expect(response.status).toBe(401);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(updateToken).toHaveBeenCalledTimes(1);
+        expect(dispatched.filter(type => type === 'auth:session-expired')).toHaveLength(1);
+        expect(requireTwoFactor).not.toHaveBeenCalled();
+    });
+
+    it('dispatches session-expired once when a refreshed token is also rejected', async () => {
+        updateToken.mockResolvedValueOnce(true);
+        const { authedFetch } = await import('./apiClient');
+        const fetchMock = vi.fn(async () => (
+            new Response(JSON.stringify({ code: 'SESSION_REVOKED' }), { status: 401 })
+        ));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const response = await authedFetch('/api/calls');
+
+        const dispatched = dispatchEvent.mock.calls.map(([e]) => (e as CustomEvent).type);
+        expect(response.status).toBe(401);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(updateToken).toHaveBeenCalledTimes(1);
+        expect(dispatched.filter(type => type === 'auth:session-expired')).toHaveLength(1);
+        expect(requireTwoFactor).not.toHaveBeenCalled();
     });
 });
 
@@ -222,8 +282,6 @@ describe('authedFetch: native WebView 401 refresh', () => {
         expect(updateToken).not.toHaveBeenCalled();
         expect(requireTwoFactor).not.toHaveBeenCalled();
         expect(signalNativeWebViewSessionExpired).not.toHaveBeenCalled();
-
-        vi.unstubAllGlobals();
     });
 
     it('signals native after the single retry is also unauthorized', async () => {
@@ -242,7 +300,5 @@ describe('authedFetch: native WebView 401 refresh', () => {
         expect(requestNativeWebViewTokenRefresh).toHaveBeenCalledTimes(1);
         expect(signalNativeWebViewSessionExpired).toHaveBeenCalledTimes(1);
         expect(updateToken).not.toHaveBeenCalled();
-
-        vi.unstubAllGlobals();
     });
 });

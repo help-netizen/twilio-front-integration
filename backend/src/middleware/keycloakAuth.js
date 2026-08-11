@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const userService = require('../services/userService');
 const auditService = require('../services/auditService');
 const authorizationService = require('../services/authorizationService');
+const sessionRevocationService = require('../services/sessionRevocationService');
 const avatarBases = require('../config/avatarBases');
 const db = require('../db/connection');
 
@@ -124,6 +125,35 @@ async function authenticate(req, res, next) {
 
     jwt.verify(token, getKey, { algorithms: ['RS256'], issuer: KEYCLOAK_REALM_URL }, async (err, decoded) => {
         if (err) return res.status(401).json({ code: 'AUTH_INVALID', message: 'Invalid or expired token', trace_id: req.traceId });
+
+        if (!Number.isSafeInteger(decoded.iat) || typeof decoded.sub !== 'string' || !decoded.sub.trim()) {
+            return res.status(401).json({ code: 'AUTH_INVALID', message: 'Invalid or expired token', trace_id: req.traceId });
+        }
+
+        try {
+            const revoked = await sessionRevocationService.isAccessTokenRevoked({
+                issuer: KEYCLOAK_REALM_URL,
+                sid: decoded.sid,
+                sub: decoded.sub,
+                issuedAt: decoded.iat,
+            });
+            if (revoked) {
+                return res.status(401).json({
+                    code: 'SESSION_REVOKED',
+                    message: 'Session has been revoked',
+                    trace_id: req.traceId,
+                });
+            }
+        } catch (revocationErr) {
+            // Authentication state is fail-closed. Do not reveal session/subject
+            // identifiers or let a store outage bypass an accepted logout.
+            console.error('[Auth] Session revocation lookup failed');
+            return res.status(503).json({
+                code: 'AUTH_REVOCATION_UNAVAILABLE',
+                message: 'Authentication temporarily unavailable',
+                trace_id: req.traceId,
+            });
+        }
 
         // Connector access tokens are deliberately bound to /mcp/chatgpt. Their
         // human subject authorizes the AI identity but must never be resolved as
@@ -270,4 +300,10 @@ function requireCompanyAccess(req, res, next) {
     next();
 }
 
-module.exports = { authenticate, requireRole, requireCompanyAccess };
+module.exports = {
+    authenticate,
+    requireRole,
+    requireCompanyAccess,
+    getKey,
+    KEYCLOAK_REALM_URL,
+};

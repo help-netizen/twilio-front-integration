@@ -30,6 +30,9 @@ jest.mock('../backend/src/services/userService', () => ({
 jest.mock('../backend/src/services/auditService', () => ({
     log: jest.fn(async () => {}),
 }));
+jest.mock('../backend/src/services/sessionRevocationService', () => ({
+    isAccessTokenRevoked: jest.fn(async () => false),
+}));
 jest.mock('../backend/src/services/authorizationService', () => ({
     buildDevAuthzContext: jest.fn(),
     resolveAuthzContext: jest.fn(async () => ({
@@ -50,6 +53,7 @@ function claims(overrides = {}) {
     return {
         iss: process.env.KEYCLOAK_REALM_URL,
         sub: 'human-sub-a',
+        iat: 1_700_000_000,
         email: 'admin-a@example.test',
         azp: 'crm-web',
         realm_access: { roles: ['company_admin'] },

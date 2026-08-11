@@ -364,6 +364,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 authzReadyRef.current = true;
                 return true;
             } else {
+                if (res.status === 401) {
+                    window.dispatchEvent(new CustomEvent('auth:session-expired'));
+                }
                 console.warn('[Auth] Failed to load auth context', res.status);
                 return false;
             }

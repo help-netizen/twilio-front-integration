@@ -32,6 +32,9 @@ jest.mock('../backend/src/services/authorizationService', () => ({
     resolveAuthzContext: (...args) => mockResolveAuthzContext(...args),
 }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('../backend/src/services/sessionRevocationService', () => ({
+    isAccessTokenRevoked: jest.fn(async () => false),
+}));
 
 jest.mock('../backend/src/services/telephonyTenantService', () => ({}));
 jest.mock('../backend/src/services/territoryGeoService', () => ({}));
@@ -81,6 +84,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     mockJwtVerify.mockImplementation((_token, _key, _options, callback) => callback(null, {
         sub: 'kc-user',
+        iat: 1_700_000_000,
         email: 'admin@example.com',
         name: 'Admin User',
         realm_access: { roles: ['company_admin'] },
@@ -205,4 +209,3 @@ describe('CALL-BLACKLIST-001 pre-routing lookup service', () => {
         expect(callBlacklistService.normalizePhoneNumber(input)).toBe(expected);
     });
 });
-

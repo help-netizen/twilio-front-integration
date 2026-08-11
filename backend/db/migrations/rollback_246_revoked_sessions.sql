@@ -1,0 +1,3 @@
+-- AUTH-BACKCHANNEL-001
+
+DROP TABLE IF EXISTS revoked_sessions;

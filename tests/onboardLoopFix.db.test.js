@@ -79,6 +79,7 @@ beforeEach(() => {
     mockCrmUser = null;
     mockClaims = {
         sub: 'onboard-loop-user',
+        iat: 1_700_000_000,
         email: 'onboard-loop@example.test',
         realm_access: { roles: ['company_admin'] },
     };
@@ -122,6 +123,7 @@ describe('ONBOARD-LOOP-FIX Root A — platform-only super admin', () => {
         };
         mockClaims = {
             sub: mockCrmUser.keycloak_sub,
+            iat: 1_700_000_000,
             email: mockCrmUser.email,
             name: mockCrmUser.full_name,
             realm_access: { roles: ['super_admin'] },
@@ -176,6 +178,7 @@ describe('ONBOARD-LOOP-FIX Root B — verified phone on an untrusted device', ()
             mockCrmUser = userResult.rows[0];
             mockClaims = {
                 sub: keycloakSub,
+                iat: 1_700_000_000,
                 email: mockCrmUser.email,
                 name: mockCrmUser.full_name,
                 realm_access: { roles: ['company_admin'] },
