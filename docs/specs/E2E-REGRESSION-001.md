@@ -8,7 +8,7 @@
 
 ## 1. Scope
 
-- **Phase 1 (P0, «smoke gate»)** — 15 тестов по ядру: auth, публичная регистрация, create contact/lead/job/estimate/invoice, approve estimate→invoice, schedule + assign + reschedule + reassign. Это минимум, который должен быть зелёным перед каждым прод-деплоем.
+- **Phase 1 (P0, «smoke gate»)** — 16 тестов по ядру: auth, публичная регистрация, create contact/lead/job/estimate/invoice, approve estimate→invoice, schedule + assign + reschedule + reassign, on-the-way status transition (plain + notify-only modal + live card update). Это минимум, который должен быть зелёным перед каждым прод-деплоем.
 - **Phase 2 (P1)** и **Phase 3 (P2)** — глубже (edit/detail/search/status/finance/void/RBAC/mobile) — перечислены в §9, детально опишем после того, как P0 поедет.
 - **Вне скоупа suite:** нагрузочное, безопасность, кросс-браузер (кроме P2 mobile), реальная доставка email/SMS/charge (интеграции на staging обезврежены — проверяем только in-app подтверждение).
 
@@ -126,6 +126,13 @@
 - **Expected:** шторка закрылась; тост; работа вверху `/jobs`; плитка показывает **«Customer, City»**; внутри — введённые данные.
 - **Cleanup:** удалить работу через API.
 - **Notes:** NewJobModal — канон create (gold-standard шторка).
+
+### JOB-06 · P0 — "On the way" system transition `@suite:jobs`
+- **Precond:** залогинен (admin, есть `messages.send` — модалка гейтится этим правом); через API засеяна работа (`RUN_ID`) в стартовом статусе.
+- **Steps:** открыть работу → нажать кнопку статуса **«On the way»** → дождаться модалки ETA → закрыть её **Cancel** (без отправки).
+- **Expected:** переход применяется сразу (blanc_status=`On the way` в API ещё до уведомления); всплывает **notify-only** модалка «On the way» (кнопка «Notify client»); закрытие модалки НЕ откатывает статус; **карточка показывает новый статус без перезагрузки** (SSE `job.updated` из FSM-apply + refetch инициатора).
+- **Cleanup:** удалить работу через API.
+- **Notes:** канон FSM-SYSTEM-TRANSITIONS-001 — поведение on-the-way на СОСТОЯНИИ (blanc:op=arrival_eta), не на ребре; регресс-гард против «статус меняется, а карточка старая до refresh».
 
 ### EST-01 · P0 — Create estimate on a job `@suite:estimates`
 - **Precond:** залогинен (admin); через API засеяна работа (`RUN_ID`).

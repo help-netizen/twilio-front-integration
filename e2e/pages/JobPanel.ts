@@ -92,6 +92,39 @@ export class JobPanel {
         }).toPass({ timeout: 30_000 });
     }
 
+    /**
+     * A header/ops button addressed by its visible label. The header status pill and
+     * the prominent FSM action buttons are both `button[name]`, so the same label
+     * points at the action button before a transition and at the status pill after it
+     * (e.g. "On the way" is the ops action while Submitted, and the status pill once
+     * the job IS On the way) — which is exactly what the on-the-way flow asserts.
+     */
+    statusButton(label: string): Locator {
+        return this.page.getByRole('button', { name: label, exact: true });
+    }
+
+    /** The notify-only "On the way" ETA modal (identified by its Notify client action). */
+    get etaModal(): Locator {
+        return this.page.getByRole('dialog').filter({
+            has: this.page.getByRole('button', { name: 'Notify client' }),
+        });
+    }
+
+    /**
+     * Click the prominent "On the way" FSM action. FSM-SYSTEM-TRANSITIONS-001: the
+     * transition applies immediately (plain), then the notify-only ETA modal opens.
+     */
+    async goOnTheWay(): Promise<void> {
+        await this.statusButton('On the way').dispatchEvent('click');
+        await expect(this.etaModal).toBeVisible({ timeout: 15_000 });
+    }
+
+    /** Dismiss the ETA modal without notifying — must NOT revert the status change. */
+    async closeEtaModal(): Promise<void> {
+        await this.etaModal.getByRole('button', { name: 'Cancel', exact: true }).dispatchEvent('click');
+        await expect(this.etaModal).toBeHidden({ timeout: 10_000 });
+    }
+
     async rescheduleToNextDay(technicianName?: string): Promise<void> {
         await expect(async () => {
             if (await this.slotPicker.title.isVisible()) return;
