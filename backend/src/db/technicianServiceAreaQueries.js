@@ -358,6 +358,7 @@ async function setWildcardTechnician(companyId, technicianId, servesAll, created
     const identity = await resolveTechnicianIdentity(companyId, technicianId);
     if (servesAll) {
         const { rows } = await db.query(
+            // tenant-safety-allow R-natural-key: the arbiter is the composite key (company_id, technician_id), so DO UPDATE can only ever touch this company's row — the WHERE guards the technician identity within it
             `INSERT INTO technician_area_wildcards
                 (company_id, technician_id, technician_uuid, created_by)
              VALUES ($1, $2, $3::uuid, $4)

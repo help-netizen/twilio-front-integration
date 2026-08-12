@@ -157,6 +157,7 @@ async function replace(companyId, technicianId, { inheritsCompanySchedule, days,
         );
         if (!parent.rows[0]) {
             parent = await client.query(
+                // tenant-safety-allow R-natural-key: the arbiter is the composite key (company_id, technician_id), so DO UPDATE can only ever touch this company's row — the WHERE guards the technician identity within it
                 `INSERT INTO technician_work_schedules
                     (company_id, technician_id, technician_uuid,
                      inherits_company_schedule, created_by, updated_by)
