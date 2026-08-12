@@ -40,6 +40,18 @@ router.get('/summary', async (req, res) => {
     }
 });
 
+router.get('/geo', async (req, res) => {
+    try {
+        const result = await analytics.getGeoPerformance(
+            companyIdFrom(req),
+            { from: req.query.from, to: req.query.to }
+        );
+        return res.json(result);
+    } catch (error) {
+        return sendError(res, error, 'geo');
+    }
+});
+
 router.get('/breakdown', async (req, res) => {
     try {
         const result = await analytics.getBreakdown(

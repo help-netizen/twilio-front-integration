@@ -18,6 +18,7 @@ jest.mock('../backend/src/services/leadChannelAnalyticsService', () => {
     return {
         LeadChannelAnalyticsError,
         getSummary: jest.fn(),
+        getGeoPerformance: jest.fn(),
         getBreakdown: jest.fn(),
         getDataQuality: jest.fn(),
     };
@@ -103,6 +104,52 @@ const DATA_QUALITY_RESPONSE = {
     connected_sources: [],
 };
 
+const GEO_RESPONSE = {
+    period: {
+        from: '2026-07-01',
+        to: '2026-07-31',
+        timezone: 'America/New_York',
+    },
+    zones: [{ area: 'Downtown', zip_count: 2 }],
+    rows: [{
+        zip: '02108',
+        area: 'Downtown',
+        in_configured_area: true,
+        geometry: {
+            google_place_id: 'place-02108',
+            lat: 42.357,
+            lon: -71.063,
+            status: 'resolved',
+        },
+        google_lsa: {
+            converted_count: 1,
+            ad_spend_cents: 400,
+            revenue_net_cents: 1200,
+            cpa_cents: 400,
+            avg_revenue_cents: 1200,
+            roas: 3,
+            spend_is_modeled: true,
+        },
+        elocal: {
+            converted_count: 0,
+            ad_spend_cents: 0,
+            revenue_net_cents: 0,
+            cpa_cents: null,
+            avg_revenue_cents: null,
+            roas: null,
+            spend_is_modeled: false,
+        },
+    }],
+    quality: {
+        unmapped_converted_count: 0,
+        unmapped_revenue_net_cents: 0,
+        unmapped_spend_cents: 0,
+        unallocated_google_lsa_spend_cents: 0,
+        centroid_only_zip_count: 0,
+        missing_geometry_zip_count: 0,
+    },
+};
+
 function responseDouble() {
     return {
         statusCode: 200,
@@ -155,6 +202,7 @@ async function invokeAs(role, pathname, query) {
 beforeEach(() => {
     jest.clearAllMocks();
     analytics.getSummary.mockResolvedValue(SUMMARY_RESPONSE);
+    analytics.getGeoPerformance.mockResolvedValue(GEO_RESPONSE);
     analytics.getBreakdown.mockResolvedValue(BREAKDOWN_RESPONSE);
     analytics.getDataQuality.mockResolvedValue(DATA_QUALITY_RESPONSE);
 });
@@ -191,6 +239,23 @@ describe('LEAD-CHANNEL-ANALYTICS-001 route response contracts', () => {
             from: '2026-07-01',
             to: '2026-07-31',
         });
+    });
+
+    test('geo returns the exact contract and only companyFilter tenant', async () => {
+        const response = await invokeAs('tenant_admin', '/geo', {
+            from: '2026-07-01',
+            to: '2026-07-31',
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.body).toEqual(GEO_RESPONSE);
+        expect(analytics.getGeoPerformance).toHaveBeenCalledWith(COMPANY_ID, {
+            from: '2026-07-01',
+            to: '2026-07-31',
+        });
+        expect(analytics.getGeoPerformance.mock.calls[0]).not.toContain(
+            POISONED_LEGACY_COMPANY_ID
+        );
     });
 
     test('data-quality returns the exact backend contract', async () => {
@@ -233,6 +298,7 @@ describe('LEAD-CHANNEL-ANALYTICS-001 route response contracts', () => {
 describe('LEAD-CHANNEL-ANALYTICS-001 R-matrix', () => {
     const endpoints = [
         ['summary', 'getSummary', '/summary', {}],
+        ['geo', 'getGeoPerformance', '/geo', {}],
         ['breakdown', 'getBreakdown', '/breakdown', { dimension: 'area' }],
         ['data-quality', 'getDataQuality', '/data-quality', {}],
     ];

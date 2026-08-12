@@ -55,6 +55,17 @@ const ELOCAL_MIGRATION = fs.readFileSync(
     ),
     'utf8'
 );
+const ZIP_PLACE_ID_MIGRATION = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '186_zip_polygon_place_ids.sql'
+    ),
+    'utf8'
+);
 
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
@@ -65,6 +76,17 @@ const TAG = `lca-${Date.now()}-${process.pid}`;
 const SHARED_PHONE = `+1555${String(Date.now()).slice(-7)}`;
 const FROM = '2026-07-01';
 const TO = '2026-07-31';
+const GEO_ZIP_SUFFIX = String((Date.now() + process.pid) % 10000).padStart(4, '0');
+const GEO_ZIP_A = `6${GEO_ZIP_SUFFIX}`;
+const GEO_ZIP_B = `7${GEO_ZIP_SUFFIX}`;
+const GEO_ZIP_SPEND_ONLY = `8${GEO_ZIP_SUFFIX}`;
+const GEO_ZIP_EMPTY_ZONE = `9${GEO_ZIP_SUFFIX}`;
+const GEO_TEST_ZIPS = [
+    GEO_ZIP_A,
+    GEO_ZIP_B,
+    GEO_ZIP_SPEND_ONLY,
+    GEO_ZIP_EMPTY_ZONE,
+];
 const SEEDED_GOOGLE_ADS_KEY = `source_${
     createHash('md5').update('google ads').digest('hex')
 }`;
@@ -408,6 +430,23 @@ async function resetSpendFixtures() {
         [COMPANY_A]
     );
     await db.query(
+        `DELETE FROM leads
+         WHERE company_id = ANY($1::uuid[])
+           AND first_name = 'Geo Analytics'`,
+        [companyIds]
+    );
+    await db.query(
+        `DELETE FROM service_territories
+         WHERE company_id = ANY($1::uuid[])
+           AND zip = ANY($2::text[])`,
+        [companyIds, GEO_TEST_ZIPS]
+    );
+    await db.query(
+        `DELETE FROM zip_geocache
+         WHERE zip = ANY($1::text[])`,
+        [GEO_TEST_ZIPS]
+    );
+    await db.query(
         `UPDATE leads
          SET gclid = NULL
          WHERE company_id = ANY($1::uuid[])`,
@@ -487,6 +526,83 @@ async function markLeadAsGoogleClick(leadId, companyId) {
     );
 }
 
+async function seedGeoLead({ companyId, contactId, suffix, postalCode }) {
+    const { rows } = await db.query(
+        `INSERT INTO leads (
+             uuid,
+             company_id,
+             contact_id,
+             first_name,
+             phone,
+             postal_code,
+             job_source,
+             status,
+             converted_to_job,
+             created_at,
+             updated_at
+         )
+         VALUES (
+             $1,
+             $2,
+             $3,
+             'Geo Analytics',
+             $4,
+             $5,
+             'Geo test',
+             'Converted',
+             true,
+             '2026-07-10T14:00:00Z',
+             '2026-07-10T14:00:00Z'
+         )
+         RETURNING id`,
+        [
+            createHash('md5')
+                .update(`${TAG}-${companyId}-${suffix}`)
+                .digest('hex')
+                .slice(0, 20),
+            companyId,
+            contactId,
+            SHARED_PHONE,
+            postalCode,
+        ]
+    );
+    return rows[0].id;
+}
+
+async function seedGeoRefund({ companyId, contactId, jobId, amount, suffix }) {
+    await db.query(
+        `INSERT INTO payment_transactions (
+             company_id,
+             contact_id,
+             job_id,
+             transaction_type,
+             payment_method,
+             status,
+             amount,
+             processed_at,
+             external_source
+         )
+         VALUES (
+             $1,
+             $2,
+             $3,
+             'refund',
+             'cash',
+             'completed',
+             $4,
+             '2026-08-07T14:00:00Z',
+             $5
+         )`,
+        [
+            companyId,
+            contactId,
+            jobId,
+            amount,
+            `${TAG}-phase3-geo-refund-${suffix}`.slice(0, 50),
+        ]
+    );
+}
+
 async function seedLsaConnection(companyId, channelId, customerId) {
     const { rows } = await db.query(
         `INSERT INTO google_ads_connections (
@@ -511,6 +627,7 @@ async function seedMatchedLsaLead({
     leadId,
     externalId,
     providerCreatedAt = '2026-07-10T14:00:00Z',
+    leadType = 'PHONE_CALL',
 }) {
     const { rows } = await db.query(
         `INSERT INTO google_lsa_leads (
@@ -537,7 +654,7 @@ async function seedMatchedLsaLead({
              $3,
              $4,
              $5,
-             'PHONE_CALL',
+             $10,
              $6,
              RIGHT($6, 10),
              $7,
@@ -560,6 +677,7 @@ async function seedMatchedLsaLead({
             providerCreatedAt,
             contactId,
             leadId,
+            leadType,
         ]
     );
     return rows[0].id;
@@ -606,6 +724,8 @@ async function seedElocalLead({
     suffix,
     billable,
     costCents,
+    serviceZipCode = null,
+    callAt = '2026-07-10T14:00:00Z',
 }) {
     const { rows } = await db.query(
         `INSERT INTO elocal_leads (
@@ -619,6 +739,7 @@ async function seedElocalLead({
              supply_event_status,
              billable,
              call_at,
+             service_zip_code,
              match_status,
              matched_contact_id,
              matched_lead_id,
@@ -636,10 +757,11 @@ async function seedElocalLead({
              $6,
              $7,
              $8,
-             '2026-07-10T14:00:00Z',
-             'matched',
              $9,
              $10,
+             'matched',
+             $11,
+             $12,
              'nearby_call_contact',
              100,
              '2026-07-10T14:00:00Z'
@@ -654,6 +776,8 @@ async function seedElocalLead({
             costCents,
             billable ? 'BILLABLE' : 'UNBILLABLE',
             billable,
+            callAt,
+            serviceZipCode,
             contactId,
             leadId,
         ]
@@ -689,6 +813,9 @@ async function seedPhase3Job({
     leadId = null,
     suffix,
     zbStatus = 'scheduled',
+    zbCanceled = false,
+    blancStatus = 'Submitted',
+    startDate = null,
     amount = null,
 }) {
     const { rows } = await db.query(
@@ -699,6 +826,8 @@ async function seedPhase3Job({
              job_number,
              blanc_status,
              zb_status,
+             zb_canceled,
+             start_date,
              created_at,
              updated_at
          )
@@ -707,13 +836,24 @@ async function seedPhase3Job({
              $2,
              $3,
              $4,
-             'Submitted',
              $5,
+             $6,
+             $7,
+             $8,
              '2026-08-05T14:00:00Z',
              '2026-08-05T14:00:00Z'
          )
          RETURNING id`,
-        [companyId, contactId, leadId, `${TAG}-phase3-${suffix}`, zbStatus]
+        [
+            companyId,
+            contactId,
+            leadId,
+            `${TAG}-phase3-${suffix}`,
+            blancStatus,
+            zbStatus,
+            zbCanceled,
+            startDate,
+        ]
     );
     const jobId = rows[0].id;
     if (amount !== null) {
@@ -740,7 +880,13 @@ async function seedPhase3Job({
                  '2026-08-06T14:00:00Z',
                  $5
              )`,
-            [companyId, contactId, jobId, amount, `${TAG}-phase3-${suffix}`]
+            [
+                companyId,
+                contactId,
+                jobId,
+                amount,
+                `${TAG}-phase3-${suffix}`.slice(0, 50),
+            ]
         );
     }
     return jobId;
@@ -756,6 +902,8 @@ beforeAll(async () => {
     await db.query(LSA_MIGRATION);
     await db.query(ELOCAL_MIGRATION);
     await db.query(ELOCAL_MIGRATION);
+    await db.query(ZIP_PLACE_ID_MIGRATION);
+    await db.query(ZIP_PLACE_ID_MIGRATION);
     await insertFixtures();
     dbReady = true;
 });
@@ -1394,6 +1542,519 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         );
         expect(persisted.rows).toHaveLength(1);
         expect(unbillableLead).toBeTruthy();
+    });
+
+    databaseTest('geo returns tenant-safe ZIP conversions, exact/modeled spend, revenue, zones, and geometry quality', async () => {
+        await db.query(
+            `INSERT INTO service_territories (company_id, zip, area)
+             VALUES
+                ($1, $3, 'Zone North'),
+                ($1, $4, 'Zone North'),
+                ($1, $5, 'Empty Zone'),
+                ($2, $3, 'Foreign Zone')`,
+            [
+                COMPANY_A,
+                COMPANY_B,
+                GEO_ZIP_A,
+                GEO_ZIP_B,
+                GEO_ZIP_EMPTY_ZONE,
+            ]
+        );
+        await db.query(
+            `INSERT INTO zip_geocache (
+                 zip,
+                 lat,
+                 lon,
+                 city,
+                 state,
+                 google_place_id,
+                 place_id_resolved_at
+             )
+             VALUES
+                ($1, 42.357, -71.063, 'Boston', 'MA', $3, NOW()),
+                ($2, 42.360, -71.050, 'Boston', 'MA', NULL, NULL)`,
+            [GEO_ZIP_A, GEO_ZIP_B, `${TAG}-place-a`]
+        );
+
+        const [googleChannelA, googleChannelB, elocalChannelA, elocalChannelB] =
+            await Promise.all([
+                ensureChannel(COMPANY_A),
+                ensureChannel(COMPANY_B),
+                ensureChannel(COMPANY_A, 'elocal', 'eLocal'),
+                ensureChannel(COMPANY_B, 'elocal', 'eLocal'),
+            ]);
+        const [lsaConnectionA, lsaConnectionB, elocalConnectionA, elocalConnectionB] =
+            await Promise.all([
+                seedLsaConnection(COMPANY_A, googleChannelA, '3333333333'),
+                seedLsaConnection(COMPANY_B, googleChannelB, '4444444444'),
+                seedElocalConnection(COMPANY_A, elocalChannelA, 'geo-a'),
+                seedElocalConnection(COMPANY_B, elocalChannelB, 'geo-b'),
+            ]);
+
+        const lsaSpecs = [
+            {
+                suffix: 'geo-lsa-a',
+                zip: GEO_ZIP_A,
+                startDate: '2026-07-12T14:00:00Z',
+                amount: 100,
+            },
+            {
+                suffix: 'geo-lsa-b',
+                zip: GEO_ZIP_B,
+                startDate: '2026-07-13T14:00:00Z',
+                amount: 30,
+            },
+            {
+                suffix: 'geo-lsa-unmapped',
+                zip: 'invalid',
+                startDate: '2026-07-14T14:00:00Z',
+                amount: 10,
+            },
+            {
+                suffix: 'geo-lsa-flag-canceled',
+                zip: GEO_ZIP_A,
+                startDate: '2026-07-15T14:00:00Z',
+                zbCanceled: true,
+                amount: 99,
+            },
+            {
+                suffix: 'geo-lsa-status-canceled',
+                zip: GEO_ZIP_A,
+                startDate: '2026-07-16T14:00:00Z',
+                zbStatus: 'canceled',
+                amount: 99,
+            },
+            {
+                suffix: 'geo-lsa-blanc-canceled',
+                zip: GEO_ZIP_A,
+                startDate: '2026-07-17T14:00:00Z',
+                blancStatus: 'Canceled',
+                amount: 99,
+            },
+            {
+                suffix: 'geo-lsa-unscheduled',
+                zip: GEO_ZIP_A,
+                startDate: null,
+                amount: 99,
+            },
+            {
+                suffix: 'geo-lsa-message',
+                zip: GEO_ZIP_A,
+                startDate: '2026-07-18T14:00:00Z',
+                leadType: 'MESSAGE',
+                amount: 99,
+            },
+        ];
+        const seededLsa = [];
+        for (const spec of lsaSpecs) {
+            const leadId = await seedGeoLead({
+                companyId: COMPANY_A,
+                contactId: contactA,
+                suffix: spec.suffix,
+                postalCode: spec.zip,
+            });
+            const jobId = await seedPhase3Job({
+                companyId: COMPANY_A,
+                contactId: contactA,
+                leadId,
+                suffix: spec.suffix,
+                zbStatus: spec.zbStatus,
+                zbCanceled: spec.zbCanceled,
+                blancStatus: spec.blancStatus,
+                startDate: spec.startDate,
+                amount: spec.amount,
+            });
+            const lsaLeadId = await seedMatchedLsaLead({
+                companyId: COMPANY_A,
+                connectionId: lsaConnectionA,
+                contactId: contactA,
+                leadId,
+                externalId: `${TAG}-${spec.suffix}`,
+                leadType: spec.leadType,
+            });
+            await attributeLsaJob({
+                companyId: COMPANY_A,
+                lsaLeadId,
+                jobId,
+                contactId: contactA,
+                leadId,
+            });
+            seededLsa.push({ ...spec, leadId, jobId });
+        }
+        await seedGeoRefund({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            jobId: seededLsa[0].jobId,
+            amount: 20,
+            suffix: 'lsa-a',
+        });
+
+        const elocalLeadId = await seedGeoLead({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'geo-elocal-job',
+            postalCode: GEO_ZIP_A,
+        });
+        const elocalJobId = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: elocalLeadId,
+            suffix: 'geo-elocal-job',
+            startDate: '2026-07-19T14:00:00Z',
+            amount: 70,
+        });
+        const elocalCanceledLeadId = await seedGeoLead({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'geo-elocal-canceled',
+            postalCode: GEO_ZIP_A,
+        });
+        const elocalCanceledJobId = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: elocalCanceledLeadId,
+            suffix: 'geo-elocal-canceled',
+            startDate: '2026-07-20T14:00:00Z',
+            zbCanceled: true,
+            amount: 90,
+        });
+        const elocalUnscheduledLeadId = await seedGeoLead({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'geo-elocal-unscheduled',
+            postalCode: GEO_ZIP_A,
+        });
+        const elocalUnscheduledJobId = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: elocalUnscheduledLeadId,
+            suffix: 'geo-elocal-unscheduled',
+            amount: 90,
+        });
+
+        const [
+            precedenceProvider,
+            jobProvider,
+            unbillableProvider,
+            invalidZipProvider,
+            spendOnlyProvider,
+            canceledProvider,
+            unscheduledProvider,
+        ] = await Promise.all([
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: elocalConnectionA,
+                contactId: contactA,
+                leadId: seededLsa[0].leadId,
+                suffix: 'geo-precedence',
+                billable: true,
+                costCents: 500,
+                serviceZipCode: GEO_ZIP_A,
+            }),
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: elocalConnectionA,
+                contactId: contactA,
+                leadId: elocalLeadId,
+                suffix: 'geo-job',
+                billable: true,
+                costCents: 900,
+                serviceZipCode: GEO_ZIP_B,
+            }),
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: elocalConnectionA,
+                contactId: contactA,
+                leadId: elocalLeadId,
+                suffix: 'geo-unbillable',
+                billable: false,
+                costCents: 999,
+                serviceZipCode: GEO_ZIP_A,
+            }),
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: elocalConnectionA,
+                contactId: contactA,
+                leadId: elocalLeadId,
+                suffix: 'geo-invalid-zip',
+                billable: true,
+                costCents: 111,
+                serviceZipCode: 'invalid',
+            }),
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: elocalConnectionA,
+                contactId: contactA,
+                leadId: elocalLeadId,
+                suffix: 'geo-spend-only',
+                billable: true,
+                costCents: 400,
+                serviceZipCode: GEO_ZIP_SPEND_ONLY,
+            }),
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: elocalConnectionA,
+                contactId: contactA,
+                leadId: elocalCanceledLeadId,
+                suffix: 'geo-canceled',
+                billable: true,
+                costCents: 0,
+                serviceZipCode: GEO_ZIP_A,
+            }),
+            seedElocalLead({
+                companyId: COMPANY_A,
+                connectionId: elocalConnectionA,
+                contactId: contactA,
+                leadId: elocalUnscheduledLeadId,
+                suffix: 'geo-unscheduled',
+                billable: true,
+                costCents: 0,
+                serviceZipCode: GEO_ZIP_A,
+            }),
+        ]);
+        expect(unbillableProvider).toBeTruthy();
+        expect(invalidZipProvider).toBeTruthy();
+        expect(spendOnlyProvider).toBeTruthy();
+        await Promise.all([
+            attributeElocalJob({
+                companyId: COMPANY_A,
+                elocalLeadId: precedenceProvider,
+                jobId: seededLsa[0].jobId,
+                contactId: contactA,
+                leadId: seededLsa[0].leadId,
+            }),
+            attributeElocalJob({
+                companyId: COMPANY_A,
+                elocalLeadId: jobProvider,
+                jobId: elocalJobId,
+                contactId: contactA,
+                leadId: elocalLeadId,
+            }),
+            attributeElocalJob({
+                companyId: COMPANY_A,
+                elocalLeadId: canceledProvider,
+                jobId: elocalCanceledJobId,
+                contactId: contactA,
+                leadId: elocalCanceledLeadId,
+            }),
+            attributeElocalJob({
+                companyId: COMPANY_A,
+                elocalLeadId: unscheduledProvider,
+                jobId: elocalUnscheduledJobId,
+                contactId: contactA,
+                leadId: elocalUnscheduledLeadId,
+            }),
+        ]);
+
+        const foreignLeadId = await seedGeoLead({
+            companyId: COMPANY_B,
+            contactId: contactB,
+            suffix: 'geo-foreign',
+            postalCode: GEO_ZIP_A,
+        });
+        const foreignJobId = await seedPhase3Job({
+            companyId: COMPANY_B,
+            contactId: contactB,
+            leadId: foreignLeadId,
+            suffix: 'geo-foreign',
+            startDate: '2026-07-12T14:00:00Z',
+            amount: 999,
+        });
+        const foreignLsaLeadId = await seedMatchedLsaLead({
+            companyId: COMPANY_B,
+            connectionId: lsaConnectionB,
+            contactId: contactB,
+            leadId: foreignLeadId,
+            externalId: `${TAG}-geo-foreign`,
+        });
+        await attributeLsaJob({
+            companyId: COMPANY_B,
+            lsaLeadId: foreignLsaLeadId,
+            jobId: foreignJobId,
+            contactId: contactB,
+            leadId: foreignLeadId,
+        });
+        await seedElocalLead({
+            companyId: COMPANY_B,
+            connectionId: elocalConnectionB,
+            contactId: contactB,
+            leadId: foreignLeadId,
+            suffix: 'geo-foreign',
+            billable: true,
+            costCents: 7777,
+            serviceZipCode: GEO_ZIP_A,
+        });
+        await Promise.all([
+            seedSpend(
+                COMPANY_A,
+                googleChannelA,
+                10010000,
+                'geo-localservices-a',
+                'Boston LocalServices Geo'
+            ),
+            seedSpend(
+                COMPANY_B,
+                googleChannelB,
+                99990000,
+                'geo-localservices-b',
+                'Foreign LocalServices Geo'
+            ),
+        ]);
+
+        const response = await invokeEndpoint(COMPANY_A, '/geo', {
+            from: FROM,
+            to: TO,
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.body.period).toEqual({
+            from: FROM,
+            to: TO,
+            timezone: 'America/New_York',
+        });
+        expect(response.body.zones).toEqual([
+            { area: 'Downtown', zip_count: 1 },
+            { area: 'Empty Zone', zip_count: 1 },
+            { area: 'Zone North', zip_count: 2 },
+        ]);
+        expect(response.body.rows.map(row => row.zip)).toEqual([
+            GEO_ZIP_A,
+            GEO_ZIP_B,
+            GEO_ZIP_SPEND_ONLY,
+        ]);
+        const [zipA, zipB, spendOnly] = response.body.rows;
+        expect(zipA).toEqual({
+            zip: GEO_ZIP_A,
+            area: 'Zone North',
+            in_configured_area: true,
+            geometry: {
+                google_place_id: `${TAG}-place-a`,
+                lat: 42.357,
+                lon: -71.063,
+                status: 'resolved',
+            },
+            google_lsa: {
+                converted_count: 1,
+                ad_spend_cents: 334,
+                revenue_net_cents: 8000,
+                cpa_cents: 334,
+                avg_revenue_cents: 8000,
+                roas: 8000 / 334,
+                spend_is_modeled: true,
+            },
+            elocal: {
+                converted_count: 1,
+                ad_spend_cents: 500,
+                revenue_net_cents: 7000,
+                cpa_cents: 500,
+                avg_revenue_cents: 7000,
+                roas: 14,
+                spend_is_modeled: false,
+            },
+        });
+        expect(zipB).toMatchObject({
+            zip: GEO_ZIP_B,
+            area: 'Zone North',
+            in_configured_area: true,
+            geometry: {
+                google_place_id: null,
+                lat: 42.36,
+                lon: -71.05,
+                status: 'centroid_only',
+            },
+            google_lsa: {
+                converted_count: 1,
+                ad_spend_cents: 334,
+                revenue_net_cents: 3000,
+                cpa_cents: 334,
+                avg_revenue_cents: 3000,
+                roas: 3000 / 334,
+                spend_is_modeled: true,
+            },
+            elocal: {
+                converted_count: 0,
+                ad_spend_cents: 900,
+                revenue_net_cents: 0,
+                cpa_cents: null,
+                avg_revenue_cents: null,
+                roas: 0,
+                spend_is_modeled: false,
+            },
+        });
+        expect(spendOnly).toMatchObject({
+            zip: GEO_ZIP_SPEND_ONLY,
+            area: null,
+            in_configured_area: false,
+            geometry: {
+                google_place_id: null,
+                lat: null,
+                lon: null,
+                status: 'missing',
+            },
+            google_lsa: {
+                converted_count: 0,
+                ad_spend_cents: 0,
+                revenue_net_cents: 0,
+                cpa_cents: null,
+                avg_revenue_cents: null,
+                roas: null,
+                spend_is_modeled: true,
+            },
+            elocal: {
+                converted_count: 0,
+                ad_spend_cents: 400,
+                revenue_net_cents: 0,
+                cpa_cents: null,
+                avg_revenue_cents: null,
+                roas: 0,
+                spend_is_modeled: false,
+            },
+        });
+        expect(response.body.quality).toEqual({
+            unmapped_converted_count: 1,
+            unmapped_revenue_net_cents: 1000,
+            unmapped_spend_cents: 444,
+            unallocated_google_lsa_spend_cents: 0,
+            centroid_only_zip_count: 1,
+            missing_geometry_zip_count: 1,
+        });
+        expect(
+            response.body.rows.reduce(
+                (sum, row) => sum + row.google_lsa.ad_spend_cents,
+                response.body.quality.unmapped_spend_cents - 111
+            )
+        ).toBe(1001);
+        const payload = JSON.stringify(response.body);
+        expect(payload).not.toContain('Foreign Zone');
+        expect(payload).not.toContain('99900');
+        expect(payload).not.toContain('7777');
+    });
+
+    databaseTest('geo exposes Local Services spend as unallocated when there are no eligible jobs', async () => {
+        const googleChannel = await ensureChannel(COMPANY_A);
+        await seedSpend(
+            COMPANY_A,
+            googleChannel,
+            7770000,
+            'geo-unallocated',
+            'LocalServices without a booked job'
+        );
+
+        const response = await invokeEndpoint(COMPANY_A, '/geo', {
+            from: FROM,
+            to: TO,
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.body.rows).toEqual([]);
+        expect(response.body.quality).toEqual({
+            unmapped_converted_count: 0,
+            unmapped_revenue_net_cents: 0,
+            unmapped_spend_cents: 0,
+            unallocated_google_lsa_spend_cents: 777,
+            centroid_only_zip_count: 0,
+            missing_geometry_zip_count: 0,
+        });
     });
 
     databaseTest("zb_status='complete' counts the job as visit-completed and done", async () => {

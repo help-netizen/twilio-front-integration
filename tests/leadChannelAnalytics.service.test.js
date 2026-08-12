@@ -2,6 +2,12 @@
 
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
+const mockResolveZipPlaceId = jest.fn(() => Promise.resolve(null));
+const mockIsPlaceIdFresh = jest.fn(() => true);
+jest.mock('../backend/src/services/territoryGeoService', () => ({
+    resolveZipPlaceId: mockResolveZipPlaceId,
+    isPlaceIdFresh: mockIsPlaceIdFresh,
+}));
 
 const analytics = require('../backend/src/services/leadChannelAnalyticsService');
 
@@ -231,5 +237,196 @@ describe('leadChannelAnalyticsService response math', () => {
         });
         expect(mockQuery.mock.calls[0][1][0]).toBe(COMPANY_ID);
         expect(mockQuery.mock.calls[1][1][0]).toBe(COMPANY_ID);
+    });
+});
+
+describe('leadChannelAnalyticsService geo performance', () => {
+    test('returns symmetric ZIP metrics, reconciled modeled spend, zones, and quality', async () => {
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{ timezone: 'America/New_York' }],
+            })
+            .mockResolvedValueOnce({
+                rows: [
+                    {
+                        zip: '02108',
+                        area: 'Downtown',
+                        in_configured_area: true,
+                        lat: '42.357',
+                        lon: '-71.063',
+                        google_place_id: 'place-02108',
+                        place_id_resolved_at: '2026-08-01T00:00:00Z',
+                        google_lsa_converted_count: '1',
+                        google_lsa_revenue_net_cents: '8000',
+                        elocal_converted_count: '1',
+                        elocal_revenue_net_cents: '7000',
+                        elocal_spend_cents: '500',
+                    },
+                    {
+                        zip: '02109',
+                        area: null,
+                        in_configured_area: false,
+                        lat: '42.36',
+                        lon: '-71.05',
+                        google_place_id: null,
+                        place_id_resolved_at: null,
+                        google_lsa_converted_count: '1',
+                        google_lsa_revenue_net_cents: '3000',
+                        elocal_converted_count: '0',
+                        elocal_revenue_net_cents: '0',
+                        elocal_spend_cents: '900',
+                    },
+                    {
+                        zip: null,
+                        area: null,
+                        in_configured_area: false,
+                        lat: null,
+                        lon: null,
+                        google_place_id: null,
+                        place_id_resolved_at: null,
+                        google_lsa_converted_count: '1',
+                        google_lsa_revenue_net_cents: '1000',
+                        elocal_converted_count: '0',
+                        elocal_revenue_net_cents: '0',
+                        elocal_spend_cents: '111',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({ rows: [{ spend_cents: '1001' }] })
+            .mockResolvedValueOnce({
+                rows: [
+                    { area: 'Downtown', zip_count: '2' },
+                    { area: 'Empty zone', zip_count: '1' },
+                ],
+            });
+
+        const result = await analytics.getGeoPerformance(COMPANY_ID, PERIOD);
+
+        expect(result).toEqual({
+            period: { ...PERIOD, timezone: 'America/New_York' },
+            zones: [
+                { area: 'Downtown', zip_count: 2 },
+                { area: 'Empty zone', zip_count: 1 },
+            ],
+            rows: [
+                {
+                    zip: '02108',
+                    area: 'Downtown',
+                    in_configured_area: true,
+                    geometry: {
+                        google_place_id: 'place-02108',
+                        lat: 42.357,
+                        lon: -71.063,
+                        status: 'resolved',
+                    },
+                    google_lsa: {
+                        converted_count: 1,
+                        ad_spend_cents: 334,
+                        revenue_net_cents: 8000,
+                        cpa_cents: 334,
+                        avg_revenue_cents: 8000,
+                        roas: 8000 / 334,
+                        spend_is_modeled: true,
+                    },
+                    elocal: {
+                        converted_count: 1,
+                        ad_spend_cents: 500,
+                        revenue_net_cents: 7000,
+                        cpa_cents: 500,
+                        avg_revenue_cents: 7000,
+                        roas: 14,
+                        spend_is_modeled: false,
+                    },
+                },
+                {
+                    zip: '02109',
+                    area: null,
+                    in_configured_area: false,
+                    geometry: {
+                        google_place_id: null,
+                        lat: 42.36,
+                        lon: -71.05,
+                        status: 'centroid_only',
+                    },
+                    google_lsa: {
+                        converted_count: 1,
+                        ad_spend_cents: 334,
+                        revenue_net_cents: 3000,
+                        cpa_cents: 334,
+                        avg_revenue_cents: 3000,
+                        roas: 3000 / 334,
+                        spend_is_modeled: true,
+                    },
+                    elocal: {
+                        converted_count: 0,
+                        ad_spend_cents: 900,
+                        revenue_net_cents: 0,
+                        cpa_cents: null,
+                        avg_revenue_cents: null,
+                        roas: 0,
+                        spend_is_modeled: false,
+                    },
+                },
+            ],
+            quality: {
+                unmapped_converted_count: 1,
+                unmapped_revenue_net_cents: 1000,
+                unmapped_spend_cents: 444,
+                unallocated_google_lsa_spend_cents: 0,
+                centroid_only_zip_count: 1,
+                missing_geometry_zip_count: 0,
+            },
+        });
+        expect(mockQuery.mock.calls.every(call => (
+            call[1][0] === COMPANY_ID
+        ))).toBe(true);
+        expect(mockResolveZipPlaceId).not.toHaveBeenCalled();
+        await new Promise(resolve => setImmediate(resolve));
+        expect(mockResolveZipPlaceId).toHaveBeenCalledWith('02109');
+    });
+
+    test('caps lazy place-ID warming at ten and never waits for it', async () => {
+        let releaseWarm;
+        const warmPromise = new Promise(resolve => {
+            releaseWarm = resolve;
+        });
+        mockResolveZipPlaceId.mockImplementation(() => warmPromise);
+        const rows = Array.from({ length: 12 }, (_, index) => ({
+            zip: `1${String(index).padStart(4, '0')}`,
+            area: null,
+            in_configured_area: false,
+            lat: null,
+            lon: null,
+            google_place_id: null,
+            place_id_resolved_at: null,
+            google_lsa_converted_count: '0',
+            google_lsa_revenue_net_cents: '0',
+            elocal_converted_count: '0',
+            elocal_revenue_net_cents: '0',
+            elocal_spend_cents: '1',
+        }));
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ timezone: 'UTC' }] })
+            .mockResolvedValueOnce({ rows })
+            .mockResolvedValueOnce({ rows: [{ spend_cents: '0' }] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        const result = await analytics.getGeoPerformance(COMPANY_ID, PERIOD);
+
+        expect(result.rows).toHaveLength(12);
+        expect(mockResolveZipPlaceId).not.toHaveBeenCalled();
+        await new Promise(resolve => setImmediate(resolve));
+        expect(mockResolveZipPlaceId).toHaveBeenCalledTimes(10);
+        releaseWarm(null);
+    });
+
+    test('surfaces all Google spend as unallocated when no eligible LSA job exists', () => {
+        expect(analytics._allocateGeoGoogleSpend(777, [{
+            zip: '02108',
+            googleLsaConvertedCount: 0,
+        }])).toEqual({
+            allocations: [0],
+            unallocated_cents: 777,
+        });
     });
 });

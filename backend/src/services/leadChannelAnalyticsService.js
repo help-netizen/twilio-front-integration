@@ -8,11 +8,13 @@
  */
 
 const db = require('../db/connection');
+const territoryGeoService = require('./territoryGeoService');
 
 const DEFAULT_TIMEZONE = 'America/New_York';
 const MAX_RANGE_DAYS = 731;
 const VALID_DIMENSIONS = new Set(['channel', 'area', 'technician']);
 const COUNT_PRECISION = 10000;
+const GEO_PLACE_ID_WARM_LIMIT = 10;
 
 class LeadChannelAnalyticsError extends Error {
     constructor(code, message, httpStatus = 400) {
@@ -892,6 +894,272 @@ const ELOCAL_METRICS_SQL = `
     CROSS JOIN lifetime_revenue lifetime
 `;
 
+const GEO_PERFORMANCE_SQL = `
+    WITH company_context AS (
+        SELECT
+            id,
+            COALESCE(NULLIF(timezone, ''), $4) AS timezone
+        FROM companies
+        WHERE id = $1
+    ),
+    lsa_jobs AS (
+        SELECT DISTINCT
+            job.id AS job_id,
+            CASE
+                WHEN SPLIT_PART(
+                    BTRIM(COALESCE(owning_lead.postal_code, '')),
+                    '-',
+                    1
+                ) ~ '^[0-9]{5}$'
+                    THEN SPLIT_PART(
+                        BTRIM(owning_lead.postal_code),
+                        '-',
+                        1
+                    )
+                ELSE NULL
+            END AS zip,
+            'google_lsa'::TEXT AS channel_key
+        FROM google_lsa_job_attributions attribution
+        JOIN google_lsa_leads provider
+          ON provider.company_id = $1
+         AND provider.id = attribution.lsa_lead_id
+        JOIN jobs job
+          ON job.company_id = $1
+         AND job.id = attribution.matched_job_id
+        JOIN company_context cc
+          ON cc.id = provider.company_id
+        LEFT JOIN leads owning_lead
+          ON owning_lead.company_id = $1
+         AND owning_lead.id = job.lead_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+          AND provider.lead_type = 'PHONE_CALL'
+          AND provider.provider_created_at
+                >= ($2::date AT TIME ZONE cc.timezone)
+          AND provider.provider_created_at
+                < (($3::date + 1) AT TIME ZONE cc.timezone)
+          AND job.start_date IS NOT NULL
+          AND COALESCE(job.zb_canceled, false) = false
+          AND LOWER(REPLACE(
+                BTRIM(COALESCE(job.zb_status, '')),
+                '_',
+                ' '
+              )) NOT IN ('canceled', 'cancelled')
+          AND LOWER(REPLACE(
+                BTRIM(COALESCE(job.blanc_status, '')),
+                '_',
+                ' '
+              )) NOT IN ('canceled', 'cancelled')
+    ),
+    elocal_jobs AS (
+        SELECT DISTINCT
+            job.id AS job_id,
+            CASE
+                WHEN SPLIT_PART(
+                    BTRIM(COALESCE(owning_lead.postal_code, '')),
+                    '-',
+                    1
+                ) ~ '^[0-9]{5}$'
+                    THEN SPLIT_PART(
+                        BTRIM(owning_lead.postal_code),
+                        '-',
+                        1
+                    )
+                ELSE NULL
+            END AS zip,
+            'elocal'::TEXT AS channel_key
+        FROM elocal_job_attributions attribution
+        JOIN elocal_leads provider
+          ON provider.company_id = $1
+         AND provider.id = attribution.elocal_lead_id
+        JOIN jobs job
+          ON job.company_id = $1
+         AND job.id = attribution.matched_job_id
+        JOIN company_context cc
+          ON cc.id = provider.company_id
+        LEFT JOIN leads owning_lead
+          ON owning_lead.company_id = $1
+         AND owning_lead.id = job.lead_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+          AND provider.call_at >= ($2::date AT TIME ZONE cc.timezone)
+          AND provider.call_at < (($3::date + 1) AT TIME ZONE cc.timezone)
+          AND job.start_date IS NOT NULL
+          AND COALESCE(job.zb_canceled, false) = false
+          AND LOWER(REPLACE(
+                BTRIM(COALESCE(job.zb_status, '')),
+                '_',
+                ' '
+              )) NOT IN ('canceled', 'cancelled')
+          AND LOWER(REPLACE(
+                BTRIM(COALESCE(job.blanc_status, '')),
+                '_',
+                ' '
+              )) NOT IN ('canceled', 'cancelled')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM google_lsa_job_attributions lsa_attribution
+              WHERE lsa_attribution.company_id = $1
+                AND lsa_attribution.matched_job_id = job.id
+                AND lsa_attribution.match_confidence >= 90
+          )
+    ),
+    attributed_jobs AS (
+        SELECT * FROM lsa_jobs
+        UNION ALL
+        SELECT * FROM elocal_jobs
+    ),
+    revenue_by_job AS (
+        SELECT
+            attributed.job_id,
+            COALESCE(
+                ROUND(
+                    (
+                        SUM(
+                            CASE
+                                WHEN transaction.transaction_type = 'payment'
+                                 AND transaction.status = 'completed'
+                                    THEN transaction.amount
+                                ELSE 0
+                            END
+                        )
+                        -
+                        SUM(
+                            CASE
+                                WHEN transaction.transaction_type = 'refund'
+                                 AND transaction.status = 'completed'
+                                    THEN ABS(transaction.amount)
+                                ELSE 0
+                            END
+                        )
+                    ) * 100
+                ),
+                0
+            )::BIGINT AS revenue_net_cents
+        FROM attributed_jobs attributed
+        LEFT JOIN payment_transactions transaction
+          ON transaction.company_id = $1
+         AND transaction.job_id = attributed.job_id
+         AND transaction.voided_at IS NULL
+        GROUP BY attributed.job_id
+    ),
+    conversion_by_zip AS (
+        SELECT
+            attributed.zip,
+            attributed.channel_key,
+            COUNT(DISTINCT attributed.job_id)::INTEGER AS converted_count,
+            COALESCE(SUM(revenue.revenue_net_cents), 0)::BIGINT
+                AS revenue_net_cents
+        FROM attributed_jobs attributed
+        LEFT JOIN revenue_by_job revenue
+          ON revenue.job_id = attributed.job_id
+        GROUP BY attributed.zip, attributed.channel_key
+    ),
+    conversion_pivot AS (
+        SELECT
+            conversion.zip,
+            COALESCE(SUM(conversion.converted_count) FILTER (
+                WHERE conversion.channel_key = 'google_lsa'
+            ), 0)::INTEGER AS google_lsa_converted_count,
+            COALESCE(SUM(conversion.revenue_net_cents) FILTER (
+                WHERE conversion.channel_key = 'google_lsa'
+            ), 0)::BIGINT AS google_lsa_revenue_net_cents,
+            COALESCE(SUM(conversion.converted_count) FILTER (
+                WHERE conversion.channel_key = 'elocal'
+            ), 0)::INTEGER AS elocal_converted_count,
+            COALESCE(SUM(conversion.revenue_net_cents) FILTER (
+                WHERE conversion.channel_key = 'elocal'
+            ), 0)::BIGINT AS elocal_revenue_net_cents
+        FROM conversion_by_zip conversion
+        GROUP BY conversion.zip
+    ),
+    elocal_spend_by_zip AS (
+        SELECT
+            CASE
+                WHEN SPLIT_PART(
+                    BTRIM(COALESCE(provider.service_zip_code, '')),
+                    '-',
+                    1
+                ) ~ '^[0-9]{5}$'
+                    THEN SPLIT_PART(
+                        BTRIM(provider.service_zip_code),
+                        '-',
+                        1
+                    )
+                ELSE NULL
+            END AS zip,
+            COALESCE(SUM(provider.cost_cents), 0)::BIGINT AS spend_cents
+        FROM elocal_leads provider
+        JOIN company_context cc
+          ON cc.id = provider.company_id
+        WHERE provider.company_id = $1
+          AND provider.billable = true
+          AND provider.call_at >= ($2::date AT TIME ZONE cc.timezone)
+          AND provider.call_at < (($3::date + 1) AT TIME ZONE cc.timezone)
+        GROUP BY 1
+    ),
+    zip_keys AS (
+        SELECT conversion.zip FROM conversion_pivot conversion
+        UNION
+        SELECT spend.zip FROM elocal_spend_by_zip spend
+    )
+    SELECT
+        zip_key.zip,
+        NULLIF(BTRIM(territory.area), '') AS area,
+        (territory.zip IS NOT NULL) AS in_configured_area,
+        geo.lat,
+        geo.lon,
+        geo.google_place_id,
+        geo.place_id_resolved_at,
+        COALESCE(conversion.google_lsa_converted_count, 0)::INTEGER
+            AS google_lsa_converted_count,
+        COALESCE(conversion.google_lsa_revenue_net_cents, 0)::BIGINT
+            AS google_lsa_revenue_net_cents,
+        COALESCE(conversion.elocal_converted_count, 0)::INTEGER
+            AS elocal_converted_count,
+        COALESCE(conversion.elocal_revenue_net_cents, 0)::BIGINT
+            AS elocal_revenue_net_cents,
+        COALESCE(spend.spend_cents, 0)::BIGINT AS elocal_spend_cents
+    FROM zip_keys zip_key
+    LEFT JOIN conversion_pivot conversion
+      ON conversion.zip IS NOT DISTINCT FROM zip_key.zip
+    LEFT JOIN elocal_spend_by_zip spend
+      ON spend.zip IS NOT DISTINCT FROM zip_key.zip
+    LEFT JOIN service_territories territory
+      ON territory.company_id = $1
+     AND territory.zip = zip_key.zip
+    LEFT JOIN zip_geocache geo
+      ON geo.zip = zip_key.zip
+    ORDER BY zip_key.zip ASC NULLS LAST
+`;
+
+const GEO_GOOGLE_LSA_SPEND_SQL = `
+    SELECT COALESCE(
+        ROUND(SUM(performance.cost_micros)::NUMERIC / 10000),
+        0
+    )::BIGINT AS spend_cents
+    FROM lead_source_performance_daily performance
+    JOIN lead_source_channels channel
+      ON channel.company_id = $1
+     AND channel.id = performance.channel_id
+     AND channel.channel_key = 'google_ads'
+    WHERE performance.company_id = $1
+      AND performance.performance_date >= $2::DATE
+      AND performance.performance_date <= $3::DATE
+      AND performance.external_campaign_name ILIKE '%localservices%'
+`;
+
+const GEO_ZONES_SQL = `
+    SELECT
+        BTRIM(territory.area) AS area,
+        COUNT(DISTINCT territory.zip)::INTEGER AS zip_count
+    FROM service_territories territory
+    WHERE territory.company_id = $1
+      AND NULLIF(BTRIM(territory.area), '') IS NOT NULL
+    GROUP BY BTRIM(territory.area)
+    ORDER BY BTRIM(territory.area)
+`;
+
 function asInteger(value) {
     const number = Number(value || 0);
     return Number.isFinite(number) ? Math.round(number) : 0;
@@ -1001,6 +1269,97 @@ async function loadElocalSnapshot(companyId, period) {
         completed_conversion_count: asInteger(row.completed_conversion_count),
         ltv_revenue_net_cents: asInteger(row.ltv_revenue_net_cents),
     };
+}
+
+function asCoordinate(value) {
+    if (value == null) return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeGeoFact(row) {
+    const googlePlaceId = typeof row.google_place_id === 'string'
+        ? row.google_place_id.trim() || null
+        : null;
+    return {
+        zip: row.zip || null,
+        area: row.area || null,
+        inConfiguredArea: row.in_configured_area === true,
+        lat: asCoordinate(row.lat),
+        lon: asCoordinate(row.lon),
+        googlePlaceId,
+        placeIdResolvedAt: row.place_id_resolved_at || null,
+        googleLsaConvertedCount: asInteger(
+            row.google_lsa_converted_count
+        ),
+        googleLsaRevenueNetCents: asInteger(
+            row.google_lsa_revenue_net_cents
+        ),
+        elocalConvertedCount: asInteger(row.elocal_converted_count),
+        elocalRevenueNetCents: asInteger(row.elocal_revenue_net_cents),
+        elocalSpendCents: asInteger(row.elocal_spend_cents),
+    };
+}
+
+async function loadGeoPerformanceFacts(companyId, period) {
+    requireCompanyId(companyId);
+    const { rows } = await db.query(
+        GEO_PERFORMANCE_SQL,
+        [companyId, period.from, period.to, DEFAULT_TIMEZONE]
+    );
+    return rows.map(normalizeGeoFact);
+}
+
+async function loadGeoGoogleLsaSpend(companyId, period) {
+    requireCompanyId(companyId);
+    const { rows } = await db.query(
+        GEO_GOOGLE_LSA_SPEND_SQL,
+        [companyId, period.from, period.to]
+    );
+    return asInteger(rows[0]?.spend_cents);
+}
+
+async function loadGeoZones(companyId) {
+    requireCompanyId(companyId);
+    const { rows } = await db.query(GEO_ZONES_SQL, [companyId]);
+    return rows.map(row => ({
+        area: row.area,
+        zip_count: asInteger(row.zip_count),
+    }));
+}
+
+function queueGeoPlaceIdWarm(facts) {
+    const candidates = facts
+        .filter(fact => (
+            fact.zip
+            && (
+                !fact.googlePlaceId
+                || !territoryGeoService.isPlaceIdFresh(fact.placeIdResolvedAt)
+            )
+        ))
+        .slice(0, GEO_PLACE_ID_WARM_LIMIT);
+    if (candidates.length === 0) return;
+
+    setImmediate(async () => {
+        try {
+            const results = await Promise.allSettled(
+                candidates.map(fact => (
+                    territoryGeoService.resolveZipPlaceId(fact.zip)
+                ))
+            );
+            const failures = results.filter(result => result.status === 'rejected');
+            if (failures.length > 0) {
+                console.warn(
+                    `[LeadChannelAnalytics] ${failures.length} lazy ZIP place ID resolutions failed (non-fatal)`
+                );
+            }
+        } catch (error) {
+            console.warn(
+                '[LeadChannelAnalytics] lazy ZIP place ID warm failed (non-fatal):',
+                error?.message || String(error)
+            );
+        }
+    });
 }
 
 function emptyCostSnapshot() {
@@ -1233,6 +1592,151 @@ function cpaFor(adSpendCents, conversionCount) {
     return Math.round(adSpendCents / conversionCount);
 }
 
+function averageRevenueFor(revenueNetCents, conversionCount) {
+    if (!conversionCount) return null;
+    return Math.round(revenueNetCents / conversionCount);
+}
+
+function allocateGeoGoogleSpend(totalSpendCents, facts) {
+    const total = Math.max(0, asInteger(totalSpendCents));
+    const totalWeight = facts.reduce(
+        (sum, fact) => sum + fact.googleLsaConvertedCount,
+        0
+    );
+    if (totalWeight === 0) {
+        return {
+            allocations: facts.map(() => 0),
+            unallocated_cents: total,
+        };
+    }
+
+    const provisional = facts.map((fact, index) => {
+        const exact = total * fact.googleLsaConvertedCount / totalWeight;
+        const base = Math.floor(exact);
+        return {
+            index,
+            key: fact.zip || '\uffff-unmapped',
+            base,
+            fraction: exact - base,
+        };
+    });
+    let residual = total - provisional.reduce(
+        (sum, item) => sum + item.base,
+        0
+    );
+    const ranked = [...provisional].sort((left, right) => (
+        right.fraction - left.fraction
+        || left.key.localeCompare(right.key)
+        || left.index - right.index
+    ));
+    let cursor = 0;
+    while (residual > 0 && ranked.length > 0) {
+        ranked[cursor % ranked.length].base += 1;
+        residual -= 1;
+        cursor += 1;
+    }
+
+    const allocations = facts.map(() => 0);
+    for (const item of provisional) allocations[item.index] = item.base;
+    return { allocations, unallocated_cents: 0 };
+}
+
+function geoChannelMetrics({
+    convertedCount,
+    spendCents,
+    revenueNetCents,
+    spendIsModeled,
+}) {
+    return {
+        converted_count: convertedCount,
+        ad_spend_cents: spendCents,
+        revenue_net_cents: revenueNetCents,
+        cpa_cents: cpaFor(spendCents, convertedCount),
+        avg_revenue_cents: averageRevenueFor(
+            revenueNetCents,
+            convertedCount
+        ),
+        roas: roasFor(revenueNetCents, spendCents),
+        spend_is_modeled: spendIsModeled,
+    };
+}
+
+function geoGeometry(fact) {
+    let status = 'missing';
+    if (fact.googlePlaceId) status = 'resolved';
+    else if (fact.lat != null && fact.lon != null) status = 'centroid_only';
+    return {
+        google_place_id: fact.googlePlaceId,
+        lat: fact.lat,
+        lon: fact.lon,
+        status,
+    };
+}
+
+function buildGeoPerformanceResponse({
+    facts,
+    googleLsaSpendCents,
+    zones,
+    period,
+    timezone,
+}) {
+    const googleAllocation = allocateGeoGoogleSpend(
+        googleLsaSpendCents,
+        facts
+    );
+    const allocatedFacts = facts.map((fact, index) => ({
+        ...fact,
+        googleLsaSpendCents: googleAllocation.allocations[index],
+    }));
+    const unmapped = allocatedFacts.find(fact => fact.zip == null) || null;
+    const mappedFacts = allocatedFacts.filter(fact => fact.zip != null);
+    const rows = mappedFacts.map(fact => ({
+        zip: fact.zip,
+        area: fact.area,
+        in_configured_area: fact.inConfiguredArea,
+        geometry: geoGeometry(fact),
+        google_lsa: geoChannelMetrics({
+            convertedCount: fact.googleLsaConvertedCount,
+            spendCents: fact.googleLsaSpendCents,
+            revenueNetCents: fact.googleLsaRevenueNetCents,
+            spendIsModeled: true,
+        }),
+        elocal: geoChannelMetrics({
+            convertedCount: fact.elocalConvertedCount,
+            spendCents: fact.elocalSpendCents,
+            revenueNetCents: fact.elocalRevenueNetCents,
+            spendIsModeled: false,
+        }),
+    }));
+
+    return {
+        period: { ...period, timezone },
+        zones,
+        rows,
+        quality: {
+            unmapped_converted_count: unmapped
+                ? unmapped.googleLsaConvertedCount
+                    + unmapped.elocalConvertedCount
+                : 0,
+            unmapped_revenue_net_cents: unmapped
+                ? unmapped.googleLsaRevenueNetCents
+                    + unmapped.elocalRevenueNetCents
+                : 0,
+            unmapped_spend_cents: unmapped
+                ? unmapped.googleLsaSpendCents + unmapped.elocalSpendCents
+                : 0,
+            unallocated_google_lsa_spend_cents:
+                googleAllocation.unallocated_cents,
+            centroid_only_zip_count: rows.filter(
+                row => row.geometry.status === 'centroid_only'
+            ).length,
+            missing_geometry_zip_count: rows.filter(
+                row => row.geometry.status === 'missing'
+            ).length,
+        },
+    };
+}
+
 function lsaKpis(
     windowedRevenueCents,
     snapshot = emptyLsaLtvSnapshot(),
@@ -1381,6 +1885,31 @@ async function getSummary(companyId, query = {}) {
         funnel: funnelForTotals(totals),
         period: { ...period, timezone },
     };
+}
+
+async function getGeoPerformance(companyId, query = {}) {
+    const period = parsePeriod(query.from, query.to);
+    requireCompanyId(companyId);
+    const [
+        timezone,
+        facts,
+        googleLsaSpendCents,
+        zones,
+    ] = await Promise.all([
+        getCompanyTimezone(companyId),
+        loadGeoPerformanceFacts(companyId, period),
+        loadGeoGoogleLsaSpend(companyId, period),
+        loadGeoZones(companyId),
+    ]);
+    const response = buildGeoPerformanceResponse({
+        facts,
+        googleLsaSpendCents,
+        zones,
+        period,
+        timezone,
+    });
+    queueGeoPlaceIdWarm(facts);
+    return response;
 }
 
 function targetsForFact(fact, dimension) {
@@ -1923,8 +2452,10 @@ async function getDataQuality(companyId, query = {}) {
 module.exports = {
     LeadChannelAnalyticsError,
     getSummary,
+    getGeoPerformance,
     getBreakdown,
     getDataQuality,
     _parsePeriod: parsePeriod,
+    _allocateGeoGoogleSpend: allocateGeoGoogleSpend,
     _buildBreakdownRows: buildBreakdownRows,
 };
