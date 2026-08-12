@@ -11,6 +11,8 @@ import type { CompanyUser, EditUserForm } from '../hooks/useCompanyUsers';
 import { TechnicianServiceAreasEditor } from '../components/settings/TechnicianServiceAreas';
 import { techniciansApi, type TechnicianServiceAreas } from '../services/techniciansApi';
 import { technicianBaseLocationsApi } from '../services/technicianBaseLocationsApi';
+import { PlaceAutocompleteInput } from '../components/PlaceAutocompleteInput';
+import type { AddressFields } from '../components/addressAutoHelpers';
 
 
 type CreateForm = { full_name: string; email: string; phone: string; role_key: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; location_tracking_enabled: boolean };
@@ -117,9 +119,14 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
     const [baseInput, setBaseInput] = useState('');
     const [baseSaved, setBaseSaved] = useState('');
     const [savingBase, setSavingBase] = useState(false);
+    // Set only when the tech PICKS a Google suggestion — then we save its exact
+    // coordinates instead of letting the server geocode the text (a typed string can
+    // silently resolve to the wrong place, which throws off drive time and slots).
+    // Any manual edit clears it, so free text / a bare ZIP still geocodes server-side.
+    const [basePlace, setBasePlace] = useState<AddressFields | null>(null);
 
     useEffect(() => {
-        setAreas(null); setAreasError(false); setBaseInput(''); setBaseSaved('');
+        setAreas(null); setAreasError(false); setBaseInput(''); setBaseSaved(''); setBasePlace(null);
         if (!technicianId) return;
         let cancelled = false;
         techniciansApi.getSettings(technicianId)
@@ -140,7 +147,20 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
         if (!technicianId || !baseInput.trim()) return;
         setSavingBase(true);
         try {
-            const saved = await technicianBaseLocationsApi.upsert(technicianId, { address: baseInput.trim() });
+            const saved = await technicianBaseLocationsApi.upsert(technicianId, {
+                address: baseInput.trim(),
+                // A picked place carries Google's own coordinates + parts — send them so
+                // the backend stores exactly that spot. Without them it geocodes the text.
+                ...(basePlace ? {
+                    lat: basePlace.lat ?? null,
+                    lng: basePlace.lng ?? null,
+                    street: basePlace.street,
+                    apt: basePlace.apt,
+                    city: basePlace.city,
+                    state: basePlace.state,
+                    zip: basePlace.zip,
+                } : {}),
+            });
             const label = saved.address || baseInput.trim();
             setBaseInput(label); setBaseSaved(label);
             toast.success('Start location saved');
@@ -168,7 +188,13 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
                         )}
                     </div>
                     <div className="space-y-1.5">
-                        <FloatingField id="tech-start-location" label="Start location" value={baseInput} onChange={e => setBaseInput(e.target.value)} />
+                        <PlaceAutocompleteInput
+                            id="tech-start-location"
+                            label="Start location"
+                            value={baseInput}
+                            onChange={text => { setBaseInput(text); setBasePlace(null); }}
+                            onPick={({ address, fields }) => { setBaseInput(address); setBasePlace(fields); }}
+                        />
                         <div className="flex items-center justify-between gap-3">
                             <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                 Address or just a ZIP — drive time and slot suggestions count from here.
