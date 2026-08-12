@@ -283,7 +283,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                     {job.start_date && (
                         <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
                             <div className="flex items-center justify-between mb-2">
-                                <p style={{ ...eyebrow, marginBottom: 0 }}>Scheduled</p>
+                                <p style={{ ...eyebrow, marginBottom: 0 }}>Schedule</p>
                                 {canReschedule && (
                                     <button
                                         onClick={() => setShowReschedule(true)}

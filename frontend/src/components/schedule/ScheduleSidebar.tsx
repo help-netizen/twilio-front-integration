@@ -127,7 +127,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                 {/* Scheduled time + rail */}
                 {item.start_at && (
                     <div style={sectionCard}>
-                        <p style={eyebrow}>Scheduled</p>
+                        <p style={eyebrow}>Schedule</p>
                         <div className="text-lg leading-tight font-semibold" style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', color: 'var(--sched-ink-1)' }}>
                             {formatDateTimeInTZ(new Date(item.start_at), timezone)}
                         </div>
