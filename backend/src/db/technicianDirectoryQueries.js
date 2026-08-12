@@ -61,6 +61,37 @@ async function resolveExternalToUuid(companyId, source, externalId) {
     return rows[0] ? rows[0].technician_id : null;
 }
 
+/**
+ * Canonicalize an inbound technician identifier. Native UUIDs and historical
+ * provider ids are both accepted, but the only value returned is
+ * technicians.id. A merged tombstone redirects to its survivor.
+ */
+async function resolveTechnicianUuid(companyId, technicianId, source = 'zenbooker', runner = db) {
+    const input = technicianId == null ? '' : String(technicianId).trim();
+    if (!companyId || !input) return null;
+    if (UUID_RE.test(input)) {
+        const { rows } = await runner.query(
+            `SELECT COALESCE(t.merged_into, t.id) AS technician_id
+             FROM technicians t
+             WHERE t.company_id = $1 AND t.id = $2::uuid`,
+            [companyId, input.toLowerCase()]
+        );
+        return rows[0] ? rows[0].technician_id : null;
+    }
+    const { rows } = await runner.query(
+        `SELECT COALESCE(t.merged_into, t.id) AS technician_id
+         FROM technician_external_identities e
+         JOIN technicians t
+           ON t.company_id = e.company_id
+          AND t.id = e.technician_id
+         WHERE e.company_id = $1
+           AND e.source = $2
+           AND e.external_id = $3`,
+        [companyId, source, input]
+    );
+    return rows[0] ? rows[0].technician_id : null;
+}
+
 async function resolveUuidToExternal(companyId, source, technicianUuid) {
     const { rows } = await db.query(
         `SELECT external_id
@@ -102,8 +133,8 @@ async function resolveCompatibilityIdsToExternal(companyId, source, compatibilit
     return [...new Set(resolved)];
 }
 
-async function listActiveTechnicians(companyId) {
-    const { rows } = await db.query(
+async function listActiveTechnicians(companyId, runner = db) {
+    const { rows } = await runner.query(
         `SELECT t.id, t.display_name, t.active, t.crm_user_id,
                 external.external_id AS zenbooker_external_id
          FROM technicians t
@@ -246,6 +277,7 @@ module.exports = {
     createTechnician,
     upsertExternalIdentity,
     resolveExternalToUuid,
+    resolveTechnicianUuid,
     resolveUuidToExternal,
     resolveCompatibilityIdsToExternal,
     listActiveTechnicians,

@@ -11,12 +11,12 @@
  *    is a 400 INVALID_ASSIGNEE and nothing is written;
  *  • every assigned_techs[].id must resolve on the native roster —
  *    off-roster ids are a 400 INVALID_TECHNICIAN and nothing is written;
- *  • valid ids pass through unchanged (byte-compatible with pre-C2 writes).
+ *  • valid legacy inputs are canonicalized to technicians.id before writes.
  */
 
 const mockCreateTask = jest.fn();
 const mockGetActiveMembershipInCompany = jest.fn();
-const mockRequireActive = jest.fn();
+const mockCanonicalizeAssignments = jest.fn();
 const mockCreateManualJob = jest.fn();
 
 jest.mock('../../src/db/scheduleQueries', () => ({
@@ -30,7 +30,7 @@ jest.mock('../../src/db/membershipQueries', () => ({
     getActiveMembershipInCompany: (...args) => mockGetActiveMembershipInCompany(...args),
 }));
 jest.mock('../../src/services/technicianRosterService', () => ({
-    requireActive: (...args) => mockRequireActive(...args),
+    canonicalizeAssignments: (...args) => mockCanonicalizeAssignments(...args),
 }));
 jest.mock('../../src/services/jobsService', () => ({
     createManualJob: (...args) => mockCreateManualJob(...args),
@@ -49,7 +49,8 @@ describe('scheduleService.createFromSlot — assignment validation (ZB-DECOUPLE 
     beforeEach(() => {
         mockCreateTask.mockReset().mockResolvedValue({ id: 7 });
         mockGetActiveMembershipInCompany.mockReset();
-        mockRequireActive.mockReset();
+        mockCanonicalizeAssignments.mockReset()
+            .mockImplementation(async (_companyId, assignments) => assignments);
         mockCreateManualJob.mockReset().mockResolvedValue({ id: 1617 });
     });
 
@@ -87,7 +88,9 @@ describe('scheduleService.createFromSlot — assignment validation (ZB-DECOUPLE 
     });
 
     it('job: an off-roster assigned_techs id is a 400 and no job is created', async () => {
-        mockRequireActive.mockRejectedValue(Object.assign(new Error('Technician not found'), { httpStatus: 404 }));
+        mockCanonicalizeAssignments.mockRejectedValueOnce(
+            Object.assign(new Error('Technician not found'), { httpStatus: 404 })
+        );
         await expect(
             scheduleService.createFromSlot(COMPANY, 'job', {
                 title: 'Repair', assigned_techs: [{ id: 'foreign-zb-id', name: 'Evil' }],
@@ -96,23 +99,29 @@ describe('scheduleService.createFromSlot — assignment validation (ZB-DECOUPLE 
         expect(mockCreateManualJob).not.toHaveBeenCalled();
     });
 
-    it('job: roster-valid techs + member assignee reach createManualJob unchanged', async () => {
+    it('job: a roster-valid legacy id reaches createManualJob as a native UUID', async () => {
         mockGetActiveMembershipInCompany.mockResolvedValue({ id: 'm1' });
-        mockRequireActive.mockResolvedValue({ id: '1770085964093x308143070595776500', name: 'Robert' });
+        mockCanonicalizeAssignments.mockResolvedValueOnce([{ id: NATIVE_UUID, name: 'Robert' }]);
         const result = await scheduleService.createFromSlot(COMPANY, 'job', {
             title: 'Repair',
             assignee_id: '42',
             assigned_techs: [{ id: '1770085964093x308143070595776500', name: 'Robert' }],
         });
-        expect(mockRequireActive).toHaveBeenCalledWith(COMPANY, '1770085964093x308143070595776500');
+        expect(mockCanonicalizeAssignments).toHaveBeenCalledWith(
+            COMPANY,
+            [{ id: '1770085964093x308143070595776500', name: 'Robert' }]
+        );
         expect(mockCreateManualJob).toHaveBeenCalledWith(COMPANY, expect.objectContaining({
             assignee_id: '42',
-            assigned_techs: [{ id: '1770085964093x308143070595776500', name: 'Robert' }],
+            assigned_techs: [{ id: NATIVE_UUID, name: 'Robert' }],
         }), null);
         expect(result.entity_id).toBe(1617);
     });
 
     it('job: an assigned_techs entry without an id is a 400', async () => {
+        mockCanonicalizeAssignments.mockRejectedValueOnce(
+            Object.assign(new Error('Technician assignments require an id'), { httpStatus: 400 })
+        );
         await expect(
             scheduleService.createFromSlot(COMPANY, 'job', { title: 'x', assigned_techs: [{ name: 'No Id' }] })
         ).rejects.toMatchObject({ code: 'INVALID_TECHNICIAN', httpStatus: 400 });

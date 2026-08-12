@@ -4,9 +4,20 @@ jest.mock('../backend/src/services/eventService', () => ({}));
 jest.mock('../backend/src/db/membershipQueries', () => ({
     resolveProviderUserIds: jest.fn().mockResolvedValue([]),
 }));
+jest.mock('../backend/src/services/technicianRosterService', () => ({
+    canonicalizeAssignments: jest.fn(async (_companyId, assignments) =>
+        assignments.map(assignment => ({
+            ...assignment,
+            id: assignment.id === 'zb-legacy-tech'
+                ? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+                : assignment.id,
+        }))
+    ),
+}));
 
 const db = require('../backend/src/db/connection');
 const jobsService = require('../backend/src/services/jobsService');
+const technicianRosterService = require('../backend/src/services/technicianRosterService');
 
 const COMPANY = '00000000-0000-0000-0000-00000000000a';
 const ZB_JOB_ID = 'zb-job-1';
@@ -135,5 +146,25 @@ describe('jobsService.createJob description upsert', () => {
 
         expect(job.description).toBe('Zenbooker intake text');
         expect(getStoredDescription()).toBe('Zenbooker intake text');
+    });
+
+    it('canonicalizes a Zenbooker assignee before the job upsert', async () => {
+        mockDescriptionUpsert();
+        await jobsService.createJob({
+            zenbookerJobId: ZB_JOB_ID,
+            zbData: zbJob({
+                assigned_providers: [{ id: 'zb-legacy-tech', name: 'Historical name' }],
+            }),
+            companyId: COMPANY,
+        });
+
+        expect(technicianRosterService.canonicalizeAssignments).toHaveBeenCalledWith(
+            COMPANY,
+            [{ id: 'zb-legacy-tech', name: 'Historical name' }]
+        );
+        expect(db.query.mock.calls[0][1][20]).toBe(JSON.stringify([{
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            name: 'Historical name',
+        }]));
     });
 });

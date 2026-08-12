@@ -84,13 +84,13 @@ async function snapshotCompany(companyId, tables) {
     return snapshot;
 }
 
-async function loserReferenceCount(fixture, table, textColumn) {
+async function loserReferenceCount(fixture, table) {
     const { rows } = await db.query(
         `SELECT COUNT(*)::int AS count
            FROM ${table}
           WHERE company_id = $1
-            AND (technician_uuid = $2 OR ${textColumn} = ANY($3::text[]))`,
-        [fixture.companyId, fixture.loserId, [fixture.loserId, fixture.externalId].filter(Boolean)]
+            AND technician_uuid = $2`,
+        [fixture.companyId, fixture.loserId]
     );
     return rows[0].count;
 }
@@ -113,62 +113,63 @@ test('full merge moves every supported reference, deduplicates, mirrors OB-58, a
     );
     await db.query(
         `INSERT INTO technician_profiles
-            (company_id, tech_id, technician_uuid, name, photo_storage_key)
-         VALUES ($1, $2, $3, 'Legacy public profile', 'tech-merge/legacy-photo.jpg')`,
-        [companyId, externalId, loserId]
+            (company_id, technician_uuid, name, photo_storage_key)
+         VALUES ($1, $2, 'Legacy public profile', 'tech-merge/legacy-photo.jpg')`,
+        [companyId, loserId]
     );
     await db.query(
         `INSERT INTO technician_base_locations
-            (company_id, tech_id, technician_uuid, lat, lng, label, address)
-         VALUES ($1, $2, $3, 41, -70, 'LOSER BASE', 'Old address'),
-                ($1, $4, $5, 42, -71, 'SURVIVOR BASE', 'Current address')`,
-        [companyId, externalId, loserId, survivorId, survivorId]
+            (company_id, technician_uuid, is_company_default, lat, lng, label, address)
+         VALUES ($1, $2, FALSE, 41, -70, 'LOSER BASE', 'Old address'),
+                ($1, $3, FALSE, 42, -71, 'SURVIVOR BASE', 'Current address'),
+                ($1, NULL, TRUE, 43, -72, 'COMPANY BASE', 'Company address')`,
+        [companyId, loserId, survivorId]
     );
     await db.query(
         `INSERT INTO technician_time_off
-            (company_id, technician_id, technician_uuid, technician_name,
+            (company_id, technician_uuid, technician_name,
              starts_at, ends_at, note, source)
-         VALUES ($1, $2, $3, 'Agshin Legacy', '2026-07-12T12:00:00Z', '2026-07-13T12:00:00Z', 'duplicate loser', 'individual'),
-                ($1, $2, $3, 'Agshin Legacy', '2026-09-01T12:00:00Z', '2026-09-02T12:00:00Z', 'loser only', 'individual'),
-                ($1, $4, $5, 'Aqwin', '2026-07-12T12:00:00Z', '2026-07-13T12:00:00Z', 'survivor wins duplicate', 'individual')`,
-        [companyId, externalId, loserId, survivorId, survivorId]
+         VALUES ($1, $2, 'Agshin Legacy', '2026-07-12T12:00:00Z', '2026-07-13T12:00:00Z', 'duplicate loser', 'individual'),
+                ($1, $2, 'Agshin Legacy', '2026-09-01T12:00:00Z', '2026-09-02T12:00:00Z', 'loser only', 'individual'),
+                ($1, $3, 'Aqwin', '2026-07-12T12:00:00Z', '2026-07-13T12:00:00Z', 'survivor wins duplicate', 'individual')`,
+        [companyId, loserId, survivorId]
     );
     await db.query(
         `INSERT INTO technician_work_schedules
-            (company_id, technician_id, technician_uuid, inherits_company_schedule)
-         VALUES ($1, $2, $3, FALSE)`,
-        [companyId, externalId, loserId]
+            (company_id, technician_uuid, inherits_company_schedule)
+         VALUES ($1, $2, FALSE)`,
+        [companyId, loserId]
     );
     await db.query(
         `INSERT INTO technician_work_schedule_days
-            (company_id, technician_id, technician_uuid, day_of_week,
+            (company_id, technician_uuid, day_of_week,
              is_working, work_start_time, work_end_time)
-         VALUES ($1, $2, $3, 1, TRUE, '09:00', '17:00'),
-                ($1, $2, $3, 2, FALSE, NULL, NULL)`,
-        [companyId, externalId, loserId]
+         VALUES ($1, $2, 1, TRUE, '09:00', '17:00'),
+                ($1, $2, 2, FALSE, NULL, NULL)`,
+        [companyId, loserId]
     );
     await db.query(
         `INSERT INTO technician_district_assignments
-            (company_id, technician_id, technician_uuid, district_name)
-         VALUES ($1, $2, $3, 'North'),
-                ($1, $2, $3, 'Shared'),
-                ($1, $4, $5, 'South'),
-                ($1, $4, $5, 'Shared')`,
-        [companyId, externalId, loserId, survivorId, survivorId]
+            (company_id, technician_uuid, district_name)
+         VALUES ($1, $2, 'North'),
+                ($1, $2, 'Shared'),
+                ($1, $3, 'South'),
+                ($1, $3, 'Shared')`,
+        [companyId, loserId, survivorId]
     );
     await db.query(
         `INSERT INTO technician_radius_assignments
-            (company_id, technician_id, technician_uuid, radius_id)
-         VALUES ($1, $2, $3, $4),
-                ($1, $5, $6, $4),
-                ($1, $5, $6, $7)`,
-        [companyId, externalId, loserId, radiusShared, survivorId, survivorId, radiusSurvivor]
+            (company_id, technician_uuid, radius_id)
+         VALUES ($1, $2, $4),
+                ($1, $3, $4),
+                ($1, $3, $5)`,
+        [companyId, loserId, survivorId, radiusShared, radiusSurvivor]
     );
     await db.query(
         `INSERT INTO technician_area_wildcards
-            (company_id, technician_id, technician_uuid)
-         VALUES ($1, $2, $3), ($1, $4, $5)`,
-        [companyId, externalId, loserId, survivorId, survivorId]
+            (company_id, technician_uuid)
+         VALUES ($1, $2), ($1, $3)`,
+        [companyId, loserId, survivorId]
     );
     const jobs = await db.query(
         `INSERT INTO jobs (company_id, assigned_techs, assigned_provider_user_ids)
@@ -213,22 +214,21 @@ test('full merge moves every supported reference, deduplicates, mirrors OB-58, a
     });
     expect(result.plan.references.jobs).toMatchObject({ affected_rows: 2, loser_assignments: 2 });
 
-    for (const [table, textColumn] of [
-        ['technician_profiles', 'tech_id'],
-        ['technician_base_locations', 'tech_id'],
-        ['technician_time_off', 'technician_id'],
-        ['technician_work_schedules', 'technician_id'],
-        ['technician_work_schedule_days', 'technician_id'],
-        ['technician_district_assignments', 'technician_id'],
-        ['technician_radius_assignments', 'technician_id'],
-        ['technician_area_wildcards', 'technician_id'],
+    for (const table of [
+        'technician_profiles',
+        'technician_base_locations',
+        'technician_time_off',
+        'technician_work_schedules',
+        'technician_work_schedule_days',
+        'technician_district_assignments',
+        'technician_radius_assignments',
+        'technician_area_wildcards',
     ]) {
-        expect(await loserReferenceCount(fixture, table, textColumn)).toBe(0);
+        expect(await loserReferenceCount(fixture, table)).toBe(0);
         const canonical = await db.query(
             `SELECT COUNT(*)::int AS count FROM ${table}
               WHERE company_id = $1
-                AND technician_uuid = $2
-                AND ${textColumn} = $2::text`,
+                AND technician_uuid = $2`,
             [companyId, survivorId]
         );
         expect(canonical.rows[0].count).toBeGreaterThan(0);
@@ -270,6 +270,11 @@ test('full merge moves every supported reference, deduplicates, mirrors OB-58, a
         `SELECT label FROM technician_base_locations WHERE company_id = $1 AND technician_uuid = $2`,
         [companyId, survivorId]
     )).rows[0].label).toBe('SURVIVOR BASE');
+    expect((await db.query(
+        `SELECT label FROM technician_base_locations
+          WHERE company_id = $1 AND is_company_default = TRUE`,
+        [companyId]
+    )).rows).toEqual([{ label: 'COMPANY BASE' }]);
     const timeOff = await db.query(
         `SELECT technician_name, note FROM technician_time_off
           WHERE company_id = $1 ORDER BY starts_at`,
@@ -345,9 +350,9 @@ test('dry-run returns an exact plan and writes nothing', async () => {
     const fixture = await seedPair('DRY', { externalId: `zb-dry-${randomUUID()}` });
     await db.query(
         `INSERT INTO technician_profiles
-            (company_id, tech_id, technician_uuid, name)
-         VALUES ($1, $2, $3, 'Dry profile')`,
-        [fixture.companyId, fixture.externalId, fixture.loserId]
+            (company_id, technician_uuid, name)
+         VALUES ($1, $2, 'Dry profile')`,
+        [fixture.companyId, fixture.loserId]
     );
     await db.query(
         `INSERT INTO jobs (company_id, assigned_techs)
@@ -381,10 +386,10 @@ test('T-blast preserves a tenant with the same external id and cross-company mer
     const tenantB = await seedPair('TENANT-B', { externalId: sharedExternal });
     await db.query(
         `INSERT INTO technician_base_locations
-            (company_id, tech_id, technician_uuid, lat, lng, label)
-         VALUES ($1, $2, $3, 10, 11, 'A-ONLY'),
-                ($4, $2, NULL, 20, 21, 'B-BYTE-SENTINEL')`,
-        [tenantA.companyId, sharedExternal, tenantA.loserId, tenantB.companyId]
+            (company_id, technician_uuid, is_company_default, lat, lng, label)
+         VALUES ($1, $2, FALSE, 10, 11, 'A-ONLY'),
+                ($3, $4, FALSE, 20, 21, 'B-BYTE-SENTINEL')`,
+        [tenantA.companyId, tenantA.loserId, tenantB.companyId, tenantB.loserId]
     );
     await db.query(
         `INSERT INTO jobs (company_id, assigned_techs)
@@ -427,40 +432,34 @@ test('singleton conflict rolls back everything; survivor data policy reports, lo
     const fixture = await seedPair('CONFLICT', { externalId: `zb-conflict-${randomUUID()}` });
     await db.query(
         `INSERT INTO technician_profiles
-            (company_id, tech_id, technician_uuid, name, photo_storage_key)
-         VALUES ($1, $2, $3, 'LOSER PROFILE', 'loser-photo-key'),
-                ($1, $4, $5, 'SURVIVOR PROFILE', 'survivor-photo-key')`,
+            (company_id, technician_uuid, name, photo_storage_key)
+         VALUES ($1, $2, 'LOSER PROFILE', 'loser-photo-key'),
+                ($1, $3, 'SURVIVOR PROFILE', 'survivor-photo-key')`,
         [
             fixture.companyId,
-            fixture.externalId,
             fixture.loserId,
-            fixture.survivorId,
             fixture.survivorId,
         ]
     );
     await db.query(
         `INSERT INTO technician_work_schedules
-            (company_id, technician_id, technician_uuid, inherits_company_schedule)
-         VALUES ($1, $2, $3, FALSE), ($1, $4, $5, TRUE)`,
+            (company_id, technician_uuid, inherits_company_schedule)
+         VALUES ($1, $2, FALSE), ($1, $3, TRUE)`,
         [
             fixture.companyId,
-            fixture.externalId,
             fixture.loserId,
-            fixture.survivorId,
             fixture.survivorId,
         ]
     );
     await db.query(
         `INSERT INTO technician_work_schedule_days
-            (company_id, technician_id, technician_uuid, day_of_week,
+            (company_id, technician_uuid, day_of_week,
              is_working, work_start_time, work_end_time)
-         VALUES ($1, $2, $3, 1, TRUE, '08:00', '12:00'),
-                ($1, $4, $5, 2, TRUE, '10:00', '18:00')`,
+         VALUES ($1, $2, 1, TRUE, '08:00', '12:00'),
+                ($1, $3, 2, TRUE, '10:00', '18:00')`,
         [
             fixture.companyId,
-            fixture.externalId,
             fixture.loserId,
-            fixture.survivorId,
             fixture.survivorId,
         ]
     );
@@ -533,12 +532,11 @@ test('singleton conflict rolls back everything; survivor data policy reports, lo
     );
     warn.mockRestore();
     const profiles = await db.query(
-        `SELECT tech_id, technician_uuid, name, photo_storage_key
+        `SELECT technician_uuid, name, photo_storage_key
            FROM technician_profiles WHERE company_id = $1`,
         [fixture.companyId]
     );
     expect(profiles.rows).toEqual([{
-        tech_id: fixture.survivorId,
         technician_uuid: fixture.survivorId,
         name: 'SURVIVOR PROFILE',
         photo_storage_key: 'survivor-photo-key',
@@ -573,54 +571,46 @@ test('loser data policy overwrites base/profile while preserving the survivor ma
     });
     await db.query(
         `INSERT INTO technician_profiles
-            (company_id, tech_id, technician_uuid, name, photo_storage_key)
-         VALUES ($1, $2, $3, 'AGSHIN PROFILE', 'agshin-photo-key'),
-                ($1, $4, $5, 'AQWIN DEFAULT PROFILE', 'aqwin-default-photo-key')`,
+            (company_id, technician_uuid, name, photo_storage_key)
+         VALUES ($1, $2, 'AGSHIN PROFILE', 'agshin-photo-key'),
+                ($1, $3, 'AQWIN DEFAULT PROFILE', 'aqwin-default-photo-key')`,
         [
             fixture.companyId,
-            fixture.externalId,
             fixture.loserId,
-            fixture.survivorId,
             fixture.survivorId,
         ]
     );
     await db.query(
         `INSERT INTO technician_base_locations
-            (company_id, tech_id, technician_uuid, lat, lng, label, address)
-         VALUES ($1, $2, $3, 40.100, -70.100, 'AGSHIN BASE', 'Agshin address'),
-                ($1, $4, $5, 41.200, -71.200, 'AQWIN DEFAULT BASE', 'Aqwin address')`,
+            (company_id, technician_uuid, is_company_default, lat, lng, label, address)
+         VALUES ($1, $2, FALSE, 40.100, -70.100, 'AGSHIN BASE', 'Agshin address'),
+                ($1, $3, FALSE, 41.200, -71.200, 'AQWIN DEFAULT BASE', 'Aqwin address')`,
         [
             fixture.companyId,
-            fixture.externalId,
             fixture.loserId,
-            fixture.survivorId,
             fixture.survivorId,
         ]
     );
     await db.query(
         `INSERT INTO technician_time_off
-            (company_id, technician_id, technician_uuid, technician_name,
+            (company_id, technician_uuid, technician_name,
              starts_at, ends_at, note, source)
-         VALUES ($1, $2, $3, 'Agshin', '2026-10-01T12:00:00Z', '2026-10-02T12:00:00Z', 'AGSHIN TIME OFF', 'individual'),
-                ($1, $4, $5, 'Aqwin', '2026-10-01T12:00:00Z', '2026-10-02T12:00:00Z', 'AQWIN DEFAULT TIME OFF', 'individual')`,
+         VALUES ($1, $2, 'Agshin', '2026-10-01T12:00:00Z', '2026-10-02T12:00:00Z', 'AGSHIN TIME OFF', 'individual'),
+                ($1, $3, 'Aqwin', '2026-10-01T12:00:00Z', '2026-10-02T12:00:00Z', 'AQWIN DEFAULT TIME OFF', 'individual')`,
         [
             fixture.companyId,
-            fixture.externalId,
             fixture.loserId,
-            fixture.survivorId,
             fixture.survivorId,
         ]
     );
     await db.query(
         `INSERT INTO technician_district_assignments
-            (company_id, technician_id, technician_uuid, district_name)
-         VALUES ($1, $2, $3, 'AGSHIN ZONE'),
-                ($1, $4, $5, 'AQWIN DEFAULT ZONE')`,
+            (company_id, technician_uuid, district_name)
+         VALUES ($1, $2, 'AGSHIN ZONE'),
+                ($1, $3, 'AQWIN DEFAULT ZONE')`,
         [
             fixture.companyId,
-            fixture.externalId,
             fixture.loserId,
-            fixture.survivorId,
             fixture.survivorId,
         ]
     );
@@ -684,21 +674,19 @@ test('loser data policy overwrites base/profile while preserving the survivor ma
     warn.mockRestore();
 
     expect((await db.query(
-        `SELECT tech_id, technician_uuid, name, photo_storage_key
+        `SELECT technician_uuid, name, photo_storage_key
            FROM technician_profiles WHERE company_id = $1`,
         [fixture.companyId]
     )).rows).toEqual([{
-        tech_id: fixture.survivorId,
         technician_uuid: fixture.survivorId,
         name: 'AGSHIN PROFILE',
         photo_storage_key: 'agshin-photo-key',
     }]);
     expect((await db.query(
-        `SELECT tech_id, technician_uuid, lat, lng, label, address
+        `SELECT technician_uuid, lat, lng, label, address
            FROM technician_base_locations WHERE company_id = $1`,
         [fixture.companyId]
     )).rows).toEqual([{
-        tech_id: fixture.survivorId,
         technician_uuid: fixture.survivorId,
         lat: 40.1,
         lng: -70.1,
@@ -706,21 +694,19 @@ test('loser data policy overwrites base/profile while preserving the survivor ma
         address: 'Agshin address',
     }]);
     expect((await db.query(
-        `SELECT technician_id, technician_uuid, technician_name, note
+        `SELECT technician_uuid, technician_name, note
            FROM technician_time_off WHERE company_id = $1`,
         [fixture.companyId]
     )).rows).toEqual([{
-        technician_id: fixture.survivorId,
         technician_uuid: fixture.survivorId,
         technician_name: 'Agshin',
         note: 'AGSHIN TIME OFF',
     }]);
     expect((await db.query(
-        `SELECT technician_id, technician_uuid, district_name
+        `SELECT technician_uuid, district_name
            FROM technician_district_assignments WHERE company_id = $1`,
         [fixture.companyId]
     )).rows).toEqual([{
-        technician_id: fixture.survivorId,
         technician_uuid: fixture.survivorId,
         district_name: 'AGSHIN ZONE',
     }]);

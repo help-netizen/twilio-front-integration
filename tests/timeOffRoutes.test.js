@@ -25,8 +25,7 @@ jest.mock('../backend/src/services/scheduleService', () => ({
     })),
 }));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
-    resolveExternalToUuid: jest.fn(),
-    resolveUuidToExternal: jest.fn(),
+    resolveTechnicianUuid: jest.fn(),
     findActiveTechnicianByCrmUserId: jest.fn(),
 }));
 
@@ -55,9 +54,8 @@ let deleteRowCount;
 function rowsFromInsertParams(params) {
     const [companyId, ...rest] = params;
     const rows = [];
-    for (let i = 0; i < rest.length; i += 9) {
-        const [technician_id, technician_uuid, technician_name, starts_at, ends_at, note, source, batch_id, created_by] = rest.slice(i, i + 9);
-        void technician_uuid;
+    for (let i = 0; i < rest.length; i += 8) {
+        const [technician_id, technician_name, starts_at, ends_at, note, source, batch_id, created_by] = rest.slice(i, i + 8);
         rows.push({
             id: `row-${rows.length + 1}`,
             company_id: companyId,
@@ -111,8 +109,10 @@ beforeEach(() => {
     selectRows = [];
     deleteRowCount = 1;
     technicianRosterService.listActive.mockReset().mockResolvedValue([]);
-    directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
-    directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
+    directoryQueries.resolveTechnicianUuid.mockReset().mockImplementation(async (_companyId, id) => {
+        const value = String(id).toLowerCase();
+        return /^[0-9a-f-]{36}$/.test(value) ? value : TECH_UUID;
+    });
     directoryQueries.findActiveTechnicianByCrmUserId.mockReset().mockResolvedValue(null);
     db.query.mockReset().mockImplementation(async (sql, params) => {
         const s = String(sql);
@@ -131,7 +131,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
         const ends_at = future(9);
         const res = await request(dispatcher()).post('/api/schedule/time-off').send({
             target: 'technician',
-            technician_id: '1234567',
+            technician_id: TECH_UUID,
             technician_name: 'John Smith',
             starts_at, ends_at,
             note: 'vacation',
@@ -141,7 +141,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
         expect(res.body.ok).toBe(true);
         expect(res.body.data.created).toHaveLength(1);
         expect(res.body.data.created[0]).toMatchObject({
-            technician_id: '1234567',
+            technician_id: TECH_UUID,
             technician_name: 'John Smith',
             source: 'individual',
             batch_id: null,
@@ -151,8 +151,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
         const [, params] = insertCalls()[0];
         expect(params).toEqual([
             COMPANY,            // req.companyFilter.company_id
-            '1234567',          // ZB TEXT id as-is (INV-7)
-            TECH_UUID,           // canonical native technician UUID
+            TECH_UUID,          // canonical native technician UUID
             'John Smith',       // client snapshot — ZB never called
             starts_at, ends_at,
             'vacation',
@@ -173,7 +172,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
         expect(res.status).toBe(201);
         expect(insertCalls()).toHaveLength(1);
         const [, params] = insertCalls()[0];
-        expect(params[9]).toBeNull();      // created_by
+        expect(params[8]).toBeNull();      // created_by
         expect(params).not.toContain('kc');
     });
 
@@ -183,7 +182,7 @@ describe('POST /api/schedule/time-off (individual)', () => {
             starts_at: future(1), ends_at: future(2),
         });
         expect(res.status).toBe(201);
-        expect(res.body.data.created[0].technician_id).toBe('no-such-tech-999');
+        expect(res.body.data.created[0].technician_id).toBe(TECH_UUID);
         expect(technicianRosterService.listActive).not.toHaveBeenCalled();
     });
 });
@@ -193,9 +192,9 @@ describe('POST /api/schedule/time-off (individual)', () => {
 describe('POST /api/schedule/time-off (company)', () => {
     it('TC-DO-03: K active techs → exactly K rows via ONE INSERT statement, shared batch_id, source=company', async () => {
         technicianRosterService.listActive.mockResolvedValue([
-            { id: 1234567, name: 'John Smith' },
-            { id: 7654321, name: 'Jane Doe' },
-            { id: 111, name: 'Bob' },
+            { id: TECH_UUID, name: 'John Smith' },
+            { id: '33333333-3333-4333-8333-333333333333', name: 'Jane Doe' },
+            { id: '44444444-4444-4444-8444-444444444444', name: 'Bob' },
         ]);
         const starts_at = future(8);
         const ends_at = future(9);
@@ -214,7 +213,11 @@ describe('POST /api/schedule/time-off (company)', () => {
         const [, params] = insertCalls()[0];
         const rows = rowsFromInsertParams(params);
         expect(rows).toHaveLength(3);
-        expect(rows.map(r => r.technician_id)).toEqual(['1234567', '7654321', '111']); // String(m.id)
+        expect(rows.map(r => r.technician_id)).toEqual([
+            TECH_UUID,
+            '33333333-3333-4333-8333-333333333333',
+            '44444444-4444-4444-8444-444444444444',
+        ]);
         expect(rows.map(r => r.technician_name)).toEqual(['John Smith', 'Jane Doe', 'Bob']);
 
         const batchIds = new Set(rows.map(r => r.batch_id));
@@ -351,7 +354,7 @@ describe('GET /api/schedule/time-off', () => {
         const res = await request(viewer()).get(`/api/schedule/time-off?from=${FROM}&to=${TO}&technician_id=1234567`);
         expect(res.status).toBe(200);
         const [sql, params] = selectCalls()[0];
-        expect(String(sql)).toMatch(/resolved_match_key = \$4::text/);
+        expect(String(sql)).toMatch(/technician_uuid = \$4::uuid/);
         expect(params).toEqual([COMPANY, FROM, TO, TECH_UUID]);
     });
 
@@ -371,7 +374,7 @@ describe('GET /api/schedule/time-off', () => {
 
         expect(directoryQueries.findActiveTechnicianByCrmUserId).toHaveBeenCalledWith(COMPANY, PROVIDER_USER);
         const [sql, params] = selectCalls()[0];
-        expect(String(sql)).toMatch(/resolved_match_key = \$4::text/);
+        expect(String(sql)).toMatch(/technician_uuid = \$4::uuid/);
         expect(params[3]).toBe(TECH_UUID); // own canonical id wins
         const allParams = db.query.mock.calls.flatMap(([, p]) => p || []);
         expect(allParams).not.toContain('7654321'); // foreign id never reaches SQL
@@ -411,12 +414,12 @@ describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
 
     it('returns explicit time off and derived schedule gaps with distinct kinds', async () => {
         technicianRosterService.listActive.mockResolvedValue([
-            { id: '1234567', name: 'John Smith', active: true, technician_uuid: TECH_UUID },
+            { id: TECH_UUID, name: 'John Smith', active: true, technician_uuid: TECH_UUID },
         ]);
         selectRows = [{
             id: ROW_ID,
             company_id: COMPANY,
-            technician_id: '1234567',
+            technician_id: TECH_UUID,
             technician_name: 'John Smith',
             starts_at: '2026-07-20T15:00:00.000Z',
             ends_at: '2026-07-20T16:00:00.000Z',
@@ -444,8 +447,8 @@ describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
 
     it('retains schedule.view RBAC and provider-own scoping', async () => {
         technicianRosterService.listActive.mockResolvedValue([
-            { id: '1234567', name: 'John Smith', active: true, technician_uuid: TECH_UUID },
-            { id: '7654321', name: 'Jane Doe', active: true, technician_uuid: '22222222-2222-4222-8222-222222222222' },
+            { id: TECH_UUID, name: 'John Smith', active: true, technician_uuid: TECH_UUID },
+            { id: '33333333-3333-4333-8333-333333333333', name: 'Jane Doe', active: true, technician_uuid: '33333333-3333-4333-8333-333333333333' },
         ]);
         directoryQueries.findActiveTechnicianByCrmUserId.mockResolvedValue({ id: TECH_UUID });
         const provider = appWith({
@@ -457,7 +460,7 @@ describe('GET /api/schedule/unavailability (TECH-SCHEDULE-001)', () => {
             `/api/schedule/unavailability?from=${FROM}&to=${TO}&technician_id=7654321`
         );
         expect(res.status).toBe(200);
-        expect(new Set(res.body.data.unavailability.map(item => item.technician_id))).toEqual(new Set(['1234567']));
+        expect(new Set(res.body.data.unavailability.map(item => item.technician_id))).toEqual(new Set([TECH_UUID]));
         expect(new Set(res.body.data.unavailability.map(item => item.technician_name))).toEqual(new Set(['John Smith']));
         expect(JSON.stringify(res.body.data.unavailability)).not.toContain('Jane Doe');
     });

@@ -8,6 +8,16 @@ jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), pool: { end
 jest.mock('../backend/src/db/membershipQueries');
 jest.mock('../backend/src/db/routeQueries');
 jest.mock('../backend/src/services/routeSegmentService');
+jest.mock('../backend/src/services/technicianRosterService', () => ({
+    canonicalizeAssignments: jest.fn(async (_companyId, assignments) =>
+        assignments.map(assignment => ({
+            ...assignment,
+            id: assignment.id === 'zb-9'
+                ? '99999999-9999-4999-8999-999999999999'
+                : assignment.id,
+        }))
+    ),
+}));
 
 const db = require('../backend/src/db/connection');
 const membershipQueries = require('../backend/src/db/membershipQueries');
@@ -33,9 +43,16 @@ describe('createManualJob (Gap 3)', () => {
         membershipQueries.resolveProviderUserIds.mockResolvedValue(['crm-1']);
         mockInsertReturning({ id: 1, zenbooker_job_id: null });
         await jobsService.createManualJob('co', { service_name: 'Fix', assigned_techs: [{ id: 'zb-9', name: 'Bob' }] });
-        expect(membershipQueries.resolveProviderUserIds).toHaveBeenCalledWith('co', ['zb-9']);
+        expect(membershipQueries.resolveProviderUserIds).toHaveBeenCalledWith(
+            'co',
+            ['99999999-9999-4999-8999-999999999999']
+        );
         const insert = db.query.mock.calls.find(c => /INSERT INTO jobs/.test(c[0]));
         expect(insert[1]).toContain(JSON.stringify(['crm-1']));   // assigned_provider_user_ids
+        expect(insert[1]).toContain(JSON.stringify([{
+            id: '99999999-9999-4999-8999-999999999999',
+            name: 'Bob',
+        }]));
     });
 
 });

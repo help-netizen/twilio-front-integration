@@ -6,8 +6,7 @@ jest.mock('../backend/src/db/connection', () => ({
     getClient: jest.fn(),
 }));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
-    resolveExternalToUuid: jest.fn(),
-    resolveUuidToExternal: jest.fn(),
+    resolveTechnicianUuid: jest.fn(),
 }));
 
 const db = require('../backend/src/db/connection');
@@ -41,11 +40,10 @@ describe('technicianWorkScheduleQueries', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         db.query.mockResolvedValue({ rows: [] });
-        directoryQueries.resolveExternalToUuid.mockImplementation(async (_companyId, _source, id) => ({
+        directoryQueries.resolveTechnicianUuid.mockImplementation(async (_companyId, id) => ({
             'tech-1': TECH_UUID_1,
             'tech-2': TECH_UUID_2,
         })[id] || null);
-        directoryQueries.resolveUuidToExternal.mockResolvedValue(null);
         client = {
             query: jest.fn().mockImplementation(async sql => ({
                 rows: /INSERT INTO technician_work_schedules/.test(sql)
@@ -60,7 +58,7 @@ describe('technicianWorkScheduleQueries', () => {
     it('scopes schedule reads by company and active technician ids', async () => {
         await queries.listByTechnicianIds(COMPANY, ['tech-1', 'tech-2']);
         expect(db.query).toHaveBeenCalledWith(
-            expect.stringMatching(/COALESCE\([\s\S]*s\.technician_uuid::text,[\s\S]*e\.technician_id::text,[\s\S]*s\.technician_id[\s\S]*\) AS resolved_match_key[\s\S]*LEFT JOIN technician_external_identities e[\s\S]*e\.company_id = s\.company_id[\s\S]*WHERE s\.company_id = \$1[\s\S]*s\.resolved_match_key = ANY\(\$2::text\[\]\)/),
+            expect.stringMatching(/s\.technician_uuid::text AS technician_id[\s\S]*WHERE s\.company_id = \$1[\s\S]*s\.technician_uuid = ANY\(\$2::uuid\[\]\)/),
             [COMPANY, [TECH_UUID_1, TECH_UUID_2]]
         );
     });
@@ -86,7 +84,7 @@ describe('technicianWorkScheduleQueries', () => {
             'COMMIT',
         ]));
         const insertDays = client.query.mock.calls.find(call => /INSERT INTO technician_work_schedule_days/.test(call[0]));
-        expect(insertDays[1]).toHaveLength(31); // company + external id + UUID + 7×4 day values
+        expect(insertDays[1]).toHaveLength(30); // company + UUID + 7×4 day values
         expect(client.release).toHaveBeenCalledTimes(1);
     });
 

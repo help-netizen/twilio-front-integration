@@ -16,8 +16,7 @@
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
-    resolveExternalToUuid: jest.fn(),
-    resolveUuidToExternal: jest.fn(),
+    resolveTechnicianUuid: jest.fn(),
     listActiveTechnicians: jest.fn(),
 }));
 
@@ -31,7 +30,7 @@ const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const TECH_UUID = '11111111-1111-4111-8111-111111111111';
 
 // The structured-address upsert binds, in order:
-//   $1 company_id, $2 tech_id, $3 technician_uuid, $4 lat, $5 lng,
+//   $1 company_id, $2 is_company_default, $3 technician_uuid, $4 lat, $5 lng,
 //   $6 label, $7 address, $8 street, $9 apt, $10 city, $11 state, $12 zip
 function findInsert() {
     return db.query.mock.calls.find(c => /INSERT INTO technician_base_locations/.test(String(c[0])));
@@ -40,8 +39,7 @@ function findInsert() {
 beforeEach(() => {
     db.query.mockReset();
     googlePlacesService.geocodeAddress.mockReset();
-    directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
-    directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
+    directoryQueries.resolveTechnicianUuid.mockReset().mockResolvedValue(TECH_UUID);
     directoryQueries.listActiveTechnicians.mockReset().mockResolvedValue([]);
     // schema bootstrap (125 + 135) + default empty result
     db.query.mockResolvedValue({ rows: [] });
@@ -87,7 +85,7 @@ describe('upsert coordinate handling', () => {
         });
         expect(googlePlacesService.geocodeAddress).not.toHaveBeenCalled();
         const ins = findInsert();
-        expect(ins[1].slice(0, 5)).toEqual([COMPANY_A, 't', TECH_UUID, 42.1, -71.2]);
+        expect(ins[1].slice(0, 5)).toEqual([COMPANY_A, false, TECH_UUID, 42.1, -71.2]);
     });
 
     it('without lat/lng but with an address → geocodes and stores returned coords', async () => {
@@ -149,7 +147,7 @@ describe('query layer round-trips structured fields', () => {
         });
         const ins = findInsert();
         expect(ins[1]).toEqual([
-            COMPANY_A, 't', TECH_UUID, 1, 2, 'L', 'A', 'S', 'AP', 'C', 'ST', 'Z',
+            COMPANY_A, false, TECH_UUID, 1, 2, 'L', 'A', 'S', 'AP', 'C', 'ST', 'Z',
         ]);
     });
 
@@ -198,9 +196,9 @@ describe('list() surfaces structured fields', () => {
         }]);
 
         const out = await svc.list(COMPANY_A);
-        const row = out.find(r => r.tech_id === 'tech_9');
+        const row = out.find(r => r.tech_id === TECH_UUID);
         expect(row).toMatchObject({
-            tech_id: 'tech_9', has_base: false,
+            tech_id: TECH_UUID, has_base: false,
             street: null, apt: null, city: null, state: null, zip: null,
         });
     });

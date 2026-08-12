@@ -1,15 +1,39 @@
-/**
- * Company-scoped persistence for TECH-SCHEDULE-001 technician service areas.
- * District and radius maps are independent; every replacement touches one
- * owner side in one table and runs in a transaction.
- */
+/** Company-scoped technician service areas keyed only by technicians.id. */
 const db = require('./connection');
 const directoryQueries = require('./technicianDirectoryQueries');
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 function uniqueStrings(values) {
     return Array.from(new Set((values || []).map(value => String(value))));
+}
+
+function invalidTargetError(message) {
+    const error = new Error(message);
+    error.code = 'INVALID_SERVICE_AREA_TARGET';
+    error.httpStatus = 404;
+    return error;
+}
+
+function invalidTechnicianIdentityError(message = 'Technician identity not found') {
+    const error = new Error(message);
+    error.code = 'TECHNICIAN_IDENTITY_NOT_FOUND';
+    error.httpStatus = 404;
+    return error;
+}
+
+async function resolveTechnicianIdentity(companyId, technicianId) {
+    const technicianUuid = await directoryQueries.resolveTechnicianUuid(
+        companyId,
+        technicianId,
+        'zenbooker'
+    );
+    if (!technicianUuid) throw invalidTechnicianIdentityError();
+    return String(technicianUuid).toLowerCase();
+}
+
+async function resolveTechnicianIdentities(companyId, technicianIds) {
+    return Array.from(new Set(await Promise.all(
+        uniqueStrings(technicianIds).map(id => resolveTechnicianIdentity(companyId, id))
+    )));
 }
 
 async function listTargets(companyId) {
@@ -41,356 +65,173 @@ async function listTargets(companyId) {
 async function listValidAssignments(companyId) {
     const [districtResult, radiusResult] = await Promise.all([
         db.query(
-            `SELECT COALESCE(
-                        a.technician_uuid::text,
-                        e.technician_id::text,
-                        a.technician_id
-                    ) AS technician_id,
-                    a.district_name
+            `SELECT a.technician_uuid::text AS technician_id, a.district_name
              FROM technician_district_assignments a
-             LEFT JOIN technician_external_identities e
-               ON a.technician_uuid IS NULL
-              AND e.company_id = a.company_id
-              AND e.source = 'zenbooker'
-              AND e.external_id = a.technician_id
              WHERE a.company_id = $1
                AND EXISTS (
-                    SELECT 1
-                    FROM service_territories st
+                    SELECT 1 FROM service_territories st
                     WHERE st.company_id = a.company_id
                       AND st.area = a.district_name
                )
-             ORDER BY a.technician_id, a.district_name`,
+             ORDER BY a.technician_uuid, a.district_name`,
             [companyId]
         ),
         db.query(
-            `SELECT COALESCE(
-                        a.technician_uuid::text,
-                        e.technician_id::text,
-                        a.technician_id
-                    ) AS technician_id,
-                    a.radius_id
+            `SELECT a.technician_uuid::text AS technician_id, a.radius_id
              FROM technician_radius_assignments a
-             LEFT JOIN technician_external_identities e
-               ON a.technician_uuid IS NULL
-              AND e.company_id = a.company_id
-              AND e.source = 'zenbooker'
-              AND e.external_id = a.technician_id
              JOIN territory_radii r
-               ON r.company_id = a.company_id
-              AND r.id = a.radius_id
+               ON r.company_id = a.company_id AND r.id = a.radius_id
              WHERE a.company_id = $1
-             ORDER BY a.technician_id, a.radius_id`,
+             ORDER BY a.technician_uuid, a.radius_id`,
             [companyId]
         ),
     ]);
-    return {
-        districts: districtResult.rows,
-        radii: radiusResult.rows,
-    };
-}
-
-function invalidTargetError(message) {
-    const error = new Error(message);
-    error.code = 'INVALID_SERVICE_AREA_TARGET';
-    error.httpStatus = 404;
-    return error;
-}
-
-function invalidTechnicianIdentityError(message = 'Technician identity not found') {
-    const error = new Error(message);
-    error.code = 'TECHNICIAN_IDENTITY_NOT_FOUND';
-    error.httpStatus = 404;
-    return error;
-}
-
-async function resolveTechnicianIdentity(companyId, technicianId) {
-    const id = technicianId == null ? '' : String(technicianId).trim();
-    if (!id) throw invalidTechnicianIdentityError();
-    if (UUID_RE.test(id)) {
-        const technicianUuid = id.toLowerCase();
-        const externalId = await directoryQueries.resolveUuidToExternal(
-            companyId,
-            'zenbooker',
-            technicianUuid
-        );
-        return { externalId: externalId || technicianUuid, technicianUuid, publicId: id };
-    }
-    const technicianUuid = await directoryQueries.resolveExternalToUuid(
-        companyId,
-        'zenbooker',
-        id
-    );
-    return {
-        externalId: id,
-        technicianUuid: technicianUuid ? String(technicianUuid).toLowerCase() : null,
-        publicId: id,
-    };
-}
-
-async function resolveTechnicianIdentities(companyId, technicianIds) {
-    const identities = await Promise.all(
-        uniqueStrings(technicianIds).map(id => resolveTechnicianIdentity(companyId, id))
-    );
-    const byMatchKey = new Map();
-    for (const identity of identities) {
-        const matchKey = identity.technicianUuid || identity.externalId;
-        if (!byMatchKey.has(matchKey)) {
-            byMatchKey.set(matchKey, identity);
-        }
-    }
-    return Array.from(byMatchKey.values());
+    return { districts: districtResult.rows, radii: radiusResult.rows };
 }
 
 async function assertDistricts(client, companyId, districtNames) {
     if (districtNames.length === 0) return;
     const { rows } = await client.query(
-        `SELECT DISTINCT area
-         FROM service_territories
-         WHERE company_id = $1
-           AND area = ANY($2::text[])`,
+        `SELECT DISTINCT area FROM service_territories
+         WHERE company_id = $1 AND area = ANY($2::text[])`,
         [companyId, districtNames]
     );
-    if (rows.length !== districtNames.length) {
-        throw invalidTargetError('District not found');
-    }
+    if (rows.length !== districtNames.length) throw invalidTargetError('District not found');
 }
 
 async function assertRadii(client, companyId, radiusIds) {
     if (radiusIds.length === 0) return;
     const { rows } = await client.query(
-        `SELECT id
-         FROM territory_radii
-         WHERE company_id = $1
-           AND id = ANY($2::uuid[])`,
+        `SELECT id FROM territory_radii
+         WHERE company_id = $1 AND id = ANY($2::uuid[])`,
         [companyId, radiusIds]
     );
-    if (rows.length !== radiusIds.length) {
-        throw invalidTargetError('Radius not found');
+    if (rows.length !== radiusIds.length) throw invalidTargetError('Radius not found');
+}
+
+async function withTransaction(work) {
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+        const result = await work(client);
+        await client.query('COMMIT');
+        return result;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
     }
 }
 
 async function replaceTechnicianDistricts(companyId, technicianId, districtNames, createdBy) {
     const targets = uniqueStrings(districtNames);
-    const identity = await resolveTechnicianIdentity(companyId, technicianId);
-    const client = await db.getClient();
-    try {
-        await client.query('BEGIN');
+    const technicianUuid = await resolveTechnicianIdentity(companyId, technicianId);
+    return withTransaction(async client => {
         await assertDistricts(client, companyId, targets);
         await client.query(
-            `DELETE FROM technician_district_assignments a
-             WHERE a.company_id = $1
-               AND (
-                    ($3::uuid IS NULL AND a.technician_uuid IS NULL AND a.technician_id = $2)
-                    OR a.technician_uuid = $3::uuid
-                    OR (
-                        a.technician_uuid IS NULL
-                        AND EXISTS (
-                            SELECT 1
-                            FROM technician_external_identities e
-                            WHERE e.company_id = a.company_id
-                              AND e.source = 'zenbooker'
-                              AND e.external_id = a.technician_id
-                              AND e.technician_id = $3::uuid
-                        )
-                    )
-               )`,
-            [companyId, identity.externalId, identity.technicianUuid]
+            `DELETE FROM technician_district_assignments
+             WHERE company_id = $1 AND technician_uuid = $2::uuid`,
+            [companyId, technicianUuid]
         );
         if (targets.length > 0) {
             await client.query(
                 `INSERT INTO technician_district_assignments
-                    (company_id, technician_id, technician_uuid, district_name, created_by)
-                 SELECT $1, $2, $3::uuid, unnest($4::text[]), $5`,
-                [companyId, identity.externalId, identity.technicianUuid, targets, createdBy || null]
+                    (company_id, technician_uuid, district_name, created_by)
+                 SELECT $1, $2::uuid, unnest($3::text[]), $4`,
+                [companyId, technicianUuid, targets, createdBy || null]
             );
         }
-        await client.query('COMMIT');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 }
 
 async function replaceTechnicianRadii(companyId, technicianId, radiusIds, createdBy) {
     const targets = uniqueStrings(radiusIds);
-    const identity = await resolveTechnicianIdentity(companyId, technicianId);
-    const client = await db.getClient();
-    try {
-        await client.query('BEGIN');
+    const technicianUuid = await resolveTechnicianIdentity(companyId, technicianId);
+    return withTransaction(async client => {
         await assertRadii(client, companyId, targets);
         await client.query(
-            `DELETE FROM technician_radius_assignments a
-             WHERE a.company_id = $1
-               AND (
-                    ($3::uuid IS NULL AND a.technician_uuid IS NULL AND a.technician_id = $2)
-                    OR a.technician_uuid = $3::uuid
-                    OR (
-                        a.technician_uuid IS NULL
-                        AND EXISTS (
-                            SELECT 1
-                            FROM technician_external_identities e
-                            WHERE e.company_id = a.company_id
-                              AND e.source = 'zenbooker'
-                              AND e.external_id = a.technician_id
-                              AND e.technician_id = $3::uuid
-                        )
-                    )
-               )`,
-            [companyId, identity.externalId, identity.technicianUuid]
+            `DELETE FROM technician_radius_assignments
+             WHERE company_id = $1 AND technician_uuid = $2::uuid`,
+            [companyId, technicianUuid]
         );
         if (targets.length > 0) {
             await client.query(
                 `INSERT INTO technician_radius_assignments
-                    (company_id, technician_id, technician_uuid, radius_id, created_by)
-                 SELECT $1, $2, $3::uuid, unnest($4::uuid[]), $5`,
-                [companyId, identity.externalId, identity.technicianUuid, targets, createdBy || null]
+                    (company_id, technician_uuid, radius_id, created_by)
+                 SELECT $1, $2::uuid, unnest($3::uuid[]), $4`,
+                [companyId, technicianUuid, targets, createdBy || null]
             );
         }
-        await client.query('COMMIT');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 }
 
 async function replaceDistrictTechnicians(companyId, districtName, technicianIds, createdBy) {
-    const identities = await resolveTechnicianIdentities(companyId, technicianIds);
-    const client = await db.getClient();
-    try {
-        await client.query('BEGIN');
+    const technicianUuids = await resolveTechnicianIdentities(companyId, technicianIds);
+    return withTransaction(async client => {
         await assertDistricts(client, companyId, [String(districtName)]);
         await client.query(
             `DELETE FROM technician_district_assignments
              WHERE company_id = $1 AND district_name = $2`,
             [companyId, String(districtName)]
         );
-        if (identities.length > 0) {
+        if (technicianUuids.length > 0) {
             await client.query(
                 `INSERT INTO technician_district_assignments
-                    (company_id, technician_id, technician_uuid, district_name, created_by)
-                 SELECT $1, i.technician_id, i.technician_uuid, $4, $5
-                 FROM unnest($2::text[], $3::uuid[])
-                    AS i(technician_id, technician_uuid)`,
-                [
-                    companyId,
-                    identities.map(identity => identity.externalId),
-                    identities.map(identity => identity.technicianUuid),
-                    String(districtName),
-                    createdBy || null,
-                ]
+                    (company_id, technician_uuid, district_name, created_by)
+                 SELECT $1, unnest($2::uuid[]), $3, $4`,
+                [companyId, technicianUuids, String(districtName), createdBy || null]
             );
         }
-        await client.query('COMMIT');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 }
 
 async function replaceRadiusTechnicians(companyId, radiusId, technicianIds, createdBy) {
-    const identities = await resolveTechnicianIdentities(companyId, technicianIds);
-    const client = await db.getClient();
-    try {
-        await client.query('BEGIN');
+    const technicianUuids = await resolveTechnicianIdentities(companyId, technicianIds);
+    return withTransaction(async client => {
         await assertRadii(client, companyId, [String(radiusId)]);
         await client.query(
             `DELETE FROM technician_radius_assignments
-             WHERE company_id = $1 AND radius_id = $2`,
+             WHERE company_id = $1 AND radius_id = $2::uuid`,
             [companyId, String(radiusId)]
         );
-        if (identities.length > 0) {
+        if (technicianUuids.length > 0) {
             await client.query(
                 `INSERT INTO technician_radius_assignments
-                    (company_id, technician_id, technician_uuid, radius_id, created_by)
-                 SELECT $1, i.technician_id, i.technician_uuid, $4::uuid, $5
-                 FROM unnest($2::text[], $3::uuid[])
-                    AS i(technician_id, technician_uuid)`,
-                [
-                    companyId,
-                    identities.map(identity => identity.externalId),
-                    identities.map(identity => identity.technicianUuid),
-                    String(radiusId),
-                    createdBy || null,
-                ]
+                    (company_id, technician_uuid, radius_id, created_by)
+                 SELECT $1, unnest($2::uuid[]), $3::uuid, $4`,
+                [companyId, technicianUuids, String(radiusId), createdBy || null]
             );
         }
-        await client.query('COMMIT');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
+    });
 }
 
-/**
- * ZONE-STRICT-001 — the explicit "works across the whole territory" mark.
- * A row here is the ONLY thing that makes a technician eligible outside their
- * assigned districts/radii; absence of assignments no longer means "everywhere".
- */
 async function listWildcardTechnicians(companyId) {
     const { rows } = await db.query(
-        `SELECT COALESCE(
-                    w.technician_uuid::text,
-                    e.technician_id::text,
-                    w.technician_id
-                ) AS technician_id
-         FROM technician_area_wildcards w
-         LEFT JOIN technician_external_identities e
-           ON w.technician_uuid IS NULL
-          AND e.company_id = w.company_id
-          AND e.source = 'zenbooker'
-          AND e.external_id = w.technician_id
-         WHERE w.company_id = $1`,
+        `SELECT technician_uuid::text AS technician_id
+         FROM technician_area_wildcards
+         WHERE company_id = $1`,
         [companyId]
     );
     return rows.map(row => String(row.technician_id));
 }
 
 async function setWildcardTechnician(companyId, technicianId, servesAll, createdBy) {
-    const identity = await resolveTechnicianIdentity(companyId, technicianId);
+    const technicianUuid = await resolveTechnicianIdentity(companyId, technicianId);
     if (servesAll) {
-        const { rows } = await db.query(
-            // tenant-safety-allow R-natural-key: the arbiter is the composite key (company_id, technician_id), so DO UPDATE can only ever touch this company's row — the WHERE guards the technician identity within it
+        await db.query(
             `INSERT INTO technician_area_wildcards
-                (company_id, technician_id, technician_uuid, created_by)
-             VALUES ($1, $2, $3::uuid, $4)
-             ON CONFLICT (company_id, technician_id) DO UPDATE SET
-                technician_uuid = EXCLUDED.technician_uuid
-             WHERE technician_area_wildcards.technician_uuid IS NULL
-                OR technician_area_wildcards.technician_uuid = EXCLUDED.technician_uuid
-             RETURNING technician_uuid`,
-            [companyId, identity.externalId, identity.technicianUuid, createdBy || null]
+                (company_id, technician_uuid, created_by)
+             VALUES ($1, $2::uuid, $3)
+             ON CONFLICT (company_id, technician_uuid) DO NOTHING`,
+            [companyId, technicianUuid, createdBy || null]
         );
-        if (!rows[0]) throw invalidTechnicianIdentityError('Technician identity conflicts with existing wildcard');
         return;
     }
     await db.query(
-        `DELETE FROM technician_area_wildcards w
-         WHERE w.company_id = $1
-           AND (
-                ($3::uuid IS NULL AND w.technician_uuid IS NULL AND w.technician_id = $2)
-                OR w.technician_uuid = $3::uuid
-                OR (
-                    w.technician_uuid IS NULL
-                    AND EXISTS (
-                        SELECT 1
-                        FROM technician_external_identities e
-                        WHERE e.company_id = w.company_id
-                          AND e.source = 'zenbooker'
-                          AND e.external_id = w.technician_id
-                          AND e.technician_id = $3::uuid
-                    )
-                )
-           )`,
-        [companyId, identity.externalId, identity.technicianUuid]
+        `DELETE FROM technician_area_wildcards
+         WHERE company_id = $1 AND technician_uuid = $2::uuid`,
+        [companyId, technicianUuid]
     );
 }
 

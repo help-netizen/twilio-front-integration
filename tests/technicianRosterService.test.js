@@ -1,6 +1,6 @@
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
     listActiveTechnicians: jest.fn(),
-    resolveUuidToExternal: jest.fn(),
+    resolveTechnicianUuid: jest.fn(),
 }));
 
 const directoryQueries = require('../backend/src/db/technicianDirectoryQueries');
@@ -13,10 +13,13 @@ const NATIVE_ONLY_UUID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 beforeEach(() => {
     jest.clearAllMocks();
     directoryQueries.listActiveTechnicians.mockResolvedValue([]);
-    directoryQueries.resolveUuidToExternal.mockResolvedValue(null);
+    directoryQueries.resolveTechnicianUuid.mockImplementation(async (_companyId, id) => {
+        if (String(id).toLowerCase() === MAPPED_UUID || String(id) === '17') return MAPPED_UUID;
+        return null;
+    });
 });
 
-it('reads the native directory and emits assignment-compatible ids', async () => {
+it('reads the native directory and emits only Albusto technician UUIDs', async () => {
     directoryQueries.listActiveTechnicians.mockResolvedValue([
         {
             id: MAPPED_UUID,
@@ -34,7 +37,7 @@ it('reads the native directory and emits assignment-compatible ids', async () =>
 
     await expect(rosterService.listActive(COMPANY)).resolves.toEqual([
         {
-            id: '17',
+            id: MAPPED_UUID,
             name: 'Alex Rivera',
             active: true,
             technician_uuid: MAPPED_UUID,
@@ -58,9 +61,26 @@ it('requireActive accepts mapped external ids and native UUIDs', async () => {
     }]);
 
     await expect(rosterService.requireActive(COMPANY, '17'))
-        .resolves.toMatchObject({ id: '17', technician_uuid: MAPPED_UUID });
+        .resolves.toMatchObject({ id: MAPPED_UUID, technician_uuid: MAPPED_UUID });
     await expect(rosterService.requireActive(COMPANY, MAPPED_UUID.toUpperCase()))
-        .resolves.toMatchObject({ id: '17', technician_uuid: MAPPED_UUID });
+        .resolves.toMatchObject({ id: MAPPED_UUID, technician_uuid: MAPPED_UUID });
+});
+
+it('canonicalizes legacy assignment ids, preserves names, and deduplicates aliases', async () => {
+    directoryQueries.listActiveTechnicians.mockResolvedValue([{
+        id: MAPPED_UUID,
+        display_name: 'Alex Rivera',
+        active: true,
+    }]);
+
+    await expect(rosterService.canonicalizeAssignments(COMPANY, [
+        { id: '17', name: 'Historical spelling', source: 'mobile' },
+        { id: MAPPED_UUID, name: 'Duplicate alias' },
+    ])).resolves.toEqual([{
+        id: MAPPED_UUID,
+        name: 'Historical spelling',
+        source: 'mobile',
+    }]);
 });
 
 it('rejects a missing company before reading the native directory', async () => {

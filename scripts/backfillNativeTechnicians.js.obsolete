@@ -1,4 +1,4 @@
-'use strict';
+'use strict'; // OBSOLETE after TECH-ID-CANON-001 migration 257; retained for archaeology only.
 
 /**
  * ZB-DECOUPLE-001 Phase A / T2 + T3a.

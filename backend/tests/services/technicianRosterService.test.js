@@ -4,8 +4,8 @@
  * ZB-DECOUPLE Phase F5 — the native roster contract that /api/zenbooker/team-members
  * now rides on (the route delegates to technicianRosterService.listActive).
  *
- * Native results preserve the assignment-compatible id shape: historical
- * external id when present, native uuid fallback otherwise.
+ * Outbound roster results always expose the native technician UUID. Historical
+ * external ids remain an inbound-only compatibility concern.
  */
 
 const mockListActiveTechnicians = jest.fn();
@@ -25,7 +25,7 @@ describe('technicianRosterService.listActive — native directory (Phase F5)', (
         mockListActiveTechnicians.mockReset();
     });
 
-    it('serves the native directory with assignment-compatible ids', async () => {
+    it('serves the native directory with UUID assignment ids', async () => {
         mockListActiveTechnicians.mockResolvedValue([
             { id: UUID_A, display_name: 'Ali', zenbooker_external_id: '1770085964093x308143070595776500' },
             { id: UUID_B, display_name: 'Native Only', zenbooker_external_id: null },
@@ -35,9 +35,7 @@ describe('technicianRosterService.listActive — native directory (Phase F5)', (
 
         expect(mockListActiveTechnicians).toHaveBeenCalledWith(COMPANY);
         expect(list).toEqual([
-            // legacy ZB id preserved → downstream assignment stays byte-compatible
-            { id: '1770085964093x308143070595776500', name: 'Ali', active: true, technician_uuid: UUID_A },
-            // no ZB identity → uuid fallback
+            { id: UUID_A, name: 'Ali', active: true, technician_uuid: UUID_A },
             { id: UUID_B, name: 'Native Only', active: true, technician_uuid: UUID_B },
         ]);
     });

@@ -17,9 +17,7 @@
 const db = require('./connection');
 const directoryQueries = require('./technicianDirectoryQueries');
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const RETURN_COLUMNS = `id, company_id, technician_id, technician_name,
+const RETURN_COLUMNS = `id, company_id, technician_uuid::text AS technician_id, technician_name,
         starts_at, ends_at, note, source, batch_id, created_by, created_at`;
 
 function invalidTechnicianIdentityError() {
@@ -30,35 +28,29 @@ function invalidTechnicianIdentityError() {
 }
 
 async function resolveTechnicianIdentity(companyId, technicianId, { required = true } = {}) {
-    const id = technicianId == null ? '' : String(technicianId).trim();
-    if (!id) {
+    const input = technicianId == null ? '' : String(technicianId).trim();
+    if (!input) {
         if (!required) return null;
         throw invalidTechnicianIdentityError();
     }
-    if (UUID_RE.test(id)) {
-        const technicianUuid = id.toLowerCase();
-        const externalId = await directoryQueries.resolveUuidToExternal(
-            companyId,
-            'zenbooker',
-            technicianUuid
-        );
-        return { externalId: externalId || technicianUuid, technicianUuid, publicId: id };
-    }
-    const technicianUuid = await directoryQueries.resolveExternalToUuid(
+    const technicianUuid = await directoryQueries.resolveTechnicianUuid(
         companyId,
-        'zenbooker',
-        id
+        input,
+        'zenbooker'
     );
+    if (!technicianUuid) {
+        if (!required) return null;
+        throw invalidTechnicianIdentityError();
+    }
     return {
-        externalId: id,
-        technicianUuid: technicianUuid ? String(technicianUuid).toLowerCase() : null,
-        publicId: id,
+        technicianUuid: String(technicianUuid).toLowerCase(),
+        publicId: String(technicianUuid).toLowerCase(),
     };
 }
 
 /**
  * List time-off records overlapping the half-open range [from, to),
- * optionally narrowed to one technician (ZB team-member TEXT id).
+ * optionally narrowed to one technician (native UUID or inbound legacy id).
  *
  * Past records are NOT trimmed — the caller owns the range.
  *
@@ -66,7 +58,7 @@ async function resolveTechnicianIdentity(companyId, technicianId, { required = t
  * @param {Object} opts
  * @param {string} opts.from - UTC ISO range start (inclusive)
  * @param {string} opts.to - UTC ISO range end (exclusive)
- * @param {string} [opts.technicianId] - optional ZB team-member id filter
+ * @param {string} [opts.technicianId] - optional technician UUID/legacy-id filter
  * @returns {Promise<Object[]>} rows ordered by starts_at
  */
 async function listRange(companyId, { from, to, technicianId } = {}) {
@@ -79,47 +71,20 @@ async function listRange(companyId, { from, to, technicianId } = {}) {
             { required: false }
         );
         if (!identity) return [];
-        technicianMatchKey = identity.technicianUuid || identity.externalId;
-        params.push(technicianMatchKey);
+        technicianMatchKey = identity.technicianUuid;
+        params.push(identity.technicianUuid);
     }
-    let sql = `WITH resolved AS (
-             SELECT t.*,
-                    COALESCE(t.technician_uuid, e.technician_id) AS resolved_technician_uuid,
-                    COALESCE(
-                        t.technician_uuid::text,
-                        e.technician_id::text,
-                        t.technician_id
-                    ) AS resolved_match_key
-             FROM technician_time_off t
-             LEFT JOIN technician_external_identities e
-               ON t.technician_uuid IS NULL
-              AND e.company_id = t.company_id
-              AND e.source = 'zenbooker'
-              AND e.external_id = t.technician_id
-             WHERE t.company_id = $1
-               AND t.starts_at < $3
-               AND t.ends_at > $2
-         )
-         SELECT r.id, r.company_id,
-                COALESCE(public_identity.external_id, r.technician_id) AS technician_id,
-                r.technician_name, r.starts_at, r.ends_at, r.note, r.source,
-                r.batch_id, r.created_by, r.created_at
-         FROM resolved r
-         LEFT JOIN LATERAL (
-             SELECT mapped.external_id
-             FROM technician_external_identities mapped
-             WHERE mapped.company_id = r.company_id
-               AND mapped.source = 'zenbooker'
-               AND mapped.technician_id = r.resolved_technician_uuid
-             ORDER BY mapped.created_at ASC, mapped.external_id ASC
-             LIMIT 1
-         ) public_identity ON TRUE`;
+    let sql = `SELECT ${RETURN_COLUMNS}
+         FROM technician_time_off
+         WHERE company_id = $1
+           AND starts_at < $3
+           AND ends_at > $2`;
     if (technicianMatchKey) {
         sql += `
-         WHERE r.resolved_match_key = $4::text`;
+           AND technician_uuid = $4::uuid`;
     }
     sql += `
-         ORDER BY r.starts_at ASC, r.id ASC`;
+         ORDER BY starts_at ASC, id ASC`;
     const { rows } = await db.query(sql, params);
     return rows;
 }
@@ -150,13 +115,12 @@ async function insertOne(companyId, row) {
     const identity = await resolveTechnicianIdentity(companyId, row.technicianId);
     const { rows } = await db.query(
         `INSERT INTO technician_time_off
-            (company_id, technician_id, technician_uuid, technician_name,
+            (company_id, technician_uuid, technician_name,
              starts_at, ends_at, note, source, batch_id, created_by)
-         VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10)
+         VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9)
          RETURNING ${RETURN_COLUMNS}`,
         [
             companyId,
-            identity.externalId,
             identity.technicianUuid,
             row.technicianName ?? null,
             row.startsAt,
@@ -187,7 +151,6 @@ async function insertMany(companyId, timeOffRows) {
     const tuples = timeOffRows.map((row, index) => {
         const base = params.length;
         params.push(
-            identities[index].externalId,
             identities[index].technicianUuid,
             row.technicianName ?? null,
             row.startsAt,
@@ -197,11 +160,11 @@ async function insertMany(companyId, timeOffRows) {
             row.batchId ?? null,
             row.createdBy ?? null
         );
-        return `($1, $${base + 1}, $${base + 2}::uuid, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`;
+        return `($1, $${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`;
     });
     const { rows } = await db.query(
         `INSERT INTO technician_time_off
-            (company_id, technician_id, technician_uuid, technician_name,
+            (company_id, technician_uuid, technician_name,
              starts_at, ends_at, note, source, batch_id, created_by)
          VALUES ${tuples.join(', ')}
          RETURNING ${RETURN_COLUMNS}`,

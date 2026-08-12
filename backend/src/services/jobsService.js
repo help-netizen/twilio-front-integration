@@ -21,6 +21,7 @@ const { withTransaction } = require('./transactionService');
 const { deduplicateNotesByIdentity } = require('./noteDeduplication');
 const membershipQueries = require('../db/membershipQueries');
 const jobFinanceQueries = require('../db/jobFinanceQueries');
+const technicianRosterService = require('./technicianRosterService');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -207,11 +208,11 @@ function computeBlancStatusFromZb(zbStatus, zbCanceled, zbRescheduled, eventType
 // =============================================================================
 
 /**
- * Resolve a job's external assigned_techs to internal crm_users.id values
- * through the company-scoped provider bridge. Returns a JSON string for the
+ * Resolve a job's assignment-compatible technician ids to internal crm_users.id
+ * values through the company-scoped provider bridge. Returns a JSON string for the
  * jobs.assigned_provider_user_ids JSONB column.
  *
- * Unmapped external provider ids resolve to nothing — they must never grant
+ * Unmapped provider ids resolve to nothing — they must never grant
  * visibility to any CRM user. Without a company the mirror stays empty.
  *
  * @param {string|null} companyId
@@ -228,6 +229,14 @@ async function resolveAssignedProviderUserIds(companyId, assignedTechs) {
     const externalIds = techs.map(t => t?.id).filter(Boolean);
     const userIds = await membershipQueries.resolveProviderUserIds(companyId, externalIds);
     return JSON.stringify(userIds);
+}
+
+async function canonicalizeAssignedTechs(companyId, assignedTechs) {
+    let values = assignedTechs;
+    if (typeof values === 'string') {
+        try { values = JSON.parse(values); } catch { values = []; }
+    }
+    return technicianRosterService.canonicalizeAssignments(companyId, values);
 }
 
 /**
@@ -296,7 +305,15 @@ async function createJob({
         ? computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled)
         : 'Submitted';
 
-    const assignedProviderUserIds = await resolveAssignedProviderUserIds(companyId, cols.assigned_techs);
+    const canonicalAssignedTechs = await canonicalizeAssignedTechs(
+        companyId,
+        cols.assigned_techs
+    );
+    cols.assigned_techs = JSON.stringify(canonicalAssignedTechs);
+    const assignedProviderUserIds = await resolveAssignedProviderUserIds(
+        companyId,
+        canonicalAssignedTechs
+    );
 
     const upsert = async (queryable) => {
         const { rows } = await queryable.query(`
@@ -410,12 +427,13 @@ async function createManualJob(companyId, input = {}, activityActor = null) {
     if (!companyId) throw new Error('createManualJob requires companyId');
     const blancStatus = input.blanc_status || 'Submitted';
 
-    // Assignment (FR-001.4 / C-2): the UI groups by assigned_techs[].id (ZenBooker
-    // team-member id) but the route engine keys on the INTERNAL crm_users.id.
-    // Accept the ZB-shaped assigned_techs from the lane, store it for the UI, and
-    // resolve the internal mirror so routing works. A direct assignee_id (already
-    // an internal id) is still honoured for internal callers.
-    const assignedTechs = Array.isArray(input.assigned_techs) ? input.assigned_techs : [];
+    // Assignment (FR-001.4 / C-2): assigned_techs stores technicians.id UUIDs;
+    // older clients may still send ZB ids, which are resolved before persistence.
+    // The route engine separately keys visibility on INTERNAL crm_users.id.
+    const assignedTechs = await canonicalizeAssignedTechs(
+        companyId,
+        Array.isArray(input.assigned_techs) ? input.assigned_techs : []
+    );
     let providerUserIds;
     if (assignedTechs.length) {
         providerUserIds = JSON.parse(await resolveAssignedProviderUserIds(companyId, assignedTechs));
@@ -557,8 +575,15 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
     // No geocode in this path; the structured create input already carries the
     // city, so persist it directly (TILE-CITY-001).
     const cityValue = address.city || null;
-    const assignedTechs = slot.tech_id ? JSON.stringify([{ id: String(slot.tech_id) }]) : '[]';
-    const assignedProviderUserIds = await resolveAssignedProviderUserIds(companyId, assignedTechs);
+    const canonicalAssignedTechs = await canonicalizeAssignedTechs(
+        companyId,
+        slot.tech_id ? [{ id: String(slot.tech_id) }] : []
+    );
+    const assignedTechs = JSON.stringify(canonicalAssignedTechs);
+    const assignedProviderUserIds = await resolveAssignedProviderUserIds(
+        companyId,
+        canonicalAssignedTechs
+    );
     const { rows } = await db.query(`
         INSERT INTO jobs (
             contact_id, company_id, blanc_status, service_name, description,

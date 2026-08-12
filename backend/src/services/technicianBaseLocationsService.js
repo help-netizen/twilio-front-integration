@@ -75,16 +75,11 @@ async function list(companyId) {
         }));
     }
 
-    const normalizedMembers = await Promise.all(members.map(async m => ({
-        member: m,
-        identity: await queries.resolveTechnicianIdentity(companyId, m.id, { required: false }),
-    })));
     const seen = new Set();
-    const out = normalizedMembers.map(({ member: m, identity }) => {
+    const out = members.map(m => {
         const techId = String(m.id);
-        const storageId = identity?.externalId || techId;
-        seen.add(storageId);
-        const base = byId.get(storageId);
+        seen.add(techId);
+        const base = byId.get(techId);
         return {
             tech_id: techId,
             name: m.name,

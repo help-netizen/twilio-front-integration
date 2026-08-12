@@ -25,6 +25,9 @@ jest.mock('../backend/src/services/routeSegmentService', () => ({
     recalcForJob: jest.fn(async () => {}),
     enqueueGeocode: jest.fn(async () => {}),
 }));
+jest.mock('../backend/src/services/technicianRosterService', () => ({
+    canonicalizeAssignments: jest.fn(async (_companyId, assignments) => assignments),
+}));
 jest.mock('../backend/src/db/routeQueries', () => ({
     getCompanyTimezone: jest.fn(async () => 'America/New_York'),
     getTechDaysForJob: jest.fn(async () => []),

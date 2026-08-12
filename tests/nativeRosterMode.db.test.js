@@ -44,7 +44,7 @@ function probeMigratedDatabase() {
 const databaseTest = probeMigratedDatabase() ? test : test.skip;
 
 describe('native technician roster mode against real PostgreSQL', () => {
-    databaseTest('returns mapped compatibility ids plus native-only technicians', async () => {
+    databaseTest('returns UUIDs for mapped and native-only technicians', async () => {
         const companyId = randomUUID();
         const mappedTechnicianId = randomUUID();
         const nativeOnlyTechnicianId = randomUUID();
@@ -75,7 +75,7 @@ describe('native technician roster mode against real PostgreSQL', () => {
 
             expect(roster).toEqual([
                 {
-                    id: zenbookerId,
+                    id: mappedTechnicianId,
                     name: 'Mapped Provider',
                     active: true,
                     technician_uuid: mappedTechnicianId,
@@ -130,7 +130,7 @@ describe('native technician roster mode against real PostgreSQL', () => {
             const roster = await rosterService.listActive(companyA);
 
             expect(roster).toEqual([{
-                id: sharedExternalId,
+                id: technicianA,
                 name: 'Identical Provider',
                 active: true,
                 technician_uuid: technicianA,

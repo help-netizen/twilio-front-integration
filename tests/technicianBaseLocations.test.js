@@ -10,8 +10,7 @@
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/googlePlacesService', () => ({ geocodeAddress: jest.fn() }));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
-    resolveExternalToUuid: jest.fn(),
-    resolveUuidToExternal: jest.fn(),
+    resolveTechnicianUuid: jest.fn(),
     listActiveTechnicians: jest.fn(),
 }));
 
@@ -46,8 +45,7 @@ function appWith({ permissions = [], companyId = COMPANY_A } = {}) {
 beforeEach(() => {
     db.query.mockReset();
     googlePlacesService.geocodeAddress.mockReset();
-    directoryQueries.resolveExternalToUuid.mockReset().mockResolvedValue(TECH_UUID);
-    directoryQueries.resolveUuidToExternal.mockReset().mockResolvedValue(null);
+    directoryQueries.resolveTechnicianUuid.mockReset().mockResolvedValue(TECH_UUID);
     directoryQueries.listActiveTechnicians.mockReset().mockResolvedValue([]);
     // schema bootstrap + default empty result
     db.query.mockResolvedValue({ rows: [] });
@@ -107,7 +105,7 @@ describe('native roster merge', () => {
         })]);
         expect(warn).toHaveBeenCalledWith(
             '[TechBaseLocations] Technician roster unavailable:',
-            'The active Zenbooker technician roster is unavailable'
+            'forced roster outage'
         );
         warn.mockRestore();
     });
@@ -153,7 +151,7 @@ describe('company isolation', () => {
             .delete('/tech_owned_by_A');
         expect(res.status).toBe(404);
         const delCall = db.query.mock.calls.find(c => /DELETE FROM technician_base_locations/.test(String(c[0])));
-        expect(delCall[1]).toEqual([COMPANY_B, 'tech_owned_by_A', TECH_UUID]);
+        expect(delCall[1]).toEqual([COMPANY_B, false, TECH_UUID]);
     });
 
     it('DELETE returns ok:true when a row is removed', async () => {
@@ -173,9 +171,9 @@ describe('queries are company-scoped', () => {
         await queries.upsert(COMPANY_A, 't', { lat: 1, lng: 2, label: 'Home', address: null });
         const call = db.query.mock.calls.find(c => /INSERT INTO technician_base_locations/.test(String(c[0])));
         expect(call[1][0]).toBe(COMPANY_A);
-        expect(call[1][1]).toBe('t');
+        expect(call[1][1]).toBe(false);
         expect(call[1][2]).toBe(TECH_UUID);
-        expect(String(call[0])).toMatch(/ON CONFLICT \(company_id, tech_id\)/);
+        expect(String(call[0])).toMatch(/is_company_default = \$2/);
     });
 
     it('remove filters by company_id AND tech_id', async () => {
@@ -183,8 +181,8 @@ describe('queries are company-scoped', () => {
         await queries.remove(COMPANY_A, 't');
         const call = db.query.mock.calls.find(c => /DELETE FROM technician_base_locations/.test(String(c[0])));
         expect(String(call[0])).toMatch(/b\.company_id = \$1/);
-        expect(String(call[0])).toMatch(/b\.technician_uuid = \$3::uuid/);
-        expect(call[1]).toEqual([COMPANY_A, 't', TECH_UUID]);
+        expect(String(call[0])).toMatch(/b\.technician_uuid IS NOT DISTINCT FROM \$3::uuid/);
+        expect(call[1]).toEqual([COMPANY_A, false, TECH_UUID]);
     });
 });
 
@@ -194,7 +192,7 @@ describe('geocode-on-upsert (service)', () => {
         await svc.upsert(COMPANY_A, 't', { lat: 42.1, lng: -71.2, label: 'Home' });
         expect(googlePlacesService.geocodeAddress).not.toHaveBeenCalled();
         const ins = db.query.mock.calls.find(c => /INSERT INTO technician_base_locations/.test(String(c[0])));
-        expect(ins[1].slice(0, 6)).toEqual([COMPANY_A, 't', TECH_UUID, 42.1, -71.2, 'Home']);
+        expect(ins[1].slice(0, 6)).toEqual([COMPANY_A, false, TECH_UUID, 42.1, -71.2, 'Home']);
     });
 
     it('address → success: geocodes and stores normalized address', async () => {

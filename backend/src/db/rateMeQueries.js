@@ -26,9 +26,16 @@ async function getTokenContext(token, hostCompanyId = null) {
                 c.contact_email AS company_email
          FROM rate_tokens t
          JOIN companies c ON c.id = t.company_id
+         LEFT JOIN technician_external_identities e
+            ON e.company_id = t.company_id
+           AND e.source = 'zenbooker'
+           AND e.external_id = t.tech_id
+         LEFT JOIN technicians technician
+            ON technician.company_id = t.company_id
+           AND (technician.id::text = t.tech_id OR technician.id = e.technician_id)
          LEFT JOIN technician_profiles p
             ON p.company_id = t.company_id
-           AND p.tech_id = t.tech_id
+           AND p.technician_uuid = COALESCE(technician.merged_into, technician.id)
          LEFT JOIN technician_ratings r ON r.rate_token_id = t.id
          LEFT JOIN jobs j ON j.id = t.job_id
          LEFT JOIN contacts ct ON ct.id = j.contact_id

@@ -18,9 +18,9 @@ const technicianRosterService = require('../services/technicianRosterService');
 // ZB-DECOUPLE C4a (2026-08-09): GET /services and POST /jobs removed — zero
 // FE/mobile callers (native job creation goes through /api/jobs).
 
-// GET /api/zenbooker/team-members — Fetch native service providers. Consumers
-// only read {id, name} (audited 2026-08-09), and the service keeps id = the
-// historical external id when present so assignment flows stay byte-compatible.
+// GET /api/zenbooker/team-members — compatibility path backed by the native
+// directory. Outbound ids are always technicians.id UUIDs; legacy ids remain
+// accepted on inbound assignment seams.
 router.get('/team-members', requirePermission('schedule.dispatch', 'jobs.assign', 'tenant.company.manage'), async (req, res) => {
     try {
         // Scope to the caller's company; the service validates the UUID.

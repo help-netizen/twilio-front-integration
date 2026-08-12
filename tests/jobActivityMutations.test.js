@@ -41,6 +41,16 @@ jest.mock('../backend/src/db/membershipQueries', () => ({
 jest.mock('../backend/src/services/eventBus', () => ({
     emit: (...args) => mockEventBusEmit(...args),
 }));
+jest.mock('../backend/src/services/technicianRosterService', () => ({
+    canonicalizeAssignments: jest.fn(async (_companyId, assignments) =>
+        assignments.map(assignment => ({
+            ...assignment,
+            id: assignment.id === 'zb-tech-1'
+                ? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+                : assignment.id,
+        }))
+    ),
+}));
 
 const jobsService = require('../backend/src/services/jobsService');
 const scheduleService = require('../backend/src/services/scheduleService');

@@ -126,7 +126,12 @@ describe('POST /api/jobs — local route contract', () => {
 });
 
 describe('jobsService.createDirectJob local persistence', () => {
-    function loadService({ dbQuery, resolveContact, resolveProviderUserIds }) {
+    function loadService({
+        dbQuery,
+        resolveContact,
+        resolveProviderUserIds,
+        canonicalizeAssignments,
+    }) {
         let service;
         jest.isolateModules(() => {
             jest.doMock('../backend/src/db/connection', () => ({
@@ -139,6 +144,10 @@ describe('jobsService.createDirectJob local persistence', () => {
             }));
             jest.doMock('../backend/src/db/membershipQueries', () => ({
                 resolveProviderUserIds: resolveProviderUserIds || jest.fn(async () => []),
+            }));
+            jest.doMock('../backend/src/services/technicianRosterService', () => ({
+                canonicalizeAssignments: canonicalizeAssignments
+                    || jest.fn(async (_companyId, assignments) => assignments),
             }));
             jest.doMock('../backend/src/services/fsmService', () => ({}));
             jest.doMock('../backend/src/services/eventService', () => ({}));
@@ -197,7 +206,14 @@ describe('jobsService.createDirectJob local persistence', () => {
         });
         const resolveContact = jest.fn().mockResolvedValue({ contact_id: 5, status: 'created' });
         const resolveProviderUserIds = jest.fn().mockResolvedValue(['user-7']);
-        const service = loadService({ dbQuery, resolveContact, resolveProviderUserIds });
+        const technicianUuid = '77777777-7777-4777-8777-777777777777';
+        const canonicalizeAssignments = jest.fn(async () => [{ id: technicianUuid }]);
+        const service = loadService({
+            dbQuery,
+            resolveContact,
+            resolveProviderUserIds,
+            canonicalizeAssignments,
+        });
 
         const result = await service.createDirectJob(COMPANY, {
             contact: { name: 'Jane Doe', phone: '+16175551234' },
@@ -212,12 +228,16 @@ describe('jobsService.createDirectJob local persistence', () => {
         });
 
         expect(result).toEqual({ job_id: 42, zenbooker_job_id: null, zb_warning: null });
-        expect(resolveProviderUserIds).toHaveBeenCalledWith(COMPANY, ['tech-7']);
+        expect(canonicalizeAssignments).toHaveBeenCalledWith(
+            COMPANY,
+            [{ id: 'tech-7' }]
+        );
+        expect(resolveProviderUserIds).toHaveBeenCalledWith(COMPANY, [technicianUuid]);
         const [insertSql, insertParams] = dbQuery.mock.calls.find(([sql]) => /INSERT INTO jobs/.test(sql));
         expect(insertSql).toContain('description');
         expect(insertSql).toContain('assigned_provider_user_ids');
         expect(insertParams).toContain('door seal');
-        expect(insertParams).toContain(JSON.stringify([{ id: 'tech-7' }]));
+        expect(insertParams).toContain(JSON.stringify([{ id: technicianUuid }]));
         expect(insertParams).toContain(JSON.stringify(['user-7']));
     });
 });

@@ -418,8 +418,8 @@ async function reassignJob(
     providerUserIds = null,
     client = null
 ) {
-    // REPLACE assigned_techs with exactly the given providers (ZB team-member
-    // shape [{id,name}]); [] unassigns. Supports one OR many providers, deduped by
+    // REPLACE assigned_techs with exactly the given providers (canonical
+    // technicians.id shape [{id,name}]); [] unassigns. Supports one OR many providers, deduped by
     // id (JOB-PROVIDER-MULTI-001). REPLACE (not append) still guards the old bug
     // where reassigning an already-assigned job accumulated stale/nameless chips
     // (JOB-TECH-ASSIGN-001). When `providerUserIds` (a JSON string of internal

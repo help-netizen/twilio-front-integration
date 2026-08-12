@@ -1096,8 +1096,8 @@ async function claimLocalJobForConversion({
  * overrides.schedule = { start_at, end_at, technician_ids? } the conversion is
  * FULLY native: the local job carries the schedule/assignment and NO Zenbooker
  * job is created. technician_ids are validated on the mode-aware
- * roster and stored as roster-compat ids — the same plane jobs.assigned_techs
- * has always used, so lanes/mirrors keep working unchanged.
+ * roster and stored as canonical technicians.id UUIDs. Historical ZB ids are
+ * accepted as input and resolved before the job write.
  */
 async function resolveNativeSchedule(schedule, companyId) {
     if (!schedule || typeof schedule !== 'object') return null;
@@ -1193,7 +1193,13 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         if (zbp.timeslot?.start) initialStartDate = zbp.timeslot.start;
         if (zbp.timeslot?.end) initialEndDate = zbp.timeslot.end;
         if (zbp.assigned_providers?.length) {
-            initialAssignedTechs = JSON.stringify(zbp.assigned_providers.map(id => ({ id })));
+            const technicianRosterService = require('./technicianRosterService');
+            const assignments = zbp.assigned_providers.map(provider =>
+                provider && typeof provider === 'object' ? provider : { id: provider }
+            );
+            initialAssignedTechs = JSON.stringify(
+                await technicianRosterService.canonicalizeAssignments(companyId, assignments)
+            );
         }
     }
 

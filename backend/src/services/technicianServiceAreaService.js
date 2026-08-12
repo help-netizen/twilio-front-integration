@@ -62,12 +62,11 @@ function normalizeUuid(value) {
 async function normalizeRoster(companyId, roster) {
     return Promise.all((roster || []).map(async technician => {
         const publicId = String(technician.id);
-        const technicianUuid = normalizeUuid(publicId)
-            || normalizeUuid(await directoryQueries.resolveExternalToUuid(
-                companyId,
-                'zenbooker',
-                publicId
-            ));
+        const technicianUuid = normalizeUuid(await directoryQueries.resolveTechnicianUuid(
+            companyId,
+            publicId,
+            'zenbooker'
+        ));
         return {
             public_id: publicId,
             technician_uuid: technicianUuid,
@@ -256,11 +255,16 @@ async function requireActiveIds(companyId, technicianIds) {
     if (!Array.isArray(technicianIds)) {
         throw new TechnicianServiceAreaError('VALIDATION', 'technician_ids must be an array', 400);
     }
-    const ids = Array.from(new Set(technicianIds.map(value => String(value))));
+    const inputs = Array.from(new Set(technicianIds.map(value => String(value))));
     const roster = await rosterService.listActive(companyId);
-    const activeIds = new Set(roster.map(technician => String(technician.id)));
-    if (ids.some(id => !activeIds.has(id))) {
-        throw new TechnicianServiceAreaError('NOT_FOUND', 'Technician not found', 404);
+    const ids = [];
+    for (const input of inputs) {
+        try {
+            const technician = await rosterService.requireActive(companyId, input);
+            if (!ids.includes(String(technician.id))) ids.push(String(technician.id));
+        } catch (error) {
+            throw new TechnicianServiceAreaError('NOT_FOUND', 'Technician not found', 404);
+        }
     }
     return { ids, roster };
 }

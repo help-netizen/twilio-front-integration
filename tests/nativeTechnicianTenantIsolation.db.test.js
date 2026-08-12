@@ -131,50 +131,50 @@ describe('native technician re-key tenant isolation attacks against real Postgre
         );
         await db.query(
             `INSERT INTO technician_district_assignments
-                (company_id, technician_id, technician_uuid, district_name)
-             VALUES ($1, $2, $3, $4)`,
-            [companyB, externalB, technicianB, attackDistrict]
+                (company_id, technician_uuid, district_name)
+             VALUES ($1, $2, $3)`,
+            [companyB, technicianB, attackDistrict]
         );
         await db.query(
             `INSERT INTO technician_radius_assignments
-                (company_id, technician_id, technician_uuid, radius_id)
-             VALUES ($1, $2, $3, $4)`,
-            [companyB, externalB, technicianB, radiusB]
+                (company_id, technician_uuid, radius_id)
+             VALUES ($1, $2, $3)`,
+            [companyB, technicianB, radiusB]
         );
         await db.query(
             `INSERT INTO technician_area_wildcards
-                (company_id, technician_id, technician_uuid)
-             VALUES ($1, $2, $3)`,
-            [companyB, externalB, technicianB]
+                (company_id, technician_uuid)
+             VALUES ($1, $2)`,
+            [companyB, technicianB]
         );
         await db.query(
             `INSERT INTO technician_base_locations
-                (company_id, tech_id, technician_uuid, lat, lng, label, address)
-             VALUES ($1, $2, $3, 40.750000, -73.990000,
+                (company_id, technician_uuid, is_company_default, lat, lng, label, address)
+             VALUES ($1, $2, FALSE, 40.750000, -73.990000,
                      'TENANT-B-BASE', 'Tenant B only')`,
-            [companyB, externalB, technicianB]
+            [companyB, technicianB]
         );
         await db.query(
             `INSERT INTO technician_time_off
-                (company_id, technician_id, technician_uuid, technician_name,
+                (company_id, technician_uuid, technician_name,
                  starts_at, ends_at, note, source)
-             VALUES ($1, $2, $3, 'Tenant B Technician',
+             VALUES ($1, $2, 'Tenant B Technician',
                      '2036-04-01T13:00:00.000Z', '2036-04-01T17:00:00.000Z',
                      'TENANT-B-TIME-OFF', 'individual')`,
-            [companyB, externalB, technicianB]
+            [companyB, technicianB]
         );
         await db.query(
             `INSERT INTO technician_work_schedules
-                (company_id, technician_id, technician_uuid, inherits_company_schedule)
-             VALUES ($1, $2, $3, FALSE)`,
-            [companyB, externalB, technicianB]
+                (company_id, technician_uuid, inherits_company_schedule)
+             VALUES ($1, $2, FALSE)`,
+            [companyB, technicianB]
         );
         await db.query(
             `INSERT INTO technician_work_schedule_days
-                (company_id, technician_id, technician_uuid,
+                (company_id, technician_uuid,
                  day_of_week, is_working, work_start_time, work_end_time)
-             VALUES ($1, $2, $3, 1, TRUE, '11:00', '15:00')`,
-            [companyB, externalB, technicianB]
+             VALUES ($1, $2, 1, TRUE, '11:00', '15:00')`,
+            [companyB, technicianB]
         );
     });
 

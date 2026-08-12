@@ -1,4 +1,4 @@
-'use strict';
+'use strict'; // OBSOLETE with the retired Phase-A native-technician import tool.
 
 const { randomUUID } = require('crypto');
 const { spawnSync } = require('child_process');

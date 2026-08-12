@@ -1,4 +1,4 @@
-'use strict';
+'use strict'; // OBSOLETE: asserts the pre-257 dual-key transition contract.
 
 jest.mock('../backend/src/services/scheduleService', () => ({
     getDispatchSettings: jest.fn(async () => ({

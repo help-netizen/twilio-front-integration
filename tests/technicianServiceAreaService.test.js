@@ -9,7 +9,7 @@ jest.mock('../backend/src/db/technicianServiceAreaQueries', () => ({
     replaceRadiusTechnicians: jest.fn(),
 }));
 jest.mock('../backend/src/db/technicianDirectoryQueries', () => ({
-    resolveExternalToUuid: jest.fn(),
+    resolveTechnicianUuid: jest.fn(),
 }));
 jest.mock('../backend/src/db/territoryRadiusQueries', () => ({
     getSettings: jest.fn(),
@@ -53,8 +53,8 @@ beforeEach(() => {
     });
     queries.listValidAssignments.mockResolvedValue({ districts: [], radii: [] });
     queries.listWildcardTechnicians.mockResolvedValue([]);
-    directoryQueries.resolveExternalToUuid.mockImplementation(
-        async (_companyId, _source, externalId) => TECH_UUIDS[externalId] || null
+    directoryQueries.resolveTechnicianUuid.mockImplementation(
+        async (_companyId, externalId) => TECH_UUIDS[externalId] || null
     );
     rosterService.listActive.mockResolvedValue(TECHS);
     rosterService.requireActive.mockImplementation(async (_companyId, techId) => {

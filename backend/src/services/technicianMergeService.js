@@ -1,9 +1,8 @@
 /**
  * TECH-MERGE-001 — loss-aware, tenant-scoped technician merge.
  *
- * Native technician UUIDs are the post-merge operational key. Legacy TEXT
- * columns are canonicalized to the survivor UUID string; external identities
- * move to the survivor as provenance/compatibility aliases. The loser remains
+ * Native technician UUIDs are the operational key. External identities move
+ * to the survivor as provenance/compatibility aliases. The loser remains
  * as an inactive `merged_into` tombstone for idempotency and audit.
  */
 
@@ -15,14 +14,14 @@ const DATA_WINS_SURVIVOR = 'survivor';
 const DATA_WINS_LOSER = 'loser';
 
 const CONFIG_TABLES = [
-    { table: 'technician_profiles', textColumn: 'tech_id' },
-    { table: 'technician_base_locations', textColumn: 'tech_id' },
-    { table: 'technician_time_off', textColumn: 'technician_id' },
-    { table: 'technician_work_schedules', textColumn: 'technician_id' },
-    { table: 'technician_work_schedule_days', textColumn: 'technician_id' },
-    { table: 'technician_district_assignments', textColumn: 'technician_id' },
-    { table: 'technician_radius_assignments', textColumn: 'technician_id' },
-    { table: 'technician_area_wildcards', textColumn: 'technician_id' },
+    { table: 'technician_profiles' },
+    { table: 'technician_base_locations' },
+    { table: 'technician_time_off' },
+    { table: 'technician_work_schedules' },
+    { table: 'technician_work_schedule_days' },
+    { table: 'technician_district_assignments' },
+    { table: 'technician_radius_assignments' },
+    { table: 'technician_area_wildcards' },
 ];
 
 class TechnicianMergeConflictError extends Error {
@@ -58,26 +57,21 @@ function serializeRow(row) {
     ]));
 }
 
-function rowOwner(row, textColumn, identities) {
+function rowOwner(row, identities) {
     const nativeId = normalizedId(row.technician_uuid);
     if (nativeId === identities.loserId) return 'loser';
     if (nativeId === identities.survivorId) return 'survivor';
-    if (nativeId) return null;
-
-    const textId = String(row[textColumn] || '');
-    if (identities.loserTextIds.has(textId)) return 'loser';
-    if (identities.survivorTextIds.has(textId)) return 'survivor';
     return null;
 }
 
 function classifyRows(rows, descriptor, identities) {
     const classified = { loser: [], survivor: [] };
     for (const row of rows) {
-        const owner = rowOwner(row, descriptor.textColumn, identities);
+        const owner = rowOwner(row, identities);
         if (!owner) {
             throw mergeError(
                 'TECHNICIAN_MERGE_INCONSISTENT_REFERENCE',
-                `${descriptor.table} contains a row whose native and legacy technician keys disagree`
+                `${descriptor.table} contains an unexpected technician_uuid`
             );
         }
         classified[owner].push(row);
@@ -90,17 +84,10 @@ async function readRelatedRows(client, descriptor, companyId, identities, forUpd
         `SELECT *
            FROM ${descriptor.table}
           WHERE company_id = $1
-            AND (
-                technician_uuid = ANY($2::uuid[])
-                OR (
-                    technician_uuid IS NULL
-                    AND ${descriptor.textColumn} = ANY($3::text[])
-                )
-            )${forUpdate ? '\n          FOR UPDATE' : ''}`,
+            AND technician_uuid = ANY($2::uuid[])${forUpdate ? '\n          FOR UPDATE' : ''}`,
         [
             companyId,
             [identities.loserId, identities.survivorId],
-            [...identities.allTextIds],
         ]
     );
     return classifyRows(rows, descriptor, identities);
@@ -110,17 +97,10 @@ async function deleteRelatedRows(client, descriptor, companyId, identities) {
     await client.query(
         `DELETE FROM ${descriptor.table}
           WHERE company_id = $1
-            AND (
-                technician_uuid = ANY($2::uuid[])
-                OR (
-                    technician_uuid IS NULL
-                    AND ${descriptor.textColumn} = ANY($3::text[])
-                )
-            )`,
+            AND technician_uuid = ANY($2::uuid[])`,
         [
             companyId,
             [identities.loserId, identities.survivorId],
-            [...identities.allTextIds],
         ]
     );
 }
@@ -398,9 +378,9 @@ async function applyProfile(client, companyId, survivorId, rowsByOwner, dataWins
     }
     await client.query(
         `UPDATE technician_profiles
-            SET tech_id = $3, technician_uuid = $4::uuid, updated_at = NOW()
+            SET technician_uuid = $3::uuid, updated_at = NOW()
           WHERE company_id = $1 AND id = $2`,
-        [companyId, winner.id, survivorId, survivorId]
+        [companyId, winner.id, survivorId]
     );
 }
 
@@ -412,11 +392,11 @@ async function applyBaseLocation(
     await deleteRelatedRows(client, descriptor, companyId, identities);
     await client.query(
         `INSERT INTO technician_base_locations
-            (company_id, tech_id, technician_uuid, lat, lng, label, address,
-             created_at, updated_at, street, apt, city, state, zip)
-         VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+            (company_id, technician_uuid, is_company_default, lat, lng, label,
+             address, created_at, updated_at, street, apt, city, state, zip)
+         VALUES ($1, $2::uuid, FALSE, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
-            companyId, survivorId, survivorId,
+            companyId, survivorId,
             winner.lat, winner.lng, winner.label, winner.address,
             winner.created_at, winner.updated_at, winner.street, winner.apt,
             winner.city, winner.state, winner.zip,
@@ -435,14 +415,12 @@ async function applyTimeOff(client, companyId, survivorId, displayName, timeOff)
     if (timeOff.winners.length > 0) {
         await client.query(
             `UPDATE technician_time_off
-                SET technician_id = $3,
-                    technician_uuid = $4::uuid,
-                    technician_name = $5
+                SET technician_uuid = $3::uuid,
+                    technician_name = $4
               WHERE company_id = $1 AND id = ANY($2::uuid[])`,
             [
                 companyId,
                 timeOff.winners.map(row => row.id),
-                survivorId,
                 survivorId,
                 displayName,
             ]
@@ -466,22 +444,22 @@ async function applyWorkSchedule(
     );
     await client.query(
         `INSERT INTO technician_work_schedules
-            (company_id, technician_id, technician_uuid, inherits_company_schedule,
+            (company_id, technician_uuid, inherits_company_schedule,
              created_by, updated_by, created_at, updated_at)
-         VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8)`,
+         VALUES ($1, $2::uuid, $3, $4, $5, $6, $7)`,
         [
-            companyId, survivorId, survivorId, winner.inherits_company_schedule,
+            companyId, survivorId, winner.inherits_company_schedule,
             winner.created_by, winner.updated_by, winner.created_at, winner.updated_at,
         ]
     );
     for (const day of winningDays) {
         await client.query(
             `INSERT INTO technician_work_schedule_days
-                (company_id, technician_id, technician_uuid, day_of_week,
+                (company_id, technician_uuid, day_of_week,
                  is_working, work_start_time, work_end_time)
-             VALUES ($1, $2, $3::uuid, $4, $5, $6, $7)`,
+             VALUES ($1, $2::uuid, $3, $4, $5, $6)`,
             [
-                companyId, survivorId, survivorId, day.day_of_week, day.is_working,
+                companyId, survivorId, day.day_of_week, day.is_working,
                 day.work_start_time, day.work_end_time,
             ]
         );
@@ -499,16 +477,16 @@ async function applySetTable(
         if (descriptor.table === 'technician_district_assignments') {
             await client.query(
                 `INSERT INTO technician_district_assignments
-                    (company_id, technician_id, technician_uuid, district_name, created_by, created_at)
-                 VALUES ($1, $2, $3::uuid, $4, $5, $6)`,
-                [companyId, survivorId, survivorId, value, winner.created_by, winner.created_at]
+                    (company_id, technician_uuid, district_name, created_by, created_at)
+                 VALUES ($1, $2::uuid, $3, $4, $5)`,
+                [companyId, survivorId, value, winner.created_by, winner.created_at]
             );
         } else {
             await client.query(
                 `INSERT INTO technician_radius_assignments
-                    (company_id, technician_id, technician_uuid, radius_id, created_by, created_at)
-                 VALUES ($1, $2, $3::uuid, $4, $5, $6)`,
-                [companyId, survivorId, survivorId, value, winner.created_by, winner.created_at]
+                    (company_id, technician_uuid, radius_id, created_by, created_at)
+                 VALUES ($1, $2::uuid, $3, $4, $5)`,
+                [companyId, survivorId, value, winner.created_by, winner.created_at]
             );
         }
     }
@@ -522,9 +500,9 @@ async function applyWildcard(
     await deleteRelatedRows(client, descriptor, companyId, identities);
     await client.query(
         `INSERT INTO technician_area_wildcards
-            (company_id, technician_id, technician_uuid, created_by, created_at)
-         VALUES ($1, $2, $3::uuid, $4, $5)`,
-        [companyId, survivorId, survivorId, winner.created_by, winner.created_at]
+            (company_id, technician_uuid, created_by, created_at)
+         VALUES ($1, $2::uuid, $3, $4)`,
+        [companyId, survivorId, winner.created_by, winner.created_at]
     );
 }
 
@@ -549,12 +527,8 @@ async function assertNoLoserReferences(client, companyId, identities) {
         const { rows } = await client.query(
             `SELECT COUNT(*)::int AS count
                FROM ${descriptor.table}
-              WHERE company_id = $1
-                AND (
-                    technician_uuid = $2::uuid
-                    OR ${descriptor.textColumn} = ANY($3::text[])
-                )`,
-            [companyId, identities.loserId, [...identities.loserTextIds]]
+              WHERE company_id = $1 AND technician_uuid = $2::uuid`,
+            [companyId, identities.loserId]
         );
         if (Number(rows[0]?.count || 0) > 0) {
             remaining.push(`${descriptor.table}=${rows[0].count}`);
@@ -604,7 +578,7 @@ async function assertNoLoserReferences(client, companyId, identities) {
     for (const descriptor of CONFIG_TABLES) {
         const { rows } = await client.query(
             `SELECT COUNT(*)::int AS count FROM ${descriptor.table}
-              WHERE technician_uuid = $1::uuid OR ${descriptor.textColumn} = $1::text`,
+              WHERE technician_uuid = $1::uuid`,
             [identities.loserId]
         );
         if (Number(rows[0]?.count || 0) > 0) globalRemaining.push(descriptor.table);

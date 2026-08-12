@@ -626,12 +626,24 @@ describe('RATE-ME-CRM-001 real-SQL isolation', () => {
         const tokenA = fixtureToken();
         const expiredToken = fixtureToken();
         const ratedToken = fixtureToken();
+        const profileTechnicianId = randomUUID();
 
         try {
             await db.query(
-                `INSERT INTO technician_profiles (company_id, tech_id, name)
-                 VALUES ($1, 'zb-profile', 'Alexander P.')`,
-                [companyA]
+                `INSERT INTO technicians (id, company_id, display_name, active)
+                 VALUES ($1, $2, 'Alexander P.', TRUE)`,
+                [profileTechnicianId, companyA]
+            );
+            await db.query(
+                `INSERT INTO technician_external_identities
+                    (company_id, source, external_id, technician_id)
+                 VALUES ($1, 'zenbooker', 'zb-profile', $2)`,
+                [companyA, profileTechnicianId]
+            );
+            await db.query(
+                `INSERT INTO technician_profiles (company_id, technician_uuid, name)
+                 VALUES ($1, $2, 'Alexander P.')`,
+                [companyA, profileTechnicianId]
             );
             await db.query(
                 `INSERT INTO rate_tokens

@@ -287,10 +287,22 @@ async function reassignItem(
     // JOB-PROVIDER-MULTI-001: one OR many providers. Normalize to [{id,name}] and
     // dedupe by id (a client could send the same provider twice).
     const seenIds = new Set();
-    const list = (assignees || [])
+    let list = (assignees || [])
         .filter(a => a && a.id != null && String(a.id) !== '')
         .map(a => ({ id: String(a.id), name: a.name || '' }))
         .filter(a => (seenIds.has(a.id) ? false : (seenIds.add(a.id), true)));
+    if (entityType === 'job') {
+        const technicianRosterService = require('./technicianRosterService');
+        try {
+            list = await technicianRosterService.canonicalizeAssignments(companyId, list);
+        } catch (error) {
+            throw new ScheduleServiceError(
+                'INVALID_TECHNICIAN',
+                error.message || 'Technician is not on the active roster',
+                400
+            );
+        }
+    }
 
     // SCHED-ROUTE-001: capture old technician/days so the vacated route repairs.
     const before = entityType === 'job' ? await captureJobTechDays(companyId, entityId) : null;
@@ -398,9 +410,9 @@ async function reassignItem(
  * Resolve them against the owning planes BEFORE any write:
  *   • assignee_id lives on the crm_users plane — provider scope filters match it
  *     against crm ids — so it must be an ACTIVE member of THIS company;
- *   • assigned_techs[].id lives on the roster plane — validated mode-aware
- *     (legacy ZB external id today; a native uuid also resolves via the map),
- *     so an off-roster or cross-company id can no longer be injected.
+ *   • assigned_techs[].id lives on the roster plane — both a native UUID and a
+ *     legacy ZB id are accepted, then canonicalized to technicians.id before
+ *     the write, so an off-roster or cross-company id cannot be injected.
  */
 async function assertFromSlotAssignment(companyId, slotData) {
     const membershipQueries = require('../db/membershipQueries');
@@ -418,21 +430,17 @@ async function assertFromSlotAssignment(companyId, slotData) {
         }
     }
 
-    const techs = Array.isArray(slotData?.assigned_techs) ? slotData.assigned_techs : [];
-    for (const tech of techs) {
-        const id = tech && tech.id;
-        if (id == null || String(id).trim() === '') {
-            throw new ScheduleServiceError('INVALID_TECHNICIAN', 'assigned_techs entries require an id', 400);
-        }
-        try {
-            await technicianRosterService.requireActive(companyId, String(id));
-        } catch (err) {
-            throw new ScheduleServiceError(
-                'INVALID_TECHNICIAN',
-                `assigned_techs id ${id} is not on the active roster`,
-                400
-            );
-        }
+    try {
+        return await technicianRosterService.canonicalizeAssignments(
+            companyId,
+            Array.isArray(slotData?.assigned_techs) ? slotData.assigned_techs : []
+        );
+    } catch (error) {
+        throw new ScheduleServiceError(
+            'INVALID_TECHNICIAN',
+            error.message || 'assigned_techs contains a technician outside the active roster',
+            400
+        );
     }
 }
 
@@ -442,7 +450,7 @@ async function assertFromSlotAssignment(companyId, slotData) {
  */
 async function createFromSlot(companyId, entityType, slotData, activityActor = null) {
     // C2: validate client-supplied assignment ids before either branch writes.
-    await assertFromSlotAssignment(companyId, slotData);
+    const canonicalAssignedTechs = await assertFromSlotAssignment(companyId, slotData);
     switch (entityType) {
         case 'task': {
             const row = await scheduleQueries.createTask(companyId, {
@@ -469,7 +477,7 @@ async function createFromSlot(companyId, entityType, slotData, activityActor = n
                 customer_name: slotData.customer_name, customer_phone: slotData.customer_phone,
                 customer_email: slotData.customer_email,
                 assignee_id: slotData.assignee_id,           // internal crm_users.id (C-2)
-                assigned_techs: slotData.assigned_techs,     // ZB-shaped lane provider (FR-001.4)
+                assigned_techs: canonicalAssignedTechs,
                 zb_address: slotData.zb_address,             // structured parts for ZB sync (C-12)
             }, activityActor);
             await triggerJobRouteSideEffects(companyId, job.id, {

@@ -1,4 +1,4 @@
-'use strict';
+'use strict'; // OBSOLETE: migration 257 forbids the legacy-only empty-directory state.
 
 jest.mock('../backend/src/services/technicianRosterService', () => ({
     listActive: jest.fn(),

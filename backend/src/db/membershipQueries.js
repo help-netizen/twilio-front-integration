@@ -198,7 +198,7 @@ async function getMembershipWithProfile(userId, companyId) {
  * remains crm_users.id only.
  *
  * @param {string} companyId - tenant company id (required)
- * @param {string[]} externalIds - roster compatibility ids
+ * @param {string[]} externalIds - native UUIDs or inbound compatibility ids
  * @returns {Promise<string[]>} sorted unique crm_users.id values
  */
 async function resolveProviderUserIds(companyId, externalIds) {
