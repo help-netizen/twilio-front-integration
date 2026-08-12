@@ -705,7 +705,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                     </p>
                                 )}
                                 {note.attachments && note.attachments.length > 0 && (
-                                    <NoteAttachmentDisplay attachments={note.attachments} />
+                                    <NoteAttachmentDisplay attachments={note.attachments} groupKey={`note-${note.id}`} />
                                 )}
                                 <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
                                     {note.author && <span className="font-medium">{note.author} · </span>}

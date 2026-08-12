@@ -9,7 +9,13 @@
  * both for the SDK's own requests and for the presigned URLs it hands the browser.
  */
 
-const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const {
+    S3Client,
+    PutObjectCommand,
+    DeleteObjectCommand,
+    GetObjectCommand,
+    HeadObjectCommand,
+} = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const crypto = require('crypto');
 const path = require('path');
@@ -109,6 +115,29 @@ async function getPresignedUrl(storageKey, expiresIn = PRESIGNED_URL_EXPIRY) {
 }
 
 /**
+ * Check whether an object exists without downloading it.
+ *
+ * @param {string} storageKey - S3 object key
+ * @returns {Promise<boolean>}
+ */
+async function fileExists(storageKey) {
+    const client = getClient();
+    try {
+        await client.send(new HeadObjectCommand({
+            Bucket: BUCKET,
+            Key: storageKey,
+        }));
+        return true;
+    } catch (err) {
+        const status = err?.$metadata?.httpStatusCode;
+        if (status === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') {
+            return false;
+        }
+        throw err;
+    }
+}
+
+/**
  * Delete a file from S3.
  *
  * @param {string} storageKey - S3 object key
@@ -127,5 +156,6 @@ module.exports = {
     uploadFile,
     downloadFile,
     getPresignedUrl,
+    fileExists,
     deleteFile,
 };

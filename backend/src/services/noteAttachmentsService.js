@@ -7,9 +7,12 @@
 
 const db = require('../db/connection');
 const storageService = require('./storageService');
+const sharp = require('sharp');
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_FILES_PER_NOTE = 5;
+const THUMBNAIL_MAX_SIZE = 320;
+const THUMBNAIL_JPEG_QUALITY = 75;
 const ALLOWED_TYPES = new Set([
     'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/gif',
     'application/pdf',
@@ -18,6 +21,45 @@ const ALLOWED_TYPES = new Set([
     'application/vnd.ms-excel',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ]);
+
+function isImageContentType(contentType) {
+    return typeof contentType === 'string' && contentType.startsWith('image/');
+}
+
+/** The thumbnail lives beside the original and needs no database column. */
+function generateThumbnailStorageKey(storageKey) {
+    return `${storageKey}.thumb.jpg`;
+}
+
+/** Auto-orient from EXIF, constrain the long side, and normalize to JPEG. */
+async function createThumbnailBuffer(buffer) {
+    return sharp(buffer)
+        .rotate()
+        .resize({
+            width: THUMBNAIL_MAX_SIZE,
+            height: THUMBNAIL_MAX_SIZE,
+            fit: 'inside',
+        })
+        .jpeg({ quality: THUMBNAIL_JPEG_QUALITY })
+        .toBuffer();
+}
+
+async function uploadAttachmentFile(companyId, entityType, entityId, file) {
+    const storageKey = storageService.generateStorageKey(companyId, entityType, entityId, file.originalname);
+    const thumbnail = isImageContentType(file.mimetype)
+        ? await createThumbnailBuffer(file.buffer)
+        : null;
+
+    await storageService.uploadFile(file.buffer, file.mimetype, storageKey);
+    if (thumbnail) {
+        await storageService.uploadFile(
+            thumbnail,
+            'image/jpeg',
+            generateThumbnailStorageKey(storageKey)
+        );
+    }
+    return storageKey;
+}
 
 /**
  * Upload files and create attachment records.
@@ -45,21 +87,8 @@ async function createAttachments(companyId, entityType, entityId, noteIndex, fil
     const results = [];
 
     for (const file of files) {
-        if (file.size > MAX_FILE_SIZE) {
-            throw Object.assign(
-                new Error(`File "${file.originalname}" exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`),
-                { status: 400 }
-            );
-        }
-        if (!ALLOWED_TYPES.has(file.mimetype)) {
-            throw Object.assign(
-                new Error(`File type "${file.mimetype}" is not allowed`),
-                { status: 400 }
-            );
-        }
-
-        const storageKey = storageService.generateStorageKey(companyId, entityType, entityId, file.originalname);
-        await storageService.uploadFile(file.buffer, file.mimetype, storageKey);
+        validateFile(file);
+        const storageKey = await uploadAttachmentFile(companyId, entityType, entityId, file);
 
         const row = await db.query(
             `INSERT INTO note_attachments (company_id, entity_type, entity_id, note_index, note_id, file_name, content_type, file_size, storage_key, uploaded_by)
@@ -119,6 +148,20 @@ async function getPresignedUrlForAttachment(companyId, attachmentId) {
     );
     if (result.rows.length === 0) return null;
     return storageService.getPresignedUrl(result.rows[0].storage_key);
+}
+
+/**
+ * Resolve the original and optional thumbnail URLs for an attachment whose
+ * tenant/entity permissions have already been loaded by the route.
+ */
+async function getPresignedUrlsForStorageKey(storageKey) {
+    const url = await storageService.getPresignedUrl(storageKey);
+    const thumbnailKey = generateThumbnailStorageKey(storageKey);
+    const thumbnailExists = await storageService.fileExists(thumbnailKey);
+    const thumbUrl = thumbnailExists
+        ? await storageService.getPresignedUrl(thumbnailKey)
+        : null;
+    return { url, thumb_url: thumbUrl };
 }
 
 /**
@@ -199,8 +242,7 @@ async function stageAttachments(companyId, entityType, entityId, files, userId) 
     const results = [];
     for (const file of files) {
         validateFile(file);
-        const storageKey = storageService.generateStorageKey(companyId, entityType, entityId, file.originalname);
-        await storageService.uploadFile(file.buffer, file.mimetype, storageKey);
+        const storageKey = await uploadAttachmentFile(companyId, entityType, entityId, file);
         const row = await db.query(
             `INSERT INTO note_attachments (company_id, entity_type, entity_id, note_index, note_id, file_name, content_type, file_size, storage_key, uploaded_by)
              VALUES ($1, $2, $3, NULL, NULL, $4, $5, $6, $7, $8)
@@ -258,9 +300,15 @@ async function deleteStaleStagedAttachments(olderThanHours = 24) {
 module.exports = {
     MAX_FILE_SIZE,
     MAX_FILES_PER_NOTE,
+    THUMBNAIL_MAX_SIZE,
+    THUMBNAIL_JPEG_QUALITY,
+    isImageContentType,
+    generateThumbnailStorageKey,
+    createThumbnailBuffer,
     createAttachments,
     getAttachmentsForEntity,
     getPresignedUrlForAttachment,
+    getPresignedUrlsForStorageKey,
     deleteAttachment,
     entityExistsInCompany,
     resolveEntityIdInCompany,

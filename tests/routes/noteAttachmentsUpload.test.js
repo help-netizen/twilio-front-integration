@@ -4,13 +4,16 @@
  */
 const express = require('express');
 const request = require('supertest');
+const sharp = require('sharp');
 
 const mockQuery = jest.fn();
 jest.mock('../../backend/src/db/connection', () => ({ query: mockQuery }));
 jest.mock('../../backend/src/services/storageService', () => ({
     generateStorageKey: jest.fn(() => 'co/job/5/key.png'),
     uploadFile: jest.fn(async () => {}),
+    downloadFile: jest.fn(async () => Buffer.alloc(0)),
     getPresignedUrl: jest.fn(async () => 'https://signed/url'),
+    fileExists: jest.fn(async () => false),
     deleteFile: jest.fn(async () => {}),
 }));
 jest.mock('../../backend/src/services/auditService', () => ({
@@ -20,6 +23,10 @@ jest.mock('../../backend/src/services/auditService', () => ({
 const noteAttachmentsRouter = require('../../backend/src/routes/noteAttachments');
 const service = require('../../backend/src/services/noteAttachmentsService');
 const storageService = require('../../backend/src/services/storageService');
+const {
+    parseArgs: parseBackfillArgs,
+    backfillThumbnails,
+} = require('../../backend/src/cli/backfillNoteAttachmentThumbnails');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
 const OFFICE_PERMISSIONS = [
@@ -29,9 +36,14 @@ const OFFICE_PERMISSIONS = [
 ];
 const PROVIDER_PERMISSIONS = ['jobs.view', 'jobs.done_pending_approval'];
 const PROVIDER_SCOPES = { job_visibility: 'assigned_only' };
+const PNG_BUFFER = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64'
+);
 
-function makeApp(permissions = OFFICE_PERMISSIONS, scopes = {}) {
+function makeApp(permissions = OFFICE_PERMISSIONS, scopes = { job_visibility: 'all' }) {
     const app = express();
+    app.use(express.json());
     app.use((req, _res, next) => {
         req.user = { sub: 'kc', email: 'u@x.com', crmUser: { id: 'crm-1' } };
         req.authz = { permissions, scopes, company: { id: COMPANY } };
@@ -42,13 +54,216 @@ function makeApp(permissions = OFFICE_PERMISSIONS, scopes = {}) {
     return app;
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+    jest.clearAllMocks();
+    mockQuery.mockReset();
+    storageService.generateStorageKey.mockReset().mockReturnValue('co/job/5/key.png');
+    storageService.uploadFile.mockReset().mockResolvedValue(undefined);
+    storageService.downloadFile.mockReset().mockResolvedValue(Buffer.alloc(0));
+    storageService.getPresignedUrl.mockReset().mockResolvedValue('https://signed/url');
+    storageService.fileExists.mockReset().mockResolvedValue(false);
+    storageService.deleteFile.mockReset().mockResolvedValue(undefined);
+});
+
+function attachmentLookup(row) {
+    return async (sql, params) => {
+        const companyScoped = /company_id\s*=\s*\$2/i.test(sql);
+        if (companyScoped && row.company_id !== params[1]) return { rows: [] };
+        return { rows: [row] };
+    };
+}
+
+describe('NOTE-THUMBS-001 contract', () => {
+    test('1. image upload stores a valid 320px JPEG thumbnail that is materially smaller', async () => {
+        const original = await sharp({
+            create: {
+                width: 1600,
+                height: 1200,
+                channels: 3,
+                background: { r: 48, g: 132, b: 220 },
+            },
+        }).png().toBuffer();
+        mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ id: 42, file_name: 'large.png', content_type: 'image/png', file_size: original.length }],
+        });
+
+        const res = await request(makeApp()).post('/api/note-attachments/upload')
+            .field('entity_type', 'job').field('entity_id', '5')
+            .attach('attachments', original, 'large.png');
+
+        expect(res.status).toBe(200);
+        expect(storageService.uploadFile).toHaveBeenCalledTimes(2);
+        const [thumbnail, contentType, thumbnailKey] = storageService.uploadFile.mock.calls[1];
+        expect(contentType).toBe('image/jpeg');
+        expect(thumbnailKey).toBe('co/job/5/key.png.thumb.jpg');
+        expect(thumbnail.length).toBeLessThan(original.length / 2);
+        await expect(sharp(thumbnail).metadata()).resolves.toMatchObject({
+            format: 'jpeg',
+            width: 320,
+            height: 240,
+        });
+    });
+
+    test('2. EXIF orientation is applied before the thumbnail dimensions are constrained', async () => {
+        const oriented = await sharp({
+            create: {
+                width: 400,
+                height: 800,
+                channels: 3,
+                background: { r: 200, g: 80, b: 40 },
+            },
+        }).jpeg().withMetadata({ orientation: 6 }).toBuffer();
+        await expect(sharp(oriented).metadata()).resolves.toMatchObject({ orientation: 6 });
+
+        const thumbnail = await service.createThumbnailBuffer(oriented);
+
+        await expect(sharp(thumbnail).metadata()).resolves.toMatchObject({
+            format: 'jpeg',
+            width: 320,
+            height: 160,
+        });
+    });
+
+    test('3. batch URL endpoint returns original and thumbnail URLs for an allowed own id', async () => {
+        mockQuery.mockImplementationOnce(attachmentLookup({
+            company_id: COMPANY,
+            entity_type: 'lead',
+            entity_id: 12,
+            storage_key: 'own/photo.jpg',
+            content_type: 'image/jpeg',
+        }));
+        storageService.fileExists.mockResolvedValueOnce(true);
+        storageService.getPresignedUrl.mockImplementation(async key => `https://signed/${key}`);
+
+        const res = await request(makeApp(['leads.view']))
+            .post('/api/note-attachments/urls')
+            .send({ ids: [7] });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+            ok: true,
+            urls: {
+                7: {
+                    url: 'https://signed/own/photo.jpg',
+                    thumb_url: 'https://signed/own/photo.jpg.thumb.jpg',
+                },
+            },
+        });
+    });
+
+    test('4. sabotage control: a foreign id is absent, and an own id without entity permission is 403', async () => {
+        mockQuery
+            .mockImplementationOnce(attachmentLookup({
+                company_id: COMPANY,
+                entity_type: 'lead',
+                entity_id: 12,
+                storage_key: 'own/photo.jpg',
+                content_type: 'image/jpeg',
+            }))
+            .mockImplementationOnce(attachmentLookup({
+                company_id: '00000000-0000-0000-0000-000000000002',
+                entity_type: 'lead',
+                entity_id: 99,
+                storage_key: 'foreign/secret.jpg',
+                content_type: 'image/jpeg',
+            }));
+        storageService.getPresignedUrl.mockImplementation(async key => `https://signed/${key}`);
+
+        const foreignRes = await request(makeApp(['leads.view']))
+            .post('/api/note-attachments/urls')
+            .send({ ids: [7, 999] });
+
+        expect(foreignRes.status).toBe(200);
+        expect(foreignRes.body.urls).toHaveProperty('7');
+        expect(foreignRes.body.urls).not.toHaveProperty('999');
+        expect(storageService.getPresignedUrl).not.toHaveBeenCalledWith('foreign/secret.jpg');
+
+        mockQuery.mockImplementationOnce(attachmentLookup({
+            company_id: COMPANY,
+            entity_type: 'lead',
+            entity_id: 12,
+            storage_key: 'own/photo.jpg',
+            content_type: 'image/jpeg',
+        }));
+        const deniedRes = await request(makeApp(['jobs.view']))
+            .post('/api/note-attachments/urls')
+            .send({ ids: [7] });
+
+        expect(deniedRes.status).toBe(403);
+    });
+
+    test('5. backfill defaults to dry-run and a second apply run performs no upload work', async () => {
+        expect(parseBackfillArgs([`--company-id=${COMPANY}`])).toMatchObject({
+            companyId: COMPANY,
+            apply: false,
+            dryRun: true,
+        });
+
+        const original = await sharp({
+            create: {
+                width: 640,
+                height: 480,
+                channels: 3,
+                background: { r: 20, g: 120, b: 60 },
+            },
+        }).png().toBuffer();
+        const existingKeys = new Set();
+        const backfillDb = {
+            query: jest.fn(async () => ({
+                rows: [{ id: 7, storage_key: 'own/photo.png', content_type: 'image/png' }],
+            })),
+        };
+        const backfillStorage = {
+            fileExists: jest.fn(async key => existingKeys.has(key)),
+            downloadFile: jest.fn(async () => original),
+            uploadFile: jest.fn(async (_buffer, _contentType, key) => { existingKeys.add(key); }),
+        };
+        const dependencies = {
+            db: backfillDb,
+            storageService: backfillStorage,
+            noteAttachmentsService: service,
+            logger: { log: jest.fn(), error: jest.fn() },
+        };
+
+        const first = await backfillThumbnails({ companyId: COMPANY, dryRun: false }, dependencies);
+        const second = await backfillThumbnails({ companyId: COMPANY, dryRun: false }, dependencies);
+
+        expect(first).toMatchObject({ found: 1, created: 1, existing: 0, failed: 0 });
+        expect(second).toMatchObject({ found: 1, created: 0, existing: 1, failed: 0 });
+        expect(backfillStorage.downloadFile).toHaveBeenCalledTimes(1);
+        expect(backfillStorage.uploadFile).toHaveBeenCalledTimes(1);
+        expect(backfillDb.query.mock.calls[0][1]).toEqual([COMPANY]);
+    });
+
+    test('6. a missing thumbnail returns thumb_url null with 200', async () => {
+        mockQuery.mockImplementationOnce(attachmentLookup({
+            company_id: COMPANY,
+            entity_type: 'contact',
+            entity_id: 44,
+            storage_key: 'own/legacy.jpg',
+            content_type: 'image/jpeg',
+        }));
+        storageService.fileExists.mockResolvedValueOnce(false);
+        storageService.getPresignedUrl.mockResolvedValueOnce('https://signed/original');
+
+        const res = await request(makeApp(['contacts.view']))
+            .post('/api/note-attachments/urls')
+            .send({ ids: [8] });
+
+        expect(res.status).toBe(200);
+        expect(res.body.urls['8']).toEqual({
+            url: 'https://signed/original',
+            thumb_url: null,
+        });
+    });
+});
 
 describe('POST /upload (stage)', () => {
     test('invalid entity_type → 400, no query', async () => {
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'widget').field('entity_id', '5')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
         expect(res.status).toBe(400);
         expect(mockQuery).not.toHaveBeenCalled();
     });
@@ -57,7 +272,7 @@ describe('POST /upload (stage)', () => {
         mockQuery.mockResolvedValueOnce({ rows: [] }); // entityExistsInCompany → none
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'job').field('entity_id', '999')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
         expect(res.status).toBe(404);
         expect(mockQuery).toHaveBeenCalledTimes(1);
         expect(storageService.uploadFile).not.toHaveBeenCalled();
@@ -68,10 +283,10 @@ describe('POST /upload (stage)', () => {
         mockQuery.mockResolvedValueOnce({ rows: [{ id: 42, file_name: 'a.png', content_type: 'image/png', file_size: 3 }] }); // INSERT
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'job').field('entity_id', '5')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
         expect(res.status).toBe(200);
         expect(res.body.data.attachments).toEqual([{ id: 42, file_name: 'a.png', content_type: 'image/png', file_size: 3 }]);
-        expect(storageService.uploadFile).toHaveBeenCalledTimes(1);
+        expect(storageService.uploadFile).toHaveBeenCalledTimes(2);
         const insert = mockQuery.mock.calls[1][0];
         expect(insert).toMatch(/INSERT INTO note_attachments/i);
         expect(insert).toMatch(/NULL, NULL/);   // note_index, note_id staged
@@ -82,7 +297,7 @@ describe('POST /upload (stage)', () => {
         mockQuery.mockResolvedValueOnce({ rows: [{ id: 43, file_name: 'a.png', content_type: 'image/png', file_size: 3 }] });
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'lead').field('entity_id', '0NMHI5')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
 
         expect(res.status).toBe(200);
         expect(mockQuery.mock.calls[0][0]).toMatch(/FROM leads WHERE uuid = \$1 AND company_id = \$2/i);
@@ -94,7 +309,7 @@ describe('POST /upload (stage)', () => {
         mockQuery.mockResolvedValueOnce({ rows: [] });
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'lead').field('entity_id', 'FOREIGN-UUID')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
 
         expect(res.status).toBe(404);
         expect(mockQuery).toHaveBeenCalledTimes(1);
@@ -108,7 +323,7 @@ describe('POST /upload (stage)', () => {
         mockQuery.mockResolvedValueOnce({ rows: [{ id: 44, file_name: 'a.png', content_type: 'image/png', file_size: 3 }] });
         const res = await request(makeApp()).post('/api/note-attachments/upload')
             .field('entity_type', 'lead').field('entity_id', '42')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
 
         expect(res.status).toBe(200);
         expect(mockQuery.mock.calls[1][0]).toMatch(/FROM leads WHERE id = \$1 AND company_id = \$2/i);
@@ -131,12 +346,12 @@ describe('Wave 1 attachment RBAC matrix', () => {
 
         const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).post('/api/note-attachments/upload')
             .field('entity_type', 'job').field('entity_id', '5')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
 
         expect(res.status).toBe(200);
         expect(mockQuery.mock.calls[1][0]).toMatch(/assigned_provider_user_ids @> \$3::jsonb/);
         expect(mockQuery.mock.calls[1][1]).toEqual([5, COMPANY, JSON.stringify(['crm-1'])]);
-        expect(storageService.uploadFile).toHaveBeenCalledTimes(1);
+        expect(storageService.uploadFile).toHaveBeenCalledTimes(2);
     });
 
     test('provider gets 404 when uploading against an unassigned in-tenant job', async () => {
@@ -145,7 +360,7 @@ describe('Wave 1 attachment RBAC matrix', () => {
 
         const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).post('/api/note-attachments/upload')
             .field('entity_type', 'job').field('entity_id', '5')
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
 
         expect(res.status).toBe(404);
         expect(storageService.uploadFile).not.toHaveBeenCalled();
@@ -157,7 +372,7 @@ describe('Wave 1 attachment RBAC matrix', () => {
     ])('provider is denied %s upload', async (entityType, entityId) => {
         const res = await request(makeApp(PROVIDER_PERMISSIONS, PROVIDER_SCOPES)).post('/api/note-attachments/upload')
             .field('entity_type', entityType).field('entity_id', entityId)
-            .attach('attachments', Buffer.from('img'), 'a.png');
+            .attach('attachments', PNG_BUFFER, 'a.png');
 
         expect(res.status).toBe(403);
         expect(mockQuery).not.toHaveBeenCalled();

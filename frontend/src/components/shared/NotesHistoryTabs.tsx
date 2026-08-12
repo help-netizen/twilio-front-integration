@@ -5,6 +5,7 @@
  */
 import { useState } from 'react';
 import { NotesSection } from './NotesSection';
+import { NoteGalleryProvider } from './NoteGallery';
 import { HistorySection } from './HistorySection';
 
 interface NotesHistoryTabsProps {
@@ -53,12 +54,15 @@ export function NotesHistoryTabs({ entityType, entityId, onNoteAdded }: NotesHis
                 </button>
             </div>
 
-            {/* Content */}
-            {tab === 'notes' ? (
-                <NotesSection entityType={entityType} entityId={entityId} onNoteAdded={onNoteAdded} />
-            ) : (
-                <HistorySection entityType={entityType} entityId={entityId} />
-            )}
+            {/* Content — one gallery spans the whole feed, so the arrow keys walk
+                every image in the history rather than a single note's. */}
+            <NoteGalleryProvider>
+                {tab === 'notes' ? (
+                    <NotesSection entityType={entityType} entityId={entityId} onNoteAdded={onNoteAdded} />
+                ) : (
+                    <HistorySection entityType={entityType} entityId={entityId} />
+                )}
+            </NoteGalleryProvider>
         </div>
     );
 }

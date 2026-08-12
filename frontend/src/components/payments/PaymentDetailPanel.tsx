@@ -1,81 +1,27 @@
-/**
- * PaymentDetailPanel — two-column layout matching Job/Lead/Contact panels.
- *
- * LEFT:  Header (amount + client + status pills) → Invoice tile → Job tile → Provider tile
- * RIGHT: Attachments gallery → Metadata → Check deposit
- */
-import { useState, useEffect } from 'react';
-import {
-    Loader2, ChevronDown, Receipt,
-} from 'lucide-react';
-import { AttachmentsSection } from '../shared/AttachmentsSection';
-import { useNavigate } from 'react-router-dom';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { useState } from 'react';
+import { ChevronDown, Loader2, Receipt } from 'lucide-react';
+import { useJobDetail } from '../../hooks/useJobDetail';
+import { JobInfoSections } from '../jobs/JobInfoSections';
+import { JobDescription } from '../jobs/JobDescription';
+import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
+import { PaymentIdentity, InvoiceFigures } from './PaymentIdentity';
+import { PaymentJobSection, PaymentProviders } from './PaymentJobSections';
 import type { PaymentDetail } from './paymentTypes';
-import { formatPaymentDate, formatCurrency } from './paymentTypes';
 
-// ─── Shared tile styles ──────────────────────────────────────────────────────
-
-const sectionCard: React.CSSProperties = {
-    padding: '16px 16px 18px',
-    borderRadius: '20px',
-    border: '1px solid var(--blanc-line)',
-    background: 'rgba(255, 255, 255, 0.5)',
-};
-
-const eyebrow: React.CSSProperties = {
-    fontSize: '11px',
-    fontWeight: 600,
-    letterSpacing: '0.14em',
-    textTransform: 'uppercase' as const,
-    color: 'var(--blanc-ink-3)',
-    marginBottom: '8px',
-};
-
-const infoRow: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    padding: '10px 0',
-    borderBottom: '1px dashed rgba(25, 25, 25, 0.12)',
-};
-
-const infoLabel: React.CSSProperties = {
-    fontSize: '13px',
-    color: 'var(--blanc-ink-3)',
-    flexShrink: 0,
-    width: '72px',
-};
-
-// ─── Status colors ───────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<string, string> = {
-    'succeeded': '#1B8B63', 'paid': '#1B8B63',
-    'failed': '#EF4444', 'refunded': '#EF4444', 'voided': '#EF4444',
-    'pending': '#F59E0B', 'processing': '#F59E0B',
-};
-
-function hexToRgba(hex: string, alpha: number): string {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r},${g},${b},${alpha})`;
-}
-
-function statusPill(label: string) {
-    const color = STATUS_COLORS[label.toLowerCase()] || '#6B7280';
-    return (
-        <span
-            className="inline-flex items-center px-3 text-xs font-semibold"
-            style={{ background: hexToRgba(color, 0.1), color, minHeight: 28, borderRadius: 8 }}
-        >
-            {label}
-        </span>
-    );
-}
-
-// ─── Component ───────────────────────────────────────────────────────────────
-
+/**
+ * The payment card, built to read like the job card.
+ *
+ * LEFT  — what this payment is (the amount is the title), where it leaves the
+ *         invoice, then the job it belongs to and that job's own Contact,
+ *         Scheduled and Location sections.
+ * RIGHT — Description, Notes/History, Metadata. No Finance: the money that
+ *         matters here is the one payment already at the top.
+ *
+ * The job sections, the description and the notes are the job card's own
+ * components pointed at the same job — not lookalikes. That is what keeps call
+ * masking, Call/Text, reschedule, tasks and note editing identical here without
+ * a second implementation to drift.
+ */
 export function PaymentDetailPanel({
     detail, loading, onClose: _onClose, onToggleDeposited,
 }: {
@@ -84,16 +30,12 @@ export function PaymentDetailPanel({
     onClose: () => void;
     onToggleDeposited: (deposited: boolean) => void;
 }) {
-    const navigate = useNavigate();
     const [showMetadata, setShowMetadata] = useState(false);
-
-    useEffect(() => {
-        setShowMetadata(false);
-    }, [detail?.transaction_id]);
+    const jobDetail = useJobDetail({ jobId: detail?.local_job_id ?? null });
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--blanc-ink-3)' }}>
+            <div className="flex h-full items-center justify-center" style={{ color: 'var(--blanc-ink-3)' }}>
                 <Loader2 className="size-5 animate-spin" />
             </div>
         );
@@ -101,163 +43,76 @@ export function PaymentDetailPanel({
 
     if (!detail) {
         return (
-            <div className="flex flex-col items-center justify-center h-full gap-3" style={{ color: 'var(--blanc-ink-3)' }}>
+            <div className="flex h-full flex-col items-center justify-center gap-3" style={{ color: 'var(--blanc-ink-3)' }}>
                 <Receipt className="size-10 opacity-20" />
                 <p className="text-sm">Unable to load payment details.</p>
             </div>
         );
     }
 
-    const allAttachments = detail.attachments || [];
-    const method = detail.display_payment_method || detail.payment_methods || '';
-    const isCheck = method.toLowerCase() === 'check';
+    const job = jobDetail.job;
 
     return (
-        <div className="flex flex-col h-full overflow-y-auto">
+        <div className="flex h-full flex-col overflow-y-auto md:flex-row md:overflow-hidden">
 
-            {/* ═══ TOP: Header + Tiles (two-column on desktop) ═══ */}
-            <div className="flex flex-col md:flex-row">
+            {/* ═══ LEFT — the payment, then the job it paid for ═══ */}
+            <div className="w-full space-y-6 px-5 py-5 md:w-1/2 md:overflow-y-auto">
+                <PaymentIdentity detail={detail} onToggleDeposited={onToggleDeposited} />
+                <InvoiceFigures invoice={detail.invoice} />
+                <PaymentJobSection detail={detail} job={job} />
 
-            {/* LEFT: Header + Tiles */}
-            <div className="w-full md:w-1/2 flex flex-col">
-                {/* Header */}
-                <div className="px-5 pt-5 pb-3">
-                    <div className="mb-2">
-                        <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.12em' }}>
-                            Payment {method && `· ${method}`} · {formatPaymentDate(detail.payment_date)}
-                        </span>
-                    </div>
-                    <h2
-                        className="text-2xl font-bold leading-tight mb-1"
-                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)', letterSpacing: '-0.03em' }}
-                    >
-                        {formatCurrency(detail.amount_paid)}
-                    </h2>
-                    <p className="text-sm mb-3" style={{ color: 'var(--blanc-ink-2)' }}>
-                        Paid by <strong style={{ color: 'var(--blanc-ink-1)' }}>{detail.client}</strong> for <strong style={{ color: 'var(--blanc-ink-1)' }}>#{detail.job_number}</strong>
+                {job ? (
+                    <>
+                        {/* Contact, Scheduled and Location exactly as the job card
+                            renders them — flat here, framed there. */}
+                        <JobInfoSections
+                            job={job}
+                            contactInfo={jobDetail.contactInfo}
+                            onJobUpdated={jobDetail.handleJobUpdated}
+                            variant="flat"
+                        />
+                        <PaymentProviders detail={detail} job={job} />
+                    </>
+                ) : (
+                    <>
+                        <PaymentProviders detail={detail} job={null} />
+                        {detail.job?.service_address && (
+                            <div>
+                                <p className="blanc-eyebrow mb-2">Location</p>
+                                <p className="text-[15px] font-medium">{detail.job.service_address}</p>
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {/* Mobile keeps one scroller: the right column's content follows here. */}
+                <div className="space-y-6 md:hidden">
+                    {job && <JobDescription job={job} onJobUpdated={jobDetail.handleJobUpdated} />}
+                    {job && <NotesHistoryTabs entityType="job" entityId={job.id} />}
+                    <MetadataSection metadata={detail.metadata} showMetadata={showMetadata} setShowMetadata={setShowMetadata} />
+                </div>
+            </div>
+
+            {/* ═══ RIGHT — description, notes, metadata (desktop) ═══ */}
+            <div
+                className="hidden w-full flex-col space-y-6 overflow-y-auto px-5 py-5 md:flex md:w-1/2"
+                style={{ borderLeft: '1px solid var(--blanc-line)' }}
+            >
+                {job ? (
+                    <>
+                        <JobDescription job={job} onJobUpdated={jobDetail.handleJobUpdated} />
+                        <NotesHistoryTabs entityType="job" entityId={job.id} />
+                    </>
+                ) : (
+                    <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
+                        This payment is not linked to a job, so there is nothing to describe or annotate.
                     </p>
-                    {/* Status pills */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                        {statusPill(detail.transaction_status)}
-                        {detail.invoice && statusPill(detail.invoice.paid_in_full ? 'Paid In Full' : `Due: ${formatCurrency(detail.invoice.amount_due)}`)}
-                        {isCheck && (
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <button
-                                        className="inline-flex items-center px-3 text-xs font-semibold cursor-pointer"
-                                        style={{
-                                            background: hexToRgba(detail.check_deposited ? '#1B8B63' : '#EF4444', 0.1),
-                                            color: detail.check_deposited ? '#1B8B63' : '#EF4444',
-                                            minHeight: 28, borderRadius: 8, border: 'none',
-                                        }}
-                                    >
-                                        {detail.check_deposited ? 'Deposited' : 'Not Deposited'}
-                                    </button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-1" align="start">
-                                    <button className="flex items-center gap-2 w-full text-left px-3 py-1.5 rounded text-sm hover:bg-muted" onClick={() => onToggleDeposited(true)}>
-                                        <span className="size-2 rounded-full" style={{ background: '#1B8B63' }} /> Deposited
-                                    </button>
-                                    <button className="flex items-center gap-2 w-full text-left px-3 py-1.5 rounded text-sm hover:bg-muted" onClick={() => onToggleDeposited(false)}>
-                                        <span className="size-2 rounded-full" style={{ background: '#EF4444' }} /> Not Deposited
-                                    </button>
-                                </PopoverContent>
-                            </Popover>
-                        )}
-                    </div>
-                </div>
-
-                {/* Warning */}
-                {detail._warning && (
-                    <div className="mx-5 mb-3 px-3 py-2 rounded-xl text-[12px]" style={{ background: 'rgba(217,119,6,0.06)', border: '1px solid rgba(217,119,6,0.2)', color: 'var(--blanc-ink-2)' }}>
-                        {detail._warning}
-                    </div>
                 )}
-
-                {/* Tiles */}
-                <div className="px-4 py-4 space-y-3">
-                    {/* Invoice tile */}
-                    {detail.invoice && (
-                        <div style={sectionCard}>
-                            <p style={eyebrow}>Invoice</p>
-                            <div style={infoRow}>
-                                <span style={infoLabel}>Total</span>
-                                <span className="text-[13px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{formatCurrency(detail.invoice.total)}</span>
-                            </div>
-                            <div style={infoRow}>
-                                <span style={infoLabel}>Paid</span>
-                                <span className="text-[13px] font-semibold" style={{ color: '#1B8B63' }}>{formatCurrency(detail.invoice.amount_paid)}</span>
-                            </div>
-                            <div style={{ ...infoRow, borderBottom: 'none', paddingBottom: 0 }}>
-                                <span style={infoLabel}>Due</span>
-                                <span className="text-[13px] font-semibold" style={{ color: parseFloat(detail.invoice.amount_due) > 0 ? '#EF4444' : 'var(--blanc-ink-1)' }}>
-                                    {formatCurrency(detail.invoice.amount_due)}
-                                </span>
-                            </div>
-                        </div>
-                    )}
-
-                </div>
-
-            </div>
-
-            {/* RIGHT: Job + Providers + Metadata */}
-            <div className="w-full md:w-1/2 flex flex-col px-4 py-4 space-y-3">
-                {/* Job tile */}
-                {detail.job && (
-                    <div
-                        style={{ ...sectionCard, cursor: detail.local_job_id ? 'pointer' : 'default' }}
-                        onClick={() => detail.local_job_id && navigate(`/jobs/${detail.local_job_id}`)}
-                        className={detail.local_job_id ? 'transition-opacity hover:opacity-80' : ''}
-                    >
-                        <p style={eyebrow}>Job</p>
-                        <div
-                            className="text-[15px] leading-snug font-semibold"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' }}
-                        >
-                            {detail.job.job_number && `#${detail.job.job_number}`}
-                            {detail.job.service_name && ` · ${detail.job.service_name}`}
-                        </div>
-                        {detail.job.service_address && (
-                            <div className="text-[13px] mt-1" style={{ color: 'var(--blanc-ink-2)' }}>
-                                {detail.job.service_address}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* Provider tile */}
-                {detail.job && detail.job.providers.length > 0 && (
-                    <div style={sectionCard}>
-                        <p style={eyebrow}>Providers</p>
-                        <div className="flex flex-wrap gap-2">
-                            {detail.job.providers.map((p, i) => (
-                                <span
-                                    key={i}
-                                    className="inline-flex items-center gap-1 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
-                                    style={{ background: 'var(--blanc-line)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
-                                >
-                                    {p.name}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
                 <MetadataSection metadata={detail.metadata} showMetadata={showMetadata} setShowMetadata={setShowMetadata} />
-            </div>
-
-            </div>
-
-            {/* ═══ BOTTOM: Attachments (full width) ═══ */}
-            <div className="px-4 pb-4">
-                <AttachmentsSection attachments={allAttachments} />
             </div>
         </div>
     );
 }
-
-// AttachmentsSection extracted to ../shared/AttachmentsSection.tsx
 
 // ─── Metadata Section ────────────────────────────────────────────────────────
 

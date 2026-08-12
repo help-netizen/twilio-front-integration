@@ -56,6 +56,29 @@ async function canAccessJob(req, companyId, jobId) {
     return result.rows.length > 0;
 }
 
+async function findAttachmentEntity(req, attachmentId) {
+    const companyId = req.companyFilter?.company_id;
+    const result = await db.query(
+        `SELECT entity_type, entity_id, note_index, uploaded_by, storage_key, content_type
+         FROM note_attachments
+         WHERE id = $1 AND company_id = $2`,
+        [attachmentId, companyId]
+    );
+    const row = result.rows[0];
+    if (!VALID_ENTITY_TYPES.has(row?.entity_type)) return null;
+    if (row.entity_type === 'job' && !await canAccessJob(req, companyId, row.entity_id)) {
+        return null;
+    }
+    return row;
+}
+
+function setLoadedAttachment(req, attachmentId, row) {
+    req.attachmentId = attachmentId;
+    req.attachmentEntityType = row.entity_type;
+    req.attachmentNoteIndex = row.note_index;
+    req.attachmentUploadedBy = row.uploaded_by;
+}
+
 async function loadAttachmentEntity(req, res, next) {
     try {
         const attachmentId = parseInt(req.params.id, 10);
@@ -63,25 +86,12 @@ async function loadAttachmentEntity(req, res, next) {
             return res.status(400).json({ ok: false, error: 'Invalid attachment ID' });
         }
 
-        const companyId = req.companyFilter?.company_id;
-        const result = await db.query(
-            `SELECT entity_type, entity_id, note_index, uploaded_by
-             FROM note_attachments
-             WHERE id = $1 AND company_id = $2`,
-            [attachmentId, companyId]
-        );
-        const entityType = result.rows[0]?.entity_type;
-        if (!VALID_ENTITY_TYPES.has(entityType)) {
-            return res.status(404).json({ ok: false, error: 'Attachment not found' });
-        }
-        if (entityType === 'job' && !await canAccessJob(req, companyId, result.rows[0].entity_id)) {
+        const row = await findAttachmentEntity(req, attachmentId);
+        if (!row) {
             return res.status(404).json({ ok: false, error: 'Attachment not found' });
         }
 
-        req.attachmentId = attachmentId;
-        req.attachmentEntityType = entityType;
-        req.attachmentNoteIndex = result.rows[0].note_index;
-        req.attachmentUploadedBy = result.rows[0].uploaded_by;
+        setLoadedAttachment(req, attachmentId, row);
         next();
     } catch (err) {
         next(err);
@@ -146,6 +156,53 @@ router.post('/upload', upload.array('attachments', noteAttachmentsService.MAX_FI
     } catch (err) {
         console.error('[NoteAttachments] Upload (stage) error:', err.message);
         res.status(err.status || 500).json({ ok: false, error: err.message || 'Upload failed' });
+    }
+});
+
+/**
+ * POST /urls
+ * Resolve original + thumbnail URLs for a feed in one request. Each attachment
+ * is loaded and permission-checked independently; foreign/unknown ids are
+ * omitted so the response does not disclose their existence.
+ */
+router.post('/urls',
+    requirePermission('jobs.view', 'leads.view', 'contacts.view'), async (req, res) => {
+    try {
+        if (!Array.isArray(req.body?.ids)) {
+            return res.status(400).json({ ok: false, error: 'ids must be an array' });
+        }
+
+        const ids = [];
+        const seen = new Set();
+        for (const rawId of req.body.ids) {
+            const attachmentId = Number(rawId);
+            if (!Number.isSafeInteger(attachmentId) || attachmentId <= 0) {
+                return res.status(400).json({ ok: false, error: 'Invalid attachment ID' });
+            }
+            if (!seen.has(attachmentId)) {
+                ids.push(attachmentId);
+                seen.add(attachmentId);
+            }
+        }
+
+        const urls = {};
+        for (const attachmentId of ids) {
+            const row = await findAttachmentEntity(req, attachmentId);
+            if (!row) continue;
+
+            setLoadedAttachment(req, attachmentId, row);
+            let allowed = false;
+            requireLoadedEntityPermission('view')(req, res, () => { allowed = true; });
+            if (!allowed) return;
+
+            urls[String(attachmentId)] = await noteAttachmentsService
+                .getPresignedUrlsForStorageKey(row.storage_key);
+        }
+
+        res.json({ ok: true, urls });
+    } catch (err) {
+        console.error('[NoteAttachments] Error getting batch URLs:', err.message);
+        res.status(500).json({ ok: false, error: 'Failed to get attachment URLs' });
     }
 });
 

@@ -199,7 +199,7 @@ function NoteCard({ item }: { item: HistoryItem }) {
         <div className="p-3 rounded-xl space-y-2 my-1" style={{ background: NOTE_BG }}>
             {item.text && <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)' }}>{item.text}</p>}
             {item.attachments && item.attachments.length > 0 && (
-                <NoteAttachmentDisplay attachments={item.attachments} />
+                <NoteAttachmentDisplay attachments={item.attachments} groupKey={`history-${item.id}`} />
             )}
             <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
                 {item.actor && <span className="font-medium">{item.actor} · </span>}

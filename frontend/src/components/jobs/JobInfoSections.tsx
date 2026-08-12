@@ -24,6 +24,8 @@ interface JobInfoSectionsProps {
     job: LocalJob;
     contactInfo: { id: number; name: string; phone?: string; email?: string; secondary_phone?: string; secondary_phone_name?: string } | null;
     onJobUpdated?: (updatedJob: LocalJob) => void;
+    /** 'flat' drops the card frame — same sections, no chrome (payment card). */
+    variant?: 'card' | 'flat';
 }
 
 // The slot shape CustomTimeModal confirms with (unchanged — named here so the
@@ -37,6 +39,13 @@ const sectionCard: React.CSSProperties = {
     borderRadius: '20px',
     border: '1px solid var(--blanc-line)',
     background: 'rgba(255, 255, 255, 0.5)',
+};
+
+// The payment card shows these very sections and asks for them flat: no frame,
+// separated by space alone. Same behaviour — masking, call/text, reschedule —
+// only without the chrome, so neither surface has to reimplement any of it.
+const flatSection: React.CSSProperties = {
+    padding: '0 0 4px',
 };
 
 const eyebrow: React.CSSProperties = {
@@ -65,7 +74,8 @@ const infoLabel: React.CSSProperties = {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSectionsProps) {
+export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'card' }: JobInfoSectionsProps) {
+    const section = variant === 'flat' ? flatSection : sectionCard;
     const [showReschedule, setShowReschedule] = useState(false);
     const [rescheduling, setRescheduling] = useState(false);
     const [editingAddress, setEditingAddress] = useState(false);
@@ -180,7 +190,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
 
             {/* ── CONTACT ── */}
             {(customerName || phone || secondaryPhone || email) && (
-                <div style={sectionCard}>
+                <div style={section}>
                     <p style={eyebrow}>Contact</p>
                     {customerName && (
                         <div style={infoRow}>
@@ -267,7 +277,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
 
             {/* ── SCHEDULED + LOCATION + PROVIDERS (one card) ── */}
             {(job.start_date || job.address || job.territory || (job.assigned_techs && job.assigned_techs.length > 0)) && (
-                <div style={sectionCard}>
+                <div style={section}>
 
                     {/* Schedule */}
                     {job.start_date && (
