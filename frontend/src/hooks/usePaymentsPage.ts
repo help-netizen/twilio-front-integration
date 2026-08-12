@@ -25,6 +25,24 @@ interface PaymentsPageMeta {
     facets: PaymentsListFacets;
 }
 
+/**
+ * What the detail panel must do when the URL says one payment and another one
+ * (or none) is loaded.
+ *
+ * This lived inline as `parsedId !== selectedId`, comparing the selection to a
+ * value seeded from the same URL — so on a direct link the two were equal on
+ * the first render and the load never happened. The panel then reported
+ * "Unable to load payment details" without ever having asked for them, while
+ * the same card opened from the list because the click fetched imperatively.
+ */
+export function nextDetailAction(
+    wantedId: number | null,
+    loadedId: number | null
+): 'clear' | 'load' | 'skip' {
+    if (wantedId === null) return 'clear';
+    return wantedId === loadedId ? 'skip' : 'load';
+}
+
 export function usePaymentsPage() {
     const { paymentId: urlPaymentId } = useParams<{ paymentId?: string }>();
     const navigate = useNavigate();
@@ -36,7 +54,13 @@ export function usePaymentsPage() {
     const searchQuery = useDebouncedSearch(searchInput, 400);
     const [sortField, setSortField] = useState<SortField>('payment_date');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
-    const [selectedId, setSelectedId] = useState<number | null>(urlPaymentId ? parseInt(urlPaymentId, 10) || null : null);
+    // The URL is the only source of truth for which payment is open. Seeding a
+    // separate selectedId from it and then comparing the two meant a direct link
+    // never fetched: the values were already equal on the first render, so the
+    // guard skipped the load and the panel said "Unable to load payment details"
+    // while the same card opened fine from the list, which fetched imperatively.
+    const selectedId = urlPaymentId ? parseInt(urlPaymentId, 10) || null : null;
+    const loadedIdRef = useRef<number | null>(null);
     const [detail, setDetail] = useState<PaymentDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
     const [providerFilter, setProviderFilter] = useState('');
@@ -131,14 +155,13 @@ export function usePaymentsPage() {
         }
     }, []);
 
+    // Both entry points do the same thing — change the URL. The effect below is
+    // the single place that loads, so a deep link, a click and the back button
+    // all travel the one path that is actually exercised.
     const handleSelectRow = (paymentId: number) => {
-        setSelectedId(paymentId);
         navigate(`/payments/${paymentId}`, { replace: true });
-        void fetchDetail(paymentId);
     };
     const handleCloseDetail = () => {
-        setSelectedId(null);
-        setDetail(null);
         navigate('/payments', { replace: true });
     };
 
@@ -161,12 +184,16 @@ export function usePaymentsPage() {
     }, [detail, paymentsList.reset, paymentsList.updateItem, selectedId]);
 
     useEffect(() => {
-        const parsedId = urlPaymentId ? parseInt(urlPaymentId, 10) : null;
-        if (parsedId && parsedId !== selectedId) {
-            setSelectedId(parsedId);
-            void fetchDetail(parsedId);
+        const action = nextDetailAction(selectedId, loadedIdRef.current);
+        if (action === 'skip') return;
+        if (action === 'clear') {
+            loadedIdRef.current = null;
+            setDetail(null);
+            return;
         }
-    }, [fetchDetail, selectedId, urlPaymentId]);
+        loadedIdRef.current = selectedId;
+        void fetchDetail(selectedId as number);
+    }, [fetchDetail, selectedId]);
 
     const handleSort = (field: SortField) => {
         if (sortField === field) setSortDir(direction => direction === 'asc' ? 'desc' : 'asc');
