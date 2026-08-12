@@ -154,3 +154,46 @@ export function fetchAnalyticsBreakdown(
 export function fetchAnalyticsDataQuality(params: PeriodParams): Promise<AnalyticsDataQuality> {
     return request<AnalyticsDataQuality>(`${API_BASE}/data-quality?${qs({ from: params.from, to: params.to })}`);
 }
+
+/* ── GEO-HEATMAP-001: per-ZIP performance for the Analytics map ──────────── */
+export interface GeoChannelMetrics {
+    converted_count: number;
+    ad_spend_cents: number;
+    revenue_net_cents: number;
+    cpa_cents: number | null;
+    avg_revenue_cents: number | null;
+    roas: number | null;
+    spend_is_modeled: boolean;
+}
+export interface GeoRow {
+    zip: string;
+    area: string | null;
+    in_configured_area: boolean;
+    geometry: {
+        google_place_id: string | null;
+        lat: number | null;
+        lon: number | null;
+        status: 'resolved' | 'centroid_only' | 'missing';
+    };
+    google_lsa: GeoChannelMetrics;
+    elocal: GeoChannelMetrics;
+}
+export interface GeoZone { area: string; zip_count: number; }
+export interface AnalyticsGeoQuality {
+    unmapped_converted_count: number;
+    unmapped_revenue_net_cents: number;
+    unmapped_spend_cents: number;
+    unallocated_google_lsa_spend_cents: number;
+    centroid_only_zip_count: number;
+    missing_geometry_zip_count: number;
+}
+export interface AnalyticsGeo {
+    period: AnalyticsPeriod;
+    zones: GeoZone[];
+    rows: GeoRow[];
+    quality: AnalyticsGeoQuality;
+}
+
+export function fetchAnalyticsGeo(params: PeriodParams): Promise<AnalyticsGeo> {
+    return request<AnalyticsGeo>(`${API_BASE}/geo?${qs({ from: params.from, to: params.to })}`);
+}

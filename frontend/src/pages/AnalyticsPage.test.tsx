@@ -83,6 +83,55 @@ const fixtures = vi.hoisted(() => ({
         tax_basis_unknown_cents: 1234,
         connected_sources: [],
     },
+    geo: {
+        period: {
+            from: '2026-07-01',
+            to: '2026-07-31',
+            timezone: 'America/New_York',
+        },
+        zones: [
+            { area: 'Boston Core', zip_count: 2 },
+        ],
+        rows: [
+            {
+                zip: '02118',
+                area: 'Boston Core',
+                in_configured_area: true,
+                geometry: {
+                    google_place_id: 'postal-place-02118',
+                    lat: 42.337,
+                    lon: -71.071,
+                    status: 'resolved',
+                },
+                google_lsa: {
+                    converted_count: 3,
+                    ad_spend_cents: 90_000,
+                    revenue_net_cents: 360_000,
+                    cpa_cents: 30_000,
+                    avg_revenue_cents: 120_000,
+                    roas: 4,
+                    spend_is_modeled: true,
+                },
+                elocal: {
+                    converted_count: 2,
+                    ad_spend_cents: 50_000,
+                    revenue_net_cents: 140_000,
+                    cpa_cents: 25_000,
+                    avg_revenue_cents: 70_000,
+                    roas: 2.8,
+                    spend_is_modeled: false,
+                },
+            },
+        ],
+        quality: {
+            unmapped_converted_count: 2,
+            unmapped_revenue_net_cents: 10_000,
+            unmapped_spend_cents: 2_000,
+            unallocated_google_lsa_spend_cents: 0,
+            centroid_only_zip_count: 0,
+            missing_geometry_zip_count: 0,
+        },
+    },
 }));
 
 vi.mock('@tanstack/react-query', () => ({
@@ -91,7 +140,9 @@ vi.mock('@tanstack/react-query', () => ({
             ? fixtures.summary
             : queryKey[0] === 'lca-breakdown'
                 ? fixtures.breakdown
-                : fixtures.quality;
+                : queryKey[0] === 'lca-geo'
+                    ? fixtures.geo
+                    : fixtures.quality;
         return { data, isLoading: false, isError: false, error: null };
     },
 }));
@@ -117,5 +168,10 @@ describe('AnalyticsPage', () => {
         expect(markup).toContain('Google Ads');
         expect(markup).toContain('Paid Social');
         expect(markup).toContain('−$250');
+        expect(markup).toContain('Where booked jobs come from');
+        expect(markup).toContain('Top ZIPs');
+        expect(markup).toContain('02118');
+        expect(markup).toContain('5 jobs');
+        expect(markup).toContain('2 booked jobs are outside mapped ZIPs');
     });
 });

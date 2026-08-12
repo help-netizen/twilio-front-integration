@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { TriangleAlert, Plug, TrendingUp } from 'lucide-react';
+import { GeoPerformanceHeatmap } from '../components/analytics/GeoPerformanceHeatmap';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import {
     fetchAnalyticsSummary,
@@ -130,6 +131,8 @@ export default function AnalyticsPage() {
                     <FunnelCard data={summaryQ.data} />
                 </>
             )}
+
+            <GeoPerformanceHeatmap from={range.from} to={range.to} />
 
             <BreakdownCard
                 dimension={dimension}
