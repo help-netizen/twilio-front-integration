@@ -324,7 +324,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     return (
         <>
             <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
-                <DialogContent variant="panel" size="full">
+                <DialogContent variant="panel" size="full" mobileFullScreen>
                     <DialogPanelHeader>
                         <div className="flex items-start justify-between gap-4 pr-2">
                             <div className="min-w-0">

@@ -6,6 +6,7 @@ import { cardStackStyle, OVERLAY_Z, type DialogSize } from "./overlayLayout"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useOverlayDismiss } from "../../hooks/useOverlayDismiss"
 import { useSheetViewport } from "../../hooks/useSheetViewport"
+import { useFullScreenViewport } from "../../hooks/useFullScreenViewport"
 import { useOverlayStack } from "./OverlayStack"
 
 const Dialog = DialogPrimitive.Root
@@ -72,8 +73,27 @@ function DialogOpenProbe({ onOpenChange }: { onOpenChange: (open: boolean) => vo
 
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
-    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize; variant?: "dialog" | "panel" }
->(({ className, children, size = "default", variant = "dialog", onInteractOutside, onOpenAutoFocus, onFocusCapture, style, ...props }, ref) => {
+    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+        size?: DialogSize;
+        variant?: "dialog" | "panel";
+        /**
+         * Mobile: cover the whole visible viewport instead of rising as a bottom sheet.
+         *
+         * For a LONG, multi-field form (invoice / estimate) the sheet is the wrong
+         * surface. A sheet floats against the visual viewport, so when the keyboard
+         * opens its geometry has to be recomputed by hand — and when that math slips the
+         * sheet leaves the screen while its input keeps focus, i.e. the user types blind
+         * into a form they cannot see. Sheets also stack badly: the pickers this form
+         * opens are sheets themselves.
+         *
+         * Full screen removes the whole class of bug: the layer is pinned to the visible
+         * viewport (top follows visualViewport, bottom ends at the keyboard), the body is
+         * an ordinary scroller, so the browser keeps the focused field in view and iOS
+         * shows its native prev/next/done bar over a normal form.
+         */
+        mobileFullScreen?: boolean;
+    }
+>(({ className, children, size = "default", variant = "dialog", mobileFullScreen = false, onInteractOutside, onOpenAutoFocus, onFocusCapture, style, ...props }, ref) => {
     // TRUE while the portal'd content subtree is mounted = the dialog is really open.
     // LAYER-STACK-PHANTOM-001: this wrapper runs its hooks even for CLOSED dialogs
     // (only the Radix portal unmounts), so any stack registration keyed on "mounted"
@@ -86,7 +106,12 @@ const DialogContent = React.forwardRef<
     // DRAG-TO-DISMISS, so dialogs felt different from a real <BottomSheet>. We add both,
     // WITHOUT replacing Radix: it keeps ownership of state / Esc / focus / portal.
     const isMobile = useIsMobile()
-    const sheetViewport = useSheetViewport({ open: contentMounted, enabled: isMobile })
+    // A full-screen mobile layer owns the visible viewport itself, so the sheet-lift
+    // math (which exists to keep a floating sheet above the keyboard) must stay OFF —
+    // running both would fight over the same edges.
+    const asFullScreen = isMobile && mobileFullScreen
+    const sheetViewport = useSheetViewport({ open: contentMounted && !asFullScreen, enabled: isMobile && !asFullScreen })
+    const fullScreenViewport = useFullScreenViewport(asFullScreen && contentMounted)
     // SHEET-KEYBOARD-001 — mobile sheets must not programmatically focus the first
     // field while the OS keyboard and VisualViewport are still transitioning. Keep
     // focus inside Radix's modal scope by focusing the non-editable content itself;
@@ -110,13 +135,15 @@ const DialogContent = React.forwardRef<
     const { dragHandlers, dragOffset, isDragging } = useOverlayDismiss({
         // Gate on the REAL open state too — `open: isMobile` alone registered every
         // closed dialog on the page in the overlay stack while on mobile.
-        open: isMobile && contentMounted,
+        open: isMobile && !asFullScreen && contentMounted,
         onClose: () => dragCloseRef.current?.click(),
         esc: false,
         closeOnBackdrop: false,
         scrollLock: false,
         focusTrap: false,
-        dragToDismiss: isMobile,
+        // A full-screen form has no sheet to pull down, and a stray downward drag while
+        // filling it in must never throw the work away — close is the × only.
+        dragToDismiss: isMobile && !asFullScreen,
     })
     // While dragging: 1:1 finger tracking (no transition). On release: spring back — the
     // SAME mapping BottomSheet uses. Only applied on mobile; desktop style is untouched.
@@ -194,6 +221,10 @@ const DialogContent = React.forwardRef<
                 // Mobile: bottom-sheet — pinned to bottom, slides up (both variants). max-h caps at
                 // content (like BottomSheet size="auto"); the internal region scrolls, not the sheet.
                 "max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:translate-x-0 max-md:translate-y-0 max-md:max-w-full max-md:max-h-[calc(100dvh-16px)] max-md:rounded-t-[22px] max-md:rounded-b-none max-md:animate-[blancSlideUp_0.25s_ease-out]",
+                // Full-screen mobile form: edge to edge, no sheet cap and no rounded lip.
+                // The inline style below sets the live top/bottom; these classes only undo
+                // the sheet-shaped bits above (max-h cap, top rounding, border).
+                asFullScreen && "max-md:max-h-none max-md:rounded-none max-md:border-0",
                 variant === "panel"
                     ? cn(
                         // Canon: column layout — pinned header + scrollable DialogBody + sticky footer.
@@ -231,6 +262,18 @@ const DialogContent = React.forwardRef<
                         maxHeight: sheetViewport.geometry.usableHeight,
                     }
                     : {}),
+                // Full-screen mobile form: span exactly the VISIBLE viewport. `top` follows
+                // visualViewport (iOS shifts it down when the keyboard opens — pinning to 0
+                // would push the header off-screen) and `bottom` stops at the keyboard, so
+                // the sticky footer stays reachable instead of hiding under it.
+                ...(asFullScreen
+                    ? {
+                        top: fullScreenViewport.top,
+                        bottom: fullScreenViewport.bottom,
+                        maxHeight: 'none' as const,
+                        height: 'auto' as const,
+                    }
+                    : {}),
             }}
             {...props}
         >
@@ -240,7 +283,7 @@ const DialogContent = React.forwardRef<
                 so it disturbs neither the centered grid nor the panel's flex column, and — being
                 a separate strip above the scrollable body — dragging it never hijacks body scroll.
                 md:hidden → desktop renders nothing here. */}
-            {isMobile && (
+            {isMobile && !asFullScreen && (
                 <div
                     {...dragHandlers}
                     aria-hidden
