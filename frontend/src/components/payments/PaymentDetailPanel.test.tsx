@@ -33,10 +33,12 @@ describe('payment card parity with the job card', () => {
         expect(identityRaw).toContain('var(--blanc-success)');
     });
 
-    it('puts the job number in the heading and the source and status in pills', () => {
+    it('puts the job number in the heading and the status in a pill', () => {
         expect(jobSectionsRaw).toContain('Job {jobNumber');
-        expect(jobSectionsRaw).toContain('tone="source"');
-        expect(jobSectionsRaw).toContain('tone="status"');
+        // The lead source is deliberately absent: on a payment it answers a
+        // question nobody is asking here.
+        expect(jobSectionsRaw).not.toContain('job_source');
+        expect(jobSectionsRaw).toContain('{status &&');
         expect(jobSectionsRaw).toContain('Tags');
     });
 

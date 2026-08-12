@@ -3,7 +3,7 @@ import type { LocalJob } from '../../services/jobsApi';
 import type { PaymentDetail } from './paymentTypes';
 
 /**
- * The job behind a payment — number, source, service, status, tags, providers.
+ * The job behind a payment — number, service, status, tags, providers.
  *
  * The job card renders these through JobDetailHeader and JobOpsSection, but
  * those carry the job's own controls (status dropdown, cancel, ETA). From a
@@ -11,10 +11,8 @@ import type { PaymentDetail } from './paymentTypes';
  * without the levers.
  */
 
-function Pill({ text, tone }: { text: string; tone: 'source' | 'status' }) {
-    const styles = tone === 'status'
-        ? { background: 'rgba(27,139,99,.10)', color: 'var(--blanc-success)' }
-        : { background: 'var(--blanc-field)', color: 'var(--blanc-ink-2)' };
+function Pill({ text }: { text: string }) {
+    const styles = { background: 'rgba(27,139,99,.10)', color: 'var(--blanc-success)' };
     return (
         <span
             className="inline-flex items-center px-2.5 text-[11.5px] font-semibold"
@@ -30,7 +28,6 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
     const jobNumber = job?.job_number || detail.job_number;
     const service = job?.service_name || detail.job_type;
     const status = job?.blanc_status || detail.status;
-    const source = job?.job_source || detail.source;
     const tags = job?.tags || [];
 
     if (!jobNumber && !service) return null;
@@ -47,11 +44,10 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
                 >
                     Job {jobNumber ? `#${jobNumber}` : ''}
                 </button>
-                {source && <Pill text={source} tone="source" />}
             </p>
             <div className="flex flex-wrap items-center gap-2 text-[15px] font-semibold" style={{ letterSpacing: '-0.01em' }}>
                 {service || '—'}
-                {status && <Pill text={status} tone="status" />}
+                {status && <Pill text={status} />}
             </div>
             {tags.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
