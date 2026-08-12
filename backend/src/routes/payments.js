@@ -2,7 +2,7 @@
  * PF004 Payments API (canonical payment ledger)
  * Sprint 5: real implementations
  *
- * Separate from legacy /api/zenbooker/payments, which serves frozen imported data.
+ * Includes the Payments-page ledger plus canonical collection/action endpoints.
  */
 const express = require('express');
 const router = express.Router();
@@ -12,6 +12,11 @@ const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 const { userActor } = require('../services/financialActivityService');
 const { withTransaction } = require('../services/transactionService');
+const { createPaymentLedgerRouter } = require('./paymentLedger');
+
+// PAY-DEZB-001: ledger reads use date_from/date_to (detail uses view=ledger).
+// Requests outside that contract continue to the canonical transaction routes below.
+router.use(createPaymentLedgerRouter());
 
 // ROLE-PROVIDER-NO-PAYMENTS-001 — decouple the standalone payments ledger from the
 // job-level payment view. The full ledger (any/unfiltered transactions) needs

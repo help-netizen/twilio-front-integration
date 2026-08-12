@@ -12,7 +12,7 @@ const leadsService = require('../backend/src/services/leadsService');
 const jobsService = require('../backend/src/services/jobsService');
 const tasksQueries = require('../backend/src/db/tasksQueries');
 const contactsService = require('../backend/src/services/contactsService');
-const paymentsService = require('../backend/src/services/zenbookerPaymentsSyncService');
+const paymentsService = require('../backend/src/services/paymentLedgerService');
 
 jest.setTimeout(300000);
 

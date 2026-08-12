@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const db = require('../backend/src/db/connection');
-const paymentsService = require('../backend/src/services/zenbookerPaymentsSyncService');
+const paymentsService = require('../backend/src/services/paymentLedgerService');
 
 jest.setTimeout(60000);
 
@@ -12,6 +12,8 @@ const TAG = `PAYLEDGER-${Date.now()}-${process.pid}`;
 const MIGRATIONS = path.join(__dirname, '..', 'backend', 'db', 'migrations');
 const migrationSql = fs.readFileSync(path.join(MIGRATIONS, '227_unify_payments_ledger.sql'), 'utf8');
 const rollbackSql = fs.readFileSync(path.join(MIGRATIONS, 'rollback_227_unify_payments_ledger.sql'), 'utf8');
+const legacyMigrationSql = fs.readFileSync(path.join(MIGRATIONS, '254_payment_legacy_snapshot.sql'), 'utf8');
+const legacyRollbackSql = fs.readFileSync(path.join(MIGRATIONS, 'rollback_254_payment_legacy_snapshot.sql'), 'utf8');
 
 let client;
 let originalQuery;
@@ -131,6 +133,8 @@ describe('PAY-LEDGER-UNIFY-001 real PostgreSQL controls', () => {
     test('CTRL-PAY-LEDGER-BACKFILL-WINS: migration is idempotent and preserves canonical decisions', async () => {
         await client.query(migrationSql);
         await client.query(migrationSql);
+        await client.query(legacyMigrationSql);
+        await client.query(legacyMigrationSql);
 
         const { rows } = await client.query(
             `SELECT company_id, metadata
@@ -144,8 +148,14 @@ describe('PAY-LEDGER-UNIFY-001 real PostgreSQL controls', () => {
         expect(own.metadata).toMatchObject({
             check_deposited: true,
             pay_ledger_unify_001_check_deposited_backfill: true,
+            legacy: expect.objectContaining({ client: 'ZB Customer' }),
+            pay_dezb_001_snapshot: expect.any(Object),
         });
-        expect(foreign.metadata).toEqual({ check_deposited: false });
+        expect(foreign.metadata).toMatchObject({
+            check_deposited: false,
+            legacy: expect.objectContaining({ client: 'Foreign ZB Customer' }),
+            pay_dezb_001_snapshot: expect.any(Object),
+        });
     });
 
     test('CTRL-PAY-LEDGER-NO-UNION and CTRL-PAY-LEDGER-MONEY: every canonical source appears once', async () => {
@@ -183,7 +193,7 @@ describe('PAY-LEDGER-UNIFY-001 real PostgreSQL controls', () => {
             check_deposited: true,
         });
         expect(detail.invoice).toMatchObject({ total: '100.00', paid_in_full: true });
-        expect(detail.attachments).toHaveLength(1);
+        expect(detail.attachments).toEqual([]);
         expect(detail.metadata).not.toHaveProperty('pay_ledger_unify_001_check_deposited_backfill');
 
         await expect(paymentsService.getPaymentDetail(companyB, zbPaymentA.id)).resolves.toBeNull();
@@ -224,9 +234,11 @@ describe('PAY-LEDGER-UNIFY-001 real PostgreSQL controls', () => {
              WHERE company_id = $1 AND id = $2`,
             [companyA, zbPaymentA.id]
         );
-        expect(explicitDecision.rows[0].metadata).toEqual({
+        expect(explicitDecision.rows[0].metadata).toMatchObject({
             zb_job_id: `${TAG}-missing-job`,
             check_deposited: false,
+            legacy: expect.any(Object),
+            pay_dezb_001_snapshot: expect.any(Object),
         });
 
         const afterForeign = await client.query(
@@ -239,6 +251,7 @@ describe('PAY-LEDGER-UNIFY-001 real PostgreSQL controls', () => {
     });
 
     test('rollback removes only migration-owned deposited metadata', async () => {
+        await client.query(legacyRollbackSql);
         await client.query(rollbackSql);
         const { rows } = await client.query(
             `SELECT company_id, metadata

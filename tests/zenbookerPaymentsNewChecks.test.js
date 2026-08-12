@@ -8,7 +8,7 @@ jest.mock('../backend/src/services/financialActivityService', () => ({
 }));
 
 const db = require('../backend/src/db/connection');
-const paymentsService = require('../backend/src/services/zenbookerPaymentsSyncService');
+const paymentsService = require('../backend/src/services/paymentLedgerService');
 
 describe('zenbookerPaymentsSyncService listPayments new checks filter', () => {
     beforeEach(() => {

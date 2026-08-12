@@ -214,10 +214,6 @@ const ROUTE_PERMISSION_BASELINE = new Map([
     ['backend/src/routes/zenbooker/jobs.js:router:POST:/:id/enroute', 'Known gap; suggest jobs.edit.'],
     ['backend/src/routes/zenbooker/jobs.js:router:POST:/:id/start', 'Known gap; suggest jobs.edit.'],
     ['backend/src/routes/zenbooker/jobs.js:router:POST:/:id/complete', 'Known gap; suggest jobs.close.'],
-    ['backend/src/routes/zenbooker/payments.js:router:POST:/sync', 'Known gap; suggest tenant.integrations.manage.'],
-    ['backend/src/routes/zenbooker/payments.js:router:GET:/export', 'Known gap; suggest payments.view.'],
-    ['backend/src/routes/zenbooker/payments.js:router:GET:/:id', 'Known gap; suggest payments.view.'],
-    ['backend/src/routes/zenbooker/payments.js:router:PATCH:/:id', 'Known gap; suggest payments.collect_offline.'],
     ['backend/src/routes/zenbooker.js:router:GET:/service-area-check', 'Known gap; suggest schedule.view.'],
     ['backend/src/routes/zenbooker.js:router:GET:/timeslots', 'Known gap; suggest schedule.view.'],
     ['backend/src/routes/zenbooker.js:router:GET:/services', 'Known gap; suggest schedule.view.'],
@@ -495,8 +491,8 @@ defineSuite('ALB-105 / TENANCY-RBAC-GUARD-001: tenant-safety sanitizer', () => {
         }
     });
 
-    it('keeps only the 23 retiring Zenbooker handlers in the RBAC gap baseline', () => {
-        expect(ROUTE_PERMISSION_BASELINE.size).toBe(23);
+    it('keeps only the 19 retiring Zenbooker handlers in the RBAC gap baseline', () => {
+        expect(ROUTE_PERMISSION_BASELINE.size).toBe(19);
         expect([...ROUTE_PERMISSION_BASELINE.keys()].every((key) => (
             key.includes('/zenbooker') || key.includes('integrations-zenbooker')
         ))).toBe(true);

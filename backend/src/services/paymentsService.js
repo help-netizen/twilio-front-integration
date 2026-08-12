@@ -5,8 +5,7 @@
  * Business logic for payment transactions, refunds, voids, and receipts.
  * Operates on the canonical payment_transactions / payment_receipts tables.
  *
- * NOTE: Frozen imported-payment reads remain in
- * services/zenbookerPaymentsSyncService.js for the legacy Payments-page data layer.
+ * Payments-page ledger reads live in services/paymentLedgerService.js.
  */
 
 const { randomUUID } = require('crypto');

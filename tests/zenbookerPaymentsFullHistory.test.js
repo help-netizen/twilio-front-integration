@@ -11,22 +11,27 @@ jest.mock('../backend/src/db/connection', () => ({
 }));
 
 const paymentsService = require('../backend/src/services/zenbookerPaymentsSyncService');
+const paymentLedgerService = require('../backend/src/services/paymentLedgerService');
 const paymentsRouter = require('../backend/src/routes/zenbooker/payments');
 
 describe('Zenbooker payment API sync decommission', () => {
-    test('the service exposes only the retained local data and reconciliation API', () => {
+    test('the archive service exposes maintenance only and the ledger has its own service', () => {
         expect(paymentsService.syncPayments).toBeUndefined();
         expect(paymentsService.isDefaultSyncCompany).toBeUndefined();
         expect(paymentsService).toEqual(expect.objectContaining({
-            listPayments: expect.any(Function),
-            listPaymentsForExport: expect.any(Function),
-            getPaymentDetail: expect.any(Function),
-            updateCheckDeposited: expect.any(Function),
             projectCompanyLedger: expect.any(Function),
             reconcileJobLinks: expect.any(Function),
             resolveZbJobId: expect.any(Function),
             resolveZbInvoiceId: expect.any(Function),
             extractSource: expect.any(Function),
+        }));
+        expect(paymentsService.listPayments).toBeUndefined();
+        expect(paymentsService.getPaymentDetail).toBeUndefined();
+        expect(paymentLedgerService).toEqual(expect.objectContaining({
+            listPayments: expect.any(Function),
+            listPaymentsForExport: expect.any(Function),
+            getPaymentDetail: expect.any(Function),
+            updateCheckDeposited: expect.any(Function),
         }));
     });
 

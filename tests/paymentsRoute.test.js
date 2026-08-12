@@ -11,7 +11,7 @@ const mockListPaymentsForExport = jest.fn();
 const mockUpdateCheckDeposited = jest.fn();
 
 // Mock the local imported-payments data layer used by the route.
-jest.mock('../backend/src/services/zenbookerPaymentsSyncService', () => ({
+jest.mock('../backend/src/services/paymentLedgerService', () => ({
     listPayments: mockListPayments,
     getPaymentDetail: mockGetPaymentDetail,
     listPaymentsForExport: mockListPaymentsForExport,
@@ -222,8 +222,8 @@ describe('Payments Route (DB-backed)', () => {
             expect(mockGetPaymentDetail).toHaveBeenCalledWith(TEST_COMPANY_ID, 999);
         });
 
-        test('returns enriched detail with attachments', async () => {
-            const detail = makeDetail();
+        test('returns enriched detail without archived attachments', async () => {
+            const detail = makeDetail({ attachments: [] });
             mockGetPaymentDetail.mockResolvedValue(detail);
 
             const res = await request(app, 'GET', '/10778');
@@ -246,7 +246,7 @@ describe('Payments Route (DB-backed)', () => {
             expect(d.job.providers).toHaveLength(1);
 
             // Attachments
-            expect(d.attachments).toHaveLength(2);
+            expect(d.attachments).toEqual([]);
 
             // Metadata
             expect(d.metadata.transaction_id).toBe('txn_001');

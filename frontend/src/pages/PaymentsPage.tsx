@@ -1,5 +1,5 @@
 /**
- * PaymentsPage — Zenbooker Payments (Split-View)
+ * PaymentsPage — Albusto Payments (Split-View)
  * Page at /payments
  */
 

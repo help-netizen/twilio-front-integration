@@ -47,6 +47,7 @@ describe('migration 182 vocabulary controls', () => {
     it('ships the exact mirror vocabulary and a rollback to the legacy method', () => {
         const migration = readSql(MIGRATION_FILE);
         const rollback = readSql(ROLLBACK_FILE);
+        const landingTable = readSql('035_create_zb_payments.sql');
         const service = fs.readFileSync(SYNC_SERVICE_FILE, 'utf8');
 
         expect(migration).toContain('payment_transactions_payment_method_check');
@@ -54,7 +55,7 @@ describe('migration 182 vocabulary controls', () => {
         for (const method of METHODS) expect(migration).toContain(`'${method}'`);
         expect(rollback).toContain("SET payment_method = 'zenbooker_sync'");
         for (const method of METHODS) expect(rollback).toContain(`'${method}'`);
-        expect(service).toContain('ON CONFLICT (company_id, transaction_id) DO UPDATE');
+        expect(landingTable).toContain('UNIQUE (company_id, transaction_id)');
         expect(service).toMatch(/ON CONFLICT \(company_id, external_id\) WHERE external_source = 'zenbooker'/);
     });
 

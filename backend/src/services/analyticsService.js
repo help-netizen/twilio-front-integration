@@ -358,12 +358,11 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
     if (cursorTs) { params.push(cursorTs); cursorClause = `AND j.created_at < $${params.length}`; }
 
     // Net "Paid" per job — supports partial payments. Single canonical source:
-    // the payment_transactions ledger (debt #6). Zenbooker is the master payment
-    // system, so when a job carries Zenbooker-source rows those are authoritative
-    // and native rows are ignored to avoid double counting; otherwise native
-    // rows are summed. Completed refunds offset gross completed/refunded
-    // payments; voids/failures are excluded. Numbers verified
-    // identical to the legacy zb_payments path on a prod-data copy (migration 104).
+    // the payment_transactions ledger. Imported history is marked
+    // external_source = 'zenbooker'; where a job carries such rows they are
+    // authoritative and native rows are ignored to avoid double counting,
+    // otherwise native rows are summed. Completed refunds offset gross
+    // completed/refunded payments; voids/failures are excluded.
     const effectiveSource = `COALESCE(
       NULLIF(pt.external_source, ''),
       refund_origin.external_source

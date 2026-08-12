@@ -7,6 +7,10 @@ node_modules/
 .env.*.local
 .env.development
 .env.production
+# any hand-made env backup — one of these carried a live Twilio SID into a commit
+.env.bak*
+.env.*.bak
+*.env.backup
 
 # Logs
 logs/

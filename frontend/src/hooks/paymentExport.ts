@@ -12,7 +12,7 @@ export async function exportPaymentsCSV(dateFrom: string, dateTo: string): Promi
     // reflect every payment in the period regardless of on-screen filters.
     const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
 
-    const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/export?${qs.toString()}`);
+    const res = await authedFetch(`${API_BASE}/api/payments/export?${qs.toString()}`);
     const json = await res.json();
     if (!res.ok || !json.ok) throw new Error(json.error || 'Export failed');
 

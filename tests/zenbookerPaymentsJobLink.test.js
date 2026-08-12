@@ -15,6 +15,7 @@ jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), getClient: 
 
 const db = require('../backend/src/db/connection');
 const sync = require('../backend/src/services/zenbookerPaymentsSyncService');
+const paymentLedger = require('../backend/src/services/paymentLedgerService');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
 const ZB_JOB_ID = '1781974323252x656275605619673900'; // shape from the real ZB API
@@ -93,15 +94,15 @@ describe('assembleRow keeps the job link', () => {
 
 // ── getPaymentDetail join key ────────────────────────────────────────────────
 
-describe('getPaymentDetail links the local job by stable id', () => {
-    it('joins on zenbooker_job_id, not the fragile job_number string', async () => {
+describe('getPaymentDetail links the canonical local job by stable id', () => {
+    it('joins on payment_transactions.job_id, not provider or job-number fallbacks', async () => {
         db.query.mockResolvedValueOnce({ rows: [{ id: 10778, job_number: '#002202-4', local_job_id: 1283, missing_job_link: false }] });
 
-        const detail = await sync.getPaymentDetail(COMPANY, 10778);
+        const detail = await paymentLedger.getPaymentDetail(COMPANY, 10778);
 
         const sql = db.query.mock.calls[0][0];
-        expect(sql).toContain("zb_job.zenbooker_job_id = NULLIF(t.metadata->>'zb_job_id', '')");
-        expect(sql).toContain('zb_job.company_id = t.company_id');
+        expect(sql).toContain('local_job.id = COALESCE(t.job_id, i.job_id)');
+        expect(sql).not.toMatch(/\bzb_payments\b|\bzb_job\b/);
         expect(sql).not.toMatch(/LEFT JOIN jobs j ON j\.job_number = p\.job_number/);
         expect(detail.local_job_id).toBe(1283);
     });

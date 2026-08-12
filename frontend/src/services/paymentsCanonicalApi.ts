@@ -1,7 +1,7 @@
 /**
  * Canonical Payments API Client (PF004)
  * Frontend fetch wrapper for /api/payments endpoints.
- * This is SEPARATE from the Zenbooker PaymentsPage — these are the canonical payment transactions.
+ * Canonical payment transactions and actions share the Payments API surface.
  */
 
 import { authedFetch } from './apiClient';

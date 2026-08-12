@@ -5,9 +5,11 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..', 'backend', 'src');
 const financialSources = [
+    'services/eventService.js',
     'services/estimatesService.js',
     'services/invoicesService.js',
     'services/paymentsService.js',
+    'services/paymentLedgerService.js',
     'services/zenbookerPaymentsSyncService.js',
     'services/portalService.js',
     'services/stripePaymentsService.js',

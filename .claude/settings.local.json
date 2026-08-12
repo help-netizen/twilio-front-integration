@@ -37,7 +37,8 @@
       "Bash(node -e \"require\\(''''./backend/src/services/jobsService''''\\)\")",
       "Bash(./scripts/prod-deploy.sh)",
       "Bash(lsof -i :3019 -sTCP:LISTEN -P)",
-      "Bash(ps -p 70862 -o command=)"
+      "Bash(ps -p 70862 -o command=)",
+      "Bash(ssh -o ConnectTimeout=10 mini \"cat albusto-staging/state/status 2>/dev/null; echo '---deployed-sha---'; cat albusto-staging/state/.deployed-sha 2>/dev/null; cat albusto-staging/state/deployed_sha 2>/dev/null; echo; echo '---my commit---'; echo 0a78d810\")"
     ]
   }
 }

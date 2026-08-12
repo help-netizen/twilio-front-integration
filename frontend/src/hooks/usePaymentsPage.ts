@@ -113,7 +113,7 @@ export function usePaymentsPage() {
             if (paidFilter) query.set('paid_status', paidFilter);
 
             const response = await authedFetch(
-                `${API_BASE}/api/zenbooker/payments?${query.toString()}`,
+                `${API_BASE}/api/payments?${query.toString()}`,
                 { signal },
             );
             const json = await response.json() as {
@@ -144,7 +144,7 @@ export function usePaymentsPage() {
     const fetchDetail = useCallback(async (paymentId: number) => {
         setDetailLoading(true);
         try {
-            const response = await authedFetch(`${API_BASE}/api/zenbooker/payments/${paymentId}`);
+            const response = await authedFetch(`${API_BASE}/api/payments/${paymentId}?view=ledger`);
             const json = await response.json();
             if (!response.ok || !json.ok) throw new Error(json.error || 'Failed to load detail');
             setDetail(json.data);
@@ -168,7 +168,7 @@ export function usePaymentsPage() {
     const handleToggleDeposited = useCallback(async (deposited: boolean) => {
         if (!detail || !selectedId) return;
         try {
-            const response = await authedFetch(`${API_BASE}/api/zenbooker/payments/${selectedId}`, {
+            const response = await authedFetch(`${API_BASE}/api/payments/${selectedId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ check_deposited: deposited }),

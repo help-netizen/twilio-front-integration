@@ -9,7 +9,7 @@ jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async ()
 const express = require('express');
 const request = require('supertest');
 const db = require('../backend/src/db/connection');
-const paymentsService = require('../backend/src/services/zenbookerPaymentsSyncService');
+const paymentsService = require('../backend/src/services/paymentLedgerService');
 const paymentsRouter = require('../backend/src/routes/zenbooker/payments');
 const { createCursorFingerprint, encodeCursor } = require('../backend/src/utils/listCursor');
 
@@ -209,8 +209,8 @@ describe('Payments complete predicates, aggregates, and facets', () => {
         expect(metadataSql).toMatch(/FROM base_rows[\s\S]*display_payment_method/);
         expect(pageSql).toMatch(/\$6 = ANY\(p\.provider_names\)/);
         expect(pageSql).toMatch(/p\.invoice_paid_in_full IS NOT TRUE/);
-        expect(pageSql).toContain('LEFT JOIN zb_payments zp');
-        expect(pageSql).toContain('zp.company_id = t.company_id');
+        expect(pageSql).not.toMatch(/\bzb_payments\b|\bzb_job\b/);
+        expect(pageSql).toContain("t.metadata->'legacy'");
         expect(pageSql).not.toMatch(/\bUNION\b/i);
         expect(metadataParams).toEqual([
             COMPANY,
