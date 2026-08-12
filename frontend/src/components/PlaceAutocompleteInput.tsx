@@ -61,12 +61,26 @@ export function PlaceAutocompleteInput({
         requestOptions: { componentRestrictions: { country: ['us'] } },
     });
 
-    // main.tsx kicks the load off app-wide; awaiting it here removes the mount race
-    // (a dialog opened before the script lands would otherwise never become ready).
+    // main.tsx kicks the load off app-wide, but the script uses `loading=async`, whose
+    // onload fires BEFORE the individual libraries are usable — so neither
+    // loadGoogleMaps() resolving nor `importLibrary` being reachable proves that
+    // `google.maps.places` exists yet. The hook's init() is one-shot: called too early it
+    // logs "Google Maps Places API library must be loaded", never retries, and the field
+    // silently offers no suggestions for the rest of its life (verified in the harness).
+    // So poll for the service itself and init() once it is genuinely there.
     useEffect(() => {
         let cancelled = false;
-        loadGoogleMaps().then(() => { if (!cancelled) init(); }).catch(() => { /* typed text still works */ });
-        return () => { cancelled = true; };
+        let timer: number | undefined;
+        let tries = 0;
+        const initWhenReady = () => {
+            if (cancelled) return;
+            if (typeof google !== 'undefined' && google.maps?.places?.AutocompleteService) { init(); return; }
+            if (++tries > 100) return; // ~20s, then give up — typed text still works
+            timer = window.setTimeout(initWhenReady, 200);
+        };
+        loadGoogleMaps().catch(() => { /* no key / offline — field stays plain text */ });
+        initWhenReady();
+        return () => { cancelled = true; window.clearTimeout(timer); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
