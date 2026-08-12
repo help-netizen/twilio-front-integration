@@ -24,6 +24,7 @@ test('targeted refresh recomputes complete mirrors for only the tenant technicia
     expect(sql).toContain("target_identity.source = 'zenbooker'");
     expect(sql).toContain('target_identity.technician_id = ANY($2::uuid[])');
     expect(sql).toContain('native_m.user_id = t.crm_user_id');
+    expect(sql).toContain('t.active = TRUE');
     expect(params).toEqual([COMPANY_A, [TECHNICIAN_A]]);
 });
 

@@ -44,7 +44,10 @@ async function refreshProviderMirror(companyId, { technicianIds = null, runner =
          FROM (
              SELECT j2.id AS job_id,
                     COALESCE(
-                        jsonb_agg(DISTINCT to_jsonb(native_m.user_id::text))
+                        jsonb_agg(
+                            DISTINCT to_jsonb(native_m.user_id::text)
+                            ORDER BY to_jsonb(native_m.user_id::text)
+                        )
                             FILTER (WHERE native_m.user_id IS NOT NULL),
                         '[]'::jsonb
                     ) AS user_ids
@@ -60,6 +63,7 @@ async function refreshProviderMirror(companyId, { technicianIds = null, runner =
              LEFT JOIN technicians t
                  ON t.company_id = j2.company_id
                 AND (t.id::text = tech.value->>'id' OR t.id = e.technician_id)
+                AND t.active = TRUE
              LEFT JOIN company_memberships native_m
                  ON native_m.company_id = j2.company_id
                 AND native_m.user_id = t.crm_user_id

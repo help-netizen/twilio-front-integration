@@ -57,6 +57,7 @@ describe('reassignJob — replace with a provider array', () => {
         expect(sql).toMatch(/FROM jsonb_array_elements\(\$3::jsonb\)/);
         expect(sql).toMatch(/e\.company_id\s*=\s*j\.company_id/);
         expect(sql).toMatch(/t\.company_id\s*=\s*j\.company_id/);
+        expect(sql).toMatch(/t\.active\s*=\s*TRUE/);
         expect(sql).toMatch(/m\.company_id\s*=\s*j\.company_id/);
         expect(params).toHaveLength(3);
     });

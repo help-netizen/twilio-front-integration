@@ -212,6 +212,7 @@ async function resolveProviderUserIds(companyId, externalIds) {
          LEFT JOIN technicians t
            ON t.company_id = m.company_id
           AND t.crm_user_id = m.user_id
+          AND t.active = TRUE
          LEFT JOIN technician_external_identities e
            ON e.company_id = t.company_id
           AND e.source = 'zenbooker'

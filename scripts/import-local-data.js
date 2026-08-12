@@ -87,6 +87,53 @@ const LOCAL_DB = process.env.DATABASE_URL || 'postgresql://localhost/twilio_call
       await client.query(`ALTER TABLE ${t} ENABLE TRIGGER ALL`);
     }
 
+    // ENABLE TRIGGER ALL restores user triggers in ORIGIN mode, even when a
+    // trigger was declared ALWAYS. Restore the provider-mirror invariant's
+    // replica-safe mode explicitly for every imported source table.
+    const providerMirrorTriggers = {
+      jobs: [
+        'trg_jobs_provider_mirror_insert',
+        'trg_jobs_provider_mirror_update',
+      ],
+      technician_external_identities: [
+        'trg_external_identities_provider_mirror_insert',
+        'trg_external_identities_provider_mirror_update',
+        'trg_external_identities_provider_mirror_delete',
+      ],
+      technicians: [
+        'trg_technicians_provider_mirror_insert',
+        'trg_technicians_provider_mirror_update',
+        'trg_technicians_provider_mirror_delete',
+      ],
+      company_memberships: [
+        'trg_memberships_provider_mirror_insert',
+        'trg_memberships_provider_mirror_update',
+        'trg_memberships_provider_mirror_delete',
+      ],
+    };
+    for (const [table, triggers] of Object.entries(providerMirrorTriggers)) {
+      if (!allTables.includes(table)) continue;
+      for (const trigger of triggers) {
+        await client.query(`ALTER TABLE ${table} ENABLE ALWAYS TRIGGER ${trigger}`);
+      }
+    }
+
+    // DISABLE TRIGGER ALL deliberately bypasses even ALWAYS triggers. Repair
+    // every tenant once all relationship rows are loaded and triggers are live.
+    const { rows: mirrorRefresh } = await client.query(
+      `SELECT refresh_job_provider_mirrors(
+           ARRAY(
+             SELECT DISTINCT company_id
+             FROM jobs
+             WHERE company_id IS NOT NULL
+           ),
+           NULL,
+           NULL,
+           TRUE
+       ) AS updated`
+    );
+    console.log(`  jobs provider mirror: ${mirrorRefresh[0].updated} rows repaired`);
+
     // Reset sequences for tables with BIGSERIAL PKs
     const seqTables = ['contacts', 'timelines', 'calls', 'recordings', 'transcripts',
                        'call_events', 'leads', 'jobs', 'estimates', 'estimate_items',

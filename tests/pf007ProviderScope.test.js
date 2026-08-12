@@ -46,6 +46,7 @@ describe('membershipQueries.resolveProviderUserIds', () => {
         expect(sql).toContain('m.company_id = $1');
         expect(sql).toContain("m.status = 'active'");
         expect(sql).toContain('t.crm_user_id = m.user_id');
+        expect(sql).toContain('t.active = TRUE');
         expect(sql).toContain('e.company_id = t.company_id');
         expect(params).toEqual(['company-1', ['zb-1', 'zb-2']]);
         expect(out).toEqual(['uuid-a', 'uuid-b']); // sorted unique

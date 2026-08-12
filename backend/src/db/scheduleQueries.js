@@ -447,7 +447,10 @@ async function reassignJob(
         `UPDATE jobs j
             SET assigned_techs = $3::jsonb,
                 assigned_provider_user_ids = COALESCE((
-                    SELECT jsonb_agg(DISTINCT to_jsonb(m.user_id::text))
+                    SELECT jsonb_agg(
+                               DISTINCT to_jsonb(m.user_id::text)
+                               ORDER BY to_jsonb(m.user_id::text)
+                           )
                              FILTER (WHERE m.user_id IS NOT NULL)
                     FROM jsonb_array_elements($3::jsonb) AS tech(value)
                     LEFT JOIN technician_external_identities e
@@ -457,6 +460,7 @@ async function reassignJob(
                     LEFT JOIN technicians t
                       ON t.company_id = j.company_id
                      AND (t.id::text = tech.value->>'id' OR t.id = e.technician_id)
+                     AND t.active = TRUE
                     LEFT JOIN company_memberships m
                       ON m.company_id = j.company_id
                      AND m.user_id = t.crm_user_id
