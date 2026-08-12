@@ -644,6 +644,35 @@ const LSA_LTV_SQL = `
           AND attribution.match_confidence >= 90
           AND attribution.matched_contact_id IS NOT NULL
     ),
+    attributed_jobs AS (
+        SELECT DISTINCT
+            attribution.matched_job_id AS job_id,
+            job.zb_status,
+            job.blanc_status
+        FROM google_lsa_job_attributions attribution
+        JOIN lsa_cohort cohort
+          ON cohort.id = attribution.lsa_lead_id
+        JOIN jobs job
+          ON job.company_id = $1
+         AND job.id = attribution.matched_job_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+    ),
+    conversion_summary AS (
+        SELECT
+            COUNT(DISTINCT attributed.job_id)::INTEGER
+                AS booked_conversion_count,
+            COUNT(DISTINCT attributed.job_id) FILTER (
+                WHERE LOWER(BTRIM(COALESCE(attributed.zb_status, '')))
+                        = 'complete'
+                   OR LOWER(REPLACE(
+                        BTRIM(COALESCE(attributed.blanc_status, '')),
+                        '_',
+                        ' '
+                   )) = 'job is done'
+            )::INTEGER AS completed_conversion_count
+        FROM attributed_jobs attributed
+    ),
     lifetime_jobs AS (
         SELECT j.id AS job_id
         FROM jobs j
@@ -651,12 +680,8 @@ const LSA_LTV_SQL = `
           ON acquired.contact_id = j.contact_id
         WHERE j.company_id = $1
         UNION
-        SELECT attribution.matched_job_id AS job_id
-        FROM google_lsa_job_attributions attribution
-        JOIN lsa_cohort cohort
-          ON cohort.id = attribution.lsa_lead_id
-        WHERE attribution.company_id = $1
-          AND attribution.match_confidence >= 90
+        SELECT attributed.job_id
+        FROM attributed_jobs attributed
     )
     SELECT
         (
@@ -690,7 +715,15 @@ const LSA_LTV_SQL = `
                 ) * 100
             ),
             0
-        )::BIGINT AS revenue_net_cents
+        )::BIGINT AS revenue_net_cents,
+        (
+            SELECT conversion.booked_conversion_count
+            FROM conversion_summary conversion
+        ) AS booked_conversion_count,
+        (
+            SELECT conversion.completed_conversion_count
+            FROM conversion_summary conversion
+        ) AS completed_conversion_count
     FROM lifetime_jobs lifetime_job
     LEFT JOIN payment_transactions pt
       ON pt.company_id = $1
@@ -711,13 +744,24 @@ const ELOCAL_METRICS_SQL = `
             provider.id,
             provider.cost_cents,
             provider.billable,
-            provider.match_status
+            provider.match_status,
+            provider.match_confidence,
+            provider.matched_contact_id
         FROM elocal_leads provider
         JOIN company_context cc
           ON cc.id = provider.company_id
         WHERE provider.company_id = $1
           AND provider.call_at >= ($2::date AT TIME ZONE cc.timezone)
           AND provider.call_at < (($3::date + 1) AT TIME ZONE cc.timezone)
+    ),
+    matched_cohort AS (
+        SELECT
+            cohort.id,
+            cohort.matched_contact_id
+        FROM provider_cohort cohort
+        WHERE cohort.match_status = 'matched'
+          AND cohort.match_confidence >= 90
+          AND cohort.matched_contact_id IS NOT NULL
     ),
     eligible_attributions AS (
         SELECT DISTINCT
@@ -735,6 +779,63 @@ const ELOCAL_METRICS_SQL = `
                 AND lsa_attribution.matched_job_id = attribution.matched_job_id
                 AND lsa_attribution.match_confidence >= 90
           )
+    ),
+    acquired_contacts AS (
+        SELECT cohort.matched_contact_id AS contact_id
+        FROM matched_cohort cohort
+        UNION
+        SELECT attribution.matched_contact_id AS contact_id
+        FROM elocal_job_attributions attribution
+        JOIN matched_cohort cohort
+          ON cohort.id = attribution.elocal_lead_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+          AND attribution.matched_contact_id IS NOT NULL
+    ),
+    lifetime_jobs AS (
+        SELECT job.id AS job_id
+        FROM jobs job
+        JOIN acquired_contacts acquired
+          ON acquired.contact_id = job.contact_id
+        WHERE job.company_id = $1
+        UNION
+        SELECT attribution.matched_job_id AS job_id
+        FROM elocal_job_attributions attribution
+        JOIN matched_cohort cohort
+          ON cohort.id = attribution.elocal_lead_id
+        WHERE attribution.company_id = $1
+          AND attribution.match_confidence >= 90
+    ),
+    lifetime_revenue AS (
+        SELECT COALESCE(
+            ROUND(
+                (
+                    SUM(
+                        CASE
+                            WHEN transaction.transaction_type = 'payment'
+                             AND transaction.status = 'completed'
+                                THEN transaction.amount
+                            ELSE 0
+                        END
+                    )
+                    -
+                    SUM(
+                        CASE
+                            WHEN transaction.transaction_type = 'refund'
+                             AND transaction.status = 'completed'
+                                THEN ABS(transaction.amount)
+                            ELSE 0
+                        END
+                    )
+                ) * 100
+            ),
+            0
+        )::BIGINT AS revenue_net_cents
+        FROM lifetime_jobs lifetime_job
+        LEFT JOIN payment_transactions transaction
+          ON transaction.company_id = $1
+         AND transaction.job_id = lifetime_job.job_id
+         AND transaction.voided_at IS NULL
     ),
     provider_summary AS (
         SELECT
@@ -784,9 +885,11 @@ const ELOCAL_METRICS_SQL = `
         provider.matched_call_count,
         provider.billable_spend_cents,
         conversion.booked_conversion_count,
-        conversion.completed_conversion_count
+        conversion.completed_conversion_count,
+        lifetime.revenue_net_cents AS ltv_revenue_net_cents
     FROM provider_summary provider
     CROSS JOIN conversion_summary conversion
+    CROSS JOIN lifetime_revenue lifetime
 `;
 
 function asInteger(value) {
@@ -844,6 +947,8 @@ function emptyLsaLtvSnapshot() {
     return {
         channel_id: null,
         revenue_net_cents: 0,
+        booked_conversion_count: 0,
+        completed_conversion_count: 0,
     };
 }
 
@@ -856,6 +961,10 @@ async function loadLsaLtvSnapshot(companyId, period) {
     return {
         channel_id: rows[0]?.channel_id || null,
         revenue_net_cents: asInteger(rows[0]?.revenue_net_cents),
+        booked_conversion_count: asInteger(rows[0]?.booked_conversion_count),
+        completed_conversion_count: asInteger(
+            rows[0]?.completed_conversion_count
+        ),
     };
 }
 
@@ -869,6 +978,7 @@ function emptyElocalSnapshot() {
         billable_spend_cents: 0,
         booked_conversion_count: 0,
         completed_conversion_count: 0,
+        ltv_revenue_net_cents: 0,
     };
 }
 
@@ -889,6 +999,7 @@ async function loadElocalSnapshot(companyId, period) {
         billable_spend_cents: asInteger(row.billable_spend_cents),
         booked_conversion_count: asInteger(row.booked_conversion_count),
         completed_conversion_count: asInteger(row.completed_conversion_count),
+        ltv_revenue_net_cents: asInteger(row.ltv_revenue_net_cents),
     };
 }
 
@@ -1124,7 +1235,7 @@ function cpaFor(adSpendCents, conversionCount) {
 
 function lsaKpis(
     windowedRevenueCents,
-    ltvRevenueCents,
+    snapshot = emptyLsaLtvSnapshot(),
     costSnapshot = emptyCostSnapshot()
 ) {
     return {
@@ -1132,14 +1243,24 @@ function lsaKpis(
             costSnapshot.google_lsa_ad_spend_cents,
         google_other_ad_spend_cents:
             costSnapshot.google_other_ad_spend_cents,
+        google_lsa_booked_conversions: snapshot.booked_conversion_count,
+        google_lsa_completed_conversions: snapshot.completed_conversion_count,
         google_lsa_windowed_revenue_cents: windowedRevenueCents,
-        google_lsa_ltv_cents: ltvRevenueCents,
+        google_lsa_ltv_cents: snapshot.revenue_net_cents,
+        google_lsa_cpa_booked_cents: cpaFor(
+            costSnapshot.google_lsa_ad_spend_cents,
+            snapshot.booked_conversion_count
+        ),
+        google_lsa_cpa_completed_cents: cpaFor(
+            costSnapshot.google_lsa_ad_spend_cents,
+            snapshot.completed_conversion_count
+        ),
         google_lsa_roas: roasFor(
             windowedRevenueCents,
             costSnapshot.google_lsa_ad_spend_cents
         ),
         google_lsa_ltv_roas: roasFor(
-            ltvRevenueCents,
+            snapshot.revenue_net_cents,
             costSnapshot.google_lsa_ad_spend_cents
         ),
     };
@@ -1158,6 +1279,7 @@ function elocalKpis(
         elocal_booked_conversions: snapshot.booked_conversion_count,
         elocal_completed_conversions: snapshot.completed_conversion_count,
         elocal_windowed_revenue_cents: windowedRevenueCents,
+        elocal_ltv_cents: snapshot.ltv_revenue_net_cents,
         elocal_cpa_booked_cents: cpaFor(
             snapshot.billable_spend_cents,
             snapshot.booked_conversion_count
@@ -1168,6 +1290,10 @@ function elocalKpis(
         ),
         elocal_roas: roasFor(
             windowedRevenueCents,
+            snapshot.billable_spend_cents
+        ),
+        elocal_ltv_roas: roasFor(
+            snapshot.ltv_revenue_net_cents,
             snapshot.billable_spend_cents
         ),
     };
@@ -1193,7 +1319,7 @@ function summaryKpis(
             totals.revenueNetCents - totals.callCostCents - adSpendCents,
         ...lsaKpis(
             totals.googleLsaWindowedRevenueCents,
-            lsaLtvSnapshot.revenue_net_cents,
+            lsaLtvSnapshot,
             costSnapshot
         ),
         ...elocalKpis(
@@ -1286,6 +1412,8 @@ function emptyBreakdownAccumulator(target) {
             googleOtherAdSpendCents: 0,
             googleLsaWindowedRevenueCents: 0,
             googleLsaLtvCents: 0,
+            googleLsaBookedConversions: 0,
+            googleLsaCompletedConversions: 0,
             elocalCallCount: 0,
             elocalBillableCallCount: 0,
             elocalUnbillableCallCount: 0,
@@ -1294,6 +1422,7 @@ function emptyBreakdownAccumulator(target) {
             elocalBookedConversions: 0,
             elocalCompletedConversions: 0,
             elocalWindowedRevenueCents: 0,
+            elocalLtvCents: 0,
         },
         allocated: {},
     };
@@ -1456,7 +1585,10 @@ function buildBreakdownRows(
         }
 
         let googleRow = accumulators.get('google_ads');
-        if (!googleRow && lsaLtvSnapshot.revenue_net_cents !== 0) {
+        const hasGoogleLsaMetrics = Object.entries(lsaLtvSnapshot).some(
+            ([key, value]) => key !== 'channel_id' && value !== 0
+        );
+        if (!googleRow && hasGoogleLsaMetrics) {
             googleRow = emptyBreakdownAccumulator({
                 id: lsaLtvSnapshot.channel_id,
                 key: 'google_ads',
@@ -1467,6 +1599,10 @@ function buildBreakdownRows(
         if (googleRow) {
             googleRow.raw.googleLsaLtvCents =
                 lsaLtvSnapshot.revenue_net_cents;
+            googleRow.raw.googleLsaBookedConversions =
+                lsaLtvSnapshot.booked_conversion_count;
+            googleRow.raw.googleLsaCompletedConversions =
+                lsaLtvSnapshot.completed_conversion_count;
         }
 
         let elocalRow = Array.from(accumulators.values()).find(
@@ -1500,6 +1636,8 @@ function buildBreakdownRows(
                 elocalSnapshot.booked_conversion_count;
             elocalRow.raw.elocalCompletedConversions =
                 elocalSnapshot.completed_conversion_count;
+            elocalRow.raw.elocalLtvCents =
+                elocalSnapshot.ltv_revenue_net_cents;
         }
     }
 
@@ -1573,9 +1711,20 @@ function buildBreakdownRows(
             - row.allocated.adSpendCents,
         google_lsa_ad_spend_cents: row.raw.googleLsaAdSpendCents,
         google_other_ad_spend_cents: row.raw.googleOtherAdSpendCents,
+        google_lsa_booked_conversions: row.raw.googleLsaBookedConversions,
+        google_lsa_completed_conversions:
+            row.raw.googleLsaCompletedConversions,
         google_lsa_windowed_revenue_cents:
             row.allocated.googleLsaWindowedRevenueCents,
         google_lsa_ltv_cents: row.raw.googleLsaLtvCents,
+        google_lsa_cpa_booked_cents: cpaFor(
+            row.raw.googleLsaAdSpendCents,
+            row.raw.googleLsaBookedConversions
+        ),
+        google_lsa_cpa_completed_cents: cpaFor(
+            row.raw.googleLsaAdSpendCents,
+            row.raw.googleLsaCompletedConversions
+        ),
         google_lsa_roas: roasFor(
             row.allocated.googleLsaWindowedRevenueCents,
             row.raw.googleLsaAdSpendCents
@@ -1594,6 +1743,7 @@ function buildBreakdownRows(
         elocal_completed_conversions: row.raw.elocalCompletedConversions,
         elocal_windowed_revenue_cents:
             row.allocated.elocalWindowedRevenueCents,
+        elocal_ltv_cents: row.raw.elocalLtvCents,
         elocal_cpa_booked_cents: cpaFor(
             row.raw.elocalBillableAdSpendCents,
             row.raw.elocalBookedConversions
@@ -1604,6 +1754,10 @@ function buildBreakdownRows(
         ),
         elocal_roas: roasFor(
             row.allocated.elocalWindowedRevenueCents,
+            row.raw.elocalBillableAdSpendCents
+        ),
+        elocal_ltv_roas: roasFor(
+            row.raw.elocalLtvCents,
             row.raw.elocalBillableAdSpendCents
         ),
         funnel_counts: {
@@ -1669,7 +1823,7 @@ async function getBreakdown(companyId, query = {}) {
                 - dimensionAdSpendCents,
             ...lsaKpis(
                 totals.googleLsaWindowedRevenueCents,
-                lsaLtvSnapshot.revenue_net_cents,
+                lsaLtvSnapshot,
                 costSnapshot
             ),
             ...elocalKpis(

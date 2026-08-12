@@ -36,6 +36,11 @@ export interface AnalyticsKpis {
     google_lsa_ltv_cents: number;
     google_lsa_roas: number | null;
     google_lsa_ltv_roas: number | null;
+    // symmetric conversion/CPA lenses (UNIFY — for channel comparison)
+    google_lsa_booked_conversions: number;
+    google_lsa_completed_conversions: number;
+    google_lsa_cpa_booked_cents: number | null;
+    google_lsa_cpa_completed_cents: number | null;
 
     // ELOCAL-ATTRIBUTION-001 — pay-per-call network. Spend = BILLABLE only
     // (UNBILLABLE = refunded/free). CPA = billable spend / converted, two lenses.
@@ -50,6 +55,8 @@ export interface AnalyticsKpis {
     elocal_cpa_booked_cents: number | null;
     elocal_cpa_completed_cents: number | null;
     elocal_roas: number | null;
+    elocal_ltv_cents: number;
+    elocal_ltv_roas: number | null;
 }
 
 export interface FunnelStage {

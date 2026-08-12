@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { TriangleAlert, Plug } from 'lucide-react';
+import { TriangleAlert, Plug, TrendingUp } from 'lucide-react';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import {
     fetchAnalyticsSummary,
@@ -217,40 +217,163 @@ function KpiRow({ data }: { data: AnalyticsSummary }) {
     );
 }
 
-/* ── channel performance (GOOGLE-LSA / ELOCAL phone-matched attribution) ──── */
+/* ── channel comparison + per-channel detail (compare, then allocate budget) ── */
+type ConvBasis = 'completed' | 'booked';
+
+interface ChannelPerfRow {
+    key: string;
+    label: string;
+    spend: number;
+    revenue: number;
+    roas: number | null;
+    bookedConv: number;
+    completedConv: number;
+    cpaBooked: number | null;
+    cpaCompleted: number | null;
+    ltv: number;
+    note?: string;
+}
+
 function ChannelPerformance({ data }: { data: AnalyticsSummary }) {
     const k = data.kpis;
-    const hasGoogle =
-        k.google_lsa_ad_spend_cents > 0 || k.google_other_ad_spend_cents > 0 || k.google_lsa_windowed_revenue_cents > 0;
+    const [basis, setBasis] = useState<ConvBasis>('completed');
+    const hasGoogle = k.google_lsa_ad_spend_cents > 0 || k.google_lsa_windowed_revenue_cents > 0 || k.google_other_ad_spend_cents > 0;
     const hasElocal = k.elocal_call_count > 0 || k.elocal_billable_ad_spend_cents > 0;
     if (!hasGoogle && !hasElocal) return null;
+
+    const rows: ChannelPerfRow[] = [];
+    if (hasGoogle) rows.push({
+        key: 'google', label: 'Google — Local Services',
+        spend: k.google_lsa_ad_spend_cents, revenue: k.google_lsa_windowed_revenue_cents, roas: k.google_lsa_roas,
+        bookedConv: k.google_lsa_booked_conversions ?? 0, completedConv: k.google_lsa_completed_conversions ?? 0,
+        cpaBooked: k.google_lsa_cpa_booked_cents ?? null, cpaCompleted: k.google_lsa_cpa_completed_cents ?? null,
+        ltv: k.google_lsa_ltv_cents,
+        note: k.google_other_ad_spend_cents > 0 ? 'LSA only — search spend shown separately below' : undefined,
+    });
+    if (hasElocal) rows.push({
+        key: 'elocal', label: 'eLocal',
+        spend: k.elocal_billable_ad_spend_cents, revenue: k.elocal_windowed_revenue_cents, roas: k.elocal_roas,
+        bookedConv: k.elocal_booked_conversions, completedConv: k.elocal_completed_conversions,
+        cpaBooked: k.elocal_cpa_booked_cents, cpaCompleted: k.elocal_cpa_completed_cents,
+        ltv: k.elocal_ltv_cents ?? 0,
+    });
+
+    const conv = (r: ChannelPerfRow) => (basis === 'completed' ? r.completedConv : r.bookedConv);
+    const cpa = (r: ChannelPerfRow) => (basis === 'completed' ? r.cpaCompleted : r.cpaBooked);
+    const maxRoas = Math.max(1, ...rows.map(r => r.roas ?? 0));
+
+    const tSpend = rows.reduce((s, r) => s + r.spend, 0);
+    const tRev = rows.reduce((s, r) => s + r.revenue, 0);
+    const tConv = rows.reduce((s, r) => s + conv(r), 0);
+    const tLtv = rows.reduce((s, r) => s + r.ltv, 0);
+    const tRoas = tSpend > 0 ? tRev / tSpend : null;
+    const tCpa = tConv > 0 ? tSpend / tConv : null;
+
+    const best = [...rows].filter(r => r.roas !== null).sort((a, b) => (b.roas! - a.roas!))[0];
+
     return (
-        <Card title="Channel performance" right={<span style={{ fontSize: 12, color: INK3 }}>ad channels · calls phone-matched to jobs</span>}>
+        <>
+            <Card title="Channel comparison" right={<BasisToggle value={basis} onChange={setBasis} />}>
+                <div className="overflow-x-auto">
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 700 }}>
+                        <thead>
+                            <tr>
+                                <Th align="left">Channel</Th>
+                                <Th>Spend</Th>
+                                <Th>Revenue</Th>
+                                <Th>ROAS</Th>
+                                <Th>Converted</Th>
+                                <Th>Cost / conv.</Th>
+                                <Th>Lifetime value</Th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map((r, i) => (
+                                <ChannelRow key={r.key} row={r} converted={conv(r)} cpa={cpa(r)} maxRoas={maxRoas} color={DOT_PALETTE[i % DOT_PALETTE.length]} />
+                            ))}
+                            {rows.length > 1 && (
+                                <tr style={{ borderTop: `2px solid ${LINE}` }}>
+                                    <td style={{ padding: '11px 10px', textAlign: 'left', fontWeight: 700, color: INK1 }}>All ad channels</td>
+                                    <td className="mono" style={tdStyle}>{fmtMoney(tSpend)}</td>
+                                    <td className="mono" style={tdStyle}>{fmtMoney(tRev)}</td>
+                                    <td className="mono" style={{ ...tdStyle, fontWeight: 700, color: roasColor(tRoas) }}>{tRoas !== null ? `${tRoas.toFixed(1)}×` : '—'}</td>
+                                    <td className="mono" style={tdStyle}>{fmtCount(tConv)}</td>
+                                    <td className="mono" style={tdStyle}>{tCpa !== null ? fmtMoney(tCpa) : '—'}</td>
+                                    <td className="mono" style={tdStyle}>{tLtv > 0 ? fmtMoney(tLtv) : '—'}</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+                {best && best.roas !== null && rows.length > 1 && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 14, fontSize: 12.5, color: INK2, background: 'var(--blanc-accent-soft)', borderRadius: 12, padding: '10px 13px' }}>
+                        <TrendingUp size={16} style={{ color: 'var(--blanc-accent)', flexShrink: 0, marginTop: 1 }} />
+                        <div>
+                            <b style={{ color: INK1 }}>{best.label}</b> is the most efficient — <b className="mono">{best.roas.toFixed(1)}×</b> return{cpa(best) !== null && <> at <b className="mono">{fmtMoney(cpa(best) as number)}</b>/conversion</>}. Both channels earn; move budget toward the higher ROAS, or trim the lower, to raise blended return.
+                        </div>
+                    </div>
+                )}
+                <div style={{ fontSize: 11.5, color: INK3, marginTop: 10 }}>
+                    Revenue &amp; ROAS use windowed job-keyed attribution — the job won from each ad call. Spend is billable ad cost only.
+                </div>
+            </Card>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {hasGoogle && <GooglePerf k={k} />}
-                {hasElocal && <ElocalPerf k={k} />}
+                {hasGoogle && <GoogleDetail k={k} />}
+                {hasElocal && <ElocalDetail k={k} />}
             </div>
-        </Card>
+        </>
     );
 }
 
-function ProviderPanel({ name, tag, headline, headlineSub, positive, children }: {
-    name: string; tag: string; headline: string; headlineSub: string; positive: boolean | null; children: ReactNode;
+function ChannelRow({ row, converted, cpa, maxRoas, color }: {
+    row: ChannelPerfRow; converted: number; cpa: number | null; maxRoas: number; color: string;
 }) {
-    const headColor = positive === null ? INK3 : positive ? OK : DANGER;
+    const roas = row.roas;
+    const barW = roas !== null ? Math.round((Math.max(roas, 0) / maxRoas) * 100) : 0;
     return (
-        <div style={{ background: 'rgba(25,25,25,0.03)', borderRadius: 16, padding: '15px 17px' }}>
-            <div className="flex items-start justify-between gap-3" style={{ marginBottom: 4 }}>
-                <div>
-                    <div style={{ fontSize: 14.5, fontWeight: 700, color: INK1, fontFamily: HEAD_FONT }}>{name}</div>
-                    <div style={{ fontSize: 11, color: INK3, marginTop: 1 }}>{tag}</div>
+        <tr style={{ borderTop: `1px solid ${LINE}` }}>
+            <td style={{ padding: '11px 10px', textAlign: 'left' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                    <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flex: 'none' }} />
+                    <div>
+                        <div style={{ fontWeight: 600, color: INK1 }}>{row.label}</div>
+                        {row.note && <div style={{ fontSize: 11, color: INK3 }}>{row.note}</div>}
+                    </div>
                 </div>
-                <div style={{ textAlign: 'right', flex: 'none' }}>
-                    <div className="mono" style={{ fontSize: 25, fontWeight: 800, lineHeight: 1, fontFamily: HEAD_FONT, color: headColor }}>{headline}</div>
-                    <div style={{ fontSize: 10, color: INK3, marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{headlineSub}</div>
+            </td>
+            <td className="mono" style={tdStyle}>{fmtMoney(row.spend)}</td>
+            <td className="mono" style={tdStyle}>{fmtMoney(row.revenue)}</td>
+            <td style={tdStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+                    <span className="mono" style={{ fontWeight: 700, color: roasColor(roas) }}>{roas !== null ? `${roas.toFixed(1)}×` : '—'}</span>
+                    <span style={{ width: 44, height: 7, borderRadius: 4, background: FIELD, overflow: 'hidden', position: 'relative', flex: 'none' }}>
+                        <i style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${barW}%`, borderRadius: 4, background: roasColor(roas) }} />
+                    </span>
                 </div>
+            </td>
+            <td className="mono" style={tdStyle}>{fmtCount(converted)}</td>
+            <td className="mono" style={tdStyle}>{cpa !== null ? fmtMoney(cpa) : '—'}</td>
+            <td className="mono" style={{ ...tdStyle, color: row.ltv > 0 ? INK1 : INK3 }}>{row.ltv > 0 ? fmtMoney(row.ltv) : '—'}</td>
+        </tr>
+    );
+}
+
+function BasisToggle({ value, onChange }: { value: ConvBasis; onChange: (b: ConvBasis) => void }) {
+    return (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11.5, color: INK3 }}>Conversions</span>
+            <div style={{ display: 'inline-flex', background: FIELD, borderRadius: 10, padding: 3 }}>
+                {(['completed', 'booked'] as ConvBasis[]).map(b => {
+                    const on = b === value;
+                    return (
+                        <button key={b} type="button" onClick={() => onChange(b)}
+                            style={{ border: 'none', background: on ? SURFACE : 'transparent', color: on ? INK1 : INK2, font: 'inherit', fontSize: 12.5, fontWeight: 600, padding: '5px 11px', borderRadius: 8, cursor: 'pointer', textTransform: 'capitalize', boxShadow: on ? '0 1px 2px rgba(0,0,0,.06)' : 'none' }}>
+                            {b}
+                        </button>
+                    );
+                })}
             </div>
-            <div style={{ marginTop: 8 }}>{children}</div>
         </div>
     );
 }
@@ -272,50 +395,42 @@ function StatRow({ label, hint, value, sub, valueColor }: {
     );
 }
 
-function GooglePerf({ k }: { k: AnalyticsKpis }) {
-    const roas = k.google_lsa_roas;
+function GoogleDetail({ k }: { k: AnalyticsKpis }) {
+    const totalGoogle = k.google_lsa_ad_spend_cents + k.google_other_ad_spend_cents;
     return (
-        <ProviderPanel
-            name="Google — Local Services"
-            tag="pay-per-call · phone-matched"
-            headline={roas !== null ? `${roas.toFixed(1)}×` : '—'}
-            headlineSub="rev ÷ LSA spend"
-            positive={roas === null ? null : roas >= 1}
-        >
-            <StatRow label="LSA spend" value={fmtMoney(k.google_lsa_ad_spend_cents)} />
-            <StatRow label="Attributed revenue" hint="windowed" value={fmtMoney(k.google_lsa_windowed_revenue_cents)} />
-            <StatRow
-                label="Customer lifetime value"
-                value={fmtMoney(k.google_lsa_ltv_cents)}
-                sub={k.google_lsa_ltv_roas !== null ? `${k.google_lsa_ltv_roas.toFixed(1)}×` : undefined}
-            />
+        <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: 22, padding: '18px 20px' }}>
+            <div style={{ fontFamily: HEAD_FONT, fontSize: 15, fontWeight: 700, color: INK1 }}>Google — details</div>
+            <div style={{ fontSize: 11.5, color: INK3, marginBottom: 8 }}>Local Services Ads + Search</div>
+            <StatRow label="Total Google spend" value={fmtMoney(totalGoogle)} />
+            <StatRow label="Local Services" hint="attributed" value={fmtMoney(k.google_lsa_ad_spend_cents)} />
             {k.google_other_ad_spend_cents > 0 && (
-                <StatRow label="Search campaigns" hint="not yet attributed" value={fmtMoney(k.google_other_ad_spend_cents)} valueColor={INK3} />
+                <StatRow label="Search campaigns" hint="not attributed" value={fmtMoney(k.google_other_ad_spend_cents)} valueColor={INK3} />
             )}
-        </ProviderPanel>
+            {k.google_lsa_ltv_cents > 0 && (
+                <StatRow label="Lifetime value" value={fmtMoney(k.google_lsa_ltv_cents)} sub={k.google_lsa_ltv_roas !== null ? `${k.google_lsa_ltv_roas.toFixed(1)}×` : undefined} />
+            )}
+            {k.google_other_ad_spend_cents > 0 && (
+                <div style={{ fontSize: 11.5, color: INK3, marginTop: 8 }}>
+                    Search-ad leads aren’t phone-matchable yet (no gclid / call tracking), so their spend stays out of the comparison ROAS.
+                </div>
+            )}
+        </div>
     );
 }
 
-function ElocalPerf({ k }: { k: AnalyticsKpis }) {
-    const roas = k.elocal_roas;
+function ElocalDetail({ k }: { k: AnalyticsKpis }) {
+    const matchPct = k.elocal_call_count > 0 ? Math.round((k.elocal_matched_call_count / k.elocal_call_count) * 100) : 0;
     return (
-        <ProviderPanel
-            name="eLocal"
-            tag="pay-per-call · phone-matched"
-            headline={roas !== null ? `${roas.toFixed(1)}×` : '—'}
-            headlineSub="rev ÷ billable spend"
-            positive={roas === null ? null : roas >= 1}
-        >
-            <StatRow label="Billable spend" hint={k.elocal_unbillable_call_count > 0 ? `${fmtCount(k.elocal_unbillable_call_count)} refunded` : undefined} value={fmtMoney(k.elocal_billable_ad_spend_cents)} sub={`${fmtCount(k.elocal_billable_call_count)} calls`} />
-            <StatRow label="Calls matched" value={`${fmtCount(k.elocal_matched_call_count)} / ${fmtCount(k.elocal_call_count)}`} />
-            <StatRow label="Converted" value={`${fmtCount(k.elocal_booked_conversions)}`} sub={`booked · ${fmtCount(k.elocal_completed_conversions)} completed`} />
-            <StatRow
-                label="Cost per converted"
-                value={k.elocal_cpa_booked_cents !== null ? fmtMoney(k.elocal_cpa_booked_cents) : '—'}
-                sub={k.elocal_cpa_completed_cents !== null ? `${fmtMoney(k.elocal_cpa_completed_cents)} completed` : 'booked'}
-            />
-            <StatRow label="Attributed revenue" hint="windowed" value={fmtMoney(k.elocal_windowed_revenue_cents)} />
-        </ProviderPanel>
+        <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: 22, padding: '18px 20px' }}>
+            <div style={{ fontFamily: HEAD_FONT, fontSize: 15, fontWeight: 700, color: INK1 }}>eLocal — details</div>
+            <div style={{ fontSize: 11.5, color: INK3, marginBottom: 8 }}>Pay-per-call volume</div>
+            <StatRow label="Calls" value={fmtCount(k.elocal_call_count)} />
+            <StatRow label="Billable" hint="charged" value={fmtCount(k.elocal_billable_call_count)} sub={fmtMoney(k.elocal_billable_ad_spend_cents)} />
+            {k.elocal_unbillable_call_count > 0 && (
+                <StatRow label="Refunded / free" value={fmtCount(k.elocal_unbillable_call_count)} valueColor={INK3} />
+            )}
+            <StatRow label="Matched to CRM" value={`${fmtCount(k.elocal_matched_call_count)} / ${fmtCount(k.elocal_call_count)}`} sub={`${matchPct}%`} />
+        </div>
     );
 }
 

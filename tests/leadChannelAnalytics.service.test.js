@@ -85,7 +85,12 @@ describe('leadChannelAnalyticsService response math', () => {
             })
             .mockResolvedValueOnce({ rows: [] })
             .mockResolvedValueOnce({
-                rows: [{ channel_id: null, revenue_net_cents: '0' }],
+                rows: [{
+                    channel_id: null,
+                    revenue_net_cents: '0',
+                    booked_conversion_count: '0',
+                    completed_conversion_count: '0',
+                }],
             })
             .mockResolvedValueOnce({
                 rows: [{
@@ -97,7 +102,7 @@ describe('leadChannelAnalyticsService response math', () => {
                     billable_spend_cents: '0',
                     booked_conversion_count: '0',
                     completed_conversion_count: '0',
-                    revenue_net_cents: '0',
+                    ltv_revenue_net_cents: '0',
                 }],
             });
 
@@ -116,8 +121,12 @@ describe('leadChannelAnalyticsService response math', () => {
                 marketing_contribution_cents: 9876,
                 google_lsa_ad_spend_cents: 0,
                 google_other_ad_spend_cents: 0,
+                google_lsa_booked_conversions: 0,
+                google_lsa_completed_conversions: 0,
                 google_lsa_windowed_revenue_cents: 0,
                 google_lsa_ltv_cents: 0,
+                google_lsa_cpa_booked_cents: null,
+                google_lsa_cpa_completed_cents: null,
                 google_lsa_roas: null,
                 google_lsa_ltv_roas: null,
                 elocal_call_count: 0,
@@ -128,9 +137,11 @@ describe('leadChannelAnalyticsService response math', () => {
                 elocal_booked_conversions: 0,
                 elocal_completed_conversions: 0,
                 elocal_windowed_revenue_cents: 0,
+                elocal_ltv_cents: 0,
                 elocal_cpa_booked_cents: null,
                 elocal_cpa_completed_cents: null,
                 elocal_roas: null,
+                elocal_ltv_roas: null,
             },
             funnel: [
                 { stage: 'leads', count: 2, conv_pct: 100 },
@@ -152,7 +163,12 @@ describe('leadChannelAnalyticsService response math', () => {
             .mockResolvedValueOnce({ rows: [cohortFact()] })
             .mockResolvedValueOnce({ rows: [] })
             .mockResolvedValueOnce({
-                rows: [{ channel_id: null, revenue_net_cents: '0' }],
+                rows: [{
+                    channel_id: null,
+                    revenue_net_cents: '0',
+                    booked_conversion_count: '0',
+                    completed_conversion_count: '0',
+                }],
             })
             .mockResolvedValueOnce({
                 rows: [{
@@ -164,7 +180,7 @@ describe('leadChannelAnalyticsService response math', () => {
                     billable_spend_cents: '0',
                     booked_conversion_count: '0',
                     completed_conversion_count: '0',
-                    revenue_net_cents: '0',
+                    ltv_revenue_net_cents: '0',
                 }],
             });
 
