@@ -248,16 +248,31 @@ function parseNativeDisplayUser(jwtToken: string): AuthUser | null {
 // Paths that must render WITHOUT forcing a Keycloak login (ALB-101)
 // /pay/:token is the customer-facing Stripe Pay-now page (F018) — opaque token is the credential.
 // /e/:token is the customer-facing public Estimate view page (SEND-DOC-001) — same model.
-const PUBLIC_AUTH_PATHS = ['/signup', '/pay', '/e', '/r/'];
-function isPublicAuthPath() {
-    return PUBLIC_AUTH_PATHS.some(p => window.location.pathname.startsWith(p));
+const PUBLIC_AUTH_PATHS = ['/signup', '/pay', '/e', '/r'];
+
+// Match whole path SEGMENTS, never string prefixes. A prefix test quietly made
+// /payments, /estimates and /email public — they merely start with /pay and /e —
+// so those sections skipped kc.init(), every request came back 401, and the
+// recovery path then called .login() on an adapter-less instance and threw
+// "Cannot read properties of undefined (reading 'login')" behind an endless
+// "Loading your workspace".
+export function isPublicAuthPath(pathname: string = window.location.pathname): boolean {
+    return PUBLIC_AUTH_PATHS.some(base => pathname === base || pathname.startsWith(`${base}/`));
 }
 
 // BUG-22b: cross-reload login-redirect loop breaker — see auth/loginLoopBreaker.ts.
 /** Route ALL forced re-login navigations through the loop breaker. */
 function loginOrBreak(onBreak: () => void): void {
     if (loginRedirectAllowed()) {
-        getKeycloak().login();
+        // Never call .login() on an instance that was never init'ed: without an
+        // adapter it throws, and the throw happens inside the very path meant to
+        // recover the session, so the app hangs instead of redirecting.
+        ensureKeycloakInitialized()
+            .then(() => getKeycloak().login())
+            .catch((error) => {
+                console.error('[Auth] could not start login:', error);
+                onBreak();
+            });
     } else {
         console.error('[Auth] login-redirect loop detected — halting redirects (BUG-22b)');
         onBreak();
