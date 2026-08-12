@@ -50,16 +50,22 @@ describe('reassignJob — replace with a provider array', () => {
         expect(JSON.parse(params[2])).toEqual([{ id: 'a', name: 'A' }]);
     });
 
-    test('providerUserIds → also refreshes assigned_provider_user_ids in the SAME update', async () => {
+    test('legacy providerUserIds cannot override the inline OB-58 mirror derivation', async () => {
         await scheduleQueries.reassignJob('co-1', 42, [{ id: 'a', name: 'A' }], JSON.stringify(['user-1']));
         const [sql, params] = db.query.mock.calls[0];
-        expect(sql).toMatch(/assigned_provider_user_ids\s*=\s*\$4::jsonb/);
-        expect(params[3]).toBe(JSON.stringify(['user-1']));
+        expect(sql).toMatch(/assigned_provider_user_ids\s*=\s*COALESCE/);
+        expect(sql).toMatch(/FROM jsonb_array_elements\(\$3::jsonb\)/);
+        expect(sql).toMatch(/e\.company_id\s*=\s*j\.company_id/);
+        expect(sql).toMatch(/t\.company_id\s*=\s*j\.company_id/);
+        expect(sql).toMatch(/m\.company_id\s*=\s*j\.company_id/);
+        expect(params).toHaveLength(3);
     });
 
-    test('no providerUserIds → the visibility mirror column is left untouched', async () => {
+    test('omitted providerUserIds still refreshes the visibility mirror atomically', async () => {
         await scheduleQueries.reassignJob('co-1', 42, [{ id: 'a', name: 'A' }]);
-        const [sql] = db.query.mock.calls[0];
-        expect(sql).not.toMatch(/assigned_provider_user_ids/);
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toMatch(/assigned_provider_user_ids\s*=\s*COALESCE/);
+        expect(sql).toMatch(/WHERE j\.id = \$1 AND j\.company_id = \$2/);
+        expect(params).toHaveLength(3);
     });
 });
