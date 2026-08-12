@@ -1031,13 +1031,18 @@ async function claimLocalJobForConversion({
                         );
                     }
                 } else {
+                    const { resolveAssignedProviderUserIds } = require('./jobsService');
+                    const assignedProviderUserIds = await resolveAssignedProviderUserIds(
+                        companyId,
+                        localJobFields.initialAssignedTechs
+                    );
                     const { rows: [jobRow] } = await client.query(`
                         INSERT INTO jobs (
                             lead_id, contact_id, zenbooker_job_id, blanc_status, service_name, address,
                             customer_name, customer_phone, customer_email, company_id,
                             job_type, job_source, description, metadata, comments,
-                            start_date, end_date, assigned_techs
-                        ) VALUES ($1, $2, $3, 'Submitted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
+                            start_date, end_date, assigned_techs, assigned_provider_user_ids
+) VALUES ($1, $2, $3, 'Submitted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb)
                         RETURNING id
                     `, [
                         lead.id,
@@ -1057,6 +1062,7 @@ async function claimLocalJobForConversion({
                         localJobFields.initialStartDate,
                         localJobFields.initialEndDate,
                         localJobFields.initialAssignedTechs,
+                        assignedProviderUserIds,
                     ]);
                     localJobId = jobRow.id;
                     localJobCreated = true;

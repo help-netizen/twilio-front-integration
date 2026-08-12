@@ -21,6 +21,7 @@ const { withTransaction } = require('./transactionService');
 const { deduplicateNotesByIdentity } = require('./noteDeduplication');
 const membershipQueries = require('../db/membershipQueries');
 const jobFinanceQueries = require('../db/jobFinanceQueries');
+const jobProviderMirrorQueries = require('../db/jobProviderMirrorQueries');
 const technicianRosterService = require('./technicianRosterService');
 const {
     createCursorFingerprint,
@@ -244,42 +245,9 @@ async function canonicalizeAssignedTechs(companyId, assignedTechs) {
  * Idempotent and company-scoped.
  */
 async function refreshCompanyProviderMirror(companyId) {
-    if (!companyId) return { updated: 0 };
-    const { rowCount } = await db.query(
-        `UPDATE jobs j
-         SET assigned_provider_user_ids = sub.user_ids, updated_at = NOW()
-         FROM (
-             SELECT j2.id AS job_id,
-                    COALESCE(
-                        jsonb_agg(DISTINCT to_jsonb(native_m.user_id::text))
-                            FILTER (WHERE native_m.user_id IS NOT NULL),
-                        '[]'::jsonb
-                    ) AS user_ids
-             FROM jobs j2
-             LEFT JOIN LATERAL jsonb_array_elements(
-                 CASE WHEN jsonb_typeof(j2.assigned_techs) = 'array'
-                      THEN j2.assigned_techs ELSE '[]'::jsonb END
-             ) AS tech(value) ON TRUE
-             LEFT JOIN technician_external_identities e
-                 ON e.company_id = j2.company_id
-                AND e.source = 'zenbooker'
-                AND e.external_id = tech.value->>'id'
-             LEFT JOIN technicians t
-                 ON t.company_id = j2.company_id
-                AND (t.id::text = tech.value->>'id' OR t.id = e.technician_id)
-             LEFT JOIN company_memberships native_m
-                 ON native_m.company_id = j2.company_id
-                AND native_m.user_id = t.crm_user_id
-                AND native_m.status = 'active'
-             WHERE j2.company_id = $1
-             GROUP BY j2.id
-         ) sub
-         WHERE j.id = sub.job_id
-           AND j.assigned_provider_user_ids IS DISTINCT FROM sub.user_ids`,
-        [companyId]
-    );
-    console.log(`[JobsService] Provider mirror refresh for company ${companyId}: ${rowCount} job(s) updated`);
-    return { updated: rowCount };
+    const result = await jobProviderMirrorQueries.refreshProviderMirror(companyId);
+    console.log(`[JobsService] Provider mirror refresh for company ${companyId}: ${result.updated} job(s) updated`);
+    return result;
 }
 
 // =============================================================================

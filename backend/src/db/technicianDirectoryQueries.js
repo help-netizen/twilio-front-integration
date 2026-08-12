@@ -13,6 +13,7 @@
  * external_id); resolve* always filter on company_id).
  */
 const db = require('./connection');
+const jobProviderMirrorQueries = require('./jobProviderMirrorQueries');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function createTechnician({ companyId, displayName, active = true, crmUserId = null }) {
@@ -22,7 +23,13 @@ async function createTechnician({ companyId, displayName, active = true, crmUser
          RETURNING id, company_id, display_name, active, crm_user_id, created_at`,
         [companyId, displayName, active, crmUserId]
     );
-    return rows[0];
+    const technician = rows[0] || null;
+    if (technician?.crm_user_id) {
+        await jobProviderMirrorQueries.refreshProviderMirror(companyId, {
+            technicianIds: [technician.id],
+        });
+    }
+    return technician;
 }
 
 /**
@@ -40,15 +47,23 @@ async function upsertExternalIdentity({ companyId, source, externalId, technicia
          RETURNING company_id, source, external_id, technician_id, created_at`,
         [companyId, source, externalId, technicianId]
     );
-    if (rows[0]) return rows[0];
-    // Already present — return what is stored (never the caller's proposed technicianId).
-    const existing = await db.query(
-        `SELECT company_id, source, external_id, technician_id, created_at
-         FROM technician_external_identities
-         WHERE company_id = $1 AND source = $2 AND external_id = $3`,
-        [companyId, source, externalId]
-    );
-    return existing.rows[0] || null;
+    let stored = rows[0] || null;
+    if (!stored) {
+        // Already present — return what is stored (never the caller's proposed technicianId).
+        const existing = await db.query(
+            `SELECT company_id, source, external_id, technician_id, created_at
+             FROM technician_external_identities
+             WHERE company_id = $1 AND source = $2 AND external_id = $3`,
+            [companyId, source, externalId]
+        );
+        stored = existing.rows[0] || null;
+    }
+    if (stored) {
+        await jobProviderMirrorQueries.refreshProviderMirror(companyId, {
+            technicianIds: [stored.technician_id],
+        });
+    }
+    return stored;
 }
 
 async function resolveExternalToUuid(companyId, source, externalId) {
@@ -191,7 +206,13 @@ async function linkCrmUser({ companyId, technicianId, crmUserId }) {
          RETURNING id, company_id, display_name, active, crm_user_id, created_at`,
         [companyId, technicianId, crmUserId]
     );
-    return rows[0] || null;
+    const technician = rows[0] || null;
+    if (technician) {
+        await jobProviderMirrorQueries.refreshProviderMirror(companyId, {
+            technicianIds: [technician.id],
+        });
+    }
+    return technician;
 }
 
 // ── ZB-DECOUPLE Phase C3 — native-directory maintenance ──────────────────────
@@ -253,7 +274,13 @@ async function updateTechnician({ companyId, technicianId, displayName, active }
          RETURNING id, company_id, display_name, active, crm_user_id, created_at`,
         [...params]
     );
-    return rows[0] || null;
+    const technician = rows[0] || null;
+    if (technician && active !== undefined) {
+        await jobProviderMirrorQueries.refreshProviderMirror(companyId, {
+            technicianIds: [technician.id],
+        });
+    }
+    return technician;
 }
 
 /**
@@ -270,7 +297,13 @@ async function unlinkCrmUser({ companyId, crmUserId }) {
          RETURNING id`,
         [companyId, crmUserId]
     );
-    return rows.map(row => row.id);
+    const technicianIds = rows.map(row => row.id);
+    if (technicianIds.length > 0) {
+        await jobProviderMirrorQueries.refreshProviderMirror(companyId, {
+            technicianIds,
+        });
+    }
+    return technicianIds;
 }
 
 module.exports = {

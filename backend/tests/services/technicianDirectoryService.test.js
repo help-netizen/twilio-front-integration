@@ -23,11 +23,15 @@ const mockQueries = {
 };
 const mockGetActiveMembershipInCompany = jest.fn();
 const mockListActiveFieldWorkers = jest.fn();
+const mockRefreshProviderMirror = jest.fn();
 
 jest.mock('../../src/db/technicianDirectoryQueries', () => mockQueries);
 jest.mock('../../src/db/membershipQueries', () => ({
     getActiveMembershipInCompany: (...args) => mockGetActiveMembershipInCompany(...args),
     listActiveFieldWorkerMemberships: (...args) => mockListActiveFieldWorkers(...args),
+}));
+jest.mock('../../src/db/jobProviderMirrorQueries', () => ({
+    refreshProviderMirror: (...args) => mockRefreshProviderMirror(...args),
 }));
 
 const service = require('../../src/services/technicianDirectoryService');
@@ -41,6 +45,8 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
     beforeEach(() => {
         Object.values(mockQueries).forEach(fn => fn.mockReset());
         mockGetActiveMembershipInCompany.mockReset();
+        mockRefreshProviderMirror.mockReset();
+        mockRefreshProviderMirror.mockResolvedValue({ updated: 0 });
         mockQueries.createTechnician.mockResolvedValue({ id: TECH_UUID, display_name: 'New Tech' });
         mockQueries.getTechnicianById.mockResolvedValue({ id: TECH_UUID, display_name: 'New Tech', active: true });
     });
@@ -168,6 +174,13 @@ describe('technicianDirectoryService — ZB-DECOUPLE C3', () => {
                 companyId: COMPANY, technicianId: TECH_UUID, active: false,
             });
             expect(out).toMatchObject({ deactivated: 1 });
+        });
+
+        it('finishes every membership projection with a tenant-wide mirror reconciliation', async () => {
+            await service.projectFromMemberships(COMPANY);
+
+            expect(mockRefreshProviderMirror).toHaveBeenCalledTimes(1);
+            expect(mockRefreshProviderMirror).toHaveBeenCalledWith(COMPANY);
         });
     });
 });

@@ -9,8 +9,12 @@
  * fully-migrated schema (the local dev DB is not fully migrated).
  */
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+jest.mock('../backend/src/db/jobProviderMirrorQueries', () => ({
+    refreshProviderMirror: jest.fn(async () => ({ updated: 0 })),
+}));
 
 const db = require('../backend/src/db/connection');
+const mirrorQueries = require('../backend/src/db/jobProviderMirrorQueries');
 const q = require('../backend/src/db/technicianDirectoryQueries');
 
 const CO_A = '00000000-0000-0000-0000-00000000000a';
@@ -46,6 +50,9 @@ test('upsertExternalIdentity is idempotent and never repoints a taken triple', a
     const first = await q.upsertExternalIdentity({ companyId: CO_A, source: 'zenbooker', externalId: ZB_ID, technicianId: TECH_A });
     expect(first.technician_id).toBe(TECH_A);
     expect(db.query.mock.calls[0][0]).toMatch(/ON CONFLICT \(company_id, source, external_id\) DO NOTHING/);
+    expect(mirrorQueries.refreshProviderMirror).toHaveBeenCalledWith(CO_A, {
+        technicianIds: [TECH_A],
+    });
 
     jest.clearAllMocks();
     // Re-run proposing a DIFFERENT technician: DO NOTHING returns [], then the
@@ -55,6 +62,9 @@ test('upsertExternalIdentity is idempotent and never repoints a taken triple', a
         .mockResolvedValueOnce({ rows: [{ company_id: CO_A, source: 'zenbooker', external_id: ZB_ID, technician_id: TECH_A }] });
     const again = await q.upsertExternalIdentity({ companyId: CO_A, source: 'zenbooker', externalId: ZB_ID, technicianId: TECH_B });
     expect(again.technician_id).toBe(TECH_A);
+    expect(mirrorQueries.refreshProviderMirror).toHaveBeenCalledWith(CO_A, {
+        technicianIds: [TECH_A],
+    });
     assertCompanyScoped(CO_A);
 });
 
@@ -108,4 +118,27 @@ test('linkCrmUser updates within the tenant only and can unlink with null', asyn
     expect(sql).toMatch(/UPDATE technicians/);
     expect(sql).toMatch(/company_id\s*=\s*\$1\s+AND\s+id\s*=\s*\$2/);
     expect(params).toEqual([CO_A, TECH_A, null]);
+    expect(mirrorQueries.refreshProviderMirror).toHaveBeenCalledWith(CO_A, {
+        technicianIds: [TECH_A],
+    });
+});
+
+test('active projection and unlink refresh only affected tenant technicians', async () => {
+    db.query
+        .mockResolvedValueOnce({ rows: [{ id: TECH_A, active: false }] })
+        .mockResolvedValueOnce({ rows: [{ id: TECH_A }, { id: TECH_B }] });
+
+    await q.updateTechnician({ companyId: CO_A, technicianId: TECH_A, active: false });
+    await q.unlinkCrmUser({ companyId: CO_A, crmUserId: 'crm-user' });
+
+    expect(mirrorQueries.refreshProviderMirror).toHaveBeenNthCalledWith(1, CO_A, {
+        technicianIds: [TECH_A],
+    });
+    expect(mirrorQueries.refreshProviderMirror).toHaveBeenNthCalledWith(2, CO_A, {
+        technicianIds: [TECH_A, TECH_B],
+    });
+    expect(mirrorQueries.refreshProviderMirror).not.toHaveBeenCalledWith(
+        CO_B,
+        expect.anything()
+    );
 });

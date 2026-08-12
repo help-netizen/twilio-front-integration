@@ -10,6 +10,7 @@
  */
 
 const technicianDirectoryQueries = require('../db/technicianDirectoryQueries');
+const jobProviderMirrorQueries = require('../db/jobProviderMirrorQueries');
 const membershipQueries = require('../db/membershipQueries');
 
 const SOURCE = 'zenbooker';
@@ -148,6 +149,10 @@ async function projectFromMemberships(companyId) {
             summary.deactivated += 1;
         }
     }
+    // Membership deletion can clear technicians.crm_user_id through the FK before
+    // this projection runs, leaving no reliable technician-id set to target.
+    // A tenant-scoped pass closes that gap; unchanged mirrors are not rewritten.
+    await jobProviderMirrorQueries.refreshProviderMirror(companyId);
     return summary;
 }
 

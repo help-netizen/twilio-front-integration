@@ -4,6 +4,8 @@ const mockClient = {
 };
 const mockLogJobActivity = jest.fn();
 const mockLogLeadContactActivity = jest.fn();
+const mockRequireActiveTechnician = jest.fn();
+const mockCanonicalizeAssignments = jest.fn();
 
 jest.mock('../backend/src/db/connection', () => ({
     query: jest.fn(),
@@ -22,6 +24,10 @@ jest.mock('../backend/src/services/leadContactActivityService', () => ({
     systemActor: (label = 'Automation', source = 'crm') => ({
         id: null, type: 'system', label, source,
     }),
+}));
+jest.mock('../backend/src/services/technicianRosterService', () => ({
+    requireActive: (...args) => mockRequireActiveTechnician(...args),
+    canonicalizeAssignments: (...args) => mockCanonicalizeAssignments(...args),
 }));
 
 const db = require('../backend/src/db/connection');
@@ -121,6 +127,11 @@ describe('leadsService.convertLead idempotency', () => {
         mockLeadLookup();
         mockLogJobActivity.mockResolvedValue({ ok: true, id: 1 });
         mockLogLeadContactActivity.mockResolvedValue({ ok: true, id: 2 });
+        mockRequireActiveTechnician.mockResolvedValue({
+            id: '77777777-7777-4777-8777-777777777777',
+            name: 'Russell',
+        });
+        mockCanonicalizeAssignments.mockImplementation(async (_companyId, assignments) => assignments);
     });
 
     it('uses the custom Zenbooker service description for the local job', async () => {
@@ -261,5 +272,40 @@ describe('leadsService.convertLead idempotency', () => {
 
         const insert = mockClient.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO jobs'));
         expect(insert[1][2]).toBe('zb-provenance-1');
+    });
+
+    it('resolves and inserts the provider mirror with a scheduled lead conversion', async () => {
+        const crmUserId = '11111111-1111-4111-8111-111111111111';
+        const leadRow = makeLeadRow();
+        currentLeadRow = leadRow;
+        db.query.mockImplementation(async sql => {
+            const text = String(sql);
+            if (text.includes('SELECT * FROM leads')) return { rows: [leadRow] };
+            if (text.includes('SELECT DISTINCT m.user_id')) {
+                return { rows: [{ user_id: crmUserId }] };
+            }
+            return { rows: [] };
+        });
+        mockClaimNewJob();
+
+        await leadsService.convertLead('ABC123', {
+            schedule: {
+                start_at: '2026-06-08T13:00:00Z',
+                end_at: '2026-06-08T15:00:00Z',
+                technician_ids: ['legacy-russell'],
+            },
+        }, 'company-1');
+
+        const [insertSql, insertParams] = mockClient.query.mock.calls.find(
+            ([sql]) => String(sql).includes('INSERT INTO jobs')
+        );
+        expect(insertSql).toContain('assigned_provider_user_ids');
+        expect(insertParams[16]).toBe(JSON.stringify([{
+            id: '77777777-7777-4777-8777-777777777777',
+            name: 'Russell',
+        }]));
+        expect(insertParams[17]).toBe(JSON.stringify([crmUserId]));
+        expect(db.query.mock.calls.find(([sql]) => String(sql).includes('SELECT DISTINCT m.user_id'))?.[1])
+            .toEqual(['company-1', ['77777777-7777-4777-8777-777777777777']]);
     });
 });
