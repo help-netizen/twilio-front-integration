@@ -9,7 +9,6 @@ import { TaskSnoozeMenu } from '../tasks/TaskSnoozeMenu';
 import { useTaskMutations } from '../tasks/useTaskMutations';
 import { AssignOwnerDropdown } from './AssignOwnerDropdown';
 import { REASON_LABELS } from './PulseContactItem';
-import { SnoozeDropdown } from './SnoozeDropdown';
 import { remainingTasksAfterCompletion, shouldShowActionRequiredPlaque, taskTitle } from './actionRequiredHelpers';
 
 interface Props {
@@ -177,7 +176,21 @@ export function ActionRequiredPlaque({
                                 <CheckCircle2 aria-hidden="true" />
                                 <span className="pulse-ar-task-action-label">Done</span>
                             </button>
-                            <SnoozeDropdown companyTz={companyTz} onSnooze={onSnoozeManual} compact />
+                            <TaskSnoozeMenu
+                                tz={companyTz}
+                                onSnooze={onSnoozeManual}
+                                trigger={(
+                                    <button
+                                        type="button"
+                                        className="pulse-ar-task-action"
+                                        aria-label="Snooze"
+                                        title="Snooze"
+                                    >
+                                        <Clock aria-hidden="true" />
+                                        <span className="pulse-ar-task-action-label">Snooze</span>
+                                    </button>
+                                )}
+                            />
                             <AssignOwnerDropdown timelineId={timelineId} onAssigned={onChanged} compact />
                         </div>
                     )}

@@ -16,7 +16,7 @@ import {
     EyeOff, Clock, CheckCircle2, AlertTriangle, Bot, ShieldBan,
 } from 'lucide-react';
 import type { Call } from '../../types/models';
-import { tomorrowAtInTZ } from '../../utils/companyTime';
+import { snoozePresets } from '../tasks/taskUtils';
 import { getPulseCallIconKind, getPulsePrimaryText, isMissedInboundStatus } from './pulseHelpers';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -28,17 +28,6 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'voicemail_recording': '#ea580c', 'voicemail_left': '#dc2626',
     'blocked': 'var(--blanc-danger)',
 };
-
-export const SNOOZE_OPTIONS = [
-    { label: '30 min', ms: 30 * 60 * 1000 },
-    { label: '2 hours', ms: 2 * 60 * 60 * 1000 },
-    { label: 'Tomorrow 9 AM', ms: null as number | null },
-];
-
-export function getSnoozeUntil(option: typeof SNOOZE_OPTIONS[number], companyTz: string = 'America/New_York'): string {
-    if (option.ms) return new Date(Date.now() + option.ms).toISOString();
-    return tomorrowAtInTZ(9, 0, companyTz).toISOString();
-}
 
 export const REASON_LABELS: Record<string, string> = {
     new_message: 'New message', new_call: 'New call', manual: 'Manual',
@@ -318,11 +307,11 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     </div>
                                     {snoozeMenuOpen && (
                                         <div className="absolute max-md:left-0 max-md:top-full max-md:mt-1 md:right-full md:top-0 md:mr-1 z-[100] bg-card rounded-xl shadow-lg border border-border py-1 min-w-[140px]">
-                                            {SNOOZE_OPTIONS.map(opt => (
-                                                <div key={opt.label} role="button" tabIndex={0}
-                                                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt, companyTz)); }}
+                                            {snoozePresets(companyTz).map(p => (
+                                                <div key={p.key} role="button" tabIndex={0}
+                                                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, p.dueIso); }}
                                                     className="px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer">
-                                                    {opt.label}
+                                                    {p.label}
                                                 </div>
                                             ))}
                                         </div>
