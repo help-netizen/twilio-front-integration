@@ -158,7 +158,7 @@ async function sendEmail(companyId, { to, cc, subject, body, textBody, files, us
 
 // ─── Reply in existing thread ────────────────────────────────────────────
 
-async function replyToThread(companyId, threadId, { to, cc, subject, body, files, userId, userEmail }) {
+async function replyToThread(companyId, threadId, { to, cc, subject, body, textBody, files, userId, userEmail }) {
     const thread = await emailQueries.getThreadById(threadId, companyId);
     if (!thread) throw new Error('Thread not found');
 
@@ -185,6 +185,7 @@ async function replyToThread(companyId, threadId, { to, cc, subject, body, files
         cc,
         subject: subject || `Re: ${thread.subject || ''}`,
         body,
+        textBody,
         files,
         inReplyTo: lastMessage?.message_id_header || null,
         references: lastMessage?.references_header

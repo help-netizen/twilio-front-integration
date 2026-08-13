@@ -185,6 +185,44 @@ describe('email workspace routes', () => {
         expect(res.status).toBe(400);
     });
 
+    test('POST /threads/compose sends manual body as exact text plus escaped HTML', async () => {
+        emailService.sendEmail.mockResolvedValue({ provider_message_id: 'sent-1' });
+        const body = 'First & <line>\n\n  indented\n\tTabbed';
+
+        const res = await request(app)
+            .post('/api/email/threads/compose')
+            .field('to[]', 'customer@example.com')
+            .field('subject', 'Plain text')
+            .field('body', body);
+
+        expect(res.status).toBe(200);
+        expect(emailService.sendEmail).toHaveBeenCalledWith('test-company-id', expect.objectContaining({
+            textBody: body,
+            body: 'First &amp; &lt;line&gt;<br>\r\n<br>\r\n&nbsp;&nbsp;indented<br>\r\n' +
+                '&nbsp;&nbsp;&nbsp;&nbsp;Tabbed',
+        }));
+    });
+
+    test('POST /threads/:id/reply sends manual body as exact text plus escaped HTML', async () => {
+        emailService.replyToThread.mockResolvedValue({ provider_message_id: 'sent-2' });
+        const body = 'Reply\n\n  paragraph';
+
+        const res = await request(app)
+            .post('/api/email/threads/thread-1/reply')
+            .field('to[]', 'customer@example.com')
+            .field('body', body);
+
+        expect(res.status).toBe(200);
+        expect(emailService.replyToThread).toHaveBeenCalledWith(
+            'test-company-id',
+            'thread-1',
+            expect.objectContaining({
+                textBody: body,
+                body: 'Reply<br>\r\n<br>\r\n&nbsp;&nbsp;paragraph',
+            })
+        );
+    });
+
     test('GET /attachments/:id/download returns 404 for missing attachment', async () => {
         emailService.getAttachmentStream.mockResolvedValue(null);
         const res = await request(app).get('/api/email/attachments/999/download');

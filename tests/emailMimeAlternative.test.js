@@ -19,13 +19,23 @@
 // heavy deps; buildMimeMessage itself is a pure function.
 jest.mock('googleapis', () => ({ google: { gmail: jest.fn() } }));
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+jest.mock('../backend/src/db/emailQueries', () => ({
+    getMailboxWithTokens: jest.fn(),
+    getThreadById: jest.fn(),
+    getMessagesByThread: jest.fn(),
+}));
 jest.mock('../backend/src/services/emailMailboxService', () => ({
     createOAuth2Client: jest.fn(),
     getValidAccessToken: jest.fn(),
 }));
 jest.mock('../backend/src/services/emailSyncService', () => ({ importGmailThread: jest.fn() }));
 
-const { buildMimeMessage } = require('../backend/src/services/emailService');
+const { google } = require('googleapis');
+const emailQueries = require('../backend/src/db/emailQueries');
+const emailMailboxService = require('../backend/src/services/emailMailboxService');
+const { importGmailThread } = require('../backend/src/services/emailSyncService');
+const { buildMimeMessage, sendEmail, replyToThread } = require('../backend/src/services/emailService');
+const { plainTextToHtml } = require('../backend/src/services/email/plainTextEmailBody');
 
 const decode = (b64url) => Buffer.from(b64url, 'base64url').toString('utf8');
 
@@ -54,19 +64,47 @@ describe('MIME-ALT-01 · textBody → multipart/alternative, text/plain FIRST', 
         // closing boundary present
         expect(raw).toMatch(/--blanc_alt_[^\r\n]*--/);
     });
+
+    it('manual text keeps the exact plain part and renders paragraphs plus indentation in HTML', () => {
+        const textBody = 'First & <line> "quoted" \'single\'\n\n  indented\n\tTabbed';
+        const htmlBody = plainTextToHtml(textBody);
+        const raw = decode(buildMimeMessage({
+            from: 'help@example.com',
+            to: 'customer@example.com',
+            subject: 'Manual email',
+            body: htmlBody,
+            textBody,
+        }));
+
+        const plainHeaderAt = raw.indexOf('Content-Type: text/plain; charset=utf-8');
+        const plainBodyAt = raw.indexOf('\r\n\r\n', plainHeaderAt) + 4;
+        const plainBodyEnd = raw.indexOf('\r\n\r\n--', plainBodyAt);
+        const htmlHeaderAt = raw.indexOf('Content-Type: text/html; charset=utf-8');
+        const htmlBodyAt = raw.indexOf('\r\n\r\n', htmlHeaderAt) + 4;
+        const htmlBodyEnd = raw.indexOf('\r\n\r\n--', htmlBodyAt);
+
+        expect(raw.slice(plainBodyAt, plainBodyEnd)).toBe(textBody);
+        expect(raw.slice(htmlBodyAt, htmlBodyEnd)).toBe(htmlBody);
+        expect(htmlBody).toBe(
+            'First &amp; &lt;line&gt; &quot;quoted&quot; &#39;single&#39;<br>\r\n' +
+            '<br>\r\n&nbsp;&nbsp;indented<br>\r\n' +
+            '&nbsp;&nbsp;&nbsp;&nbsp;Tabbed'
+        );
+    });
 });
 
 describe('MIME-ALT-02 · no textBody → the historical single-part text/html (regression)', () => {
-    it('keeps the lone text/html shape for every non-Yelp sender', () => {
+    it('keeps an estimate/invoice HTML body byte-identical for existing HTML senders', () => {
+        const htmlBody = '<p style="color: red">Estimate &amp; invoice</p>';
         const raw = decode(buildMimeMessage({
             from: 'help@bostonmasters.com',
             to: 'x@y.z',
             subject: 'Estimate',
-            body: '<p>doc</p>',
+            body: htmlBody,
         }));
         expect(raw).toContain('Content-Type: text/html; charset=utf-8');
         expect(raw).not.toContain('multipart/alternative');
-        expect(raw.trim().endsWith('<p>doc</p>')).toBe(true);
+        expect(raw.slice(raw.indexOf('\r\n\r\n') + 4)).toBe(htmlBody);
     });
 });
 
@@ -110,5 +148,63 @@ describe('MIME-INLINE-01 · receipt logo uses a Content-ID part', () => {
         expect(raw).toContain('Content-Disposition: inline; filename="company-logo.png"');
         expect(raw).toContain('Content-ID: <albusto-company-logo>');
         expect(raw).toContain('Content-Disposition: attachment; filename="Invoice-88.pdf"');
+    });
+});
+
+describe('manual send/reply service plumbing', () => {
+    let gmailSend;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        gmailSend = jest.fn().mockResolvedValue({ data: { id: 'sent-1', threadId: 'provider-thread-1' } });
+        google.gmail.mockReturnValue({ users: { messages: { send: gmailSend } } });
+        emailMailboxService.createOAuth2Client.mockReturnValue({ setCredentials: jest.fn() });
+        emailMailboxService.getValidAccessToken.mockResolvedValue('access-token');
+        emailQueries.getMailboxWithTokens.mockResolvedValue({
+            id: 'mailbox-1',
+            status: 'connected',
+            email_address: 'help@example.com',
+        });
+        importGmailThread.mockResolvedValue(undefined);
+    });
+
+    test('sendEmail carries both manual alternatives into the Gmail raw message', async () => {
+        const textBody = 'Compose line one\n\n  Compose paragraph';
+        const htmlBody = plainTextToHtml(textBody);
+
+        await sendEmail('company-1', {
+            to: ['customer@example.com'],
+            subject: 'Compose',
+            body: htmlBody,
+            textBody,
+        });
+
+        const raw = decode(gmailSend.mock.calls[0][0].requestBody.raw);
+        expect(raw).toContain(`Content-Type: text/plain; charset=utf-8\r\n\r\n${textBody}`);
+        expect(raw).toContain(`Content-Type: text/html; charset=utf-8\r\n\r\n${htmlBody}`);
+    });
+
+    test('replyToThread carries both manual alternatives into the Gmail raw message', async () => {
+        const textBody = 'Reply line one\n\n\tReply paragraph';
+        const htmlBody = plainTextToHtml(textBody);
+        emailQueries.getThreadById.mockResolvedValue({
+            subject: 'Original',
+            provider_thread_id: 'provider-thread-1',
+        });
+        emailQueries.getMessagesByThread.mockResolvedValue([{
+            message_id_header: '<original@example.com>',
+            references_header: null,
+        }]);
+
+        await replyToThread('company-1', 'local-thread-1', {
+            to: ['customer@example.com'],
+            body: htmlBody,
+            textBody,
+        });
+
+        const raw = decode(gmailSend.mock.calls[0][0].requestBody.raw);
+        expect(raw).toContain(`Content-Type: text/plain; charset=utf-8\r\n\r\n${textBody}`);
+        expect(raw).toContain(`Content-Type: text/html; charset=utf-8\r\n\r\n${htmlBody}`);
+        expect(raw).toContain('In-Reply-To: <original@example.com>');
     });
 });

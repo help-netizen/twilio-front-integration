@@ -13,6 +13,7 @@ const { requirePermission } = require('../middleware/authorization');
 const emailQueries = require('../db/emailQueries');
 const emailService = require('../services/emailService');
 const emailMailboxService = require('../services/emailMailboxService');
+const { plainTextToHtml } = require('../services/email/plainTextEmailBody');
 
 const router = express.Router();
 
@@ -108,11 +109,13 @@ router.post('/threads/compose', requirePermission('messages.send'), upload.array
             return res.status(400).json({ ok: false, error: 'Body or attachment is required' });
         }
 
+        const textBody = body || '';
         const result = await emailService.sendEmail(companyId, {
             to: toList,
             cc: ccList,
             subject,
-            body: body || '',
+            body: plainTextToHtml(textBody),
+            textBody,
             files: req.files || [],
             userId: req.user?.sub,
             userEmail: req.user?.email,
@@ -148,11 +151,13 @@ router.post('/threads/:threadId/reply', requirePermission('messages.send'), uplo
             return res.status(400).json({ ok: false, error: 'Body or attachment is required' });
         }
 
+        const textBody = body || '';
         const result = await emailService.replyToThread(companyId, threadId, {
             to: toList,
             cc: ccList,
             subject: subject || null,
-            body: body || '',
+            body: plainTextToHtml(textBody),
+            textBody,
             files: req.files || [],
             userId: req.user?.sub,
             userEmail: req.user?.email,

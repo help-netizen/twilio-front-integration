@@ -1,6 +1,6 @@
 'use strict';
 
-const { toTimelineBody } = require('./emailTimelineBody');
+const { toTimelineBody, htmlToText } = require('./emailTimelineBody');
 const { stripTimelineHtml } = require('./emailTimelineHtml');
 
 /**
@@ -13,6 +13,9 @@ function projectEmailTimelineItem(row) {
     const isOutbound = typeof row.is_outbound === 'boolean'
         ? row.is_outbound
         : row.direction === 'outbound';
+    const timelineText = typeof row.body_text === 'string' && row.body_text.trim() !== ''
+        ? row.body_text
+        : htmlToText(row.body_html);
     const item = {
         id: row.id,
         type: 'email',
@@ -22,7 +25,7 @@ function projectEmailTimelineItem(row) {
         from_name: row.from_name || null,
         to_email: row.to_recipients_json || [],
         subject: row.subject || null,
-        body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
+        body_text: toTimelineBody(timelineText, { snippet: row.snippet }),
         display_html: stripTimelineHtml(row.body_html),
         // EMAIL-TS-ORDER-001: for outbound rows our own insert time is the send
         // moment and is trustworthy; provider dates on agent-path outbound have
