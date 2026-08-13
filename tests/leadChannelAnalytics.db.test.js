@@ -81,11 +81,13 @@ const GEO_ZIP_A = `6${GEO_ZIP_SUFFIX}`;
 const GEO_ZIP_B = `7${GEO_ZIP_SUFFIX}`;
 const GEO_ZIP_SPEND_ONLY = `8${GEO_ZIP_SUFFIX}`;
 const GEO_ZIP_EMPTY_ZONE = `9${GEO_ZIP_SUFFIX}`;
+const GEO_ZIP_JOB_FALLBACK = `5${GEO_ZIP_SUFFIX}`;
 const GEO_TEST_ZIPS = [
     GEO_ZIP_A,
     GEO_ZIP_B,
     GEO_ZIP_SPEND_ONLY,
     GEO_ZIP_EMPTY_ZONE,
+    GEO_ZIP_JOB_FALLBACK,
 ];
 const SEEDED_GOOGLE_ADS_KEY = `source_${
     createHash('md5').update('google ads').digest('hex')
@@ -817,6 +819,8 @@ async function seedPhase3Job({
     blancStatus = 'Submitted',
     startDate = null,
     amount = null,
+    address = null,
+    normalizedAddress = null,
 }) {
     const { rows } = await db.query(
         `INSERT INTO jobs (
@@ -828,6 +832,8 @@ async function seedPhase3Job({
              zb_status,
              zb_canceled,
              start_date,
+             address,
+             normalized_address,
              created_at,
              updated_at
          )
@@ -840,6 +846,8 @@ async function seedPhase3Job({
              $6,
              $7,
              $8,
+             $9,
+             $10,
              '2026-08-05T14:00:00Z',
              '2026-08-05T14:00:00Z'
          )
@@ -853,6 +861,8 @@ async function seedPhase3Job({
             zbStatus,
             zbCanceled,
             startDate,
+            address,
+            normalizedAddress,
         ]
     );
     const jobId = rows[0].id;
@@ -1542,6 +1552,176 @@ describe('LEAD-CHANNEL-ANALYTICS-001 real aggregate and endpoint tenancy', () =>
         );
         expect(persisted.rows).toHaveLength(1);
         expect(unbillableLead).toBeTruthy();
+    });
+
+    databaseTest('geo recovers lead-less conversions from trailing job service ZIPs', async () => {
+        const [googleChannel, elocalChannel] = await Promise.all([
+            ensureChannel(COMPANY_A),
+            ensureChannel(COMPANY_A, 'elocal', 'eLocal'),
+        ]);
+        const [lsaConnection, elocalConnection] = await Promise.all([
+            seedLsaConnection(COMPANY_A, googleChannel, '5555555555'),
+            seedElocalConnection(COMPANY_A, elocalChannel, 'geo-job-zip'),
+        ]);
+
+        const fallbackLsaLeadId = await seedGeoLead({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'geo-job-zip-lsa',
+            postalCode: null,
+        });
+        const fallbackLsaJobId = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: fallbackLsaLeadId,
+            suffix: 'geo-job-zip-lsa',
+            startDate: '2026-07-12T14:00:00Z',
+            amount: 20,
+            address: '12345 Wrong Street Number',
+            normalizedAddress:
+                `12345 Service Way, Brockton, MA ${GEO_ZIP_JOB_FALLBACK}-4321, USA.`,
+        });
+        const fallbackLsaProviderId = await seedMatchedLsaLead({
+            companyId: COMPANY_A,
+            connectionId: lsaConnection,
+            contactId: contactA,
+            leadId: fallbackLsaLeadId,
+            externalId: `${TAG}-geo-job-zip-lsa`,
+        });
+        await attributeLsaJob({
+            companyId: COMPANY_A,
+            lsaLeadId: fallbackLsaProviderId,
+            jobId: fallbackLsaJobId,
+            contactId: contactA,
+            leadId: fallbackLsaLeadId,
+        });
+
+        const fallbackElocalLeadId = await seedGeoLead({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'geo-job-zip-elocal',
+            postalCode: ' ',
+        });
+        const fallbackElocalJobId = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: fallbackElocalLeadId,
+            suffix: 'geo-job-zip-elocal',
+            startDate: '2026-07-13T14:00:00Z',
+            amount: 30,
+            address:
+                `54321 Service Road, Brockton, MA ${GEO_ZIP_JOB_FALLBACK}, usa`,
+            normalizedAddress: 'Unparseable normalized service address',
+        });
+        const fallbackElocalProviderId = await seedElocalLead({
+            companyId: COMPANY_A,
+            connectionId: elocalConnection,
+            contactId: contactA,
+            leadId: fallbackElocalLeadId,
+            suffix: 'geo-job-zip-elocal',
+            billable: false,
+            costCents: 0,
+        });
+        await attributeElocalJob({
+            companyId: COMPANY_A,
+            elocalLeadId: fallbackElocalProviderId,
+            jobId: fallbackElocalJobId,
+            contactId: contactA,
+            leadId: fallbackElocalLeadId,
+        });
+
+        const unmappedLeadId = await seedGeoLead({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'geo-job-zip-unmapped',
+            postalCode: null,
+        });
+        const unmappedJobId = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: unmappedLeadId,
+            suffix: 'geo-job-zip-unmapped',
+            startDate: '2026-07-14T14:00:00Z',
+            amount: 5,
+            address: 'No postal code available',
+            normalizedAddress: 'Unparseable service address',
+        });
+        const unmappedProviderId = await seedMatchedLsaLead({
+            companyId: COMPANY_A,
+            connectionId: lsaConnection,
+            contactId: contactA,
+            leadId: unmappedLeadId,
+            externalId: `${TAG}-geo-job-zip-unmapped`,
+        });
+        await attributeLsaJob({
+            companyId: COMPANY_A,
+            lsaLeadId: unmappedProviderId,
+            jobId: unmappedJobId,
+            contactId: contactA,
+            leadId: unmappedLeadId,
+        });
+
+        const leadZipId = await seedGeoLead({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            suffix: 'geo-job-zip-primary',
+            postalCode: GEO_ZIP_B,
+        });
+        const leadZipJobId = await seedPhase3Job({
+            companyId: COMPANY_A,
+            contactId: contactA,
+            leadId: leadZipId,
+            suffix: 'geo-job-zip-primary',
+            startDate: '2026-07-15T14:00:00Z',
+            amount: 7,
+            normalizedAddress:
+                `900 Service Way, Brockton, MA ${GEO_ZIP_JOB_FALLBACK}, USA`,
+        });
+        const leadZipProviderId = await seedMatchedLsaLead({
+            companyId: COMPANY_A,
+            connectionId: lsaConnection,
+            contactId: contactA,
+            leadId: leadZipId,
+            externalId: `${TAG}-geo-job-zip-primary`,
+        });
+        await attributeLsaJob({
+            companyId: COMPANY_A,
+            lsaLeadId: leadZipProviderId,
+            jobId: leadZipJobId,
+            contactId: contactA,
+            leadId: leadZipId,
+        });
+
+        const response = await invokeEndpoint(COMPANY_A, '/geo', {
+            from: FROM,
+            to: TO,
+        });
+
+        expect(response.statusCode).toBe(200);
+        const fallback = response.body.rows.find(
+            row => row.zip === GEO_ZIP_JOB_FALLBACK
+        );
+        expect(fallback).toMatchObject({
+            google_lsa: {
+                converted_count: 1,
+                revenue_net_cents: 2000,
+            },
+            elocal: {
+                converted_count: 1,
+                revenue_net_cents: 3000,
+            },
+        });
+        expect(response.body.rows.find(row => row.zip === GEO_ZIP_B))
+            .toMatchObject({
+                google_lsa: {
+                    converted_count: 1,
+                    revenue_net_cents: 700,
+                },
+            });
+        expect(response.body.quality).toMatchObject({
+            unmapped_converted_count: 1,
+            unmapped_revenue_net_cents: 500,
+        });
     });
 
     databaseTest('geo returns tenant-safe ZIP conversions, exact/modeled spend, revenue, zones, and geometry quality', async () => {

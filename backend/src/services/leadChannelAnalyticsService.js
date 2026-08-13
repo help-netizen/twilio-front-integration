@@ -905,19 +905,31 @@ const GEO_PERFORMANCE_SQL = `
     lsa_jobs AS (
         SELECT DISTINCT
             job.id AS job_id,
-            CASE
-                WHEN SPLIT_PART(
-                    BTRIM(COALESCE(owning_lead.postal_code, '')),
-                    '-',
-                    1
-                ) ~ '^[0-9]{5}$'
-                    THEN SPLIT_PART(
-                        BTRIM(owning_lead.postal_code),
+            COALESCE(
+                CASE
+                    WHEN SPLIT_PART(
+                        BTRIM(COALESCE(owning_lead.postal_code, '')),
                         '-',
                         1
-                    )
-                ELSE NULL
-            END AS zip,
+                    ) ~ '^[0-9]{5}$'
+                        THEN SPLIT_PART(
+                            BTRIM(owning_lead.postal_code),
+                            '-',
+                            1
+                        )
+                    ELSE NULL
+                END,
+                (regexp_match(
+                    BTRIM(COALESCE(job.normalized_address, '')),
+                    '(?:^|[^0-9])([0-9]{5})(?:-[0-9]{4})?[[:space:]]*(?:,?[[:space:]]*USA[.]?)?[[:space:]]*$',
+                    'i'
+                ))[1],
+                (regexp_match(
+                    BTRIM(COALESCE(job.address, '')),
+                    '(?:^|[^0-9])([0-9]{5})(?:-[0-9]{4})?[[:space:]]*(?:,?[[:space:]]*USA[.]?)?[[:space:]]*$',
+                    'i'
+                ))[1]
+            ) AS zip,
             'google_lsa'::TEXT AS channel_key
         FROM google_lsa_job_attributions attribution
         JOIN google_lsa_leads provider
@@ -954,19 +966,31 @@ const GEO_PERFORMANCE_SQL = `
     elocal_jobs AS (
         SELECT DISTINCT
             job.id AS job_id,
-            CASE
-                WHEN SPLIT_PART(
-                    BTRIM(COALESCE(owning_lead.postal_code, '')),
-                    '-',
-                    1
-                ) ~ '^[0-9]{5}$'
-                    THEN SPLIT_PART(
-                        BTRIM(owning_lead.postal_code),
+            COALESCE(
+                CASE
+                    WHEN SPLIT_PART(
+                        BTRIM(COALESCE(owning_lead.postal_code, '')),
                         '-',
                         1
-                    )
-                ELSE NULL
-            END AS zip,
+                    ) ~ '^[0-9]{5}$'
+                        THEN SPLIT_PART(
+                            BTRIM(owning_lead.postal_code),
+                            '-',
+                            1
+                        )
+                    ELSE NULL
+                END,
+                (regexp_match(
+                    BTRIM(COALESCE(job.normalized_address, '')),
+                    '(?:^|[^0-9])([0-9]{5})(?:-[0-9]{4})?[[:space:]]*(?:,?[[:space:]]*USA[.]?)?[[:space:]]*$',
+                    'i'
+                ))[1],
+                (regexp_match(
+                    BTRIM(COALESCE(job.address, '')),
+                    '(?:^|[^0-9])([0-9]{5})(?:-[0-9]{4})?[[:space:]]*(?:,?[[:space:]]*USA[.]?)?[[:space:]]*$',
+                    'i'
+                ))[1]
+            ) AS zip,
             'elocal'::TEXT AS channel_key
         FROM elocal_job_attributions attribution
         JOIN elocal_leads provider
