@@ -95,6 +95,7 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
             overdue: req.query.overdue === '1' || req.query.overdue === 'true',
             due_from: req.query.due_from || undefined,
             due_to: req.query.due_to || undefined,
+            snoozed: req.query.snoozed || undefined,
             search: req.query.search || undefined,
             sort_by: req.query.sort_by || 'due_at',
             sort_order: req.query.sort_order || 'asc',
@@ -121,10 +122,15 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
 
 // ── GET /count — open-task badge count (role-scoped; mirrors GET / verbatim) ──
 // TASKS-COUNT-BADGE-001. Static segment: mounted above the /:id param routes so
-// a future GET /:id can never swallow it. Count == GET /?status=open row count.
+// a future GET /:id can never swallow it. Count == the active subset of
+// GET /?status=open&snoozed=active.
 router.get('/count', requirePermission('tasks.view'), async (req, res) => {
     try {
-        const filters = { status: 'open', parent_type: req.query.parent_type || undefined };
+        const filters = {
+            status: 'open',
+            parent_type: req.query.parent_type || undefined,
+            snoozed: 'active',
+        };
         // Same visibility branch as GET /: managers count all; everyone else own.
         applyListVisibility(req, filters);
         const count = await tasksQueries.countTasks(companyId(req), filters);
@@ -250,7 +256,7 @@ router.patch('/:id', requirePermission('tasks.view'), async (req, res) => {
             return res.status(403).json({ ok: false, error: { code: 'ACCESS_DENIED', message: 'Cannot modify this task' } });
         }
 
-        const { description, owner_user_id, due_at, status } = req.body || {};
+        const { description, owner_user_id, due_at, snoozed_until, status } = req.body || {};
         const patch = {};
         if (description !== undefined) {
             if (!String(description).trim()) return bad(res, 'DESCRIPTION_REQUIRED', 'A task description is required');
@@ -261,12 +267,22 @@ router.patch('/:id', requirePermission('tasks.view'), async (req, res) => {
             if (due_at !== null && Number.isNaN(Date.parse(due_at))) return bad(res, 'INVALID_DUE_AT', 'due_at must be a valid timestamp');
             patch.due_at = due_at || null;
         }
+        if (snoozed_until !== undefined) {
+            if (snoozed_until !== null && snoozed_until !== '' && Number.isNaN(Date.parse(snoozed_until))) {
+                return bad(res, 'INVALID_SNOOZED_UNTIL', 'snoozed_until must be a valid timestamp or null');
+            }
+            patch.snoozed_until = snoozed_until || null;
+        }
         if (status !== undefined) {
             if (!['open', 'done'].includes(status)) return bad(res, 'INVALID_STATUS', "status must be 'open' or 'done'");
             patch.status = status;
         }
 
-        const task = await tasksQueries.updateTask(companyId(req), req.params.id, patch);
+        const task = Object.keys(patch).length === 1 && 'snoozed_until' in patch
+            ? await tasksQueries.snoozeTask(
+                companyId(req), req.params.id, patch.snoozed_until
+            )
+            : await tasksQueries.updateTask(companyId(req), req.params.id, patch);
         if ('owner_user_id' in patch
             && String(existing.owner_user_id || '') !== String(task.owner_user_id || '')) {
             await emitTaskEvent(req, 'task.reassigned', task, {
@@ -285,10 +301,9 @@ router.patch('/:id', requirePermission('tasks.view'), async (req, res) => {
                 companyId(req), existing.thread_id
             );
         }
-        // TASKS-COUNT-BADGE-001: emit ONCE when a status flip (complete/reopen) or
-        // an owner reassign was in the patch — those move the open-count. A pure
-        // description/due/snooze edit does NOT change any count → stay silent (S7).
-        if ('status' in patch || 'owner_user_id' in patch) {
+        // TASKS-COUNT-BADGE-001: emit once when a patch moves the active count:
+        // status flips, owner reassignments, snoozes, and explicit wake-ups.
+        if ('status' in patch || 'owner_user_id' in patch || 'snoozed_until' in patch) {
             tasksService.emitTaskChange(companyId(req));
         }
         res.json({ ok: true, data: { task } });

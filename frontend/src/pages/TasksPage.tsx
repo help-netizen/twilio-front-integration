@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Search, X } from 'lucide-react';
+import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Search, X, Moon, Sun } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -8,8 +8,8 @@ import { MobileListPage } from '../components/layout/MobileListPage';
 import { TaskSnoozeMenu } from '../components/tasks/TaskSnoozeMenu';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { FilterColumn } from '../components/jobs/jobsFilterHelpers';
-import { listTasksPage, completeTask, snoozeTask, parentPath, type Task, type TaskParentType } from '../components/tasks/tasksApi';
-import { isOverdue } from '../components/tasks/taskUtils';
+import { listTasksPage, completeTask, snoozeTask, unsnoozeTask, parentPath, type Task, type TaskParentType } from '../components/tasks/tasksApi';
+import { isOverdue, snoozedUntilLabel } from '../components/tasks/taskUtils';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../utils/companyTime';
 import { useLoadMoreList } from '../hooks/useLoadMoreList';
 import { useDebouncedSearch } from '../hooks/useDebouncedSearch';
@@ -98,6 +98,7 @@ export function TasksPage() {
                 status,
                 parent_type: parentType || undefined,
                 search: debouncedSearch || undefined,
+                snoozed: 'active',
                 sort_by: sortBy,
                 sort_order: sortOrder,
                 limit,
@@ -127,8 +128,42 @@ export function TasksPage() {
         onRetry: () => { void tasksList.retry(); },
     };
 
+    // SNOOZE-REWORK-001: parked (snoozed) tasks — a second, secondary list sorted by
+    // wake time. Kept out of the active list + the nav badge (server counts active only).
+    const snoozedList = useLoadMoreList<Task>({
+        queryKey: ['tasks-snoozed', company?.id ?? null, user?.sub ?? null, canManage, parentType || null, debouncedSearch],
+        pageSize: TASKS_PAGE_SIZE,
+        enabled: !!company?.id,
+        fetchPage: async ({ cursor, limit, signal }) => {
+            const page = await listTasksPage({
+                status: 'open',
+                parent_type: parentType || undefined,
+                search: debouncedSearch || undefined,
+                snoozed: 'snoozed',
+                sort_by: 'snoozed_until',
+                sort_order: 'asc',
+                limit,
+                cursor: cursor ?? undefined,
+            }, signal);
+            return { items: page.tasks, pagination: { ...page.pagination, mode: 'cursor' as const }, meta: null };
+        },
+        getItemKey: taskKey,
+    });
+    const snoozedTasks = snoozedList.items;
+    const snoozedFooterProps: LoadMoreFooterProps = {
+        state: snoozedList.state,
+        loadedCount: snoozedTasks.length,
+        totalCount: snoozedList.total,
+        singularLabel: 'snoozed task',
+        pluralLabel: 'snoozed tasks',
+        errorPhase: snoozedList.errorPhase,
+        onLoadMore: () => { void snoozedList.loadMore(); },
+        onRetry: () => { void snoozedList.retry(); },
+    };
+
     const canActOn = (t: Task) => canManage || (!!myEmail && t.assignee_email === myEmail);
 
+    const resetBoth = () => Promise.all([tasksList.reset(), snoozedList.reset()]);
     const onComplete = async (t: Task) => {
         tasksList.updateItem(t.id, current => ({ ...current, status: 'done' as const }));
         try {
@@ -137,10 +172,14 @@ export function TasksPage() {
         } catch {
             toast.error('Failed');
         }
-        await tasksList.reset();
+        await resetBoth();
     };
     const onSnooze = async (t: Task, iso: string) => {
-        try { await snoozeTask(t.id, iso); toast.success('Task snoozed'); await tasksList.reset(); }
+        try { await snoozeTask(t.id, iso); toast.success('Task snoozed'); await resetBoth(); }
+        catch { toast.error('Failed'); }
+    };
+    const onUnsnooze = async (t: Task) => {
+        try { await unsnoozeTask(t.id); toast.success('Task woken'); await resetBoth(); }
         catch { toast.error('Failed'); }
     };
 
@@ -167,6 +206,28 @@ export function TasksPage() {
             <TaskSnoozeMenu tz={tz} onSnooze={(iso) => onSnooze(t, iso)} iconOnly />
         </div>
     ) : null;
+
+    // SNOOZE-REWORK-001: actions for a task in the Snoozed section — Done + Wake now.
+    const SnoozedActions = ({ t }: { t: Task }) => canActOn(t) ? (
+        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+            <button type="button" title="Mark done" onClick={() => onComplete(t)}
+                className="p-1.5 rounded-md transition-opacity hover:opacity-70"
+                style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}>
+                <Check className="size-3.5" />
+            </button>
+            <button type="button" title="Wake now" onClick={() => onUnsnooze(t)}
+                className="p-1.5 rounded-md transition-opacity hover:opacity-70"
+                style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)' }}>
+                <Sun className="size-3.5" />
+            </button>
+        </div>
+    ) : null;
+
+    const SnoozeWakeLabel = ({ t }: { t: Task }) => (
+        <span className="inline-flex items-center gap-1.5 shrink-0" style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>
+            <Moon className="size-3.5" />{snoozedUntilLabel(t.snoozed_until, tz)}
+        </span>
+    );
 
     const Avatar = ({ t }: { t: Task }) => (
         <span className="inline-flex items-center justify-center shrink-0"
@@ -233,13 +294,36 @@ export function TasksPage() {
             );
         };
 
+        const renderSnoozedTile = (t: Task) => {
+            const meta = PARENT_META[t.parent_type];
+            return (
+                <div key={t.id} onClick={() => navigate(parentPath(t))}
+                    className="w-full rounded-xl p-3 space-y-2 cursor-pointer transition-colors"
+                    style={{ border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong, #fffdf9)', opacity: 0.78 }}>
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11, color: 'var(--blanc-ink-3)' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color }} />{meta.label}
+                        </span>
+                        <SnoozeWakeLabel t={t} />
+                    </div>
+                    <p className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</p>
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
+                            <Avatar t={t} /><span className="truncate">{t.parent_label || meta.label}</span>
+                        </span>
+                        <SnoozedActions t={t} />
+                    </div>
+                </div>
+            );
+        };
+
         const body = loading ? (
             <div className="mobile-list-page__empty">
                 <Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
             </div>
         ) : tasks.length === 0 && footerProps.state === 'error+retry' ? (
             <LoadMoreFooter {...footerProps} />
-        ) : groups.length === 0 ? (
+        ) : groups.length === 0 && snoozedTasks.length === 0 ? (
             <div className="mobile-list-page__empty text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No tasks</div>
         ) : (
             <div className="space-y-6">
@@ -249,7 +333,16 @@ export function TasksPage() {
                         {group.tasks.map(t => renderTile(t, group))}
                     </div>
                 ))}
-                <LoadMoreFooter {...footerProps} />
+                {groups.length > 0 && <LoadMoreFooter {...footerProps} />}
+                {snoozedTasks.length > 0 && (
+                    <div className="space-y-2">
+                        <div className="blanc-eyebrow inline-flex items-center gap-1.5" style={{ color: 'var(--blanc-ink-3)' }}>
+                            <Moon className="size-3" /> Snoozed
+                        </div>
+                        {snoozedTasks.map(t => renderSnoozedTile(t))}
+                        <LoadMoreFooter {...snoozedFooterProps} />
+                    </div>
+                )}
             </div>
         );
 
@@ -362,7 +455,7 @@ export function TasksPage() {
                         <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
                             <LoadMoreFooter {...footerProps} />
                         </div>
-                    ) : tasks.length === 0 ? (
+                    ) : tasks.length === 0 && snoozedTasks.length === 0 ? (
                         <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
                             No tasks found
                         </div>
@@ -450,6 +543,46 @@ export function TasksPage() {
                                                 </tr>
                                             );
                                         })}
+                                        {snoozedTasks.length > 0 && (
+                                            <>
+                                                <tr>
+                                                    <td colSpan={COLUMNS.length} className="px-4 pt-6 pb-1">
+                                                        <span className="blanc-eyebrow inline-flex items-center gap-1.5" style={{ color: 'var(--blanc-ink-3)', marginBottom: 0 }}>
+                                                            <Moon className="size-3" /> Snoozed
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                                {snoozedTasks.map(t => {
+                                                    const meta = PARENT_META[t.parent_type];
+                                                    return (
+                                                        <tr key={`s-${t.id}`} className="cursor-pointer" style={{ opacity: 0.72 }} onClick={() => navigate(parentPath(t))}>
+                                                            <td className="px-4 py-2.5">
+                                                                <span className="font-medium line-clamp-2" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</span>
+                                                            </td>
+                                                            <td className="px-4 py-2.5 whitespace-nowrap">
+                                                                <span className="inline-flex items-center gap-2">
+                                                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flex: 'none' }} />
+                                                                    {meta.label}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-4 py-2.5 max-w-[16rem]">
+                                                                <span className="truncate block" style={{ color: 'var(--blanc-ink-2)' }}>{t.parent_label || '—'}</span>
+                                                            </td>
+                                                            <td className="px-4 py-2.5 whitespace-nowrap">
+                                                                <span className="inline-flex items-center gap-2">
+                                                                    <Avatar t={t} />
+                                                                    <span style={{ color: 'var(--blanc-ink-2)' }}>{t.assignee_name || '—'}</span>
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-4 py-2.5 whitespace-nowrap"><SnoozeWakeLabel t={t} /></td>
+                                                            <td className="px-2 py-2.5 w-20" onClick={e => e.stopPropagation()}>
+                                                                <SnoozedActions t={t} />
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </>
+                                        )}
                                     </tbody>
                                 </table>
                                 {/* OB-17: footer at the end of the scroll container. */}

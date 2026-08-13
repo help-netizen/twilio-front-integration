@@ -31,16 +31,35 @@ export interface SnoozePreset {
     dueIso: string;
 }
 
-/** The four relative/named snooze presets (custom date handled separately). */
+/** Next Monday at the morning hour, company TZ (today-if-Monday jumps a full week). */
+export function nextMondayMorningInTZ(tz: string): string {
+    const today = todayInTZ(tz);
+    const [y, m, d] = today.split('-').map(Number);
+    const dow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0=Sun … 1=Mon
+    const daysUntil = ((1 - dow + 7) % 7) || 7;
+    return dateInTZ(y, m, d + daysUntil, SNOOZE_MORNING_HOUR, 0, tz).toISOString();
+}
+
+/** SNOOZE-REWORK-001 quick snooze presets (custom date handled separately). */
 export function snoozePresets(tz: string): SnoozePreset[] {
     const now = serverDate().getTime();
     const rel = (ms: number) => new Date(now + ms).toISOString();
     return [
-        { key: '15m', label: 'In 15 minutes', dueIso: rel(15 * 60_000) },
         { key: '1h', label: 'In 1 hour', dueIso: rel(60 * 60_000) },
         { key: '3h', label: 'In 3 hours', dueIso: rel(3 * 60 * 60_000) },
         { key: 'tomorrow', label: `Tomorrow · ${SNOOZE_MORNING_HOUR}:00 AM`, dueIso: tomorrowAtInTZ(SNOOZE_MORNING_HOUR, 0, tz).toISOString() },
+        { key: 'next-monday', label: `Next Monday · ${SNOOZE_MORNING_HOUR}:00 AM`, dueIso: nextMondayMorningInTZ(tz) },
     ];
+}
+
+/** True while a task is snoozed (hidden until a future instant). */
+export function isSnoozed(task: Pick<Task, 'snoozed_until'>): boolean {
+    return !!task.snoozed_until && new Date(task.snoozed_until).getTime() > serverDate().getTime();
+}
+
+/** "Asleep until Tomorrow · 8:00 AM" — label for a task in the Snoozed section. */
+export function snoozedUntilLabel(snoozedUntil: string | null, tz: string): string {
+    return `Asleep until ${formatDeadline(snoozedUntil, tz)}`;
 }
 
 /** A picked "YYYY-MM-DD" → ISO at the morning hour in company TZ. */

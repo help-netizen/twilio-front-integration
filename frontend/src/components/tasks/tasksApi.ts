@@ -42,6 +42,9 @@ export interface Task {
     description: string;
     status: 'open' | 'done';
     due_at: string | null;
+    /** SNOOZE-REWORK-001: hidden-until timestamp, separate from the deadline (due_at).
+     * Active = null or in the past; snoozed/inactive = in the future. */
+    snoozed_until: string | null;
     completed_at: string | null;
     created_at: string;
     owner_user_id: string | null;
@@ -77,7 +80,10 @@ export interface ListTasksParams {
     offset?: number;
     cursor?: string;
     search?: string;
-    sort_by?: 'description' | 'parent_type' | 'parent_label' | 'assignee_name' | 'due_at';
+    /** SNOOZE-REWORK-001: 'active' (default in badge) = not snoozed / snooze elapsed;
+     * 'snoozed' = hidden until a future time; 'all' = no snooze filter. */
+    snoozed?: 'active' | 'snoozed' | 'all';
+    sort_by?: 'description' | 'parent_type' | 'parent_label' | 'assignee_name' | 'due_at' | 'snoozed_until';
     sort_order?: 'asc' | 'desc';
 }
 
@@ -162,6 +168,7 @@ export async function listTasksPage(
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.cursor) query.set('cursor', params.cursor);
     if (params.search) query.set('search', params.search);
+    if (params.snoozed) query.set('snoozed', params.snoozed);
     if (params.sort_by) query.set('sort_by', params.sort_by);
     if (params.sort_order) query.set('sort_order', params.sort_order);
     const queryString = query.toString();
@@ -191,6 +198,8 @@ export interface UpdateTaskPatch {
     description?: string;
     owner_user_id?: string | null;
     due_at?: string | null;
+    /** SNOOZE-REWORK-001: set a future instant to snooze; null to wake now. */
+    snoozed_until?: string | null;
     status?: 'open' | 'done';
 }
 
@@ -206,7 +215,10 @@ export async function updateTask(id: number, patch: UpdateTaskPatch): Promise<Ta
 
 export const completeTask = (id: number) => updateTask(id, { status: 'done' });
 export const reopenTask = (id: number) => updateTask(id, { status: 'open' });
-export const snoozeTask = (id: number, dueAtIso: string) => updateTask(id, { due_at: dueAtIso });
+/** SNOOZE-REWORK-001: hide a task until an instant (leaves due_at/deadline intact). */
+export const snoozeTask = (id: number, snoozedUntilIso: string) => updateTask(id, { snoozed_until: snoozedUntilIso });
+/** Wake a snoozed task now — back into the active list. */
+export const unsnoozeTask = (id: number) => updateTask(id, { snoozed_until: null });
 
 export async function deleteTask(id: number): Promise<void> {
     const res = await authedFetch(`${BASE}/${id}`, { method: 'DELETE' });

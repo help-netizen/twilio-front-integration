@@ -108,6 +108,7 @@ describe('ROLE-TASKS-SCOPE-001 — list visibility', () => {
         await request(appWithAuthz({ permissions: ['tasks.view'] }), 'GET', '/count');
         const [, filters] = tasksQueries.countTasks.mock.calls[0];
         expect(filters.scopeOwnerId).toBe(PROVIDER_USER);
+        expect(filters.snoozed).toBe('active');
     });
 });
 

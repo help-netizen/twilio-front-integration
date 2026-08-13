@@ -23,6 +23,7 @@ function taskRow(id, overrides = {}) {
         description: `Task ${id}`,
         status: 'open',
         due_at: new Date('2026-07-18T16:00:00.123Z'),
+        snoozed_until: null,
         created_at: new Date('2026-07-17T12:00:00.654Z'),
         assignee_name: 'Alex Tech',
         assignee_email: 'alex@example.com',
@@ -117,6 +118,31 @@ describe('Tasks route-only page contract', () => {
         expect(mixed.body.error.code).toBe('INVALID_CURSOR_REQUEST');
         expect(mockQuery).not.toHaveBeenCalled();
     });
+
+    test('route forwards active/snoozed partitions and rows expose snoozed_until', async () => {
+        const wakeAt = '2026-08-15T13:00:00.000Z';
+        usePageDispatch({ total: 1, rows: [taskRow(1, { snoozed_until: wakeAt })] });
+
+        const response = await request(appFor()).get('/api/tasks').query({
+            snoozed: 'snoozed',
+            sort_by: 'snoozed_until',
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body.data.tasks[0].snoozed_until).toBe(wakeAt);
+        const dataSql = mockQuery.mock.calls[1][0];
+        expect(dataSql).toContain('t.snoozed_until > now()');
+        expect(dataSql).toMatch(/SELECT t\.id,[\s\S]*t\.due_at,\s+t\.snoozed_until,/);
+        expect(dataSql).toContain('(page_base.snoozed_until IS NULL) ASC');
+        expect(dataSql).toContain('page_base.snoozed_until ASC');
+
+        jest.clearAllMocks();
+        usePageDispatch();
+        await request(appFor()).get('/api/tasks?snoozed=active');
+        expect(mockQuery.mock.calls[1][0]).toContain(
+            '(t.snoozed_until IS NULL OR t.snoozed_until <= now())'
+        );
+    });
 });
 
 describe('Tasks complete search/sort/count predicates', () => {
@@ -172,7 +198,8 @@ describe('Tasks complete search/sort/count predicates', () => {
             "SELECT COUNT(*)::int AS count FROM tasks t WHERE t.company_id = $1 AND "
             + "(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR "
             + "t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL OR "
-            + "(t.thread_id IS NOT NULL AND t.created_by IN ('user', 'agent'))) AND t.status = $2",
+            + "(t.thread_id IS NOT NULL AND t.created_by IN ('user', 'agent'))) AND t.status = $2 "
+            + "AND (t.snoozed_until IS NULL OR t.snoozed_until <= now())",
         );
     });
 });

@@ -81,6 +81,18 @@ describe('buildTaskListFilters — shared predicate (TC-2)', () => {
         expect(a.conditions).toEqual(b.conditions);
         expect(a.params).toEqual(b.params);
     });
+
+    test('active and snoozed filters partition at query time without changing due_at', () => {
+        const active = tasksQueries.buildTaskListFilters(COMPANY, { snoozed: 'active' });
+        const snoozed = tasksQueries.buildTaskListFilters(COMPANY, { snoozed: 'snoozed' });
+        const all = tasksQueries.buildTaskListFilters(COMPANY, { snoozed: 'all' });
+
+        expect(active.conditions).toContain('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
+        expect(snoozed.conditions).toContain('t.snoozed_until > now()');
+        expect(all.conditions.join(' ')).not.toContain('snoozed_until');
+        expect(active.conditions.join(' ')).not.toContain('due_at');
+        expect(snoozed.conditions.join(' ')).not.toContain('due_at');
+    });
 });
 
 // Extract the WHERE predicate (everything between "WHERE " and the first of
@@ -96,7 +108,7 @@ function whereClause(sql) {
 
 describe('drift guard — listTasks & countTasks share the builder (TC-9 mock)', () => {
     test('both emit a byte-identical WHERE clause for identical inputs', async () => {
-        const filters = { status: 'open', scopeOwnerId: ME };
+        const filters = { status: 'open', scopeOwnerId: ME, snoozed: 'active' };
 
         mockQuery.mockResolvedValueOnce({ rows: [] });            // listTasks
         await tasksQueries.listTasks(COMPANY, filters);
@@ -113,6 +125,7 @@ describe('drift guard — listTasks & countTasks share the builder (TC-9 mock)',
             + " AND (\n                t.owner_user_id = $2\n"
             + "                OR t.author_user_id = $2\n"
             + "            ) AND t.status = $3"
+            + " AND (t.snoozed_until IS NULL OR t.snoozed_until <= now())"
         );
 
         // Shared param prefix identical; count carries no limit/offset tail.
@@ -133,6 +146,7 @@ describe('drift guard — listTasks & countTasks share the builder (TC-9 mock)',
         const [countSql, countParams] = mockQuery.mock.calls[0];
         expect(countSql).not.toMatch(/LIMIT/);
         expect(countSql).not.toMatch(/OFFSET/);
+        expect(countSql).toContain('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
         expect(countParams).toEqual([COMPANY, 'open']);
     });
 });
@@ -150,6 +164,7 @@ describe('countTasks — SQL shape + return (TC-3)', () => {
         expect(sql).toContain('t.status = $3');
         expect(sql).toContain('t.owner_user_id = $2');
         expect(sql).toContain('t.author_user_id = $2');
+        expect(sql).toContain('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
         // Must NOT carry any SELECT_TASK label-hydration joins.
         expect(sql).not.toMatch(/LEFT JOIN/);
         expect(sql).not.toMatch(/crm_users ow/);
@@ -161,6 +176,94 @@ describe('countTasks — SQL shape + return (TC-3)', () => {
     test('empty result set → 0 (rows[0]?.count || 0)', async () => {
         mockQuery.mockResolvedValueOnce({ rows: [] });
         expect(await tasksQueries.countTasks(COMPANY, { status: 'open' })).toBe(0);
+    });
+
+    test('future snoozes are excluded and elapsed snoozes are re-included by now()', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+        expect(await tasksQueries.countTasks(COMPANY, { status: 'open', snoozed: 'all' })).toBe(2);
+
+        const [sql] = mockQuery.mock.calls[0];
+        expect(sql).toContain('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
+        expect(sql).not.toContain('t.snoozed_until > now()');
+    });
+});
+
+describe('snoozeTask — deadline separation', () => {
+    test('sets snoozed_until while leaving due_at unchanged', async () => {
+        const dueAt = '2026-08-14T21:00:00.000Z';
+        const snoozedUntil = '2026-08-15T13:00:00.000Z';
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 41 }] })
+            .mockResolvedValueOnce({ rows: [{ id: 41, due_at: dueAt, snoozed_until: snoozedUntil }] });
+
+        const task = await tasksQueries.snoozeTask(COMPANY, 41, snoozedUntil);
+
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toContain('UPDATE tasks SET snoozed_until = $3::timestamptz');
+        expect(sql).toContain('WHERE company_id = $1 AND id = $2');
+        expect(sql).not.toMatch(/SET[\s\S]*due_at/);
+        expect(params).toEqual([COMPANY, 41, snoozedUntil]);
+        expect(task).toMatchObject({ due_at: dueAt, snoozed_until: snoozedUntil });
+    });
+
+    test('null clears snoozed_until without changing due_at', async () => {
+        const dueAt = '2026-08-14T21:00:00.000Z';
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 41 }] })
+            .mockResolvedValueOnce({ rows: [{ id: 41, due_at: dueAt, snoozed_until: null }] });
+
+        const task = await tasksQueries.snoozeTask(COMPANY, 41, null);
+
+        expect(mockQuery.mock.calls[0][1]).toEqual([COMPANY, 41, null]);
+        expect(task).toMatchObject({ due_at: dueAt, snoozed_until: null });
+    });
+});
+
+describe('listTasksPage — snooze partition and ordering', () => {
+    test('snoozed rows carry snoozed_until and can sort by their wake time', async () => {
+        const wakeAt = '2026-08-15T13:00:00.000Z';
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 1 }] })
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 51,
+                    due_at: '2026-08-14T21:00:00.000Z',
+                    snoozed_until: wakeAt,
+                    created_at: '2026-08-13T12:00:00.000Z',
+                    __cursor_null: false,
+                    __cursor_value: wakeAt,
+                    __cursor_created: '2026-08-13T12:00:00.000Z',
+                    __cursor_id: '51',
+                }],
+            });
+
+        const page = await tasksQueries.listTasksPage(COMPANY, {
+            snoozed: 'snoozed',
+            sort_by: 'snoozed_until',
+        });
+
+        expect(page.tasks).toEqual([expect.objectContaining({ id: 51, snoozed_until: wakeAt })]);
+        expect(page.tasks[0]).not.toHaveProperty('__cursor_value');
+        for (const [sql] of mockQuery.mock.calls) {
+            expect(sql).toContain('t.snoozed_until > now()');
+        }
+        const dataSql = mockQuery.mock.calls[1][0];
+        expect(dataSql).toMatch(/SELECT t\.id,[\s\S]*t\.due_at,\s+t\.snoozed_until,/);
+        expect(dataSql).toContain('(page_base.snoozed_until IS NULL) ASC');
+        expect(dataSql).toContain('page_base.snoozed_until ASC');
+    });
+
+    test('active uses the complementary query-time predicate', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        await tasksQueries.listTasksPage(COMPANY, { snoozed: 'active' });
+
+        for (const [sql] of mockQuery.mock.calls) {
+            expect(sql).toContain('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
+            expect(sql).not.toContain('t.snoozed_until > now()');
+        }
     });
 });
 

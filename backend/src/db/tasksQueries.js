@@ -78,6 +78,7 @@ const TASK_LIST_FROM = `FROM tasks t
 // caller gets everything needed to render a row and deep-link to the parent card.
 const SELECT_TASK = `
     SELECT t.id, t.company_id, t.title AS description, t.status, t.due_at,
+           t.snoozed_until,
            t.completed_at, t.created_at, t.owner_user_id, t.author_user_id,
            t.thread_id, t.kind, t.agent_type, t.agent_output, t.actions,
            ow.full_name AS assignee_name, ow.email AS assignee_email,
@@ -252,6 +253,11 @@ function buildTaskListFilters(companyId, filters = {}) {
     if (filters.parent_type && isValidParentType(filters.parent_type)) {
         conditions.push(`t.${PARENTS[filters.parent_type].col} IS NOT NULL`);
     }
+    if (filters.snoozed === 'active') {
+        conditions.push('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
+    } else if (filters.snoozed === 'snoozed') {
+        conditions.push('t.snoozed_until > now()');
+    }
     if (filters.overdue) {
         conditions.push(`t.status = 'open' AND t.due_at IS NOT NULL AND t.due_at < now()`);
     }
@@ -327,7 +333,8 @@ async function listTasksPage(companyId, filters = {}, client = null) {
 
     const sortBy = filters.sort_by || 'due_at';
     const sortOrder = filters.sort_order || 'asc';
-    if ((sortBy !== 'due_at' && !TASK_PAGE_SORTS[sortBy]) || (sortOrder !== 'asc' && sortOrder !== 'desc')) {
+    const isTimestampSort = sortBy === 'due_at' || sortBy === 'snoozed_until';
+    if ((!isTimestampSort && !TASK_PAGE_SORTS[sortBy]) || (sortOrder !== 'asc' && sortOrder !== 'desc')) {
         throw tasksListError('INVALID_QUERY', 'Invalid task sort');
     }
 
@@ -344,6 +351,7 @@ async function listTasksPage(companyId, filters = {}, client = null) {
         filters: {
             status: filters.status || null,
             parent_type: filters.parent_type || null,
+            snoozed: filters.snoozed || null,
             overdue: Boolean(filters.overdue),
             due_from: filters.due_from || null,
             due_to: filters.due_to || null,
@@ -358,7 +366,7 @@ async function listTasksPage(companyId, filters = {}, client = null) {
         direction: sortOrder,
         limit,
     });
-    const cursorValueTypes = sortBy === 'due_at'
+    const cursorValueTypes = isTimestampSort
         ? ['boolean', { type: 'timestamp', nullable: true }, 'timestamp', 'bigint']
         : ['text', 'bigint'];
     const cursorExpectation = {
@@ -387,22 +395,23 @@ async function listTasksPage(companyId, filters = {}, client = null) {
     const cursorKeys = [];
     const cursorProjections = [];
     const orderParts = [];
-    if (sortBy === 'due_at') {
+    if (isTimestampSort) {
+        const timestampColumn = `page_base.${sortBy}`;
         cursorKeys.push(
-            { expression: '(page_base.due_at IS NULL)', direction: 'asc', type: 'boolean' },
-            { expression: 'page_base.due_at', direction: sortOrder, type: 'timestamp', nullable: true },
+            { expression: `(${timestampColumn} IS NULL)`, direction: 'asc', type: 'boolean' },
+            { expression: timestampColumn, direction: sortOrder, type: 'timestamp', nullable: true },
             { expression: 'page_base.created_at', direction: 'desc', type: 'timestamp' },
             { expression: 'page_base.id', direction: 'desc', type: 'bigint' },
         );
         cursorProjections.push(
-            '(page_base.due_at IS NULL) AS __cursor_null',
-            `${timestampCursorExpression('page_base.due_at')} AS __cursor_value`,
+            `(${timestampColumn} IS NULL) AS __cursor_null`,
+            `${timestampCursorExpression(timestampColumn)} AS __cursor_value`,
             `${timestampCursorExpression('page_base.created_at')} AS __cursor_created`,
             `${bigintCursorExpression('page_base.id')} AS __cursor_id`,
         );
         orderParts.push(
-            '(page_base.due_at IS NULL) ASC',
-            `page_base.due_at ${sortOrder.toUpperCase()}`,
+            `(${timestampColumn} IS NULL) ASC`,
+            `${timestampColumn} ${sortOrder.toUpperCase()}`,
             'page_base.created_at DESC',
             'page_base.id DESC',
         );
@@ -464,7 +473,7 @@ async function listTasksPage(companyId, filters = {}, client = null) {
     const lastPageRow = pageRows.at(-1);
     const cursorValues = !lastPageRow
         ? []
-        : sortBy === 'due_at'
+        : isTimestampSort
             ? [
                 Boolean(lastPageRow.__cursor_null),
                 lastPageRow.__cursor_value == null ? null : String(lastPageRow.__cursor_value),
@@ -496,15 +505,16 @@ async function listTasksPage(companyId, filters = {}, client = null) {
 }
 
 /**
- * Count of the global cross-entity list under the SAME predicate as `listTasks`
- * (TASKS-COUNT-BADGE-001). The common no-search path counts the bare `tasks t`;
- * search uses the shared joins because parent label and assignee are predicates.
- * Returns a non-negative integer.
+ * Active count of the global cross-entity list under the SAME shared predicate
+ * as `listTasks` (TASKS-COUNT-BADGE-001), with snoozed='active' forced so callers
+ * cannot accidentally include future snoozes. The common no-search path counts
+ * the bare `tasks t`; search uses the shared joins. Returns a non-negative integer.
  */
 async function countTasks(companyId, filters = {}, client = null) {
     requireCompanyId(companyId);
     const query = queryFor(client, db);
-    const { conditions, params } = buildTaskListFilters(companyId, filters);
+    const countFilters = { ...filters, snoozed: 'active' };
+    const { conditions, params } = buildTaskListFilters(companyId, countFilters);
     const fromClause = filters.search && String(filters.search).trim()
         ? TASK_LIST_FROM
         : 'FROM tasks t';
@@ -654,7 +664,7 @@ async function createTask(companyId, payload, client = null) {
     return getTaskById(companyId, rows[0].id, client);
 }
 
-/** Patch description / owner_user_id / due_at / status. */
+/** Patch description / owner_user_id / due_at / snoozed_until / status. */
 async function updateTask(companyId, taskId, patch = {}, client = null) {
     requireCompanyId(companyId);
     const query = queryFor(client, db);
@@ -675,6 +685,10 @@ async function updateTask(companyId, taskId, patch = {}, client = null) {
         params.push(patch.due_at);
         sets.push(`due_at = $${params.length}::timestamptz`);
     }
+    if (patch.snoozed_until !== undefined) {
+        params.push(patch.snoozed_until);
+        sets.push(`snoozed_until = $${params.length}::timestamptz`);
+    }
     if (patch.status !== undefined) {
         params.push(patch.status);
         sets.push(`status = $${params.length}`);
@@ -690,6 +704,13 @@ async function updateTask(companyId, taskId, patch = {}, client = null) {
     );
     if (rows.length === 0) return null;
     return getTaskById(companyId, taskId, client);
+}
+
+/** Hide a task until a timestamp, or wake it now with null. Its due_at is untouched. */
+async function snoozeTask(companyId, taskId, snoozedUntil, client = null) {
+    return updateTask(companyId, taskId, {
+        snoozed_until: snoozedUntil || null,
+    }, client);
 }
 
 /** Clear the legacy timeline flag after its final open task is completed. */
@@ -743,6 +764,7 @@ module.exports = {
     countAppTasksCreatedToday,
     createTask,
     updateTask,
+    snoozeTask,
     clearTimelineActionRequiredIfNoOpenTasks,
     deleteTask,
 };

@@ -133,6 +133,7 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
         expect(sql).toMatch(/SELECT COUNT\(\*\)::int AS count FROM tasks t WHERE/);
         expect(sql).not.toMatch(/t\.owner_user_id = \$/);
         expect(sql).toMatch(/t\.status = \$/);
+        expect(sql).toContain('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
         expect(params).toContain('open');
     });
 
@@ -158,13 +159,19 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ total: 0 }] })
             .mockResolvedValueOnce({ rows: [] });
-        await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks?status=open');
+        await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] }))
+            .get('/api/tasks?status=open&snoozed=active');
         const listSql = mockQuery.mock.calls[1][0];
         mockQuery.mockClear();
         mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
         await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks/count');
         const countSql = mockQuery.mock.calls[0][0];
-        for (const frag of ['t.company_id = $1', 't.owner_user_id = $2', 't.status = $3']) {
+        for (const frag of [
+            't.company_id = $1',
+            't.owner_user_id = $2',
+            't.status = $3',
+            '(t.snoozed_until IS NULL OR t.snoozed_until <= now())',
+        ]) {
             expect(listSql).toContain(frag);
             expect(countSql).toContain(frag);
         }
@@ -228,16 +235,17 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
         expect(sql).toMatch(/t\.company_id = \$1/);
     });
 
-    test('no parent_type param → SQL byte-identical to today (TC-WS-02 drift guard)', async () => {
+    test('no parent_type param → active-only SQL remains pinned (TC-WS-02 drift guard)', async () => {
         mockQuery.mockResolvedValueOnce({ rows: [{ count: 1 }] });
         await request(makeApp()).get('/api/tasks/count');
         const [sql, params] = mockQuery.mock.calls[0];
-        // Pinned byte-for-byte to the pre-change (TASKS-COUNT-BADGE-001) manager SQL.
+        // Pinned byte-for-byte so the badge cannot regress to counting snoozed tasks.
         expect(sql).toBe(
             "SELECT COUNT(*)::int AS count FROM tasks t WHERE t.company_id = $1 AND " +
             "(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR " +
             "t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL OR " +
-            "(t.thread_id IS NOT NULL AND t.created_by IN ('user', 'agent'))) AND t.status = $2"
+            "(t.thread_id IS NOT NULL AND t.created_by IN ('user', 'agent'))) AND t.status = $2 " +
+            "AND (t.snoozed_until IS NULL OR t.snoozed_until <= now())"
         );
         expect(params).toEqual([COMPANY, 'open']);
     });
@@ -447,6 +455,49 @@ describe('PATCH /:id — edit / complete / snooze', () => {
         const res = await request(makeApp()).patch('/api/tasks/7').send({ status: 'archived' });
         expect(res.status).toBe(400);
         expect(res.body.error.code).toBe('INVALID_STATUS');
+    });
+
+    test('snooze sets snoozed_until without changing due_at', async () => {
+        const dueAt = '2026-08-14T21:00:00.000Z';
+        const snoozedUntil = '2026-08-15T13:00:00.000Z';
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 7, owner_user_id: ME, author_user_id: ME, due_at: dueAt }] })
+            .mockResolvedValueOnce({ rows: [{ id: 7 }] })
+            .mockResolvedValueOnce({ rows: [{ id: 7, due_at: dueAt, snoozed_until: snoozedUntil }] });
+
+        const res = await request(makeApp()).patch('/api/tasks/7').send({ snoozed_until: snoozedUntil });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.task).toMatchObject({ due_at: dueAt, snoozed_until: snoozedUntil });
+        const [sql, params] = mockQuery.mock.calls[1];
+        expect(sql).toContain('UPDATE tasks SET snoozed_until = $3::timestamptz');
+        expect(sql).not.toMatch(/SET[\s\S]*due_at/);
+        expect(sql).toContain('WHERE company_id = $1 AND id = $2');
+        expect(params).toEqual([COMPANY, '7', snoozedUntil]);
+    });
+
+    test.each([null, ''])('un-snooze accepts %p and stores NULL', async (input) => {
+        const dueAt = '2026-08-14T21:00:00.000Z';
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 7, owner_user_id: ME, author_user_id: ME, due_at: dueAt }] })
+            .mockResolvedValueOnce({ rows: [{ id: 7 }] })
+            .mockResolvedValueOnce({ rows: [{ id: 7, due_at: dueAt, snoozed_until: null }] });
+
+        const res = await request(makeApp()).patch('/api/tasks/7').send({ snoozed_until: input });
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.task).toMatchObject({ due_at: dueAt, snoozed_until: null });
+        expect(mockQuery.mock.calls[1][1]).toEqual([COMPANY, '7', null]);
+    });
+
+    test('invalid snoozed_until → 400 without a write', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, owner_user_id: ME, author_user_id: ME }] });
+
+        const res = await request(makeApp()).patch('/api/tasks/7').send({ snoozed_until: 'not-a-date' });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_SNOOZED_UNTIL');
+        expect(mockQuery).toHaveBeenCalledTimes(1);
     });
 
     test('done sets completed_at; returns updated task', async () => {
