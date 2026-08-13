@@ -158,7 +158,9 @@ Read and follow instructions in: `docs/agents/agent-04-test-cases.md`
 
 **Expected output:**
 - Test cases with priorities (P0-P3)
-- Test types (unit / integration / E2E)
+- Test types (unit / integration / E2E) — **every user-facing case MUST name the `e2e/`
+  Playwright test to write or the spec+page-object to extend (see "E2E on staging" below),
+  tagged `@p0` when deploy-critical**
 - File for `Docs/test-cases/[feature-id].md`
 
 **After completion:** Save to `Docs/test-cases/`.
@@ -200,8 +202,9 @@ Per `gpt-implementer.md`:
 - Compose a SHORT brief (pointers to spec/files, scope, acceptance criteria, verify commands).
 - For M/L tasks: plan-first turn (GPT replies with a plan, you approve/adjust), then implement.
 - Invoke `codex exec` (workspace-write, `-C` this worktree); capture the `session id`.
-- GPT writes the code AND the Jest tests (the 6a/6b agent roles below collapse into GPT's session),
-  runs build/tests itself, and reports in the fixed format.
+- GPT writes the code AND the tests — Jest units AND the `e2e/` Playwright case for any
+  user-facing case (new or extended, per "E2E on staging"; Claude adds the `data-testid`
+  hooks when the surface is Claude's) — runs build/tests itself, and reports in the fixed format.
 
 ### 6-Review: Claude Reviewer
 
@@ -316,6 +319,38 @@ Print a structured completion report:
 
 ---
 
+## E2E on staging — MANDATORY (owner directive 2026-08-13)
+
+Same standing rule as tandem — it applies to this pipeline too. Full canon:
+`.claude/skills/tandem/SKILL.md` §"E2E on staging"; standing memory
+`e2e-coverage-on-touch.md`. Jest proves the units in isolation; the `e2e/` Playwright
+suite proves the case works end-to-end through the deployed app on **staging**
+(`docs/specs/E2E-REGRESSION-001.md`).
+
+- **No user-facing case ships uncovered.** A NEW case (flow / screen / state / FSM
+  transition / RBAC-gated visibility / customer-send) ships WITH a Playwright test in
+  `e2e/`; a TOUCHED existing case backfills — extend the covering spec, or write it now
+  if none exists. Coverage is currently sparse, so touching a case is the trigger to
+  close its gap, never "later." Exempt only when there is no user-observable behavior
+  (say "no E2E impact — <why>"); a backend capability with an API surface still earns an
+  API-level E2E (`e2e/fixtures/api.ts`).
+- **Who does what:** the **Test Cases agent (Step 4)** names the `e2e/` case to write or
+  the spec+page-object to extend, `@p0` when deploy-critical; the **GPT Implementer
+  (Step 6)** authors/extends `e2e/tests/*.spec.ts` + page-objects (`e2e/pages/`) + REST
+  fixtures (`e2e/fixtures/`) alongside the Jest tests; **Claude** adds the `data-testid`
+  hooks the E2E must drive when the frontend surface is Claude's. Reuse the harness canon,
+  don't reinvent (login-once→storageState, REST + `RUN_ID` setup/teardown, getByRole/
+  Label/Text + testid, creds via env).
+- **Gate (before prod):** the case runs GREEN against staging after the master→staging
+  auto-deploy — `set -a && . e2e/.env.local && set +a && cd e2e && npm run smoke` (`@p0`)
+  or `npm test` — recorded in the spec's Verification section (run command + pass/skip/fail
+  counts + the negative control: break the case → E2E red), same as Jest. `e2e/.env.local`
+  (test creds) is the owner's; if absent, ASK — do not skip the gate. A case never run
+  green on staging is not done. Frontend form-jitter (Radix scrim / SSE re-mount) is fixed
+  frontend-side (stable testid + a "settled" signal), NOT with test-side click hacks.
+
+---
+
 ## Regression Handling
 
 If tests fail during implementation:
@@ -358,6 +393,7 @@ If tests fail during implementation:
 - [ ] Step 5: Planner done, tasks.md updated
 - [ ] Step 6: All tasks implemented (Implementer → Tester → Reviewer)
 - [ ] Step 7: Plan verification passed
+- [ ] E2E on staging: feature's `e2e/` case (new/extended) run GREEN vs staging before prod
 - [ ] Step 8: changelog.md updated
 - [ ] Step 9: Project Spec Updater done, project-spec.md updated
 - [ ] Step 10: Final report generated

@@ -23,9 +23,10 @@ The user's feature request: `$ARGUMENTS`
 - Current-state UX MAP (which components/patterns/endpoints already exist, file:line) so
   Claude can design against reality — but NOT the final visual design, look, or markup.
 - Spec DRAFTS, task breakdowns, effort estimates, risk lists.
-- ALL backend code + ALL tests, and frontend DATA plumbing (types, API clients, hooks) —
-  the logic layer. NOT the presentational components/markup (Claude's). All builds/test
-  runs inside its session.
+- ALL backend code + ALL tests — Jest units AND the `e2e/` Playwright case coverage (see
+  **E2E on staging**) — and frontend DATA plumbing (types, API clients, hooks) — the logic
+  layer. NOT the presentational components/markup (Claude's). All builds/test runs inside
+  its session.
 - Mechanical decisions (naming, file placement, minor API shapes) — it decides and
   RECORDS them in a DECISIONS section for your review; it does not ask.
 - Docs DRAFTS of every durable artifact (see **Durable artifacts** below): the spec
@@ -129,7 +130,9 @@ and return a current-state map (files/flows, existing components/patterns, file:
 (b) sketch the backend/data implementation (endpoints, data shape, reuse-not-duplicate),
 (c) surface the conceptual forks it sees, (d) the **MCP parity** check (see the section
 below) — does this touch a CRM capability, readable field, permission, FSM/status, or a
-shared service the ChatGPT connector reuses, (e) list DECISIONS NEEDED / RISKS / QUESTIONS.
+shared service the ChatGPT connector reuses, (e) the **E2E coverage** check — does an
+`e2e/` spec already cover this case (which `tests/*.spec.ts` + page-object) to EXTEND, or
+is it a gap to fill (see **E2E on staging**), (f) list DECISIONS NEEDED / RISKS / QUESTIONS.
 Do NOT ask Codex for the visual mockup — the design is yours.
 
 **Your move — design the UX yourself.** From Codex's current-state map, YOU work out the
@@ -153,13 +156,16 @@ Skip Turn 2 for S-size tasks — fold the plan into Turn 1.
 ### Phase 2 — Implement (Codex backend, YOU frontend; you gate per task)
 Split the build along the ownership line and run the two halves in PARALLEL — they
 rarely touch the same files:
-- **Codex (its session):** backend routes/services/db, data hooks/types, and ALL tests,
-  task-by-task; applies patches, runs its own verify (build + jest), reports per the
-  contract. Tell it plainly in the brief: "frontend/UI is Claude's — do not create or
-  edit .tsx/presentational files or the mockup."
+- **Codex (its session):** backend routes/services/db, data hooks/types, and ALL tests —
+  Jest units AND the `e2e/` Playwright case(s) for this feature, new or extended per
+  **E2E on staging** — task-by-task; applies patches, runs its own verify (build + jest),
+  reports per the contract. Tell it plainly in the brief: "frontend/UI is Claude's — do
+  not create or edit .tsx/presentational files or the mockup."
 - **You (in parallel):** write the presentational frontend yourself — the components,
   markup, styling, and interaction from your Phase-1 design, wired to the data contract
   you gave Codex. Match the surrounding components' idiom; run `npm run build` yourself.
+  Expose stable `data-testid` on the nodes the E2E must drive (create/submit/select/status
+  controls) — the E2E's frontend hooks are yours (**E2E on staging**).
 This parallelism is a feature: while Codex writes the backend + tests, you build the UI,
 so the feature converges in one pass. Watch for the false-"completed" notification
 (L-017) — poll `ps`/log growth before concluding Codex is done.
@@ -205,6 +211,9 @@ directive 2026-07-19; leaked sessions pile up and eat the Mac's RAM):**
 ### Phase 3 — Acceptance, docs, report (you; small)
 - Full targeted regression sweep (one jest regex over the affected domains); include the
   MCP suite whenever a shared CRM service/route/permission/schema was touched (**MCP parity**).
+- Run the feature's **E2E green against staging** before any prod deploy — the pre-deploy
+  gate (**E2E on staging**): the new/extended case for anything user-facing this feature
+  built or touched, recorded in the spec's Verification with its run command + result.
 - **Durable artifacts (MANDATORY — see the section below):** Codex drafts the
   requirements/architecture/changelog blocks and the spec incl. its Verification
   section (resume); you red-pen and OWN the final spec wording, confirm the
@@ -266,6 +275,58 @@ the spec). No impact → say "no MCP impact" and move on.
 A capability change with no matching MCP spec update (tool inventory + consent-tier counts)
 is undone — the spec is the parity source of truth.
 
+## E2E on staging — MANDATORY (owner directive 2026-08-13: every user-facing case earns a Playwright test)
+
+The pre-deploy safety net is the `e2e/` Playwright suite that drives **staging** in a
+real browser ([[e2e-regression-001]], spec `docs/specs/E2E-REGRESSION-001.md`). Jest +
+the sabotage gate prove the units in isolation; the E2E proves **the case actually works
+end-to-end through the deployed app**. Both are required — neither substitutes for the
+other, and the automated E2E is what makes the previously-manual frontend check *durable*
+(you still eyeball the preview during dev, but you leave an E2E so the case is covered
+next time, not re-verified by hand).
+
+**The rule — no user-facing case ships uncovered:**
+- **New case** (a new flow, screen, state, status/FSM transition, permission-gated
+  visibility, or customer-send path) → it ships WITH an E2E test in `e2e/` that exercises
+  it against staging, in the SAME feature/push.
+- **Touched existing case** → coverage is currently sparse, so **backfill by touch**: if
+  an E2E already covers the case, EXTEND/update it for your change; if none does, WRITE
+  it now. Touching a case is the trigger to close its E2E gap — never leave it "for later."
+- The ONLY exempt change is one with **no user-observable behavior** (pure internal
+  refactor, log-only, comment/copy-nudge already covered). State "no E2E impact — <why>"
+  and move on. A backend capability with an API surface still earns an **API-level** E2E
+  (`e2e/fixtures/api.ts`), not a browser one.
+
+**Ownership (same seam as the rest of tandem):**
+- **Codex authors/extends the E2E** — `e2e/tests/<domain>.spec.ts`, the page-objects in
+  `e2e/pages/`, and the REST setup/teardown in `e2e/fixtures/` (E2E is test code → Codex,
+  per the division of labor). Brief it with the case, the acceptance assertions, the
+  reused page-object/fixture, and the `@p0` tag when the case is deploy-critical. Harness
+  canon is fixed — reuse it, don't reinvent: `e2e/` at root, login-once-per-role →
+  `storageState`, REST + `RUN_ID`-prefixed setup/teardown (UI only for the flow under
+  test — [[prefer-api-over-ui-automation]]), `getByRole/Label/Text` + `data-testid`,
+  creds only via env.
+- **You supply the frontend test-hooks** — any component you build or touch exposes
+  stable `data-testid` on the critical nodes the E2E must drive (create / submit / select
+  / status controls). This is frontend markup = yours. The known create-form jitter (a
+  Radix scrim over interactive nodes; SSE re-mounts) is fixed **frontend-side** — stable
+  testids + a "form-settled" signal — NOT with test-side `dispatchEvent`/force hacks; a
+  surface that can't be driven stably is a frontend defect to fix, not a test to quarantine.
+
+**The gate (Phase 3, yours):** the feature's E2E must run **GREEN against staging** —
+after the master→staging auto-deploy, before any prod deploy ([[prod-deploy-procedure]],
+[[staging-env-001]]). Run: `set -a && . e2e/.env.local && set +a && cd e2e && npm run smoke`
+(`@p0`) or `npm test` (full). The owner holds `e2e/.env.local` (test creds); if it is
+absent, ASK for it rather than skipping the gate. Record the E2E in the spec's
+**Verification** section exactly like jest: the run command + pass/skip/fail counts + the
+negative control (break the case → E2E red). A case whose E2E was never run green on
+staging is NOT done.
+
+**Coverage debt is tracked, never silent:** you inherit a suite with documented gaps
+(quarantined create/detail specs awaiting testids; the job-flow specs). When you touch
+near an uncovered or quarantined case, either close it or state precisely what stays
+uncovered and why — a green run must never imply coverage it does not have.
+
 ## Durable artifacts — MANDATORY (the project must be re-enterable from these alone)
 
 The acceptance test for a finished feature: could someone with no memory of this chat —
@@ -285,7 +346,8 @@ Five in-repo artifacts, **append-only** (never rewrite existing history):
 3. **`docs/specs/<FEATURE-ID>.md`** — THE spec, and the load-bearing artifact. Scope +
    owner decisions + the filled `Tenancy & Roles` table (canon) + a MANDATORY
    **Verification** section:
-   - every test with its EXACT run command (jest worktree form / vitest / build);
+   - every test with its EXACT run command (jest worktree form / vitest / build / the
+     `e2e/` Playwright-vs-staging run per **E2E on staging** — new or extended case);
    - every sabotage control: what you broke → which test went red → restored;
    - the live run results (suite/test counts, pass/fail, exit status).
    Principle: **a test without a recorded run command is undocumented.** The spec — not
