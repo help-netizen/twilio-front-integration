@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CalendarClock, Loader2, ChevronRight, Pencil, Check, X } from 'lucide-react';
+import { CalendarClock, Loader2, ChevronRight, Pencil, Check, X, User, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LocalJob } from '../../services/jobsApi';
 import { rescheduleJob, updateJobLocation } from '../../services/jobsApi';
@@ -78,10 +78,19 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
     const section = variant === 'flat' ? flatSection : sectionCard;
     // The payment card asked for one heading scale across its left column, so in
     // flat mode these labels become the same section heading Description uses.
-    const label: React.CSSProperties = variant === 'flat'
-        ? { fontFamily: 'var(--blanc-font-heading)', fontSize: '15px', fontWeight: 600,
-            letterSpacing: '-0.01em', color: 'var(--blanc-ink-1)', marginBottom: '8px' }
+    const flat = variant === 'flat';
+    const label: React.CSSProperties = flat
+        ? { fontFamily: 'var(--blanc-font-heading)', fontSize: '15px', fontWeight: 500,
+            letterSpacing: '-0.01em', color: 'var(--blanc-ink-1)', marginBottom: '8px',
+            display: 'flex', alignItems: 'center', gap: '7px' }
         : eyebrow;
+    // The rows sit slightly in from their heading so the group reads as one —
+    // the shift alone does it, with no line to eat width on a phone.
+    const row: React.CSSProperties = flat ? { ...infoRow, paddingLeft: '23px' } : infoRow;
+    const indent: React.CSSProperties = flat ? { paddingLeft: '23px' } : {};
+    const icon = flat
+        ? { size: 15, style: { color: 'var(--blanc-ink-3)', flexShrink: 0 } as React.CSSProperties }
+        : null;
     const [showReschedule, setShowReschedule] = useState(false);
     const [rescheduling, setRescheduling] = useState(false);
     const [editingAddress, setEditingAddress] = useState(false);
@@ -197,9 +206,9 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
             {/* ── CONTACT ── */}
             {(customerName || phone || secondaryPhone || email) && (
                 <div style={section}>
-                    <p style={label}>Contact</p>
+                    <p style={label}>{icon && <User size={icon.size} style={icon.style} />}Contact</p>
                     {customerName && (
-                        <div style={infoRow}>
+                        <div style={row}>
                             <span style={infoLabel}>Customer</span>
                             {(contactInfo?.id || job.contact_id) ? (
                                 <button
@@ -217,7 +226,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                         </div>
                     )}
                     {phone && (
-                        <div style={infoRow}>
+                        <div style={row}>
                             <span style={infoLabel}>Phone</span>
                             {/* Masking replaces the number AND the call action — a masked
                                 call is the only dial a masked viewer gets. Messaging is not a
@@ -243,7 +252,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                         </div>
                     )}
                     {secondaryPhone && (
-                        <div style={infoRow}>
+                        <div style={row}>
                             {/* The label sits OUTSIDE the masking wrapper on purpose: masking
                                 collapses both numbers to ONE masked dial, so the stored label
                                 ("Wife", "Office"…) is the only way a masked viewer tells the
@@ -289,7 +298,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                     {job.start_date && (
                         <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
                             <div className="flex items-center justify-between mb-2">
-                                <p style={{ ...label, marginBottom: 0 }}>Schedule</p>
+                                <p style={{ ...label, marginBottom: 0 }}>{icon && <CalendarClock size={icon.size} style={icon.style} />}Schedule</p>
                                 {canReschedule && (
                                     <button
                                         onClick={() => setShowReschedule(true)}
@@ -304,7 +313,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                             </div>
                             <div
                                 className="text-lg leading-tight font-semibold"
-                                style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.03em', color: 'var(--blanc-ink-1)' }}
+                                style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.03em', color: 'var(--blanc-ink-1)', ...indent }}
                             >
                                 {new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                                 {', '}
@@ -322,7 +331,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                     {/* Location — SCHED-ROUTE-001 FR-002/FR-003: clickable Maps link + inline edit */}
                     <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
                         <div className="flex items-center gap-1.5 mb-1">
-                            <p style={{ ...label, marginBottom: 0 }}>Location</p>
+                            <p style={{ ...label, marginBottom: 0 }}>{icon && <MapPin size={icon.size} style={icon.style} />}Location</p>
                             {job.territory && (
                                 <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>· {job.territory}</span>
                             )}

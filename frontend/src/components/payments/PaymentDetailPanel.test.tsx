@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import panelRaw from './PaymentDetailPanel.tsx?raw';
 import identityRaw from './PaymentIdentity.tsx?raw';
 import jobSectionsRaw from './PaymentJobSections.tsx?raw';
+import jobInfoRaw from '../jobs/JobInfoSections.tsx?raw';
 
 /**
  * The payment card is meant to BE the job card minus Finance — not a lookalike.
@@ -50,10 +51,23 @@ describe('payment card parity with the job card', () => {
         expect(panelRaw).toContain('job ? (');
     });
 
-    it('nests the job’s own sections under that title', () => {
-        // Schedule, Location and Contact describe the job above them, and the
-        // indent is what says so — no frame, no repeated heading.
-        expect(panelRaw).toContain('pl-4');
-        expect(panelRaw).toContain('Indented under the job heading');
+    it('shows belonging without spending width on a rail', () => {
+        // A phone cannot afford a 16px gutter down the whole card, so the
+        // secondary headings carry an icon and their rows shift in behind them.
+        expect(panelRaw).not.toContain('border-l');
+        expect(jobInfoRaw).toContain("paddingLeft: '23px'");
+        expect(jobInfoRaw).toContain('<CalendarClock size={icon.size}');
+        expect(jobInfoRaw).toContain('<User size={icon.size}');
+        expect(jobInfoRaw).toContain('<MapPin size={icon.size}');
+    });
+
+    it('keeps secondary headings lighter than the section titles', () => {
+        expect(jobInfoRaw).toContain("fontSize: '15px', fontWeight: 500");
+    });
+
+    it('labels Status and Tags like every other row', () => {
+        expect(jobSectionsRaw).toContain('>Status<');
+        expect(jobSectionsRaw).toContain('>Tags<');
+        expect(jobSectionsRaw.match(/w-\[58px\]/g)?.length).toBeGreaterThanOrEqual(2);
     });
 });

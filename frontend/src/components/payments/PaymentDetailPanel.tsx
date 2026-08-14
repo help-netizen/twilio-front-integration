@@ -62,10 +62,11 @@ export function PaymentDetailPanel({
                 <PaymentJobSection detail={detail} job={job} />
 
                 {job ? (
-                    /* Indented under the job heading: Schedule, Location and Contact
-                       describe THAT job, and the shift says so without drawing a
-                       frame or a rail to say it. */
-                    <div className="space-y-5 border-l pl-4" style={{ borderColor: 'var(--blanc-line)', marginTop: '-4px' }}>
+                    /* No rail and no outer indent: on a phone that column of
+                       whitespace costs more than it explains. Belonging is carried
+                       by the icon-led secondary headings and the rows shifted in
+                       behind them. */
+                    <div className="space-y-5" style={{ marginTop: '-4px' }}>
                         {/* The job card's own sections — flat here, framed there. */}
                         <JobInfoSections
                             job={job}

@@ -49,31 +49,29 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
                 {jobNumber ? `Job #${jobNumber}` : 'Job'}{service ? ` · ${service}` : ''}
             </button>
 
-            {/* Two lines, not one: where the job stands and how it is labelled are
-                separate facts, and running them together made a pill soup where
-                neither could be scanned. */}
+            {/* Status and Tags are rows like Mobile or Location — same label
+                column, same weight. A lone pill under a title looked like a
+                fragment of something else. */}
             {status && (
-                <div className="flex flex-wrap items-center gap-1.5">
+                <div className="flex items-baseline gap-2.5 py-1">
+                    <span className="w-[58px] flex-none text-[12px]" style={{ color: 'var(--blanc-ink-3)' }}>Status</span>
                     <Pill text={status} />
                 </div>
             )}
             {tags.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span
-                        className="text-[10px] font-semibold uppercase"
-                        style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
-                    >
-                        Tags
+                <div className="flex items-baseline gap-2.5 py-1">
+                    <span className="w-[58px] flex-none text-[12px]" style={{ color: 'var(--blanc-ink-3)' }}>Tags</span>
+                    <span className="flex flex-wrap gap-1.5">
+                        {tags.map(tag => (
+                            <span
+                                key={tag.id}
+                                className="inline-flex items-center px-2.5 text-[11px] font-semibold"
+                                style={{ height: 22, borderRadius: 6, background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
+                            >
+                                {tag.name}
+                            </span>
+                        ))}
                     </span>
-                    {tags.map(tag => (
-                        <span
-                            key={tag.id}
-                            className="inline-flex items-center px-2.5 text-[11px] font-semibold"
-                            style={{ height: 22, borderRadius: 6, background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
-                        >
-                            {tag.name}
-                        </span>
-                    ))}
                 </div>
             )}
         </div>
