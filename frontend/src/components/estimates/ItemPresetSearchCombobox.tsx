@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Clock, Layers, Loader2, Plus } from 'lucide-react';
+import { ChevronRight, Clock, Layers, Loader2, Plus, Search } from 'lucide-react';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { FullScreenSearchPicker } from '../shared/FullScreenSearchPicker';
+import { FloatingField } from '../ui/floating-field';
 import { searchEstimateItemPresets, type EstimateItemPreset } from '../../services/estimateItemPresetsApi';
 import {
     listCategoryTree,
@@ -15,6 +16,13 @@ import { categoryPath, categoryPathLabel, flattenCategoryTree } from './priceBoo
 
 interface Props {
     disabled?: boolean;
+    /** Invoice item sheets keep search in the keyboard-aware sheet instead of
+     * opening a third full-screen search layer. */
+    inlineOnMobile?: boolean;
+    /** Render the trigger as the invoice sheet's floating-label search field. */
+    sheetField?: boolean;
+    /** Controls catalog-save copy; custom items remain available without this permission. */
+    catalogCreateAllowed?: boolean;
     /** Called when user picks an existing preset. Combobox passes the full preset. */
     onPickPreset: (preset: EstimateItemPreset) => void | Promise<void>;
     /** Called when user chooses to create a brand-new item. Combobox passes the typed name. */
@@ -49,7 +57,15 @@ function itemAsPreset(item: PriceBookItem): EstimateItemPreset {
     };
 }
 
-export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, onPickGroup }: Props) {
+export function ItemPresetSearchCombobox({
+    disabled,
+    inlineOnMobile = false,
+    sheetField = false,
+    catalogCreateAllowed = true,
+    onPickPreset,
+    onCreateNew,
+    onPickGroup,
+}: Props) {
     const [query, setQuery] = useState('');
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -260,7 +276,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
             {canCreate && (
                 <button type="button" onMouseDown={event => { event.preventDefault(); createNew(); }} onMouseEnter={() => setHighlighted(createOffset)} className="w-full text-left px-4 py-2 text-sm flex items-start gap-2" style={{ background: highlighted === createOffset ? 'rgba(25,25,25,0.06)' : 'transparent' }}>
                     <Plus className="size-4 mt-0.5 shrink-0" style={{ color: 'var(--blanc-job)' }} />
-                    <div className="min-w-0"><div className="font-medium" style={{ color: 'var(--blanc-job)' }}>Create new “{trimmed}”</div><div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Will be saved to the catalog for future estimates</div></div>
+                    <div className="min-w-0"><div className="font-medium" style={{ color: 'var(--blanc-job)' }}>Use custom item “{trimmed}”</div><div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>{catalogCreateAllowed ? 'Save it to the Price Book when the item is added' : 'Add it to this invoice only'}</div></div>
                 </button>
             )}
         </>
@@ -268,7 +284,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
 
     // Mobile: full-screen search (type C) — shared FullScreenSearchPicker (bottom search, no
     // auto-keyboard, clear button). Same list rows as desktop; picking a row closes the picker.
-    if (isMobile) {
+    if (isMobile && !inlineOnMobile) {
         return (
             <>
                 <button
@@ -295,21 +311,39 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
     }
 
     return (
-        <div ref={boxRef} className="relative w-full max-w-md">
+        <div ref={boxRef} className={`relative w-full ${sheetField ? '' : 'max-w-md'}`}>
             <div className="relative">
-                <Plus className="absolute left-3 top-1/2 -translate-y-1/2 size-4 pointer-events-none" style={{ color: 'var(--blanc-accent)' }} />
-                <input
-                    type="text"
-                    value={query}
-                    disabled={disabled}
-                    placeholder={PLACEHOLDER}
-                    title="Search all saved items, or browse categories and subcategories"
-                    onFocus={() => setOpen(true)}
-                    onClick={() => { if (!open) setOpen(true); }}
-                    onChange={event => { setQuery(event.target.value); if (!open) setOpen(true); }}
-                    onKeyDown={handleKeyDown}
-                    className="h-9 w-full rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-accent-soft)] pl-9 pr-3 text-sm text-[var(--blanc-ink-1)] outline-none placeholder:text-[var(--blanc-accent)] focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
-                />
+                {sheetField ? (
+                    <>
+                        <FloatingField
+                            label="Search Price Book"
+                            value={query}
+                            disabled={disabled}
+                            onFocus={() => setOpen(true)}
+                            onClick={() => { if (!open) setOpen(true); }}
+                            onChange={event => { setQuery(event.target.value); if (!open) setOpen(true); }}
+                            onKeyDown={handleKeyDown}
+                            className="pr-10"
+                        />
+                        <Search className="pointer-events-none absolute right-3.5 top-1/2 size-4 -translate-y-1/2 text-[var(--blanc-ink-3)]" />
+                    </>
+                ) : (
+                    <>
+                        <Plus className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" style={{ color: 'var(--blanc-accent)' }} />
+                        <input
+                            type="text"
+                            value={query}
+                            disabled={disabled}
+                            placeholder={PLACEHOLDER}
+                            title="Search all saved items, or browse categories and subcategories"
+                            onFocus={() => setOpen(true)}
+                            onClick={() => { if (!open) setOpen(true); }}
+                            onChange={event => { setQuery(event.target.value); if (!open) setOpen(true); }}
+                            onKeyDown={handleKeyDown}
+                            className="h-9 w-full rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-accent-soft)] pl-9 pr-3 text-sm text-[var(--blanc-ink-1)] outline-none placeholder:text-[var(--blanc-accent)] focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
+                        />
+                    </>
+                )}
             </div>
 
             {open && (

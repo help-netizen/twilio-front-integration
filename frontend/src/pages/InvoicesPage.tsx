@@ -9,7 +9,7 @@ import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
-import type { Invoice, InvoiceCreateData } from '../services/invoicesApi';
+import type { HydratedInvoice, Invoice, InvoiceCreateData } from '../services/invoicesApi';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ function formatDate(value: string | null): string {
 export function InvoicesPage() {
     const page = useInvoices();
     const [editorOpen, setEditorOpen] = useState(false);
-    const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+    const [editingInvoice, setEditingInvoice] = useState<HydratedInvoice | null>(null);
     const [sendDialogOpen, setSendDialogOpen] = useState(false);
     const [sendInvoiceId, setSendInvoiceId] = useState<number | null>(null);
     const [searchParams, setSearchParams] = useSearchParams();
@@ -73,14 +73,19 @@ export function InvoicesPage() {
         setEditorOpen(true);
     };
 
-    const handleEdit = (invoice: Invoice) => {
-        setEditingInvoice(invoice);
-        setEditorOpen(true);
+    const handleEdit = async (invoice: Invoice) => {
+        try {
+            const hydrated = await page.hydrateInvoice(invoice);
+            setEditingInvoice(hydrated);
+            setEditorOpen(true);
+        } catch {
+            // Never open an edit form whose item contract failed to hydrate.
+        }
     };
 
     const handleEditorSave = async (data: InvoiceCreateData) => {
         if (editingInvoice) {
-            await page.handleUpdateInvoice(editingInvoice.id, data);
+            await page.handleUpdateInvoice(editingInvoice.id, data, editingInvoice);
         } else {
             await page.handleCreateInvoice(data);
         }
@@ -163,6 +168,7 @@ export function InvoicesPage() {
                                         key={inv.id}
                                         className={`cursor-pointer ${page.selectedInvoice?.id === inv.id ? 'blanc-tile-row-selected' : ''}`}
                                         onClick={() => page.selectInvoice(inv.id)}
+                                        data-testid="invoice-list-row"
                                     >
                                         <td className="px-4 py-2 font-mono text-xs">{inv.invoice_number}</td>
                                         <td className="px-4 py-2 truncate max-w-[180px]">{inv.contact_name || inv.title || '-'}</td>
@@ -182,7 +188,7 @@ export function InvoicesPage() {
                                                     </Button>
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
-                                                    <DropdownMenuItem onClick={() => handleEdit(inv)}>Edit</DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => void handleEdit(inv)}>Edit</DropdownMenuItem>
                                                     {inv.status === 'draft' && (
                                                         <DropdownMenuItem onClick={() => handleSend(inv.id)}>Send</DropdownMenuItem>
                                                     )}

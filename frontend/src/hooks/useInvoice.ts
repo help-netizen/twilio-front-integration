@@ -147,6 +147,15 @@ export function useInvoice(invoiceId: number | null, options: UseInvoiceOptions 
         eventsError: eventsQuery.error,
         paymentsError: capabilities.canViewPayments ? paymentsQuery.error : null,
         save: updateMutation.mutateAsync,
-        refresh: () => queryClient.invalidateQueries({ queryKey: invoiceKey }),
+        refresh: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: invoiceKey }),
+                queryClient.invalidateQueries({ queryKey: ['invoice-events', invoiceId] }),
+                ...(paymentFetchAllowed
+                    ? [queryClient.invalidateQueries({ queryKey: ['invoice-payments', invoiceId] })]
+                    : []),
+            ]);
+            return queryClient.getQueryData<HydratedInvoice>(invoiceKey) ?? null;
+        },
     };
 }

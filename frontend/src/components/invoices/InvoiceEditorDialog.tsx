@@ -1,71 +1,48 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Loader2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ChevronDown, Loader2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { aiDraftEstimate } from '../../services/estimatesApi';
-import { useIsMobile } from '../../hooks/useIsMobile';
-import { FullScreenTextEditor } from '../shared/FullScreenTextEditor';
-import {
-    Dialog,
-    DialogContent,
-    DialogTitle,
-    DialogDescription,
-    DialogPanelHeader,
-    DialogBody,
-    DialogPanelFooter,
-} from '../ui/dialog';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { FloatingField } from '../ui/floating-field';
-import { Checkbox } from '../ui/checkbox';
-import { MoneyInput } from '../ui/MoneyInput';
-import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
-import { FloatingSelect } from '../ui/floating-select';
-import { SelectItem } from '../ui/select';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
-import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
-import { OrderListSection, makeOrderRow, serializeOrderList, type OrderRow } from '../estimates/OrderListSection';
+import { expandGroup } from '../../services/priceBookApi';
 import {
     createEstimateItemPreset,
     recordEstimateItemPresetUsage,
     type EstimateItemPreset,
 } from '../../services/estimateItemPresetsApi';
-import type { Invoice, InvoiceCreateData } from '../../services/invoicesApi';
+import type { HydratedInvoice, InvoiceCreateData } from '../../services/invoicesApi';
+import { useAuthz } from '../../hooks/useAuthz';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { FullScreenTextEditor } from '../shared/FullScreenTextEditor';
+import {
+    Dialog,
+    DialogBody,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogPanelFooter,
+    DialogPanelHeader,
+    DialogTitle,
+} from '../ui/dialog';
+import { Button } from '../ui/button';
+import { FloatingField, FloatingLabel } from '../ui/floating-field';
+import { MoneyInput } from '../ui/MoneyInput';
+import { OverlayClose } from '../ui/OverlayClose';
+import {
+    OrderListSection,
+    makeOrderRow,
+    serializeOrderList,
+    type OrderRow,
+} from '../estimates/OrderListSection';
+import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
+import { InvoiceItemSheet, type InvoiceItemDraft } from './InvoiceItemSheet';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-interface LineItem {
+interface LineItem extends InvoiceItemDraft {
     key: string;
-    name: string;
-    description: string;
-    quantity: string;
-    unit_price: string;
-    taxable: boolean;
 }
-
-const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-// OB-24: new items default to taxable (invisible false default read as "tax broken").
-// Price-book picks keep their catalog default; the row checkbox is the override.
-const emptyItem = (): LineItem => ({ key: newKey(), name: '', description: '', quantity: '1', unit_price: '0', taxable: true });
-
-function money(value: number | string | null | undefined): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function amount(item: LineItem): number {
-    return (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
-}
-
-// Border-only, near-white cell input — sits on the panel surface, no clashing bg.
-const CELL_INPUT =
-    'h-9 rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent text-[14px] text-[var(--blanc-ink-1)] outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)]';
-
-// ── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    invoice: Invoice | null;
+    invoice: HydratedInvoice | null;
     defaultJobId?: number;
     defaultLeadId?: number;
     defaultContactId?: number;
@@ -74,7 +51,57 @@ interface Props {
     onSave: (data: InvoiceCreateData) => Promise<void>;
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+const emptyItem = (): LineItem => ({
+    key: newKey(),
+    name: '',
+    description: '',
+    quantity: '1',
+    unit_price: '0',
+    taxable: true,
+});
+
+function money(value: number | string | null | undefined): string {
+    return '$' + Number(value || 0).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+}
+
+function amount(item: InvoiceItemDraft): number {
+    return (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
+}
+
+function invoiceItems(invoice: HydratedInvoice | null): LineItem[] {
+    return (invoice?.items ?? []).map(item => ({
+        key: newKey(),
+        name: item.name,
+        description: item.description || '',
+        quantity: String(item.quantity ?? '1'),
+        unit_price: String(item.unit_price ?? '0'),
+        taxable: !!item.taxable,
+    }));
+}
+
+function editorSnapshot(input: {
+    summary: string;
+    items: LineItem[];
+    taxRate: string;
+    discountType: 'fixed' | 'percentage' | null;
+    discountValue: string;
+    aiReport: string;
+    orderList: OrderRow[];
+}): string {
+    return JSON.stringify({
+        summary: input.summary,
+        items: input.items.map(({ key: _key, ...item }) => item),
+        taxRate: input.taxRate,
+        discountType: input.discountType,
+        discountValue: input.discountValue,
+        aiReport: input.aiReport,
+        orderList: input.orderList.map(({ key: _key, ...row }) => row),
+    });
+}
 
 export function InvoiceEditorDialog({
     open,
@@ -88,147 +115,175 @@ export function InvoiceEditorDialog({
     onSave,
 }: Props) {
     const isEdit = !!invoice;
+    const isMobile = useIsMobile();
+    const { hasPermission } = useAuthz();
+    const canManagePriceBook = hasPermission('price_book.manage');
+    const baseline = useRef('');
 
-    // Summary (stored as `notes` on the invoice — same as the detail panel)
     const [summary, setSummary] = useState('');
-    const [summaryOpen, setSummaryOpen] = useState(false);
     const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
     const [summaryDraft, setSummaryDraft] = useState('');
-
     const [items, setItems] = useState<LineItem[]>([]);
-    const [taxRate, setTaxRate] = useState<string>('0');
-    // OB-43: $ / % toggle mirrors EstimateEditorDialog. Invoices persist only the
-    // computed discount_amount (no discount_type column) — % is an input mode.
+    const [taxRate, setTaxRate] = useState('0');
     const [discountType, setDiscountType] = useState<'fixed' | 'percentage' | null>(null);
-    const [discountValue, setDiscountValue] = useState<string>('0');
-
-    // Aside (document settings) — Due date is derived from the invoice template's
-    // `default_due_days` on the backend, so it is not editable here at create time.
-    const [paymentTerms, setPaymentTerms] = useState<string>('');
-
+    const [discountValue, setDiscountValue] = useState('0');
     const [saving, setSaving] = useState(false);
     const [aiReport, setAiReport] = useState('');
-    // AI-GEN-LOG-002: remember the generation this editor content came from.
     const [aiGenerationId, setAiGenerationId] = useState<number | null>(null);
     const [aiGenerating, setAiGenerating] = useState(false);
+    const [reportToEstimateOff, setReportToEstimateOff] = useState(false);
+    const [reportEditorOpen, setReportEditorOpen] = useState(false);
     const [orderList, setOrderList] = useState<OrderRow[]>([]);
-
-    // Item dialog (for "Create new" path from combobox)
-    const [itemDialogOpen, setItemDialogOpen] = useState(false);
+    const [itemSheetOpen, setItemSheetOpen] = useState(false);
     const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
     const [itemDraft, setItemDraft] = useState<LineItem>(emptyItem());
     const [savePresetOnNextItem, setSavePresetOnNextItem] = useState(false);
+    const [discardOpen, setDiscardOpen] = useState(false);
 
-    // Reset on open
     useEffect(() => {
         if (!open) return;
-        setSummary(invoice?.notes || '');
-        setSummaryOpen(false);
-        setTaxRate(invoice?.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
+        const nextItems = invoiceItems(invoice);
         const initialDiscount = Number(invoice?.discount_amount) || 0;
-        setDiscountType(initialDiscount > 0 ? 'fixed' : null);
-        setDiscountValue(initialDiscount > 0 ? String(initialDiscount) : '0');
-        setPaymentTerms(invoice?.payment_terms || '');
-        setItems((invoice?.items || []).map(item => ({
-            key: newKey(),
-            name: item.name,
-            description: item.description || '',
-            quantity: String(item.quantity ?? '1'),
-            unit_price: String(item.unit_price ?? '0'),
-            taxable: !!item.taxable,
-        })));
-        setOrderList((invoice?.order_list || []).map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))));
+        const nextDiscountType = initialDiscount > 0 ? 'fixed' as const : null;
+        const nextDiscountValue = initialDiscount > 0 ? String(initialDiscount) : '0';
+        const nextTaxRate = invoice?.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0';
+        const nextOrderList = (invoice?.order_list || []).map(part => (
+            makeOrderRow(part.part_number, part.part_name, String(part.quantity))
+        ));
+        const nextSummary = invoice?.notes || '';
+
+        setSummary(nextSummary);
+        setSummaryDialogOpen(false);
+        setItems(nextItems);
+        setTaxRate(nextTaxRate);
+        setDiscountType(nextDiscountType);
+        setDiscountValue(nextDiscountValue);
         setAiReport('');
         setAiGenerationId(null);
-    }, [open, invoice]);
+        setOrderList(nextOrderList);
+        setItemSheetOpen(false);
+        setDiscardOpen(false);
+        baseline.current = editorSnapshot({
+            summary: nextSummary,
+            items: nextItems,
+            taxRate: nextTaxRate,
+            discountType: nextDiscountType,
+            discountValue: nextDiscountValue,
+            aiReport: '',
+            orderList: nextOrderList,
+        });
+    }, [invoice, open]);
 
-    // ── Totals ───────────────────────────────────────────────────────────────
+    const currentSnapshot = useMemo(() => editorSnapshot({
+        summary,
+        items,
+        taxRate,
+        discountType,
+        discountValue,
+        aiReport,
+        orderList,
+    }), [aiReport, discountType, discountValue, items, orderList, summary, taxRate]);
+    const isDirty = open && currentSnapshot !== baseline.current;
 
     const subtotal = useMemo(() => items.reduce((sum, item) => sum + amount(item), 0), [items]);
     const rawDiscountValue = Number(discountValue) || 0;
-    const discountVal = discountType === 'percentage'
+    const discountAmount = discountType === 'percentage'
         ? subtotal * Math.min(Math.max(rawDiscountValue, 0), 100) / 100
         : discountType === 'fixed'
             ? rawDiscountValue
             : 0;
-    const taxableSubtotal = items.filter(item => item.taxable).reduce((sum, item) => sum + amount(item), 0);
-    const taxAmount = Math.max(taxableSubtotal - discountVal, 0) * ((Number(taxRate) || 0) / 100);
-    const total = subtotal - discountVal + taxAmount;
-    const discountError = discountType === 'fixed' && discountVal > subtotal
+    const taxableSubtotal = items
+        .filter(item => item.taxable)
+        .reduce((sum, item) => sum + amount(item), 0);
+    const taxAmount = Math.max(taxableSubtotal - discountAmount, 0) * ((Number(taxRate) || 0) / 100);
+    const total = subtotal - discountAmount + taxAmount;
+    const discountError = discountType === 'fixed' && discountAmount > subtotal
         ? 'Discount cannot exceed subtotal'
         : discountType === 'percentage' && rawDiscountValue > 100
             ? 'Discount percentage cannot exceed 100'
             : '';
     const canSave = (items.length > 0 || summary.trim().length > 0) && !discountError;
 
-    // ── Summary handlers ─────────────────────────────────────────────────────
+    const requestOpenChange = (nextOpen: boolean) => {
+        if (nextOpen) {
+            onOpenChange(true);
+            return;
+        }
+        if (saving) return;
+        if (isDirty) {
+            setDiscardOpen(true);
+            return;
+        }
+        onOpenChange(false);
+    };
 
-    const openSummaryDialog = () => {
+    const openSummary = () => {
         setSummaryDraft(summary);
         setSummaryDialogOpen(true);
     };
-    const [reportToEstimateOff, setReportToEstimateOff] = useState(false);
-    const isMobile = useIsMobile();
-    const [reportEditorOpen, setReportEditorOpen] = useState(false);
 
     const handleAiGenerate = async () => {
-        const text = aiReport.trim();
-        if (!text || aiGenerating) return;
+        const report = aiReport.trim();
+        if (!report || aiGenerating) return;
         setAiGenerating(true);
         setReportToEstimateOff(false);
         try {
-            const draft = await aiDraftEstimate(text, defaultJobId);
+            const draft = await aiDraftEstimate(report, defaultJobId);
             if (draft.generation_id) setAiGenerationId(draft.generation_id);
-            if (draft.summary) { setSummary(draft.summary); setSummaryOpen(true); }
+            if (draft.summary) setSummary(draft.summary);
             if (draft.line_items?.length) {
-                setItems(prev => [
-                    ...prev,
-                    ...draft.line_items.map(li => ({
+                setItems(previous => [
+                    ...previous,
+                    ...draft.line_items.map(item => ({
                         key: newKey(),
-                        name: li.title,
-                        description: li.description || '',
-                        quantity: String(li.qty || 1),
-                        unit_price: String(li.unit_price ?? 0),
+                        name: item.title,
+                        description: item.description || '',
+                        quantity: String(item.qty || 1),
+                        unit_price: String(item.unit_price ?? 0),
                         taxable: true,
                     })),
                 ]);
             }
             if (draft.order_list?.length) {
-                setOrderList(prev => [
-                    ...prev,
-                    ...draft.order_list!.map(p => makeOrderRow(p.part_number, p.part_name, String(p.quantity))),
+                setOrderList(previous => [
+                    ...previous,
+                    ...draft.order_list!.map(part => (
+                        makeOrderRow(part.part_number, part.part_name, String(part.quantity))
+                    )),
                 ]);
             }
-            const created = draft.line_items.filter(li => li.created).length;
+            const created = draft.line_items.filter(item => item.created).length;
             toast.success(
-                `Draft generated${created ? ` · ${created} new price-book item${created > 1 ? 's' : ''}` : ''} — review and Save`,
+                `Draft generated${created ? ` · ${created} new price-book item${created > 1 ? 's' : ''}` : ''} — review and save`,
             );
             setAiReport('');
-        } catch (err) {
-            if ((err as { code?: string }).code === 'app_disabled') {
+        } catch (error) {
+            if ((error as { code?: string }).code === 'app_disabled') {
                 setReportToEstimateOff(true);
             } else {
-                toast.error(err instanceof Error ? err.message : 'Could not generate the draft');
+                toast.error(error instanceof Error ? error.message : 'Could not generate the draft');
             }
         } finally {
             setAiGenerating(false);
         }
     };
 
-    const saveSummary = () => {
-        setSummary(summaryDraft.trim());
-        setSummaryOpen(false);
-        setSummaryDialogOpen(false);
+    const openNewItem = () => {
+        setEditingItemKey(null);
+        setItemDraft(emptyItem());
+        setSavePresetOnNextItem(false);
+        setItemSheetOpen(true);
     };
 
-    // ── Item handlers ────────────────────────────────────────────────────────
-
-    const removeItem = (key: string) => {
-        setItems(prev => prev.filter(item => item.key !== key));
+    const openEditItem = (item: LineItem) => {
+        setEditingItemKey(item.key);
+        setItemDraft({ ...item });
+        setSavePresetOnNextItem(false);
+        setItemSheetOpen(true);
     };
 
     const pickPreset = (preset: EstimateItemPreset) => {
-        setItems(prev => [...prev, {
+        setItems(previous => [...previous, {
             key: newKey(),
             name: preset.name,
             description: preset.description || '',
@@ -239,93 +294,135 @@ export function InvoiceEditorDialog({
         recordEstimateItemPresetUsage(preset.id).catch(() => {});
     };
 
-    const startCreateFromName = (name: string) => {
-        setEditingItemKey(null);
-        setItemDraft({ ...emptyItem(), name });
-        setSavePresetOnNextItem(true);
-        setItemDialogOpen(true);
-    };
-
-    const saveItem = () => {
-        if (!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0) return;
-        const nextItem = { ...itemDraft, name: itemDraft.name.trim() };
-        setItems(prev => editingItemKey
-            ? prev.map(item => item.key === editingItemKey ? nextItem : item)
-            : [...prev, { ...nextItem, key: newKey() }]
-        );
-        if (!editingItemKey && savePresetOnNextItem) {
-            createEstimateItemPreset({
-                name: nextItem.name,
-                description: nextItem.description || null,
-                default_quantity: Number(nextItem.quantity) || 1,
-                default_unit_price: Number(nextItem.unit_price) || 0,
-                default_taxable: !!nextItem.taxable,
-            })
-                .then(preset => recordEstimateItemPresetUsage(preset.id).catch(() => {}))
-                .catch(() => {});
-            setSavePresetOnNextItem(false);
+    const pickGroup = async (groupId: number) => {
+        const groupItems = await expandGroup(groupId);
+        if (groupItems.length === 0) {
+            toast.info('That group has no active items');
+            return;
         }
-        setItemDialogOpen(false);
+        setItems(previous => [
+            ...previous,
+            ...groupItems.map(item => ({
+                key: newKey(),
+                name: item.name,
+                description: item.description || '',
+                quantity: String(item.quantity ?? 1),
+                unit_price: String(item.unit_price ?? 0),
+                taxable: !!item.taxable,
+            })),
+        ]);
+        toast.success(`Added ${groupItems.length} item(s) from group`);
     };
 
-    // ── Save ─────────────────────────────────────────────────────────────────
+    const saveItem = async (draft: InvoiceItemDraft) => {
+        const nextItem: LineItem = {
+            ...draft,
+            key: editingItemKey ?? newKey(),
+        };
+        setItems(previous => editingItemKey
+            ? previous.map(item => item.key === editingItemKey ? nextItem : item)
+            : [...previous, nextItem]);
+
+        if (!editingItemKey && savePresetOnNextItem && canManagePriceBook) {
+            try {
+                const preset = await createEstimateItemPreset({
+                    name: nextItem.name,
+                    description: nextItem.description || null,
+                    default_quantity: Number(nextItem.quantity) || 1,
+                    default_unit_price: Number(nextItem.unit_price) || 0,
+                    default_taxable: nextItem.taxable,
+                });
+                recordEstimateItemPresetUsage(preset.id).catch(() => {});
+            } catch {
+                toast.warning('Item added — it could not be saved to the Price Book');
+            }
+        }
+        setSavePresetOnNextItem(false);
+    };
+
+    const removeEditingItem = () => {
+        if (!editingItemKey) return;
+        setItems(previous => previous.filter(item => item.key !== editingItemKey));
+    };
 
     const handleSave = async () => {
-        if (!canSave) return;
+        if (!canSave || saving) return;
         setSaving(true);
         try {
             const data: InvoiceCreateData = {
                 contact_id: invoice?.contact_id ?? defaultContactId ?? null,
-                // AI-GEN-LOG-002: only meaningful on create (first save of an AI draft).
                 ai_generation_id: !isEdit ? aiGenerationId : null,
                 lead_id: invoice?.lead_id ?? defaultLeadId ?? null,
                 job_id: invoice?.job_id ?? defaultJobId ?? null,
                 estimate_id: invoice?.estimate_id ?? defaultEstimateId ?? null,
                 notes: summary.trim() || undefined,
                 tax_rate: taxRate || '0',
-                discount_amount: String(discountVal),
-                payment_terms: paymentTerms || null,
-                // due_date is auto-populated by the backend from the invoice template
-                // (`invoice_settings.default_due_days`). Editable per-invoice from the detail panel after save.
-                items: items.map((item, idx) => ({
-                    sort_order: idx,
+                discount_amount: String(discountAmount),
+                items: items.map((item, index) => ({
+                    sort_order: index,
                     name: item.name || 'Untitled item',
                     description: item.description.trim() || null,
                     quantity: item.quantity || '1',
                     unit: null,
                     unit_price: item.unit_price || '0',
                     taxable: item.taxable,
-                } as any)),
+                } as never)),
                 order_list: serializeOrderList(orderList),
             };
             await onSave(data);
-        } catch (err) {
-            // Never fail silently — the dialog stays open so the user can retry.
-            toast.error(err instanceof Error && err.message ? err.message : 'Could not save the invoice. Please try again.');
+        } catch (error) {
+            toast.error(error instanceof Error && error.message
+                ? error.message
+                : 'Could not save the invoice. Please try again.');
         } finally {
             setSaving(false);
         }
     };
 
+    const saveButton = (
+        <Button
+            type="button"
+            className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold"
+            onClick={handleSave}
+            disabled={saving || !canSave}
+            data-testid="invoice-create-save"
+        >
+            {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+            {saving ? 'Saving…' : isEdit ? 'Save invoice' : 'Create invoice'}
+        </Button>
+    );
+
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange} modal={!isMobile}>
-                <DialogContent variant="panel" size="full" mobileFullScreen>
-                    <DialogPanelHeader>
+            <Dialog open={open} onOpenChange={requestOpenChange}>
+                <DialogContent
+                    variant="panel"
+                    size="full"
+                    mobileFullScreen
+                    data-testid="invoice-editor"
+                    className="[&>button[aria-label='Close']]:hidden"
+                >
+                    <div className="md:hidden">
+                        <DialogClose asChild>
+                            <OverlayClose variant="corner" data-testid="invoice-close" />
+                        </DialogClose>
+                    </div>
+                    <DialogPanelHeader className="max-md:hidden">
                         <div className="flex items-start justify-between gap-4">
                             <div className="min-w-0">
                                 <DialogTitle
-                                    className="text-[22px] font-semibold leading-tight"
-                                    style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                                    className="text-[22px] font-semibold leading-tight text-[var(--blanc-ink-1)]"
+                                    style={{ fontFamily: 'var(--blanc-font-heading)' }}
                                 >
                                     {isEdit ? invoice?.invoice_number : 'New invoice'}
                                 </DialogTitle>
-                                <DialogDescription className="sr-only">
-                                    {isEdit ? 'Edit invoice line items and totals' : 'Create a new invoice'}
+                                <DialogDescription>
+                                    {defaultContext && !isEdit
+                                        ? defaultContext
+                                        : isEdit
+                                            ? 'Edit invoice line items and totals'
+                                            : 'Create a new invoice'}
                                 </DialogDescription>
-                                {defaultContext && !isEdit && (
-                                    <p className="mt-1 text-xs font-medium text-[var(--blanc-ink-2)]">{defaultContext}</p>
-                                )}
                             </div>
                             <div className="shrink-0 text-right">
                                 <p className="blanc-eyebrow">Total</p>
@@ -334,370 +431,234 @@ export function InvoiceEditorDialog({
                         </div>
                     </DialogPanelHeader>
 
-                    <DialogBody className="md:px-8 md:py-7">
-                        {/* Wide document — line-item grid uses the full panel width (no max-w cap). */}
-                        <div className="w-full space-y-6">
-                            {/* AI-ESTIMATE-001 — paste a report, AI fills summary + items (nothing saves until Save). */}
-                            <div className="rounded-xl px-4 py-4" style={{ background: 'var(--blanc-accent-soft)' }}>
-                                <div className="flex items-center gap-2">
-                                    <Sparkles className="size-4" style={{ color: 'var(--blanc-accent)' }} />
-                                    <p className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Generate from a report</p>
+                    <DialogBody className="px-[18px] pb-8 pt-6 md:px-8 md:py-7">
+                        <div className="mx-auto w-full max-w-[820px] space-y-6">
+                            <div className="pr-10 md:hidden">
+                                <DialogTitle
+                                    className="text-[26px] font-semibold leading-[1.15] text-[var(--blanc-ink-1)]"
+                                    style={{ fontFamily: 'var(--blanc-font-heading)' }}
+                                >
+                                    {isEdit ? invoice?.invoice_number : 'New invoice'}
+                                </DialogTitle>
+                                {defaultContext && !isEdit ? (
+                                    <p className="mt-1 text-[13px] text-[var(--blanc-ink-3)]">{defaultContext}</p>
+                                ) : null}
+                            </div>
+
+                            <section className="rounded-[16px] bg-[var(--blanc-accent-soft)] p-[15px]">
+                                <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--blanc-ink-1)]">
+                                    <Sparkles className="size-[17px] text-[var(--blanc-accent)]" />
+                                    Generate from a report
                                 </div>
-                                <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                                    Paste a repair report or a short description — AI fills the summary and line items, matching your Price Book. Review before you save.
+                                <p className="mt-1 text-[13px] leading-relaxed text-[var(--blanc-ink-2)]">
+                                    Paste a repair report — AI fills the summary and line items from your Price Book. Review before you save.
                                 </p>
-                                {reportToEstimateOff && (
-                                    <div className="mt-3 rounded-xl px-3.5 py-2.5 text-sm" style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-ink-1)' }}>
+                                {reportToEstimateOff ? (
+                                    <div className="mt-3 rounded-xl bg-[var(--blanc-panel-surface)] px-3.5 py-2.5 text-sm text-[var(--blanc-ink-1)]">
                                         <span className="font-medium">Report → Estimate is turned off.</span>{' '}
                                         Enable it in Settings → Integrations to draft from a report.
                                     </div>
-                                )}
-                                {/* Mobile: reports are often long — tap opens the full-screen editor (type B). */}
-                                <textarea
+                                ) : null}
+                                <FloatingField
+                                    textarea
+                                    rows={3}
+                                    containerClassName="mt-3"
+                                    label="Paste the report here…"
                                     value={aiReport}
-                                    onChange={event => setAiReport(event.target.value)}
                                     readOnly={isMobile}
                                     onClick={isMobile && !aiGenerating ? () => setReportEditorOpen(true) : undefined}
-                                    placeholder="Paste the report here…"
-                                    rows={3}
+                                    onChange={event => setAiReport(event.target.value)}
                                     disabled={aiGenerating}
-                                    className="mt-3 w-full resize-none rounded-lg border-[1.5px] border-transparent px-3 py-2 text-sm outline-none focus:border-[var(--blanc-ink-2)] disabled:opacity-60"
-                                    style={{ background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-1)' }}
                                 />
-                                <FullScreenTextEditor
-                                    open={isMobile && reportEditorOpen}
-                                    initialValue={aiReport}
-                                    onDone={text => { setAiReport(text); setReportEditorOpen(false); }}
-                                    onCancel={() => setReportEditorOpen(false)}
-                                    title="Report"
-                                    placeholder="Paste or type the service report…"
-                                />
-                                <div className="mt-3 flex justify-end">
-                                    <Button type="button" onClick={handleAiGenerate} disabled={aiGenerating || !aiReport.trim()}>
-                                        {aiGenerating
-                                            ? <><Loader2 className="mr-1.5 size-4 animate-spin" /> Generating…</>
-                                            : <><Sparkles className="mr-1.5 size-4" /> Generate</>}
-                                    </Button>
-                                </div>
-                            </div>
-
-                            {/* Summary */}
-                            {summary ? (
-                                <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
-                                    <div className="rounded-2xl border border-[var(--blanc-line)]">
-                                        <div className="flex items-center justify-between px-4 py-3">
-                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-[var(--blanc-ink-1)]">
-                                                <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
-                                                Summary
-                                            </CollapsibleTrigger>
-                                            <Button type="button" size="sm" variant="ghost" onClick={openSummaryDialog}>
-                                                <Pencil className="size-4" />
-                                            </Button>
-                                        </div>
-                                        <CollapsibleContent>
-                                            <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{summary}</div>
-                                        </CollapsibleContent>
-                                    </div>
-                                </Collapsible>
-                            ) : (
-                                <div className="rounded-2xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                                    <p className="text-sm font-medium text-[var(--blanc-ink-1)]">Summary</p>
-                                    <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">Add scope, findings, or any context worth highlighting to the customer.</p>
-                                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
-                                        <Plus className="mr-1 size-4" /> Add summary
-                                    </Button>
-                                </div>
-                            )}
-
-                            {/* Items */}
-                            <section className="space-y-3">
-                                <div>
-                                    <p className="blanc-eyebrow">Items</p>
-                                    <p className="text-xs text-[var(--blanc-ink-3)]">Title and unit price are required. Qty defaults to 1.</p>
-                                </div>
-
-                                <div className="flex flex-col gap-4">
-                                    {items.map(item => (
-                                        <div key={item.key} className="space-y-2">
-                                            <Input
-                                                placeholder="Item title"
-                                                value={item.name}
-                                                onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, name: e.target.value } : i))}
-                                                className={`${CELL_INPUT} h-[42px] font-medium text-[15px]`}
-                                            />
-                                            <AutoGrowTextarea
-                                                placeholder="Description (optional)"
-                                                value={item.description}
-                                                onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, description: e.target.value } : i))}
-                                                rows={2}
-                                                className="w-full resize-none rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3.5 py-2.5 text-sm font-normal leading-relaxed text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
-                                            />
-                                            {/* Per-cell labels + wrap (unified with the estimate editor):
-                                                the fixed grid overflowed a 375px viewport. */}
-                                            <div className="flex flex-wrap items-center gap-3">
-                                                <div className="flex w-[76px] flex-col gap-0.5">
-                                                    <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Qty</span>
-                                                    <Input
-                                                        type="text"
-                                                        inputMode="decimal"
-                                                        value={item.quantity}
-                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value.replace(/[^0-9.]/g, '') } : i))}
-                                                        className={CELL_INPUT}
-                                                    />
-                                                </div>
-                                                <div className="flex w-[110px] flex-col gap-0.5">
-                                                    <span className="text-[10px] uppercase tracking-wider text-[var(--blanc-ink-3)]">Unit price</span>
-                                                    <MoneyInput
-                                                        value={item.unit_price}
-                                                        onValueChange={next => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: next } : i))}
-                                                        className={`${CELL_INPUT} w-full px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
-                                                    />
-                                                </div>
-                                                <label className="flex items-center gap-2 pt-4 text-xs text-[var(--blanc-ink-2)] cursor-pointer">
-                                                    <Checkbox
-                                                        checked={item.taxable}
-                                                        onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
-                                                    />
-                                                    Taxable
-                                                </label>
-                                                <div className="ml-auto flex items-center gap-1 pt-4">
-                                                    <p className="font-mono text-sm font-semibold text-right whitespace-nowrap text-[var(--blanc-ink-1)]">{money(amount(item))}</p>
-                                                    <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
-                                                        <Trash2 className="size-4" />
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <ItemPresetSearchCombobox
-                                    onPickPreset={pickPreset}
-                                    onCreateNew={startCreateFromName}
-                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="mt-3 h-11 w-full rounded-xl font-semibold text-[var(--blanc-accent)]"
+                                    onClick={handleAiGenerate}
+                                    disabled={aiGenerating || !aiReport.trim()}
+                                >
+                                    {aiGenerating
+                                        ? <><Loader2 className="mr-2 size-4 animate-spin" />Generating…</>
+                                        : <><Sparkles className="mr-2 size-4" />Generate</>}
+                                </Button>
                             </section>
 
-                            {/* Totals */}
-                            <section className="space-y-3 rounded-2xl p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                                <p className="blanc-eyebrow">Totals</p>
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
-                                    <span className="font-mono text-[var(--blanc-ink-1)]">{money(subtotal)}</span>
-                                </div>
-                                {discountType ? (
-                                    /* OB-24 wrap + OB-43 $/% toggle (mirrors EstimateEditorDialog). */
-                                    <div className="flex flex-wrap items-center gap-2 text-sm">
-                                        <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                        <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
-                                            <button
-                                                type="button"
-                                                onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }}
-                                                className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
-                                                    discountType === 'fixed'
-                                                        ? 'bg-[var(--blanc-ink-1)] text-white'
-                                                        : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
-                                                }`}
-                                            >
-                                                $
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }}
-                                                className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
-                                                    discountType === 'percentage'
-                                                        ? 'bg-[var(--blanc-ink-1)] text-white'
-                                                        : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
-                                                }`}
-                                            >
-                                                %
-                                            </button>
-                                        </div>
-                                        {discountType === 'fixed' ? (
-                                            <MoneyInput
-                                                value={discountValue}
-                                                onValueChange={setDiscountValue}
-                                                className={`${CELL_INPUT} w-24 px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
-                                            />
-                                        ) : (
-                                            <input
-                                                type="text"
-                                                inputMode="decimal"
-                                                value={discountValue}
-                                                placeholder="0"
-                                                onFocus={event => event.currentTarget.select()}
-                                                onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
-                                                maxLength={6}
-                                                className={`${CELL_INPUT} w-24 px-3 text-right tabular-nums focus:border-[var(--blanc-ink-2)]`}
-                                            />
-                                        )}
-                                        <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }} title="Remove discount">
-                                            <Trash2 className="size-4" />
+                            <section>
+                                <div className="flex min-h-[30px] items-center justify-between gap-3">
+                                    <p className="blanc-eyebrow">Summary</p>
+                                    {summary ? (
+                                        <Button type="button" variant="ghost" size="icon" className="size-[30px] rounded-[9px]" onClick={openSummary} aria-label="Edit summary">
+                                            <Pencil className="size-4" />
                                         </Button>
-                                        <span className="font-mono text-red-600 ml-auto">-{money(discountVal)}</span>
-                                    </div>
+                                    ) : null}
+                                </div>
+                                {summary ? (
+                                    <p className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--blanc-ink-2)]">{summary}</p>
                                 ) : (
-                                    <button type="button" className="text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>
-                                        Add discount
-                                    </button>
-                                )}
-                                {discountError && <p className="text-xs text-red-600">{discountError}</p>}
-                                <div className="grid grid-cols-[1fr_auto] items-center gap-3 text-sm">
-                                    <Label className="text-[var(--blanc-ink-2)]">Tax rate</Label>
-                                    <div className="relative w-24">
-                                        <Input
-                                            type="text"
-                                            inputMode="decimal"
-                                            value={taxRate}
-                                            onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
-                                            onBlur={() => { const n = Number(taxRate); if (Number.isFinite(n)) setTaxRate(n.toFixed(2)); }}
-                                            className={`${CELL_INPUT} w-full pr-7 text-right tabular-nums`}
-                                        />
-                                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                                    <div className="mt-2">
+                                        <p className="text-[13px] leading-relaxed text-[var(--blanc-ink-2)]">
+                                            Add scope, findings, or context worth highlighting to the customer.
+                                        </p>
+                                        <Button type="button" variant="outline" className="mt-3 h-11 w-full rounded-xl" onClick={openSummary}>
+                                            <Plus className="mr-1.5 size-4" /> Add summary
+                                        </Button>
                                     </div>
-                                </div>
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-[var(--blanc-ink-2)]">Tax</span>
-                                    <span className="font-mono text-[var(--blanc-ink-1)]">{money(taxAmount)}</span>
-                                </div>
-                                <div className="flex justify-between pt-2 text-base font-semibold text-[var(--blanc-ink-1)]" style={{ borderTop: '1px solid var(--blanc-line)' }}>
-                                    <span>Total</span>
-                                    <span className="font-mono">{money(total)}</span>
+                                )}
+                            </section>
+
+                            <section>
+                                <p className="blanc-eyebrow">Items</p>
+                                <p className="mt-1 text-[12.5px] text-[var(--blanc-ink-3)]">Title and unit price required. Qty defaults to 1.</p>
+                                {items.length > 0 ? (
+                                    <div className="mt-2">
+                                        {items.map(item => (
+                                            <button
+                                                key={item.key}
+                                                type="button"
+                                                className="flex w-full items-center justify-between gap-3 border-b border-[var(--blanc-line)] px-1 py-[13px] text-left last:border-b-0"
+                                                onClick={() => openEditItem(item)}
+                                                data-testid="invoice-item-row"
+                                            >
+                                                <span className="min-w-0">
+                                                    <span className="block truncate text-[15px] font-semibold text-[var(--blanc-ink-1)]">{item.name}</span>
+                                                    {item.description ? <span className="mt-0.5 block truncate text-[13px] text-[var(--blanc-ink-2)]">{item.description}</span> : null}
+                                                    <span className="mt-1 block text-[12px] text-[var(--blanc-ink-3)]">
+                                                        {Number(item.quantity)} × {money(item.unit_price)}{item.taxable ? ' · Taxable' : ''}
+                                                    </span>
+                                                </span>
+                                                <span className="flex shrink-0 items-center gap-2">
+                                                    <span className="font-mono text-[15px] font-semibold text-[var(--blanc-ink-1)]">{money(amount(item))}</span>
+                                                    <ChevronRight className="size-4 text-[var(--blanc-ink-3)]" />
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : null}
+                                <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-[14px] border-dashed" onClick={openNewItem} data-testid="invoice-add-item">
+                                    <Plus className="mr-1.5 size-4" /> Add item
+                                </Button>
+                            </section>
+
+                            <section>
+                                <p className="blanc-eyebrow">Totals</p>
+                                <div className="mt-2 space-y-1 text-[14px]">
+                                    <div className="flex min-h-8 items-center justify-between">
+                                        <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
+                                        <span className="font-mono font-semibold text-[var(--blanc-ink-1)]">{money(subtotal)}</span>
+                                    </div>
+                                    {discountType ? (
+                                        <div className="flex flex-wrap items-center gap-2 py-1">
+                                            <span className="text-[var(--blanc-ink-2)]">Discount</span>
+                                            <div className="inline-flex shrink-0 rounded-[10px] border border-[var(--blanc-line)] p-0.5">
+                                                <button type="button" onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Fixed discount">$</button>
+                                                <button type="button" onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Percentage discount">%</button>
+                                            </div>
+                                            {discountType === 'fixed' ? (
+                                                <FloatingLabel label="Amount" filled className="w-28">
+                                                    <MoneyInput value={discountValue} onValueChange={setDiscountValue} className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right text-sm tabular-nums outline-none focus:border-[var(--blanc-line-strong)]" />
+                                                </FloatingLabel>
+                                            ) : (
+                                                <FloatingField label="Percent" value={discountValue} inputMode="decimal" containerClassName="w-28" onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))} />
+                                            )}
+                                            <Button type="button" variant="ghost" size="icon" className="size-10" onClick={() => { setDiscountType(null); setDiscountValue('0'); }} aria-label="Remove discount">
+                                                <Trash2 className="size-4" />
+                                            </Button>
+                                            <span className="ml-auto font-mono font-semibold text-[var(--blanc-danger)]">-{money(discountAmount)}</span>
+                                        </div>
+                                    ) : (
+                                        <button type="button" className="min-h-10 text-sm font-medium text-[var(--blanc-job)]" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>+ Add discount</button>
+                                    )}
+                                    {discountError ? <div className="rounded-xl bg-[var(--blanc-danger-soft)] px-3.5 py-2.5 text-xs text-[var(--blanc-danger)]">{discountError}</div> : null}
+                                    <div className="flex items-center justify-between gap-3 py-1">
+                                        <span className="text-[var(--blanc-ink-2)]">Tax rate</span>
+                                        <FloatingField
+                                            label="Percent"
+                                            value={taxRate}
+                                            inputMode="decimal"
+                                            containerClassName="w-28"
+                                            onChange={event => setTaxRate(event.target.value.replace(/[^0-9.]/g, ''))}
+                                            onBlur={() => { const next = Number(taxRate); if (Number.isFinite(next)) setTaxRate(next.toFixed(2)); }}
+                                        />
+                                    </div>
+                                    <div className="flex min-h-8 items-center justify-between">
+                                        <span className="text-[var(--blanc-ink-2)]">Tax</span>
+                                        <span className="font-mono font-semibold text-[var(--blanc-ink-1)]">{money(taxAmount)}</span>
+                                    </div>
+                                    <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] text-[16px] font-semibold text-[var(--blanc-ink-1)]">
+                                        <span>Total</span>
+                                        <span className="font-mono">{money(total)}</span>
+                                    </div>
                                 </div>
                             </section>
 
                             <OrderListSection value={orderList} onChange={setOrderList} disabled={saving} />
-
-                            {/* Document settings */}
-                            <section className="space-y-3">
-                                <FloatingSelect
-                                    label="Payment terms"
-                                    value={paymentTerms || '_none'}
-                                    onValueChange={v => setPaymentTerms(v === '_none' ? '' : v)}
-                                >
-                                    <SelectItem value="_none">None</SelectItem>
-                                    <SelectItem value="Due on Receipt">Due on Receipt</SelectItem>
-                                    <SelectItem value="Net 15">Net 15</SelectItem>
-                                    <SelectItem value="Net 30">Net 30</SelectItem>
-                                    <SelectItem value="Net 60">Net 60</SelectItem>
-                                </FloatingSelect>
-                                <p className="text-xs text-[var(--blanc-ink-3)]">
-                                    Due date is set automatically from the invoice template default. You can adjust it on the invoice after creation.
-                                </p>
-                            </section>
+                            <div className="pt-1 md:hidden">{saveButton}</div>
                         </div>
                     </DialogBody>
 
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-                        <Button type="button" onClick={handleSave} disabled={saving || !canSave}>
-                            {saving ? 'Saving...' : isEdit ? 'Save invoice' : 'Create invoice'}
-                        </Button>
+                    <DialogPanelFooter className="max-md:hidden">
+                        <Button type="button" variant="outline" className="h-12" onClick={() => requestOpenChange(false)} disabled={saving}>Cancel</Button>
+                        <div className="w-full max-w-[280px]">{saveButton}</div>
                     </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
 
-            {/* Summary edit dialog */}
-            {/* Mobile: edit the summary in the full-screen editor (type B). */}
+            <FullScreenTextEditor
+                open={reportEditorOpen && isMobile}
+                initialValue={aiReport}
+                onDone={text => { setAiReport(text); setReportEditorOpen(false); }}
+                onCancel={() => setReportEditorOpen(false)}
+                title="Report"
+                placeholder="Paste or type the service report…"
+            />
             <FullScreenTextEditor
                 open={summaryDialogOpen && isMobile}
                 initialValue={summary}
                 onDone={text => { setSummary(text); setSummaryDialogOpen(false); }}
                 onCancel={() => setSummaryDialogOpen(false)}
                 title="Summary"
-                placeholder="Make, model, serial, failure issue, findings, needs, cause…"
+                placeholder="Make, model, serial, issue, findings, and resolution…"
             />
             <Dialog open={summaryDialogOpen && !isMobile} onOpenChange={setSummaryDialogOpen}>
                 <DialogContent variant="panel">
                     <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            Summary
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">Edit the invoice summary</DialogDescription>
+                        <DialogTitle className="text-[22px] font-semibold leading-tight text-[var(--blanc-ink-1)]" style={{ fontFamily: 'var(--blanc-font-heading)' }}>Summary</DialogTitle>
+                        <DialogDescription>Edit the customer-facing invoice summary.</DialogDescription>
                     </DialogPanelHeader>
                     <DialogBody className="md:px-8 md:py-7">
-                        <div className="mx-auto w-full max-w-[740px] space-y-6">
-                            <FloatingField
-                                textarea
-                                rows={10}
-                                id="invoice-summary"
-                                label="Notes for the customer…"
-                                value={summaryDraft}
-                                onChange={event => setSummaryDraft(event.target.value)}
-                            />
-                        </div>
+                        <FloatingField textarea rows={10} label="Notes for the customer" value={summaryDraft} onChange={event => setSummaryDraft(event.target.value)} />
                     </DialogBody>
                     <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
-                        <Button type="button" onClick={saveSummary}>Save summary</Button>
+                        <Button type="button" variant="outline" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
+                        <Button type="button" onClick={() => { setSummary(summaryDraft.trim()); setSummaryDialogOpen(false); }}>Save summary</Button>
                     </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
 
-            {/* Item create/edit dialog (used by combobox "Create new" path) */}
-            <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            {editingItemKey ? 'Edit custom item' : 'Add custom item'}
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">Define a custom line item</DialogDescription>
-                    </DialogPanelHeader>
-                    <DialogBody className="md:px-8 md:py-7">
-                        <div className="mx-auto w-full max-w-[740px] space-y-6">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField
-                                    containerClassName="sm:col-span-2"
-                                    id="item-title"
-                                    label="Title"
-                                    value={itemDraft.name}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, name: event.target.value }))}
-                                />
-                                <FloatingField
-                                    containerClassName="sm:col-span-2"
-                                    textarea
-                                    rows={4}
-                                    id="item-description"
-                                    label="Description"
-                                    value={itemDraft.description}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, description: event.target.value }))}
-                                />
-                                <FloatingField
-                                    id="item-qty"
-                                    label="Qty"
-                                    type="number"
-                                    inputMode="decimal"
-                                    value={itemDraft.quantity}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, quantity: event.target.value }))}
-                                />
-                                <FloatingField
-                                    id="item-unit-price"
-                                    label="Unit price"
-                                    type="number"
-                                    inputMode="decimal"
-                                    value={itemDraft.unit_price}
-                                    onChange={event => setItemDraft(prev => ({ ...prev, unit_price: event.target.value }))}
-                                />
-                                <label className="sm:col-span-2 flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
-                                    <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
-                                    Service is taxable
-                                </label>
-                            </div>
-                        </div>
-                    </DialogBody>
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
-                        <Button type="button" onClick={saveItem} disabled={!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0}>
-                            Save item
-                        </Button>
-                    </DialogPanelFooter>
-                </DialogContent>
-            </Dialog>
+            <InvoiceItemSheet
+                open={itemSheetOpen}
+                onOpenChange={setItemSheetOpen}
+                isEdit={!!editingItemKey}
+                initial={itemDraft}
+                onSave={saveItem}
+                onRemove={editingItemKey ? removeEditingItem : undefined}
+                onPickPreset={pickPreset}
+                onPickGroup={pickGroup}
+                onCreateFromSearch={() => setSavePresetOnNextItem(canManagePriceBook)}
+                catalogCreateAllowed={canManagePriceBook}
+            />
+
+            <InvoiceConfirmDialog
+                open={discardOpen}
+                onOpenChange={setDiscardOpen}
+                title="Discard this invoice?"
+                description="You have unsaved changes — closing now will lose them."
+                cancelLabel="Keep editing"
+                confirmLabel="Discard"
+                confirmTone="neutral"
+                confirmTestId="invoice-discard-confirm"
+                onConfirm={() => { setDiscardOpen(false); onOpenChange(false); }}
+            />
         </>
     );
 }

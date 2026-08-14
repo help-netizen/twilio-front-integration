@@ -1,61 +1,48 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     Ban,
     Check,
-    ChevronDown,
+    ChevronRight,
+    CreditCard,
     Eye,
     Loader2,
-    MoreHorizontal,
     Pencil,
     Plus,
     Send,
-    Trash2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
+import { FloatingField, FloatingLabel } from '../ui/floating-field';
+import { FloatingSelect } from '../ui/floating-select';
 import { MoneyInput } from '../ui/MoneyInput';
-import { Label } from '../ui/label';
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from '../ui/dropdown-menu';
-import { EstimateItemDialog, type ItemDraft } from '../estimates/EstimateItemDialog';
+import { SelectItem } from '../ui/select';
+import { TaskStack } from '../tasks/TaskStack';
 import { EstimateSummaryDialog } from '../estimates/EstimateSummaryDialog';
-import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
+import { openAuthedPdf } from '../../lib/openAuthedPdf';
+import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
+import { useInvoice } from '../../hooks/useInvoice';
 import { expandGroup } from '../../services/priceBookApi';
 import {
     createEstimateItemPreset,
     recordEstimateItemPresetUsage,
     type EstimateItemPreset,
 } from '../../services/estimateItemPresetsApi';
-import type {
-    Invoice,
-    InvoiceEvent,
-    InvoiceItem,
-} from '../../services/invoicesApi';
 import {
     addInvoiceItem,
     addInvoiceItemsBulk,
     deleteInvoiceItem,
-    fetchInvoice,
-    fetchInvoicePayments,
-    updateInvoice,
     updateInvoiceItem,
     voidInvoicePayment,
+    type Invoice,
+    type InvoiceEvent,
+    type InvoiceItem,
 } from '../../services/invoicesApi';
-import { useAuthz } from '../../hooks/useAuthz';
-import { TaskStack } from '../tasks/TaskStack';
-import { openAuthedPdf } from '../../lib/openAuthedPdf';
-import { toast } from 'sonner';
-import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
+import type { PaymentTransaction } from '../../services/paymentsCanonicalApi';
+import { PaymentStatusChip, isVoidablePayment } from '../payments/paymentStatus';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
-import { PaymentStatusChip } from '../payments/paymentStatus';
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
+import { InvoiceItemSheet, type InvoiceItemDraft } from './InvoiceItemSheet';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     draft: 'secondary',
@@ -69,199 +56,150 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
 };
 
 function money(value: string | number | null | undefined): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '$' + Number(value || 0).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
 }
 
-// Border-only, near-white control input — sits on the warm panel surface, no clashing bg.
-const TOTALS_INPUT =
-    'h-8 rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent text-[var(--blanc-ink-1)] outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)]';
-
 function fmtDate(value: string | null | undefined): string {
-    if (!value) return '-';
-    return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (!value) return '';
+    return new Date(value).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
 }
 
 function fmtDateTime(value: string | null | undefined): string {
-    if (!value) return '-';
-    return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    if (!value) return '';
+    return new Date(value).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
 }
 
 function toDateInput(value: string | null | undefined): string {
     if (!value) return '';
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = (part: number) => String(part).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
-
-// ── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
     invoice: Invoice;
     events: InvoiceEvent[];
     loading: boolean;
     onClose: () => void;
-    /** @deprecated Edit happens inline; kept for backward compat with older callers. */
     onEdit?: () => void;
     onSend: () => void;
-    onVoid: () => void;
-    /** @deprecated Sync-from-estimate was removed; prop kept temporarily for caller compatibility. */
+    onCollect?: () => void;
+    onVoid: () => void | Promise<void>;
     onSyncEstimate?: () => void;
-    onDelete: () => void;
-    /** Called after the panel mutates the invoice so the parent can refetch / update its own state. */
+    onDelete: () => void | Promise<void>;
     onChanged?: (invoice: Invoice) => void;
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+const emptyItem = (): InvoiceItemDraft => ({
+    name: '',
+    description: '',
+    quantity: '1',
+    unit_price: '0',
+    taxable: true,
+});
 
 export function InvoiceDetailPanel({
     invoice: initialInvoice,
-    events,
+    events: initialEvents,
     loading,
-    onClose: _onClose,
     onSend,
+    onCollect,
     onVoid,
     onDelete,
     onChanged,
 }: Props) {
-    // Local copy so we can apply optimistic updates while saving.
+    const invoiceData = useInvoice(initialInvoice.id);
     const [invoice, setInvoice] = useState<Invoice>(initialInvoice);
-    const [hydrating, setHydrating] = useState(!initialInvoice.items);
-    // Sync from the prop AND hydrate the full record. Callers frequently pass a
-    // list row WITHOUT its line items — the Financials tabs (Job/Lead) and the
-    // Invoices list all hand us `i.*` (no `items`). Without this fetch a freshly
-    // opened invoice renders "This invoice has no items" until an item mutation
-    // triggers a refetch, even though the items are persisted (they were never lost).
-    // Fetching also enriches contact_email/phone and pulls the freshest totals.
+    const [editing, setEditing] = useState(false);
+    const [notesDialogOpen, setNotesDialogOpen] = useState(false);
+    const [itemSheetOpen, setItemSheetOpen] = useState(false);
+    const [itemEditingId, setItemEditingId] = useState<number | null>(null);
+    const [itemDraft, setItemDraft] = useState<InvoiceItemDraft>(emptyItem());
+    const [savePresetOnNextItem, setSavePresetOnNextItem] = useState(false);
+    const [taxRate, setTaxRate] = useState('0');
+    const [discountAmount, setDiscountAmount] = useState('0');
+    const [hasDiscount, setHasDiscount] = useState(false);
+    const [dueDate, setDueDate] = useState('');
+    const [paymentTerms, setPaymentTerms] = useState('');
+    const [voidPayment, setVoidPayment] = useState<PaymentTransaction | null>(null);
+    const [destructiveAction, setDestructiveAction] = useState<'void' | 'delete' | null>(null);
+    const [destructiveBusy, setDestructiveBusy] = useState(false);
+
     useEffect(() => {
         setInvoice(initialInvoice);
-        if (initialInvoice.items) { setHydrating(false); return; }
-        let cancelled = false;
-        setHydrating(true);
-        fetchInvoice(initialInvoice.id)
-            .then(fresh => { if (!cancelled) setInvoice(fresh); })
-            .catch(() => { /* keep the row we have — item mutations still refetch */ })
-            .finally(() => { if (!cancelled) setHydrating(false); });
-        return () => { cancelled = true; };
+        setEditing(false);
     }, [initialInvoice]);
 
-    // Default to expanded whenever the invoice has summary/notes content — saves a click
-    // for the common "open invoice to read it" path.
-    const [notesOpen, setNotesOpen] = useState<boolean>(!!initialInvoice.notes);
     useEffect(() => {
-        setNotesOpen(!!initialInvoice.notes);
-    }, [initialInvoice.id, initialInvoice.notes]);
-    const [notesDialogOpen, setNotesDialogOpen] = useState(false);
+        if (invoiceData.invoice) setInvoice(invoiceData.invoice);
+    }, [invoiceData.invoice]);
 
-    // Inline-edit modals (Items)
-    const [itemDialogOpen, setItemDialogOpen] = useState(false);
-    const [itemEditingId, setItemEditingId] = useState<number | null>(null);
-    const [itemDraft, setItemDraft] = useState<ItemDraft>({ name: '', description: '', quantity: '1', unit_price: '0', taxable: false });
-
-    // Local mirrors for debounced auto-save.
-    const [taxRate, setTaxRate] = useState<string>(invoice.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
-    const [discountAmount, setDiscountAmount] = useState<string>(invoice.discount_amount ? String(invoice.discount_amount) : '0');
-    const [hasDiscount, setHasDiscount] = useState<boolean>(Number(invoice.discount_amount) > 0);
-    const [dueDate, setDueDate] = useState<string>(toDateInput(invoice.due_date));
     useEffect(() => {
         setTaxRate(invoice.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
         setDiscountAmount(invoice.discount_amount ? String(invoice.discount_amount) : '0');
         setHasDiscount(Number(invoice.discount_amount) > 0);
         setDueDate(toDateInput(invoice.due_date));
-    }, [invoice.tax_rate, invoice.discount_amount, invoice.due_date]);
+        setPaymentTerms(invoice.payment_terms || '');
+    }, [invoice.discount_amount, invoice.due_date, invoice.payment_terms, invoice.tax_rate]);
 
-    // Payments list
-    const [payments, setPayments] = useState<any[]>([]);
-    // OB-31: payment pending the void confirmation (manual/offline rows only).
-    const [voidTx, setVoidTx] = useState<any | null>(null);
-    useEffect(() => {
-        if (!invoice?.id) return;
-        fetchInvoicePayments(invoice.id).then(setPayments).catch(() => {});
-    }, [invoice?.id]);
+    const { capabilities } = invoiceData;
+    const isTerminal = invoice.status === 'void' || invoice.status === 'refunded';
+    const readOnly = !editing || !capabilities.canEdit;
+    const events = invoiceData.events.length > 0 ? invoiceData.events : initialEvents;
+    const payments = invoiceData.payments;
+    const hasItems = !!invoice.items?.length;
+    const total = Number(invoice.total) || 0;
+    const amountPaid = Number(invoice.amount_paid) || 0;
+    const balanceDue = Number(invoice.balance_due) || 0;
+    const paymentProgress = total > 0 ? Math.min((amountPaid / total) * 100, 100) : 0;
 
-    const { hasPermission } = useAuthz();
-    const isVoid = invoice.status === 'void' || invoice.status === 'refunded';
-    // VIEW-FIRST (owner 2026-08-08): the panel opens as a read-only document preview —
-    // items and totals render as plain info with no add/remove/edit affordances. The
-    // footer's explicit Edit switches to the editing state (all existing readOnly-gated
-    // affordances light up); Save returns to the preview. Void/refunded documents have
-    // no Edit at all (permanently read-only, as before).
-    const [editing, setEditing] = useState(false);
-    useEffect(() => setEditing(false), [invoice.id]);
-    const canEdit = !isVoid;
-    const readOnly = !editing || !canEdit;
-    // Send is always available for non-void invoices (re-sends are a normal workflow).
-    // Permission-gated: only roles with invoices.send may dispatch.
-    const canSend = hasPermission('invoices.send') && (!invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded'));
-    const canManagePriceBook = hasPermission('price_book.manage');
-    const canVoid = !isVoid;
-    const canVoidPayment = hasPermission('payments.collect_offline');
-
-    // ── Item-edit handlers ───────────────────────────────────────────────────
-
-    const refreshAfterItemChange = async () => {
+    const refresh = async () => {
         try {
-            const fresh = await fetchInvoice(invoice.id);
-            setInvoice(fresh);
-            onChanged?.(fresh);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Refresh failed');
+            const fresh = await invoiceData.refresh();
+            if (fresh) {
+                setInvoice(fresh);
+                onChanged?.(fresh);
+            }
+            return fresh;
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Refresh failed');
+            return null;
         }
     };
 
-    /** True when the next saveItemDraft should also create a preset (combobox "Create new" flow). */
-    const [savePresetOnNextItem, setSavePresetOnNextItem] = useState(false);
+    const persist = async (patch: Parameters<typeof invoiceData.save>[0]) => {
+        if (readOnly) return;
+        try {
+            const updated = await invoiceData.save(patch);
+            setInvoice(updated);
+            onChanged?.(updated);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Save failed');
+            throw error;
+        }
+    };
 
-    const openNewItem = (prefill?: Partial<ItemDraft>, opts?: { savePreset?: boolean }) => {
+    const openNewItem = () => {
         setItemEditingId(null);
-        setItemDraft({
-            name: prefill?.name ?? '',
-            description: prefill?.description ?? '',
-            quantity: prefill?.quantity ?? '1',
-            unit_price: prefill?.unit_price ?? '0',
-            taxable: prefill?.taxable ?? false,
-        });
-        setSavePresetOnNextItem(!!opts?.savePreset);
-        setItemDialogOpen(true);
+        setItemDraft(emptyItem());
+        setSavePresetOnNextItem(false);
+        setItemSheetOpen(true);
     };
 
-    /** Combobox: existing preset selected → add to invoice immediately with defaults. */
-    const pickPreset = async (preset: EstimateItemPreset) => {
-        try {
-            await addInvoiceItem(invoice.id, {
-                name: preset.name,
-                description: preset.description || '',
-                quantity: String(preset.default_quantity ?? 1),
-                unit_price: String(preset.default_unit_price ?? 0),
-                taxable: !!preset.default_taxable,
-            } as any);
-            recordEstimateItemPresetUsage(preset.id).catch(() => {});
-            await refreshAfterItemChange();
-            toast.success(`Added "${preset.name}"`);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Add failed');
-        }
-    };
-
-    /** Combobox: picked a Price Book group → expand into its items (single bulk add). */
-    const pickGroup = async (groupId: number) => {
-        try {
-            const items = await expandGroup(groupId);
-            if (items.length === 0) { toast.info('That group has no active items'); return; }
-            await addInvoiceItemsBulk(invoice.id, items.map(i => ({
-                name: i.name, description: i.description, quantity: i.quantity,
-                unit: i.unit || undefined, unit_price: i.unit_price, taxable: i.taxable,
-            })) as any);
-            await refreshAfterItemChange();
-            toast.success(`Added ${items.length} item(s) from group`);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Add failed');
-        }
-    };
-
-    const startCreateFromName = (name: string) => {
-        openNewItem({ name }, { savePreset: true });
-    };
     const openEditItem = (item: InvoiceItem) => {
         setItemEditingId(item.id);
         setItemDraft({
@@ -271,536 +209,408 @@ export function InvoiceDetailPanel({
             unit_price: String(item.unit_price ?? '0'),
             taxable: !!item.taxable,
         });
-        setItemDialogOpen(true);
+        setSavePresetOnNextItem(false);
+        setItemSheetOpen(true);
     };
-    const saveItemDraft = async (draft: ItemDraft) => {
+
+    const pickPreset = async (preset: EstimateItemPreset) => {
         try {
-            const payload = {
-                name: draft.name.trim(),
-                description: draft.description,
-                quantity: draft.quantity,
-                unit_price: draft.unit_price,
-                taxable: draft.taxable,
-            };
+            await addInvoiceItem(invoice.id, {
+                name: preset.name,
+                description: preset.description || '',
+                quantity: String(preset.default_quantity ?? 1),
+                unit_price: String(preset.default_unit_price ?? 0),
+                taxable: !!preset.default_taxable,
+            });
+            recordEstimateItemPresetUsage(preset.id).catch(() => {});
+            await refresh();
+            toast.success(`Added “${preset.name}”`);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Add failed');
+            throw error;
+        }
+    };
+
+    const pickGroup = async (groupId: number) => {
+        try {
+            const groupItems = await expandGroup(groupId);
+            if (groupItems.length === 0) {
+                toast.info('That group has no active items');
+                return;
+            }
+            await addInvoiceItemsBulk(invoice.id, groupItems.map(item => ({
+                name: item.name,
+                description: item.description,
+                quantity: item.quantity,
+                unit: item.unit || undefined,
+                unit_price: item.unit_price,
+                taxable: item.taxable,
+            })));
+            await refresh();
+            toast.success(`Added ${groupItems.length} item(s) from group`);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Add failed');
+            throw error;
+        }
+    };
+
+    const saveItem = async (draft: InvoiceItemDraft) => {
+        const payload = {
+            name: draft.name.trim(),
+            description: draft.description,
+            quantity: draft.quantity,
+            unit_price: draft.unit_price,
+            taxable: draft.taxable,
+        };
+        try {
             if (itemEditingId == null) {
-                await addInvoiceItem(invoice.id, payload as any);
-                // Catalog write needs price_book.manage; others just add to the
-                // invoice with no scary 403 toast (mirrors EstimateDetailPanel).
-                if (savePresetOnNextItem && canManagePriceBook) {
+                await addInvoiceItem(invoice.id, payload);
+                if (savePresetOnNextItem && capabilities.canManagePriceBook) {
                     try {
                         const preset = await createEstimateItemPreset({
                             name: payload.name,
                             description: payload.description || null,
                             default_quantity: Number(payload.quantity) || 1,
                             default_unit_price: Number(payload.unit_price) || 0,
-                            default_taxable: !!payload.taxable,
+                            default_taxable: payload.taxable,
                         });
                         recordEstimateItemPresetUsage(preset.id).catch(() => {});
-                        toast.success(`Created "${preset.name}" and added to invoice`);
                     } catch {
-                        toast.warning('Item added — could not save it to the Price Book');
-                    } finally {
-                        setSavePresetOnNextItem(false);
+                        toast.warning('Item added — it could not be saved to the Price Book');
                     }
-                } else {
-                    setSavePresetOnNextItem(false);
                 }
             } else {
-                await updateInvoiceItem(invoice.id, itemEditingId, payload as any);
+                await updateInvoiceItem(invoice.id, itemEditingId, payload);
             }
-            await refreshAfterItemChange();
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Save failed');
-        }
-    };
-    const handleRemoveItem = async (id: number) => {
-        try {
-            await deleteInvoiceItem(invoice.id, id);
-            await refreshAfterItemChange();
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Remove failed');
+            setSavePresetOnNextItem(false);
+            await refresh();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Save failed');
+            throw error;
         }
     };
 
-    // ── Auto-save ────────────────────────────────────────────────────────────
-
-    const saving = useRef(false);
-    const persist = async (patch: Partial<Invoice>) => {
-        if (readOnly) return;
-        if (saving.current) return;
-        saving.current = true;
+    const removeItem = async () => {
+        if (itemEditingId == null) return;
         try {
-            const updated = await updateInvoice(invoice.id, patch as any);
-            setInvoice(updated);
-            onChanged?.(updated);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Save failed');
+            await deleteInvoiceItem(invoice.id, itemEditingId);
+            await refresh();
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Remove failed');
+            throw error;
+        }
+    };
+
+    const explicitSave = async () => {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+        await new Promise(resolve => window.setTimeout(resolve, 150));
+        await refresh();
+        toast.success('All changes saved');
+        setEditing(false);
+    };
+
+    const previewPdf = () => {
+        openAuthedPdf(
+            `/api/invoices/${invoice.id}/pdf`,
+            `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`,
+        ).catch(() => toast.error('Could not open the PDF'));
+    };
+
+    const confirmDestructive = async () => {
+        if (!destructiveAction || destructiveBusy) return;
+        setDestructiveBusy(true);
+        try {
+            if (destructiveAction === 'void') await onVoid();
+            else await onDelete();
+            setDestructiveAction(null);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : `Could not ${destructiveAction} invoice`);
         } finally {
-            saving.current = false;
+            setDestructiveBusy(false);
         }
     };
-    const saveNotes = async (text: string) => {
-        await persist({ notes: text } as any);
-    };
 
-    // ── Inline payment recording ─────────────────────────────────────────────
-
-    if (loading) {
+    if (loading || (invoiceData.isLoading && !invoice.items)) {
         return (
-            <div className="flex h-full items-center justify-center">
-                <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            <div className="flex h-full items-center justify-center bg-[var(--blanc-panel-surface)]">
+                <Loader2 className="size-6 animate-spin text-[var(--blanc-ink-3)]" />
             </div>
         );
     }
 
-    const hasItems = !!invoice.items?.length;
-    const totalNum = Number(invoice.total) || 0;
-    const paidNum = Number(invoice.amount_paid) || 0;
-    const paymentProgress = totalNum > 0 ? Math.min((paidNum / totalNum) * 100, 100) : 0;
-    const balanceDueNum = Number(invoice.balance_due) || 0;
-
-    // INVOICE footer (mirror of ESTIMATE-FOOTER-001): exactly ONE primary CTA per
-    // state + a "More" kebab for everything else.
-    // Owner amendment 2026-08-03: explicit Save beside the primary CTA — edits
-    // already persist inline; Save flushes any in-progress field and confirms.
-    const handleExplicitSave = async () => {
-        (document.activeElement as HTMLElement | null)?.blur?.();
-        await new Promise(resolve => setTimeout(resolve, 150)); // let on-blur saves land
-        await refreshAfterItemChange().catch(() => {});
-        toast.success('All changes saved');
-        setEditing(false); // back to the read-only preview (VIEW-FIRST)
-    };
-    const previewPdf = () => openAuthedPdf(`/api/invoices/${invoice.id}/pdf`, `${invoice.invoice_number || `Invoice-${invoice.id}`}.pdf`)
-        .catch(() => toast.error('Could not open the PDF'));
-    const primaryKey: 'send' | 'preview' =
-        !isVoid && invoice.status === 'draft' && canSend ? 'send'
-        : 'preview';
-
     return (
-        <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${isVoid ? 'grayscale opacity-60' : ''}`}>
-            {/* ONE scroll surface at every width (design review 2026-07-23) — see
-                EstimateDetailPanel: the per-column scroll pair broke mobile. The header
-                lives INSIDE this scroller (owner 2026-08-08: it scrolls with the content,
-                not pinned). overflow-x-hidden kills the mobile horizontal rubber-band —
-                overflow-y:auto makes overflow-x compute to `auto`, so a child a hair too
-                wide (the native date input below) became draggable sideways. */}
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
-                <div className="border-b border-[var(--blanc-line)] px-5 py-4 pr-14">
-                    <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                                {invoice.job_id ? (
-                                    <a
-                                        href={`/jobs/${invoice.job_id}`}
-                                        onClick={e => { e.preventDefault(); window.open(`/jobs/${invoice.job_id}`, '_blank', 'noopener,noreferrer'); }}
-                                        className="font-mono text-sm font-semibold text-blue-600 hover:underline"
-                                        title={`Open Job #${invoice.job_id}`}
-                                    >
+        <div className={`h-full min-h-0 bg-[var(--blanc-panel-surface)] text-[var(--blanc-ink-1)] ${isTerminal ? 'opacity-70' : ''}`} data-testid="invoice-detail">
+            <div className="h-full overflow-y-auto overflow-x-hidden overscroll-contain px-[18px] pb-8 pt-6 md:px-8 md:py-7">
+                <div className="mx-auto w-full max-w-[820px] space-y-6">
+                    <header className="pr-10 md:pr-0">
+                        <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <h2 className="font-mono text-[17px] font-semibold text-[var(--blanc-ink-1)]">
                                         {invoice.invoice_number}
-                                    </a>
-                                ) : (
-                                    <span className="font-mono text-sm font-semibold text-[var(--blanc-ink-1)]">{invoice.invoice_number}</span>
-                                )}
-                                <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">{invoice.status}</Badge>
-                            </div>
-                            <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{invoice.contact_name || 'No customer linked'}</p>
-                        </div>
-                        <div className="flex items-start gap-3">
-                            <div className="text-right">
-                                <p className="blanc-eyebrow">Due</p>
-                                <p className={`font-mono text-xl font-semibold ${balanceDueNum > 0 ? 'text-[var(--blanc-ink-1)]' : 'text-emerald-700'}`}>
-                                    {money(invoice.balance_due)}
+                                    </h2>
+                                    <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">
+                                        {invoice.status}
+                                    </Badge>
+                                </div>
+                                <p className="mt-2 text-[13px] text-[var(--blanc-ink-2)]">
+                                    {invoice.contact_name || 'No customer linked'}
+                                    {invoice.job_id ? ` · Job #${invoice.job_number || invoice.job_id}` : ''}
                                 </p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--blanc-ink-3)]">Balance due</p>
+                                <p className="mt-0.5 font-mono text-[26px] font-semibold leading-tight text-[var(--blanc-ink-1)]">{money(invoice.balance_due)}</p>
                                 <p className="text-[11px] text-[var(--blanc-ink-3)]">of {money(invoice.total)}</p>
                             </div>
                         </div>
-                    </div>
-                </div>
-                <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
-                <main className="min-w-0 space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
-                    {/* Summary (stored in `notes`; labeled "Summary" to match estimates).
-                        OB-28 mirror: dashed invite when empty, collapsible card when filled. */}
-                    {invoice.notes ? readOnly ? (
-                        /* VIEW MODE: flat — no box; the eyebrow row keeps the collapse chevron. */
-                        <section>
-                            <button
-                                type="button"
-                                onClick={() => setNotesOpen(o => !o)}
-                                className="flex items-center gap-1.5"
-                            >
-                                <span className="blanc-eyebrow">Summary</span>
-                                <ChevronDown className={`size-3.5 text-[var(--blanc-ink-3)] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
-                            </button>
-                            {notesOpen && (
-                                <p className="mt-3 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</p>
-                            )}
-                        </section>
-                    ) : (
-                        <section className="rounded-2xl border border-[var(--blanc-line)]">
-                            <div className="flex items-center justify-between px-4 py-3">
-                                <button
-                                    type="button"
-                                    onClick={() => setNotesOpen(o => !o)}
-                                    className="flex flex-1 items-center gap-2 text-left text-sm font-medium text-[var(--blanc-ink-1)]"
-                                >
-                                    <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
-                                    Summary
-                                </button>
-                                {!readOnly && (
-                                    <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setNotesDialogOpen(true)} title="Edit summary">
-                                        <Pencil className="size-4" />
-                                    </Button>
-                                )}
+                        {total > 0 ? (
+                            <div className="mt-3">
+                                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--blanc-surface-muted)]">
+                                    <div className="h-full rounded-full bg-[var(--blanc-success)]" style={{ width: `${paymentProgress}%` }} />
+                                </div>
+                                <p className="mt-1 text-right text-[11px] text-[var(--blanc-ink-3)]">{paymentProgress.toFixed(0)}% paid</p>
                             </div>
-                            {notesOpen && (
-                                <div className="px-4 pb-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{invoice.notes}</div>
-                            )}
-                        </section>
-                    ) : !readOnly ? (
-                        /* Edit mode only — no empty-state box in the preview. */
-                        <div className="rounded-2xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                            <p className="text-sm font-medium text-[var(--blanc-ink-1)]">Summary</p>
-                            <p className="mt-1 text-sm text-[var(--blanc-ink-3)]">Add scope, findings, or any context worth highlighting to the customer.</p>
-                            {!readOnly && (
-                                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setNotesDialogOpen(true)}>
-                                    <Plus className="mr-1 size-4" /> Add summary
+                        ) : null}
+                    </header>
+
+                    {!editing ? (
+                        <section className="space-y-2.5">
+                            {capabilities.canCollect && onCollect ? (
+                                <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={onCollect} data-testid="invoice-collect">
+                                    <CreditCard className="mr-2 size-5" /> Collect payment
                                 </Button>
-                            )}
-                        </div>
+                            ) : invoice.status === 'draft' && capabilities.canSend ? (
+                                <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={onSend} data-testid="invoice-send">
+                                    <Send className="mr-2 size-5" /> Send invoice
+                                </Button>
+                            ) : null}
+                            <div className="grid grid-cols-2 gap-2.5">
+                                {invoice.status !== 'draft' && capabilities.canSend ? (
+                                    <Button type="button" variant="outline" className="h-[46px] rounded-[13px] text-[14px] font-semibold" onClick={onSend} data-testid="invoice-send">
+                                        <Send className="mr-1.5 size-4" /> Resend
+                                    </Button>
+                                ) : null}
+                                <Button type="button" variant="outline" className={`h-[46px] rounded-[13px] text-[14px] font-semibold ${invoice.status === 'draft' || !capabilities.canSend ? 'col-span-2' : ''}`} onClick={previewPdf}>
+                                    <Eye className="mr-1.5 size-4" /> Preview PDF
+                                </Button>
+                            </div>
+                        </section>
                     ) : null}
 
-                    {/* Items */}
+                    {(invoice.notes || editing) ? (
+                        <section>
+                            <div className="flex min-h-[30px] items-center justify-between gap-3">
+                                <p className="blanc-eyebrow">Summary</p>
+                                {editing ? (
+                                    <Button type="button" variant="ghost" size="icon" className="size-[30px] rounded-[9px]" onClick={() => setNotesDialogOpen(true)} aria-label={invoice.notes ? 'Edit summary' : 'Add summary'}>
+                                        {invoice.notes ? <Pencil className="size-4" /> : <Plus className="size-4" />}
+                                    </Button>
+                                ) : null}
+                            </div>
+                            {invoice.notes ? <p className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--blanc-ink-2)]">{invoice.notes}</p> : <p className="mt-2 text-[13px] text-[var(--blanc-ink-3)]">Add context for the customer.</p>}
+                        </section>
+                    ) : null}
+
                     <section>
-                        <div className="mb-3 flex items-end justify-between gap-3">
-                            <p className="blanc-eyebrow">Items</p>
-                        </div>
+                        <p className="blanc-eyebrow">Items</p>
                         {hasItems ? (
-                            <div className={readOnly ? 'space-y-4' : 'space-y-2'}>
-                                {invoice.items!.map(item => readOnly ? (
-                                    /* VIEW MODE: flat row, no tile chrome (owner: flat design).
-                                       Qty × price folds into the price line — `2 × $140.00 = $280.00` —
-                                       and is omitted for qty 1 (the overwhelmingly common case, so the
-                                       row stays one line shorter). Long names truncate. Taxable trails
-                                       the description on the same line. */
-                                    <div key={item.id} className="text-sm">
-                                        <div className="flex items-baseline justify-between gap-3">
-                                            <p className="min-w-0 truncate font-medium text-[var(--blanc-ink-1)]">{item.name}</p>
-                                            <p className="shrink-0 font-mono whitespace-nowrap text-[var(--blanc-ink-1)]">
-                                                {Number(item.quantity) !== 1 && (
-                                                    <span className="text-[var(--blanc-ink-3)]">{Number(item.quantity)} × {money(item.unit_price)} = </span>
-                                                )}
-                                                <span className="font-semibold">{money((item as any).amount ?? Number(item.quantity) * Number(item.unit_price))}</span>
-                                            </p>
-                                        </div>
-                                        {(item.description || item.taxable) && (
-                                            <p className="mt-0.5 whitespace-pre-wrap text-[var(--blanc-ink-2)]">
-                                                {item.description}
-                                                {item.taxable && <span className="text-xs text-[var(--blanc-ink-3)]">{item.description ? ' · ' : ''}Taxable</span>}
-                                            </p>
-                                        )}
-                                    </div>
-                                ) : (
-                                    /* EDIT MODE tile: name↔amount header, full-width description, meta
-                                       row with actions — mirrors the estimate tile. */
-                                    <div
+                            <div className="mt-2">
+                                {invoice.items!.map(item => (
+                                    <button
                                         key={item.id}
-                                        className="rounded-xl border border-[var(--blanc-line)] p-4 text-sm transition-colors cursor-pointer hover:border-[var(--blanc-ink-3)]"
-                                        onClick={() => openEditItem(item)}
+                                        type="button"
+                                        className={`flex w-full items-center justify-between gap-3 border-b border-[var(--blanc-line)] px-1 py-[11px] text-left last:border-b-0 ${editing ? '' : 'cursor-default'}`}
+                                        onClick={() => { if (editing) openEditItem(item); }}
+                                        data-testid="invoice-item-row"
                                     >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <p className="min-w-0 font-medium text-[var(--blanc-ink-1)]">{item.name}</p>
-                                            <p className="shrink-0 font-mono font-semibold whitespace-nowrap text-[var(--blanc-ink-1)]">{money((item as any).amount ?? Number(item.quantity) * Number(item.unit_price))}</p>
-                                        </div>
-                                        {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
-                                        <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blanc-ink-3)]">
-                                            <span>{Number(item.quantity)} × {money(item.unit_price)}</span>
-                                            {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
-                                            <span className="ml-auto flex items-center gap-1">
-                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
-                                                    <Pencil className="size-4" />
-                                                </Button>
-                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
-                                                    <Trash2 className="size-4" />
-                                                </Button>
-                                            </span>
-                                        </div>
-                                    </div>
+                                        <span className="min-w-0">
+                                            <span className="block truncate text-[15px] font-semibold text-[var(--blanc-ink-1)]">{item.name}</span>
+                                            {item.description ? <span className="mt-0.5 block truncate text-[13px] text-[var(--blanc-ink-2)]">{item.description}</span> : null}
+                                            {(Number(item.quantity) !== 1 || item.taxable) ? (
+                                                <span className="mt-1 block text-[12px] text-[var(--blanc-ink-3)]">
+                                                    {Number(item.quantity) !== 1 ? `${Number(item.quantity)} × ${money(item.unit_price)}` : ''}
+                                                    {Number(item.quantity) !== 1 && item.taxable ? ' · ' : ''}
+                                                    {item.taxable ? 'Taxable' : ''}
+                                                </span>
+                                            ) : null}
+                                        </span>
+                                        <span className="flex shrink-0 items-center gap-2">
+                                            <span className="font-mono text-[15px] font-semibold text-[var(--blanc-ink-1)]">{money(item.amount ?? Number(item.quantity) * Number(item.unit_price))}</span>
+                                            {editing ? <ChevronRight className="size-4 text-[var(--blanc-ink-3)]" /> : null}
+                                        </span>
+                                    </button>
                                 ))}
                             </div>
-                        ) : hydrating ? (
-                            <div className="flex items-center gap-2 rounded-md border border-[var(--blanc-line)] px-4 py-3 text-sm text-[var(--blanc-ink-3)]">
+                        ) : invoiceData.isLoading ? (
+                            <div className="mt-2 flex items-center gap-2 rounded-xl bg-[var(--blanc-surface-muted)] px-4 py-3 text-sm text-[var(--blanc-ink-3)]">
                                 <Loader2 className="size-4 animate-spin" /> Loading items…
                             </div>
                         ) : (
-                            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            <div className="mt-2 rounded-xl bg-[var(--blanc-surface-muted)] px-4 py-3 text-sm text-[var(--blanc-ink-2)]">
                                 This invoice has no items. Add at least one priced item before sending.
                             </div>
                         )}
-                        {!readOnly && (
-                            <div className="mt-3">
-                                <ItemPresetSearchCombobox
-                                    onPickPreset={pickPreset}
-                                    onCreateNew={startCreateFromName}
-                                    onPickGroup={pickGroup}
-                                />
-                            </div>
-                        )}
+                        {editing ? (
+                            <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-[14px] border-dashed" onClick={openNewItem} data-testid="invoice-add-item">
+                                <Plus className="mr-1.5 size-4" /> Add item
+                            </Button>
+                        ) : null}
                     </section>
 
-                    {/* Totals */}
-                    <section className="rounded-2xl p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                        <p className="mb-3 blanc-eyebrow">Totals</p>
-                        <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                                <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
-                                <span className="font-mono text-[var(--blanc-ink-1)]">{money(invoice.subtotal)}</span>
-                            </div>
-                            {hasDiscount ? readOnly ? (
-                                /* View mode: the discount is a plain info row like Subtotal/Tax. */
-                                <div className="flex justify-between">
+                    <section>
+                        <p className="blanc-eyebrow">Totals</p>
+                        <div className="mt-2 space-y-1 text-[14px]">
+                            <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Subtotal</span><span className="font-mono font-semibold">{money(invoice.subtotal)}</span></div>
+                            {hasDiscount ? editing ? (
+                                <div className="flex flex-wrap items-center gap-2 py-1">
                                     <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                    <span className="font-mono text-red-600">-{money(invoice.discount_amount)}</span>
+                                    <FloatingLabel label="Amount" filled className="w-28">
+                                        <MoneyInput
+                                            value={discountAmount}
+                                            onValueChange={setDiscountAmount}
+                                            onBlur={() => persist({ discount_amount: discountAmount || '0' })}
+                                            className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right text-sm tabular-nums outline-none focus:border-[var(--blanc-line-strong)]"
+                                        />
+                                    </FloatingLabel>
+                                    <Button type="button" variant="ghost" className="h-10 px-2 text-[var(--blanc-danger)]" onClick={() => { setHasDiscount(false); setDiscountAmount('0'); persist({ discount_amount: '0' }); }}>Remove</Button>
+                                    <span className="ml-auto font-mono font-semibold text-[var(--blanc-danger)]">-{money(invoice.discount_amount)}</span>
                                 </div>
                             ) : (
-                                /* OB-24: wrap so the amount drops to its own line on narrow widths. */
-                                <div className="flex flex-wrap items-center gap-2 text-sm">
-                                    <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                    <span className="text-[var(--blanc-ink-3)]">$</span>
-                                    <MoneyInput
-                                        value={discountAmount}
-                                        onValueChange={setDiscountAmount}
-                                        onBlur={() => persist({ discount_amount: discountAmount || '0' } as any)}
-                                        disabled={readOnly}
-                                        className="h-8 w-24 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 text-right text-sm tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
-                                    />
-                                    <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" disabled={readOnly} onClick={() => { setHasDiscount(false); setDiscountAmount('0'); persist({ discount_amount: '0' } as any); }} title="Remove discount">
-                                        <Trash2 className="size-4" />
-                                    </Button>
-                                    <span className="font-mono text-red-600 ml-auto">-{money(invoice.discount_amount)}</span>
-                                </div>
-                            ) : !readOnly && (
-                                <button type="button" className="text-sm text-blue-600" onClick={() => { setHasDiscount(true); setDiscountAmount('0'); }}>
-                                    Add Discount
-                                </button>
-                            )}
-                            {readOnly ? Number(taxRate) > 0 && (
-                                /* View mode: plain rate row (omitted when 0 — no empty states). */
-                                <div className="flex justify-between">
+                                <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Discount</span><span className="font-mono font-semibold text-[var(--blanc-danger)]">-{money(invoice.discount_amount)}</span></div>
+                            ) : editing ? (
+                                <button type="button" className="min-h-10 text-sm font-medium text-[var(--blanc-job)]" onClick={() => { setHasDiscount(true); setDiscountAmount('0'); }}>+ Add discount</button>
+                            ) : null}
+                            {editing ? (
+                                <div className="flex items-center justify-between gap-3 py-1">
                                     <span className="text-[var(--blanc-ink-2)]">Tax rate</span>
-                                    <span className="font-mono text-[var(--blanc-ink-1)]">{taxRate}%</span>
+                                    <FloatingField
+                                        label="Percent"
+                                        value={taxRate}
+                                        inputMode="decimal"
+                                        containerClassName="w-28"
+                                        onChange={event => setTaxRate(event.target.value.replace(/[^0-9.]/g, ''))}
+                                        onBlur={() => { const next = Number(taxRate); const value = Number.isFinite(next) ? next.toFixed(2) : '0'; setTaxRate(value); persist({ tax_rate: value }); }}
+                                    />
                                 </div>
-                            ) : (
-                                <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                    <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
-                                    <div className="relative w-24">
-                                        <Input
-                                            type="text"
-                                            inputMode="decimal"
-                                            value={taxRate}
-                                            onChange={e => setTaxRate(e.target.value.replace(/[^0-9.]/g, ''))}
-                                            onBlur={() => {
-                                                const n = Number(taxRate);
-                                                const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
-                                                setTaxRate(formatted);
-                                                persist({ tax_rate: formatted } as any);
-                                            }}
-                                            className={`${TOTALS_INPUT} w-full pr-7 text-right tabular-nums`}
-                                        />
-                                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
-                                    </div>
-                                </div>
-                            )}
-                            <div className="flex justify-between">
-                                <span className="text-[var(--blanc-ink-2)]">Tax</span>
-                                <span className="font-mono text-[var(--blanc-ink-1)]">{money(invoice.tax_amount)}</span>
-                            </div>
-                            <div className="flex justify-between pt-2 text-base font-semibold text-[var(--blanc-ink-1)]" style={{ borderTop: '1px solid var(--blanc-line)' }}>
-                                <span>Total</span>
-                                <span className="font-mono">{money(invoice.total)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                                <span className="text-[var(--blanc-ink-2)]">Amount paid</span>
-                                <span className="font-mono text-emerald-700">{money(invoice.amount_paid)}</span>
-                            </div>
-                            <div className="flex justify-between pt-2 text-base font-semibold text-[var(--blanc-ink-1)]" style={{ borderTop: '1px solid var(--blanc-line)' }}>
-                                <span>Balance Due</span>
-                                <span className={`font-mono ${balanceDueNum <= 0 ? 'text-emerald-700' : ''}`}>{money(invoice.balance_due)}</span>
-                            </div>
-                            {totalNum > 0 && (
-                                <div>
-                                    <div className="w-full rounded-full h-1.5" style={{ background: 'rgba(25,25,25,0.10)' }}>
-                                        <div
-                                            className="bg-emerald-600 h-1.5 rounded-full transition-all"
-                                            style={{ width: `${paymentProgress}%` }}
-                                        />
-                                    </div>
-                                    <p className="text-[11px] text-[var(--blanc-ink-3)] mt-1 text-right">{paymentProgress.toFixed(0)}% paid</p>
-                                </div>
-                            )}
+                            ) : Number(taxRate) > 0 ? (
+                                <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Tax rate</span><span className="font-mono font-semibold">{taxRate}%</span></div>
+                            ) : null}
+                            <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Tax</span><span className="font-mono font-semibold">{money(invoice.tax_amount)}</span></div>
+                            <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] text-[16px] font-semibold"><span>Total</span><span className="font-mono">{money(invoice.total)}</span></div>
+                            <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Amount paid</span><span className="font-mono font-semibold text-[var(--blanc-success)]">{money(invoice.amount_paid)}</span></div>
+                            <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] text-[16px] font-semibold"><span>Balance due</span><span className="font-mono">{money(invoice.balance_due)}</span></div>
                         </div>
                     </section>
-                </main>
 
-                <aside className="min-w-0 space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
-                    {/* Tasks are meta — beside the document (desktop) / after it (mobile). */}
-                    <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
-
-                    {/* Document settings — in view mode a plain "Due date" info row (whole
-                        section omitted when there's no due date; no empty states). */}
-                    {(!readOnly || !!dueDate) && (
-                        <section className="space-y-3 text-sm">
+                    {(editing || dueDate || paymentTerms) ? (
+                        <section>
                             <p className="blanc-eyebrow">Document settings</p>
-                            {readOnly ? (
-                                <div className="flex items-center justify-between">
-                                    <span className="text-[var(--blanc-ink-2)]">Due date</span>
-                                    <span className="font-medium text-[var(--blanc-ink-1)]">{fmtDate(dueDate)}</span>
+                            {editing ? (
+                                <div className="mt-3 space-y-3.5">
+                                    <FloatingLabel label="Due date" htmlFor="invoice-due-date" filled={!!dueDate}>
+                                        <input
+                                            id="invoice-due-date"
+                                            type="date"
+                                            value={dueDate}
+                                            onChange={event => setDueDate(event.target.value)}
+                                            onBlur={() => persist({ due_date: dueDate || null })}
+                                            className="h-[50px] w-full min-w-0 rounded-xl border-[1.5px] border-transparent bg-transparent px-3.5 text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none focus:border-[var(--blanc-line-strong)]"
+                                        />
+                                    </FloatingLabel>
+                                    <FloatingSelect
+                                        label="Payment terms"
+                                        value={paymentTerms || '_none'}
+                                        onValueChange={value => {
+                                            const next = value === '_none' ? '' : value;
+                                            setPaymentTerms(next);
+                                            persist({ payment_terms: next || null });
+                                        }}
+                                    >
+                                        <SelectItem value="_none">None</SelectItem>
+                                        <SelectItem value="Due on Receipt">Due on Receipt</SelectItem>
+                                        <SelectItem value="Net 15">Net 15</SelectItem>
+                                        <SelectItem value="Net 30">Net 30</SelectItem>
+                                        <SelectItem value="Net 60">Net 60</SelectItem>
+                                    </FloatingSelect>
                                 </div>
                             ) : (
-                                /* minmax(0,1fr) + w-full min-w-0: a native <input type="date"> has an
-                                    intrinsic min-width that a bare 1fr (= minmax(auto,1fr)) won't shrink,
-                                    so it overflowed the panel and drove the horizontal rubber-band. */
-                                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
-                                    <Label className="text-[var(--blanc-ink-2)]">Due date</Label>
-                                    <Input
-                                        type="date"
-                                        value={dueDate}
-                                        onChange={e => setDueDate(e.target.value)}
-                                        onBlur={() => persist({ due_date: dueDate || null } as any)}
-                                        className={`${TOTALS_INPUT} w-full min-w-0`}
-                                    />
+                                <div className="mt-2 space-y-1 text-[14px]">
+                                    {dueDate ? <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Due date</span><span className="font-medium">{fmtDate(dueDate)}</span></div> : null}
+                                    {paymentTerms ? <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Payment terms</span><span className="font-medium">{paymentTerms}</span></div> : null}
                                 </div>
                             )}
                         </section>
-                    )}
+                    ) : null}
 
-                    {/* Fully-paid state — flat row, no box (containers invisible). Info, not an
-                        edit affordance → shown in view mode too (hidden only for void/refunded). */}
-                    {!isVoid && balanceDueNum <= 0 && (
-                        <div className="flex items-center gap-2 text-sm font-medium text-emerald-700">
-                            <Check className="size-4 shrink-0" />
-                            Invoice is fully paid
+                    {!isTerminal && balanceDue <= 0 ? (
+                        <div className="flex items-center gap-2 text-sm font-medium text-[var(--blanc-success)]">
+                            <Check className="size-4" /> Invoice is fully paid
                         </div>
-                    )}
+                    ) : null}
 
-                    {/* Payments list. OB-31: voided rows stay listed — grayed and LAST;
-                        manual (non-Stripe/ZB) rows can be voided with confirmation. */}
-                    {payments.length > 0 && (
-                        <section className="space-y-2 text-sm">
+                    {payments && payments.length > 0 ? (
+                        <section>
                             <p className="blanc-eyebrow">Payments</p>
-                            <div className="space-y-1">
-                                {[...payments].sort((a, b) => (a.voided_at ? 1 : 0) - (b.voided_at ? 1 : 0)).map((tx: any) => {
-                                    const voided = !!tx.voided_at;
-                                    const manual = !tx.external_source || tx.external_source === '' || tx.external_source === 'manual';
-                                    return (
-                                        <div key={tx.id} className="flex items-center justify-between gap-2 text-xs">
-                                            <span className="flex min-w-0 items-center gap-2">
-                                                <span className={voided ? 'text-[var(--blanc-ink-3)]' : 'text-[var(--blanc-ink-2)]'}>
-                                                    {fmtDate(tx.transaction_date || tx.created_at)}
-                                                    {(tx.payment_method || tx.metadata?.payment_method) && ` · ${paymentMethodLabel(tx.payment_method || tx.metadata?.payment_method)}`}
-                                                </span>
-                                                <PaymentStatusChip status={voided ? 'voided' : 'completed'} transactionType="payment" />
+                            <div className="mt-2">
+                                {[...payments]
+                                    .sort((left, right) => (left.voided_at ? 1 : 0) - (right.voided_at ? 1 : 0))
+                                    .map(payment => (
+                                        <div key={payment.id} className="flex min-h-10 items-center justify-between gap-3 border-b border-[var(--blanc-line)] py-2 text-[12px] last:border-b-0">
+                                            <span className="min-w-0">
+                                                <span className="text-[var(--blanc-ink-2)]">{fmtDate(payment.processed_at || payment.created_at)} · {paymentMethodLabel(payment.payment_method)}</span>
+                                                <PaymentStatusChip status={payment.status} transactionType={payment.transaction_type} className="ml-2" />
                                             </span>
-                                            <span className="flex items-center gap-1">
-                                                <span className={`font-mono ${voided ? 'text-[var(--blanc-ink-3)] line-through' : 'text-emerald-700'}`}>
-                                                    {money(tx.amount ?? tx.metadata?.amount)}
-                                                </span>
-                                                {!voided && manual && canVoidPayment && !readOnly && (
-                                                    <Button
-                                                        type="button" variant="ghost" size="sm"
-                                                        className="size-6 p-0 text-[var(--blanc-ink-3)] hover:text-red-600"
-                                                        onClick={() => setVoidTx(tx)}
-                                                        title="Void payment"
-                                                    >
+                                            <span className="flex shrink-0 items-center gap-2">
+                                                <span className={`font-mono font-semibold ${payment.status === 'voided' ? 'line-through text-[var(--blanc-ink-3)]' : 'text-[var(--blanc-success)]'}`}>{money(payment.amount)}</span>
+                                                {editing && capabilities.canVoidPayment && isVoidablePayment(payment) ? (
+                                                    <Button type="button" variant="ghost" size="icon" className="size-8 text-[var(--blanc-ink-3)] hover:text-[var(--blanc-danger)]" onClick={() => setVoidPayment(payment)} aria-label="Void payment">
                                                         <Ban className="size-3.5" />
                                                     </Button>
-                                                )}
+                                                ) : null}
                                             </span>
                                         </div>
-                                    );
-                                })}
+                                    ))}
                             </div>
                         </section>
-                    )}
+                    ) : null}
 
-                    {/* OB-31 / TXN-STATUS-VOID-001: void-payment confirmation with a reason,
-                        shared with the Job finance surface. */}
-                    <VoidPaymentDialog
-                        open={!!voidTx}
-                        onOpenChange={o => { if (!o) setVoidTx(null); }}
-                        bodyText="This will remove the payment from the invoice and recalculate the invoice's balance."
-                        onConfirm={async reason => {
-                            if (!voidTx) return;
-                            try {
-                                await voidInvoicePayment(invoice.id, voidTx.id, reason);
-                                const [fresh, ps] = await Promise.all([fetchInvoice(invoice.id), fetchInvoicePayments(invoice.id)]);
-                                setInvoice(fresh); setPayments(ps); onChanged?.(fresh);
-                                toast.success('Payment voided');
-                            } catch (err) {
-                                toast.error(err instanceof Error ? err.message : 'Could not void the payment');
-                                throw err;
-                            }
-                        }}
-                    />
+                    <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
 
-                    {events.length > 0 && (
-                        <section className="space-y-3 text-sm">
+                    {events.length > 0 ? (
+                        <section>
                             <p className="blanc-eyebrow">History</p>
-                            <div className="space-y-2.5">
-                                {events.map(evt => (
-                                    <div key={evt.id} className="text-xs">
-                                        <span className="font-medium capitalize text-[var(--blanc-ink-1)]">{evt.event_type.replace(/_/g, ' ')}</span>
-                                        <p className="text-[var(--blanc-ink-3)]">{fmtDateTime(evt.created_at)}</p>
+                            <div className="mt-2 space-y-3">
+                                {events.map(event => (
+                                    <div key={event.id} className="text-[12px]">
+                                        <span className="font-medium capitalize text-[var(--blanc-ink-1)]">{event.event_type.replace(/_/g, ' ')}</span>
+                                        <p className="mt-0.5 text-[var(--blanc-ink-3)]">{fmtDateTime(event.created_at)}</p>
                                     </div>
                                 ))}
                             </div>
                         </section>
-                    )}
-                </aside>
-                </div>
-            </div>
+                    ) : null}
 
-            <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#F1F1F0)] px-5 py-3">
-                <div className="flex items-center justify-end gap-2">
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="outline" size="sm" aria-label="More actions">
-                                <MoreHorizontal className="size-4" />
-                                <span className="ml-1 hidden sm:inline">More</span>
+                    <section className="space-y-2.5 pt-1">
+                        {editing ? (
+                            <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={explicitSave}>
+                                <Check className="mr-2 size-5" /> Save changes
                             </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-52">
-                            {primaryKey !== 'preview' && (
-                                <DropdownMenuItem onSelect={previewPdf}><Eye className="size-4" />Preview PDF</DropdownMenuItem>
-                            )}
-                            {canSend && primaryKey !== 'send' && (
-                                <DropdownMenuItem onSelect={onSend}><Send className="size-4" />{invoice.status === 'draft' ? 'Send' : 'Resend'}</DropdownMenuItem>
-                            )}
-                            {!isVoid && (
-                                <>
-                                    {canVoid && <DropdownMenuItem onSelect={onVoid}><Ban className="size-4" />Void</DropdownMenuItem>}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={onDelete}><Trash2 className="size-4" />Delete</DropdownMenuItem>
-                                </>
-                            )}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-
-                    {/* VIEW-FIRST: Edit enters the editing state; Save flushes pending on-blur
-                        saves and returns to the preview. */}
-                    {canEdit && (editing ? (
-                        <Button variant="secondary" onClick={handleExplicitSave}>
-                            <Check className="mr-1.5 size-4" />Save
-                        </Button>
-                    ) : (
-                        <Button variant="secondary" onClick={() => setEditing(true)}>
-                            <Pencil className="mr-1.5 size-4" />Edit
-                        </Button>
-                    ))}
-                    {primaryKey === 'send' ? (
-                        <Button onClick={onSend}><Send className="mr-1.5 size-4" />Send</Button>
-                    ) : (
-                        <Button onClick={previewPdf}><Eye className="mr-1.5 size-4" />Preview PDF</Button>
-                    )}
+                        ) : capabilities.canEdit ? (
+                            <Button type="button" variant="outline" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={() => setEditing(true)}>
+                                <Pencil className="mr-2 size-5" /> Edit invoice
+                            </Button>
+                        ) : null}
+                        {!editing && capabilities.canDelete ? (
+                            <Button type="button" variant="ghost" className="mt-6 h-10 w-full text-[13px] text-[var(--blanc-danger)] hover:text-[var(--blanc-danger)]" onClick={() => setDestructiveAction('delete')}>
+                                Delete draft
+                            </Button>
+                        ) : !editing && capabilities.canVoid ? (
+                            <Button type="button" variant="ghost" className="mt-6 h-10 w-full text-[13px] text-[var(--blanc-ink-3)] hover:text-[var(--blanc-danger)]" onClick={() => setDestructiveAction('void')}>
+                                <Ban className="mr-1.5 size-4" /> Void invoice
+                            </Button>
+                        ) : null}
+                    </section>
                 </div>
             </div>
 
@@ -808,14 +618,46 @@ export function InvoiceDetailPanel({
                 open={notesDialogOpen}
                 onOpenChange={setNotesDialogOpen}
                 initial={invoice.notes || ''}
-                onSave={saveNotes}
+                onSave={text => persist({ notes: text })}
             />
-            <EstimateItemDialog
-                open={itemDialogOpen}
-                onOpenChange={setItemDialogOpen}
+            <InvoiceItemSheet
+                open={itemSheetOpen}
+                onOpenChange={setItemSheetOpen}
                 isEdit={itemEditingId != null}
                 initial={itemDraft}
-                onSave={saveItemDraft}
+                onSave={saveItem}
+                onRemove={itemEditingId != null ? removeItem : undefined}
+                onPickPreset={pickPreset}
+                onPickGroup={pickGroup}
+                onCreateFromSearch={() => setSavePresetOnNextItem(capabilities.canManagePriceBook)}
+                catalogCreateAllowed={capabilities.canManagePriceBook}
+            />
+            <VoidPaymentDialog
+                open={!!voidPayment}
+                onOpenChange={next => { if (!next) setVoidPayment(null); }}
+                bodyText="This removes the payment from the invoice and recalculates its balance."
+                onConfirm={async reason => {
+                    if (!voidPayment) return;
+                    await voidInvoicePayment(invoice.id, voidPayment.id, reason);
+                    await refresh();
+                    setVoidPayment(null);
+                    toast.success('Payment voided');
+                }}
+            />
+            <InvoiceConfirmDialog
+                open={!!destructiveAction}
+                onOpenChange={next => { if (!next) setDestructiveAction(null); }}
+                title={destructiveAction === 'delete'
+                    ? `Delete draft ${invoice.invoice_number}?`
+                    : `Void ${invoice.invoice_number}?`}
+                description={destructiveAction === 'delete'
+                    ? <>This permanently deletes the draft and its {money(invoice.balance_due)} balance. This can’t be undone.</>
+                    : <>This clears the <span className="font-semibold text-[var(--blanc-danger)]">{money(invoice.balance_due)}</span> balance and marks the invoice void. This can’t be undone.</>}
+                cancelLabel="Keep"
+                confirmLabel={destructiveAction === 'delete' ? 'Delete draft' : 'Void invoice'}
+                confirmTestId={destructiveAction === 'delete' ? 'invoice-delete-confirm' : 'invoice-void-confirm'}
+                onConfirm={confirmDestructive}
+                busy={destructiveBusy}
             />
         </div>
     );
