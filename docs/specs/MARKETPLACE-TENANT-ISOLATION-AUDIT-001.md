@@ -205,6 +205,48 @@ the global index. Migration 263 is an explicit operator-gated stage 2b, so the
 repository-wide migration runner cannot remove the global index in the same
 automatic pass before stage-2a verification.
 
+## Verification — migration 262 two-tier repair (2026-08-14)
+
+Migration 262 treats persisted relationships and phone matches differently:
+Tier 1 (`timeline`, contact/call/email/task/Yelp FKs) is authoritative and any
+cross-company contradiction aborts before ownership writes. Tier 2
+(`contact_phone`, `sms_phone`) is consulted only with no Tier-1 evidence;
+one company is accepted, while multiple companies emit
+`TENANT_ISO_262_PHONE_AMBIGUOUS` and fall through to the explicit legacy ABC
+data assignment. This is required because the same customer phone is a legal
+natural key in multiple tenants.
+
+Real-DB Jest verification:
+
+```bash
+unset NODE_USE_SYSTEM_CA
+DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/timelineTenantIndexMigration.db.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"
+```
+
+Result: **PASS — 1 suite, 5 tests**. Coverage includes ambiguous phone-only
+evidence → NOTICE + ABC, contradictory Tier-1 → `TENANT_ISO_262_CONFLICT`,
+Tier-1 winning over another tenant's phone match, unique Tier-2 ownership,
+double replay, composite-index T-blast, separate per-company `ANONYMOUS`,
+contact-id isolation, and Yelp conversation-id isolation.
+
+Deployment-transport verification used an isolated clone of `albusto_test`,
+seeded with one ownerless timeline whose phone existed in ABC and QA Test Co,
+and applied the raw file in the same autocommit shape as staging/production:
+
+```bash
+/usr/local/Cellar/postgresql@16/16.11_1/bin/psql -X -v ON_ERROR_STOP=1 -d postgresql://localhost/albusto_tenant_iso_262_verify_final_20260814 -f backend/db/migrations/262_timeline_company_backfill_and_composite.sql
+```
+
+First run: **PASS**, emitted `TENANT_ISO_262_PHONE_AMBIGUOUS: 1`, assigned the
+timeline to ABC, left zero NULL owners, and retained both global and composite
+indexes. Repeating the exact command: **PASS**, all three ownership updates
+reported `UPDATE 0`; the composite index was already present. The disposable
+clone was then deleted; neither staging nor production was queried or mutated.
+
+Sabotage proof: temporarily changing ambiguous-phone handling from `NOTICE` to
+fatal `EXCEPTION` made `SAB-PHONE-HEURISTIC` red at migration execution. After
+the exact source restoration, the complete 5-test suite returned green.
+
 MCP parity: T1–T5 do not change the ChatGPT connector surface,
 `chatgptMcpPermissions.js`, or `agentSkillsMcpRegistry.js`.
 
