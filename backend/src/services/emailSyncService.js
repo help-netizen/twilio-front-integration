@@ -11,6 +11,7 @@ const emailMailboxService = require('./emailMailboxService');
 const SYNC_INTERVAL_MS = parseInt(process.env.EMAIL_SYNC_INTERVAL_MS || '300000', 10); // 5 min
 const SYNC_LOOKBACK_DAYS = parseInt(process.env.EMAIL_SYNC_LOOKBACK_DAYS || '30', 10);
 const MAX_THREADS_PER_SYNC = 100;
+const GMAIL_DRAFT_LABEL = 'DRAFT';
 
 let schedulerTimer = null;
 
@@ -109,7 +110,11 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
     });
 
     const gmailThread = threadRes.data;
-    const messages = gmailThread.messages || [];
+    // Gmail threads.get returns every message in the thread, including autosaved
+    // drafts even when threads.list was queried with -in:draft. Filter once, before
+    // any thread aggregate or message upsert can observe the draft.
+    const messages = (gmailThread.messages || []).filter(msg =>
+        !(msg.labelIds || []).includes(GMAIL_DRAFT_LABEL));
     if (messages.length === 0) return null;
 
     // Collect all participants
@@ -222,7 +227,7 @@ async function runInitialBackfill(companyId) {
         const listRes = await gmail.users.threads.list({
             userId: 'me',
             maxResults: MAX_THREADS_PER_SYNC,
-            q: `after:${afterEpoch}`,
+            q: `after:${afterEpoch} -in:draft`,
             pageToken,
         });
 
@@ -484,6 +489,7 @@ async function pullChangesNormalized(companyId, sinceCursor) {
         for (const mid of affectedMessageIds) {
             try {
                 const msgRes = await gmail.users.messages.get({ userId: 'me', id: mid, format: 'full' });
+                if ((msgRes.data.labelIds || []).includes(GMAIL_DRAFT_LABEL)) continue;
                 messages.push(normalizeGmailMessage(msgRes.data, mailboxEmail));
             } catch (err) {
                 // A message deleted between history + fetch is expected; skip it.
@@ -523,7 +529,7 @@ async function backfillNormalized(companyId, gmail, mailboxData, mailboxEmail) {
         const listRes = await gmail.users.threads.list({
             userId: 'me',
             maxResults: MAX_THREADS_PER_SYNC,
-            q: `after:${afterEpoch}`,
+            q: `after:${afterEpoch} -in:draft`,
             pageToken,
         });
         const threadIds = (listRes.data.threads || []).map(t => t.id);
@@ -531,6 +537,7 @@ async function backfillNormalized(companyId, gmail, mailboxData, mailboxEmail) {
             try {
                 const threadRes = await gmail.users.threads.get({ userId: 'me', id: tid, format: 'full' });
                 for (const msg of threadRes.data.messages || []) {
+                    if ((msg.labelIds || []).includes(GMAIL_DRAFT_LABEL)) continue;
                     messages.push(normalizeGmailMessage(msg, mailboxEmail));
                 }
             } catch (err) {

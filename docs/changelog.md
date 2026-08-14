@@ -4,6 +4,10 @@
 
 ---
 
+## 2026-08-14 — EMAIL-DRAFT-INGEST-001: Gmail autosaves excluded + reversible prune CLI
+
+Polling now excludes Gmail `DRAFT` messages at `threads.list`, immediately after `threads.get`, and in the per-message history path before normalization. Migration 260 adds the reversible `email_messages.is_draft_artifact` marker; a dry-run-first, company+mailbox-scoped CLI classifies historical outbound rows by Gmail message existence and marks only 404s, with bounded rollout, pacing, retry backoff, and fail-closed errors. Missing candidates log only row/message ids, Gmail timestamp, and body length—never body PII. Mark/unmark transactionally refreshes the four cached last-message display fields from the newest visible message while preserving `unread_count`; a draft-only thread cache is left unchanged. Marked rows are excluded from email/timeline/Pulse/Inspector read projections; no physical deletion, frontend, push-path, or ChatGPT MCP tool change. Verification: focused 27/27 and real-PG 4/4; DRAFT-upsert, tenant-guard, and thread-cache sabotages red→restore→green. **НЕ задеплоено.**
+
 ## 2026-07-26 — Lead-install gate: Yelp autoresponder gated by Marketplace connection
 
 LEAD-INSTALL-GATE-001. The Yelp autoresponder now runs only when the **Yelp Leads**

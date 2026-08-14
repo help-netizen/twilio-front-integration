@@ -4,6 +4,18 @@
 
 ---
 
+## EMAIL-DRAFT-INGEST-001 — Gmail draft autosaves are not sent email (2026-08-14)
+
+- Polling backfill must query `-in:draft` and independently reject every Gmail message carrying `DRAFT` before message persistence or thread aggregation.
+- Historical outbound rows are classified by `users.messages.get(provider_message_id)`: 404 is a reversible artifact candidate, 200 is retained, and every other error fails closed.
+- Cleanup is an operator CLI with mandatory company scope, default dry-run, `--apply`, `--limit`, sequential pacing, retry backoff, progress logging, and idempotent company+mailbox-scoped writes.
+- Every missing-candidate audit line exposes only row/message ids, Gmail timestamp, and body length; message bodies are prohibited from container logs.
+- Remediation only sets `email_messages.is_draft_artifact`; physical deletion and destructive link rewrites are prohibited. Timeline, message, Pulse, and related read projections exclude marked rows. The same transaction refreshes the thread's four cached last-message display fields, symmetrically for mark/unmark; no-visible-message leaves the cache unchanged.
+- `email_threads.unread_count` is never rewritten by cleanup: no per-message unread state exists, artifacts are outbound, and the counter represents inbound unread state.
+- Push ingestion, frontend email body rendering, and ChatGPT MCP authorization/tool contracts remain unchanged.
+
+Draft spec and verification ledger: `docs/specs/EMAIL-DRAFT-INGEST-001.md`.
+
 ## SCHEDULE-DESKTOP-MAP-001 (OB-18) — Desktop Day/Timeline route map
 
 **Status:** Implemented, pending acceptance

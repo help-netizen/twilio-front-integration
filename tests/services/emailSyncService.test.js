@@ -3,13 +3,104 @@
  * Gmail parsing helpers, message extraction, sync logic.
  */
 
+const mockGoogleGmail = jest.fn();
+
+jest.mock('googleapis', () => ({
+    google: { gmail: mockGoogleGmail },
+}));
+jest.mock('../../backend/src/db/emailQueries', () => ({
+    getMailboxWithTokens: jest.fn(),
+    getSyncState: jest.fn(),
+    upsertThread: jest.fn(),
+    upsertMessage: jest.fn(),
+    upsertAttachments: jest.fn(),
+    upsertSyncState: jest.fn(),
+    updateMailboxStatus: jest.fn(),
+}));
+jest.mock('../../backend/src/services/emailMailboxService', () => ({
+    createOAuth2Client: jest.fn(() => ({ setCredentials: jest.fn() })),
+    getValidAccessToken: jest.fn(),
+    getGmailProfile: jest.fn(),
+}));
+
+const emailQueries = require('../../backend/src/db/emailQueries');
+const emailMailboxService = require('../../backend/src/services/emailMailboxService');
 const {
     parseGmailHeaders,
     parseEmailAddress,
     parseRecipientList,
     extractBody,
     extractAttachments,
+    importGmailThread,
+    runInitialBackfill,
+    pullChangesNormalized,
 } = require('../../backend/src/services/emailSyncService');
+
+const COMPANY_ID = '00000000-0000-0000-0000-00000000000a';
+const MAILBOX_ID = '11111111-1111-1111-1111-111111111111';
+const MAILBOX_EMAIL = 'dispatch@example.com';
+
+function gmailMessage({ id, from, to, subject, at, labels = [], snippet, attachment = false }) {
+    const parts = [{
+        mimeType: 'text/plain',
+        body: { data: Buffer.from(`${id} body`).toString('base64url') },
+    }];
+    if (attachment) {
+        parts.push({
+            mimeType: 'application/pdf',
+            filename: `${id}.pdf`,
+            partId: '2',
+            body: { attachmentId: `${id}-attachment`, size: 10 },
+            headers: [{ name: 'Content-Disposition', value: 'attachment' }],
+        });
+    }
+    return {
+        id,
+        threadId: 'thread-1',
+        internalDate: String(at),
+        labelIds: labels,
+        snippet,
+        payload: {
+            mimeType: 'multipart/mixed',
+            headers: [
+                { name: 'From', value: from },
+                { name: 'To', value: to },
+                { name: 'Subject', value: subject },
+                { name: 'Message-ID', value: `<${id}@example.com>` },
+            ],
+            parts,
+        },
+    };
+}
+
+function gmailClient({ threads = [], threadMessages = [] } = {}) {
+    return {
+        users: {
+            history: {
+                list: jest.fn().mockResolvedValue({ data: { history: [] } }),
+            },
+            threads: {
+                list: jest.fn().mockResolvedValue({ data: { threads } }),
+                get: jest.fn().mockResolvedValue({ data: { messages: threadMessages } }),
+            },
+            messages: { get: jest.fn() },
+        },
+    };
+}
+
+beforeEach(() => {
+    jest.clearAllMocks();
+    emailQueries.getMailboxWithTokens.mockResolvedValue({
+        id: MAILBOX_ID,
+        email_address: MAILBOX_EMAIL,
+        history_id: null,
+    });
+    emailQueries.upsertThread.mockResolvedValue({ id: 77 });
+    emailQueries.upsertMessage.mockImplementation(async data => ({ id: data.provider_message_id }));
+    emailQueries.upsertAttachments.mockResolvedValue([]);
+    emailMailboxService.getValidAccessToken.mockResolvedValue('access-token');
+    emailMailboxService.getGmailProfile.mockResolvedValue({ history_id: 'cursor-new' });
+});
 
 describe('emailSyncService — parsing helpers', () => {
     // ─── parseGmailHeaders ───────────────────────────────────────���───────
@@ -163,5 +254,131 @@ describe('emailSyncService — parsing helpers', () => {
             const payload = { mimeType: 'text/plain', body: { data: 'text' } };
             expect(extractAttachments(payload, 'msg-3')).toHaveLength(0);
         });
+    });
+});
+
+describe('emailSyncService — Gmail draft polling guards', () => {
+    test('thread [inbound, DRAFT, sent] persists exactly two and aggregates without the draft', async () => {
+        const inbound = gmailMessage({
+            id: 'inbound-1',
+            from: 'Customer <customer@example.com>',
+            to: MAILBOX_EMAIL,
+            subject: 'Need service',
+            at: 1000,
+            labels: ['INBOX', 'UNREAD'],
+            snippet: 'incoming',
+        });
+        const draft = gmailMessage({
+            id: 'draft-1',
+            from: MAILBOX_EMAIL,
+            to: 'draft-only@example.com',
+            subject: 'Half written',
+            at: 3000,
+            labels: ['DRAFT', 'UNREAD'],
+            snippet: 'unfinished',
+            attachment: true,
+        });
+        const sent = gmailMessage({
+            id: 'sent-1',
+            from: `Dispatcher <${MAILBOX_EMAIL}>`,
+            to: 'customer@example.com',
+            subject: 'Re: Need service',
+            at: 2000,
+            labels: ['SENT'],
+            snippet: 'finished reply',
+        });
+        const gmail = gmailClient({ threadMessages: [inbound, draft, sent] });
+
+        await importGmailThread(gmail, 'thread-1', COMPANY_ID, MAILBOX_ID, MAILBOX_EMAIL);
+
+        expect(emailQueries.upsertMessage).toHaveBeenCalledTimes(2);
+        expect(emailQueries.upsertMessage.mock.calls.map(([row]) => row.provider_message_id))
+            .toEqual(['inbound-1', 'sent-1']);
+        expect(emailQueries.upsertThread).toHaveBeenCalledWith(expect.objectContaining({
+            company_id: COMPANY_ID,
+            mailbox_id: MAILBOX_ID,
+            provider_thread_id: 'thread-1',
+            last_message_at: new Date(2000),
+            last_message_preview: 'finished reply',
+            last_message_direction: 'outbound',
+            unread_count: 1,
+            has_attachments: false,
+            message_count: 2,
+        }));
+        const aggregate = emailQueries.upsertThread.mock.calls[0][0];
+        expect(aggregate.participants_json.map(person => person.email).sort())
+            .toEqual([MAILBOX_EMAIL, 'customer@example.com'].sort());
+    });
+
+    test('both threads.list queries include -in:draft and normalized backfill omits DRAFT messages', async () => {
+        const draft = gmailMessage({
+            id: 'draft-backfill', from: MAILBOX_EMAIL, to: 'customer@example.com',
+            subject: 'Draft', at: 3000, labels: ['DRAFT'], snippet: 'draft',
+        });
+        const sent = gmailMessage({
+            id: 'sent-backfill', from: MAILBOX_EMAIL, to: 'customer@example.com',
+            subject: 'Sent', at: 4000, labels: ['SENT'], snippet: 'sent',
+        });
+        const normalizedGmail = gmailClient({
+            threads: [{ id: 'thread-backfill' }],
+            threadMessages: [draft, sent],
+        });
+        const inboxGmail = gmailClient();
+        mockGoogleGmail
+            .mockReturnValueOnce(normalizedGmail)
+            .mockReturnValueOnce(inboxGmail);
+
+        const result = await pullChangesNormalized(COMPANY_ID, null);
+
+        expect(inboxGmail.users.threads.list).toHaveBeenCalledWith(expect.objectContaining({
+            q: expect.stringContaining('-in:draft'),
+        }));
+        expect(normalizedGmail.users.threads.list).toHaveBeenCalledWith(expect.objectContaining({
+            q: expect.stringContaining('-in:draft'),
+        }));
+        expect(result.messages.map(message => message.provider_message_id)).toEqual(['sent-backfill']);
+    });
+
+    test('initial backfill threads.list query includes -in:draft', async () => {
+        const gmail = gmailClient();
+        mockGoogleGmail.mockReturnValue(gmail);
+
+        await runInitialBackfill(COMPANY_ID);
+
+        expect(gmail.users.threads.list).toHaveBeenCalledWith(expect.objectContaining({
+            q: expect.stringContaining('-in:draft'),
+        }));
+    });
+
+    test('history normalization omits a DRAFT fetched by message id', async () => {
+        const draft = gmailMessage({
+            id: 'draft-history', from: MAILBOX_EMAIL, to: 'customer@example.com',
+            subject: 'Draft', at: 5000, labels: ['DRAFT'], snippet: 'unfinished',
+        });
+        const sent = gmailMessage({
+            id: 'sent-history', from: MAILBOX_EMAIL, to: 'customer@example.com',
+            subject: 'Sent', at: 6000, labels: ['SENT'], snippet: 'finished',
+        });
+        const gmail = gmailClient({ threadMessages: [draft, sent] });
+        gmail.users.history.list.mockResolvedValue({
+            data: {
+                history: [{
+                    messagesAdded: [
+                        { message: { id: draft.id, threadId: draft.threadId } },
+                        { message: { id: sent.id, threadId: sent.threadId } },
+                    ],
+                }],
+            },
+        });
+        gmail.users.messages.get.mockImplementation(async ({ id }) => ({
+            data: id === draft.id ? draft : sent,
+        }));
+        mockGoogleGmail.mockReturnValue(gmail);
+
+        const result = await pullChangesNormalized(COMPANY_ID, 'cursor-old');
+
+        expect(gmail.users.messages.get).toHaveBeenCalledTimes(2);
+        expect(result.messages.map(message => message.provider_message_id))
+            .toEqual(['sent-history']);
     });
 });

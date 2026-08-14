@@ -130,13 +130,25 @@ async function disconnectMailbox(mailboxId, updatedBy) {
 
 async function getThreads({ company_id, view = 'all', q, cursor, limit = 30 }) {
     const params = [company_id];
-    const conditions = ['t.company_id = $1'];
+    const conditions = [
+        't.company_id = $1',
+        `EXISTS (
+            SELECT 1 FROM email_messages visible
+            WHERE visible.company_id = $1
+              AND visible.thread_id = t.id
+              AND visible.is_draft_artifact = false
+        )`,
+    ];
     let idx = 2;
 
     // View filters
     if (view === 'inbox') {
         // Inbox = threads that have at least one inbound message (excludes sent-only threads)
-        conditions.push(`EXISTS (SELECT 1 FROM email_messages m WHERE m.thread_id = t.id AND m.direction = 'inbound')`);
+        conditions.push(`EXISTS (
+            SELECT 1 FROM email_messages m
+            WHERE m.company_id = $1 AND m.thread_id = t.id
+              AND m.direction = 'inbound' AND m.is_draft_artifact = false
+        )`);
     } else if (view === 'unread') {
         conditions.push(`t.unread_count > 0`);
     } else if (view === 'sent') {
@@ -155,6 +167,8 @@ async function getThreads({ company_id, view = 'all', q, cursor, limit = 30 }) {
             OR EXISTS (
                 SELECT 1 FROM email_messages m
                 WHERE m.thread_id = t.id
+                  AND m.company_id = $1
+                  AND m.is_draft_artifact = false
                   AND (m.body_text ILIKE $${idx} OR m.from_email ILIKE $${idx} OR m.from_name ILIKE $${idx}
                        OR m.to_recipients_json::text ILIKE $${idx}
                        OR m.cc_recipients_json::text ILIKE $${idx})
@@ -162,7 +176,8 @@ async function getThreads({ company_id, view = 'all', q, cursor, limit = 30 }) {
             OR EXISTS (
                 SELECT 1 FROM email_attachments a
                 JOIN email_messages m2 ON m2.id = a.message_id
-                WHERE m2.thread_id = t.id AND a.file_name ILIKE $${idx}
+                WHERE m2.thread_id = t.id AND m2.company_id = $1
+                  AND m2.is_draft_artifact = false AND a.file_name ILIKE $${idx}
             )
         )`);
         params.push(qParam);
@@ -314,6 +329,7 @@ async function getMessagesByThread(threadId, companyId) {
                ) AS attachments
         FROM email_messages m
         WHERE m.thread_id = $1 AND m.company_id = $2
+          AND m.is_draft_artifact = false
         ORDER BY m.gmail_internal_at ASC, m.id ASC
     `, [threadId, companyId]);
     return result.rows;
@@ -350,6 +366,148 @@ async function upsertMessage(data) {
         subject, snippet, body_text, body_html, has_attachments || false,
         gmail_internal_at, sent_by_user_id, sent_by_user_email]);
     return result.rows[0];
+}
+
+/**
+ * EMAIL-DRAFT-INGEST-001: bounded outbound rows for the Gmail existence audit.
+ * Both company and its resolved mailbox are mandatory scope keys; already-marked
+ * rows are omitted so --apply is idempotent.
+ */
+async function listOutboundDraftArtifactCandidates(companyId, mailboxId, { limit = 100 } = {}) {
+    const result = await db.query(
+        `SELECT id, provider_message_id, provider_thread_id, gmail_internal_at,
+                length(body_text)::int AS body_text_length
+         FROM email_messages
+         WHERE company_id = $1
+           AND mailbox_id = $2
+           AND direction = 'outbound'
+           AND is_draft_artifact = false
+         ORDER BY id ASC
+         LIMIT $3`,
+        [companyId, mailboxId, limit]
+    );
+    return result.rows;
+}
+
+/**
+ * Reversibly change one outbound row's draft-artifact state and refresh the
+ * thread's four cached last-message display fields from its newest visible row.
+ * `unread_count` is intentionally untouched: email_messages has no per-message
+ * unread state, and draft artifacts are outbound while unread tracks inbound.
+ */
+async function setDraftArtifactStatus(companyId, mailboxId, providerMessageId, isDraftArtifact) {
+    if (typeof isDraftArtifact !== 'boolean') {
+        throw new TypeError('isDraftArtifact must be a boolean');
+    }
+
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+
+        const targetResult = await client.query(
+            `SELECT id, thread_id
+             FROM email_messages
+             WHERE company_id = $1
+               AND mailbox_id = $2
+               AND provider_message_id = $3
+               AND direction = 'outbound'
+               AND is_draft_artifact IS DISTINCT FROM $4
+             LIMIT 1`,
+            [companyId, mailboxId, providerMessageId, isDraftArtifact]
+        );
+        const target = targetResult.rows[0];
+        if (!target) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+
+        const threadResult = await client.query(
+            `SELECT id
+             FROM email_threads
+             WHERE id = $1
+               AND company_id = $2
+               AND mailbox_id = $3
+             FOR UPDATE`,
+            [target.thread_id, companyId, mailboxId]
+        );
+        if (!threadResult.rows[0]) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+
+        const changedResult = await client.query(
+            `UPDATE email_messages
+             SET is_draft_artifact = $4,
+                 updated_at = now()
+             WHERE id = $1
+               AND company_id = $2
+               AND mailbox_id = $3
+               AND direction = 'outbound'
+               AND is_draft_artifact IS DISTINCT FROM $4
+             RETURNING id, thread_id, provider_message_id, is_draft_artifact`,
+            [target.id, companyId, mailboxId, isDraftArtifact]
+        );
+        const changed = changedResult.rows[0];
+        if (!changed) {
+            await client.query('COMMIT');
+            return null;
+        }
+
+        const latestResult = await client.query(
+            `SELECT gmail_internal_at, direction,
+                    COALESCE(snippet, '') AS last_message_preview,
+                    COALESCE(NULLIF(from_name, ''), from_email) AS last_message_from
+             FROM email_messages
+             WHERE thread_id = $1
+               AND company_id = $2
+               AND mailbox_id = $3
+               AND is_draft_artifact = false
+             ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+             LIMIT 1`,
+            [changed.thread_id, companyId, mailboxId]
+        );
+        const latest = latestResult.rows[0];
+        if (latest) {
+            await client.query(
+                `UPDATE email_threads
+                 SET last_message_at = $4,
+                     last_message_direction = $5,
+                     last_message_preview = $6,
+                     last_message_from = $7,
+                     updated_at = now()
+                 WHERE id = $1
+                   AND company_id = $2
+                   AND mailbox_id = $3`,
+                [
+                    changed.thread_id,
+                    companyId,
+                    mailboxId,
+                    latest.gmail_internal_at,
+                    latest.direction,
+                    latest.last_message_preview,
+                    latest.last_message_from,
+                ]
+            );
+        }
+
+        await client.query('COMMIT');
+        return changed;
+    } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* noop */ }
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+/** Mark one classified Gmail 404 without deleting or destroying its old links. */
+async function markDraftArtifact(companyId, mailboxId, providerMessageId) {
+    return setDraftArtifactStatus(companyId, mailboxId, providerMessageId, true);
+}
+
+/** Reverse a prior mark while restoring the thread cache from visible rows. */
+async function unmarkDraftArtifact(companyId, mailboxId, providerMessageId) {
+    return setDraftArtifactStatus(companyId, mailboxId, providerMessageId, false);
 }
 
 // ─── email_attachments ───────────────────────────────────────────────────
@@ -550,6 +708,7 @@ async function getMessageLinkState(providerMessageId, companyId) {
         `SELECT contact_id, timeline_id, on_timeline
          FROM email_messages
          WHERE company_id = $1 AND provider_message_id = $2
+           AND is_draft_artifact = false
          LIMIT 1`,
         [companyId, providerMessageId]
     );
@@ -572,6 +731,7 @@ async function getThreadingByProviderMessageId(providerMessageId, companyId) {
                 body_text, body_html, from_email, from_name, gmail_internal_at, timeline_id
          FROM email_messages
          WHERE company_id = $1 AND provider_message_id = $2
+           AND is_draft_artifact = false
          LIMIT 1`,
         [companyId, providerMessageId]
     );
@@ -590,11 +750,13 @@ async function listYelpConversationHistory(companyId, timelineId, { excludeProvi
              SELECT DISTINCT em.thread_id
              FROM email_messages em
              WHERE em.company_id = $1 AND em.timeline_id = $2 AND em.on_timeline = true
+               AND em.is_draft_artifact = false
          )
          SELECT em.id, em.provider_message_id, em.direction, em.body_text, em.snippet,
                 em.gmail_internal_at
          FROM email_messages em
          WHERE em.company_id = $1
+           AND em.is_draft_artifact = false
            AND (
                  (em.timeline_id = $2 AND em.on_timeline = true)
               OR (em.direction = 'outbound'
@@ -622,6 +784,7 @@ async function listUnlinkedInboundForTimeline(companyId, { limit = 100 } = {}) {
          FROM email_messages
          WHERE company_id = $1
            AND direction = 'inbound'
+           AND is_draft_artifact = false
            AND contact_id IS NULL
            AND on_timeline = false
          ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
@@ -638,13 +801,10 @@ async function listUnlinkedInboundForTimeline(companyId, { limit = 100 } = {}) {
  * are emails the agent sent (incl. directly from Gmail) whose `from` is the
  * mailbox, so `getDirection` stamped them `direction='outbound'`.
  *
- * DRAFT exclusion: `email_messages` carries no Gmail label / draft flag column
- * (079), so there is nothing to filter on here beyond `direction`. The real-time
- * PUSH path is the one that excludes drafts (its NormalizedInboundMessage carries
- * `labelIds`, and `linkOutboundMessage` drops `DRAFT`). For the stored row,
- * `direction='outbound'` is the only discriminator available — matching how the
- * inbound poll relies on `direction='inbound'`. Returns `to_recipients_json`
- * (the recipient source `extractRecipientEmails` reads). Newest-first, scoped.
+ * DRAFT exclusion is defense-in-depth: new polling imports skip Gmail's DRAFT
+ * label before persistence, while retro-classified historical rows are excluded
+ * here by `is_draft_artifact=false`. Returns `to_recipients_json` (the recipient
+ * source `extractRecipientEmails` reads). Newest-first, company-scoped.
  */
 async function listUnlinkedOutboundForTimeline(companyId, { limit = 100 } = {}) {
     const result = await db.query(
@@ -653,12 +813,12 @@ async function listUnlinkedOutboundForTimeline(companyId, { limit = 100 } = {}) 
          FROM email_messages
          WHERE company_id = $1
            AND direction = 'outbound'
+           AND is_draft_artifact = false
            AND contact_id IS NULL
            AND on_timeline = false
-           -- draft-safe: genuinely-sent emails carry a Message-ID header; a draft
-           -- being composed has none. email_messages stores no label, so this is the
-           -- discriminator that keeps drafts off the timeline on the poll/backfill path
-           -- (the push path excludes drafts via labelIds ∩ {DRAFT}).
+           -- Legacy defense: genuinely-sent emails carry a Message-ID header.
+           -- The durable retro-classifier flag above is authoritative for rows
+           -- whose Gmail provider_message_id returned 404.
            AND message_id_header IS NOT NULL
            AND message_id_header <> ''
          ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
@@ -701,6 +861,7 @@ async function getTimelineEmailByContact(companyId, contactId, { limit } = {}) {
                 (direction = 'outbound') AS is_outbound
          FROM email_messages
          WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
+           AND is_draft_artifact = false
          ORDER BY gmail_internal_at ASC, id ASC${limitClause}`,
         params
     );
@@ -728,6 +889,7 @@ async function getTimelineEmailByTimeline(companyId, timelineId, { limit } = {})
                 (direction = 'outbound') AS is_outbound
          FROM email_messages
          WHERE company_id = $1 AND timeline_id = $2 AND on_timeline = true
+           AND is_draft_artifact = false
          ORDER BY gmail_internal_at ASC, id ASC${limitClause}`,
         params
     );
@@ -762,6 +924,7 @@ async function getTimelineEmailPageByContact(companyId, contactId, { limit, curs
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
          FROM email_messages
          WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
+           AND is_draft_artifact = false
            ${cursorClause}
          ORDER BY CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END DESC, id DESC
          LIMIT $${params.length}`,
@@ -798,6 +961,7 @@ async function getTimelineEmailPageByTimeline(companyId, timelineId, { limit, cu
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
          FROM email_messages
          WHERE company_id = $1 AND timeline_id = $2 AND on_timeline = true
+           AND is_draft_artifact = false
            ${cursorClause}
          ORDER BY CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END DESC, id DESC
          LIMIT $${params.length}`,
@@ -817,6 +981,7 @@ async function getNewestThreadIdForContact(companyId, contactId) {
         `SELECT thread_id
          FROM email_messages
          WHERE company_id = $1 AND contact_id = $2
+           AND is_draft_artifact = false
          ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
          LIMIT 1`,
         [companyId, contactId]
@@ -921,6 +1086,9 @@ module.exports = {
     // messages
     getMessagesByThread,
     upsertMessage,
+    listOutboundDraftArtifactCandidates,
+    markDraftArtifact,
+    unmarkDraftArtifact,
     // attachments
     getAttachmentById,
     upsertAttachments,

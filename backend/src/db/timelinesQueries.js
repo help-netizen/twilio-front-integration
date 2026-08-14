@@ -553,6 +553,7 @@ async function getUnifiedTimelinePage({
                  JOIN email_threads et ON et.id = em.thread_id
                  WHERE em.company_id = $1 AND et.company_id = $1
                    AND em.direction = 'inbound' AND em.from_email IS NOT NULL
+                   AND em.is_draft_artifact = false
                  UNION ALL
                  SELECT em.contact_id, et.id, et.subject,
                         et.last_message_at, et.last_message_direction, et.unread_count
@@ -561,6 +562,7 @@ async function getUnifiedTimelinePage({
                  WHERE em.company_id = $1 AND et.company_id = $1
                    AND em.direction = 'outbound' AND em.contact_id IS NOT NULL
                    AND em.on_timeline = true
+                   AND em.is_draft_artifact = false
              ) legs
              -- A mixed thread emits identical tuples from both legs; DISTINCT ON
              -- collapses them. The email_thread_id DESC tie-break is NEW and
@@ -584,6 +586,7 @@ async function getUnifiedTimelinePage({
              WHERE em.company_id = $1
                AND em.timeline_id IS NOT NULL
                AND em.on_timeline = true
+               AND em.is_draft_artifact = false
                -- MAIL-MUTE-001 regression guard: scope this timeline-keyed leg to
                -- GENUINELY-CONTACTLESS emails. linkMessageToContact stamps
                -- timeline_id + on_timeline=true on NORMAL contact-keyed emails too
