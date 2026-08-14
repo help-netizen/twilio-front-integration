@@ -52,7 +52,7 @@ export class EstimateEditor {
         const itemTitle = this.page.getByRole('heading', { name: 'Add custom item' });
         await expect(async () => {
             if (await itemTitle.isVisible()) return;
-            const createNew = this.page.getByRole('button').filter({ hasText: `Create new “${marker}”` });
+            const createNew = this.page.getByRole('button').filter({ hasText: `Use custom item “${marker}”` });
             await expect(createNew).toBeVisible({ timeout: 2000 });
             // ItemPresetSearchCombobox selects rows from onMouseDown, not onClick.
             await createNew.dispatchEvent('mousedown', { button: 0 });
@@ -88,7 +88,7 @@ export class EstimateEditor {
         await this.itemSearch.fill(marker);
         await expect(async () => {
             if (await this.detailItem.title.isVisible()) return;
-            const createNew = this.page.getByRole('button').filter({ hasText: `Create new “${marker}”` });
+            const createNew = this.page.getByRole('button').filter({ hasText: `Use custom item “${marker}”` });
             await expect(createNew).toBeVisible({ timeout: 2000 });
             await createNew.dispatchEvent('mousedown', { button: 0 });
             await expect(this.detailItem.title).toBeVisible({ timeout: 2000 });

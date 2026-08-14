@@ -11,8 +11,10 @@ export class InvoiceEditor {
     get aiBlock(): Locator {
         return this.root.getByText('Generate from a report', { exact: true });
     }
-    get close(): Locator { return this.root.getByTestId('invoice-close'); }
-    get save(): Locator { return this.root.getByTestId('invoice-create-save'); }
+    // Header/footer actions render twice (mobile inline + desktop footer) with the same
+    // testid; scope to the variant the current viewport actually shows.
+    get close(): Locator { return this.root.getByTestId('invoice-close').filter({ visible: true }); }
+    get save(): Locator { return this.root.getByTestId('invoice-create-save').filter({ visible: true }); }
     get addItemButton(): Locator { return this.root.getByTestId('invoice-add-item'); }
     get itemRows(): Locator { return this.root.getByTestId('invoice-item-row'); }
     get itemSheet(): Locator { return this.page.getByTestId('invoice-item-sheet'); }
@@ -42,7 +44,12 @@ export class InvoiceEditor {
     async addPriceBookItem(marker: string): Promise<void> {
         await this.openItemSheet();
         await this.itemSearch.fill(marker);
-        const preset = this.itemSheet.getByRole('button').filter({ hasText: marker }).first();
+        // The "Use custom item …" create row also contains the marker text — exclude it
+        // so we pick the actual Price Book preset row, not the create-custom affordance.
+        const preset = this.itemSheet.getByRole('button')
+            .filter({ hasText: marker })
+            .filter({ hasNotText: 'Use custom item' })
+            .first();
         await expect(preset).toBeVisible();
         // ItemPresetSearchCombobox intentionally chooses rows on mousedown.
         await preset.dispatchEvent('mousedown', { button: 0 });
@@ -60,7 +67,9 @@ export class InvoiceEditor {
         await this.itemSheet.getByLabel('Description').fill(`${marker} description`);
         await this.itemSheet.getByLabel('Qty').fill(quantity);
         await this.itemSheet.getByLabel('Unit price').fill(unitPrice);
-        await this.itemSheet.getByTestId('invoice-item-save').click();
+        // The sheet renders its action buttons twice (mobile inline + desktop footer),
+        // so scope to the one the current viewport actually shows.
+        await this.itemSheet.getByTestId('invoice-item-save').filter({ visible: true }).click();
         await expect(this.itemSheet).toBeHidden();
         await expect(this.itemRow(marker)).toBeVisible();
     }
@@ -70,10 +79,9 @@ export class InvoiceEditor {
     }
 
     async expectTotal(amount: string): Promise<void> {
-        const totalsSection = this.root.locator('section').filter({
-            has: this.root.getByText('Totals', { exact: true }),
-        });
-        await expect(totalsSection.getByText(amount, { exact: true }).last()).toBeVisible();
+        // The redesign moved the grand total into the editor header (top-right),
+        // not a "Totals" section — assert it shows anywhere in the editor.
+        await expect(this.root.getByText(amount, { exact: true }).first()).toBeVisible();
     }
 
     async createInvoice(): Promise<void> {

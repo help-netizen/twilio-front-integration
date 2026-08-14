@@ -25,7 +25,9 @@ test.describe('@suite:zb-decouple', () => {
 
     test('@p0 ZBX-02 Payments page has no Zenbooker Sync controls (F3)', async ({ page }) => {
         await page.goto('/payments');
-        await page.waitForLoadState('networkidle');
+        // Anchor on the app shell rendering rather than 'networkidle' — the Payments
+        // page holds SSE/polling connections open, so networkidle never settles.
+        await expect(page.locator('button.user-menu')).toBeVisible();
         await expect(page).toHaveURL(/\/payments/);
         // The Zenbooker payment-sync buttons ("Sync" / "Sync full history") are gone;
         // the local Payments data layer (list/detail/export) is untouched.

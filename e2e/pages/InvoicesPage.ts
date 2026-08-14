@@ -12,7 +12,9 @@ export class InvoicesPage {
         this.editor = new InvoiceEditor(page);
     }
 
-    get rows(): Locator { return this.page.getByTestId('invoice-list-row'); }
+    // Desktop table row and mobile card row both carry this testid; exactly one is
+    // visible per viewport, so scope to the visible variant to avoid strict-mode clashes.
+    get rows(): Locator { return this.page.getByTestId('invoice-list-row').filter({ visible: true }); }
     get mobileSearch(): Locator { return this.page.getByTestId('invoice-search'); }
     get desktopSearch(): Locator { return this.page.getByPlaceholder('type to find anything...'); }
     get loadMore(): Locator { return this.page.getByTestId('invoice-load-more'); }
