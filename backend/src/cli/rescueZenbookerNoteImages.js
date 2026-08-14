@@ -34,6 +34,17 @@ const storageService = require('../services/storageService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 
 const EXTERNAL_HOST = /(^|\.)bubble\.io$|(^|\.)zenbooker\.com$/i;
+
+/**
+ * A Zenbooker note keeps photographs in `images` and everything else — the
+ * signed work order, a part invoice — in `files`. Both are plain URL arrays and
+ * both point at the vendor, so both come home; only the field they are archived
+ * into differs.
+ */
+const RESCUE_FIELDS = [
+    { source: 'images', archive: 'zb_images_rescued' },
+    { source: 'files', archive: 'zb_files_rescued' },
+];
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -90,17 +101,33 @@ function contentTypeFor(fileName, headerValue) {
     return EXTENSION_TYPES[ext] || 'application/octet-stream';
 }
 
+/**
+ * Is the file still there?
+ *
+ * HEAD alone lies: `zenbooker.com/fileupload/…` answers 403 to HEAD and 200 to
+ * GET, because it only signs a CDN redirect for a real read. A dry-run that
+ * trusted HEAD called twenty live files dead — so a refused HEAD is re-asked as
+ * a one-byte ranged GET, which costs nothing and tells the truth.
+ */
 async function probe(url) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-        const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
-        return { alive: res.ok, status: res.status };
-    } catch (err) {
-        return { alive: false, status: 0, error: String(err.message || err) };
-    } finally {
-        clearTimeout(timer);
-    }
+    const attempt = async init => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        try {
+            const res = await fetch(url, { ...init, signal: controller.signal });
+            return { ok: res.ok, status: res.status };
+        } catch (err) {
+            return { ok: false, status: 0, error: String(err.message || err) };
+        } finally {
+            clearTimeout(timer);
+        }
+    };
+
+    const head = await attempt({ method: 'HEAD' });
+    if (head.ok) return { alive: true, status: head.status };
+
+    const ranged = await attempt({ headers: { Range: 'bytes=0-0' } });
+    return { alive: ranged.ok, status: ranged.status, error: ranged.error };
 }
 
 async function download(url) {
@@ -202,57 +229,60 @@ async function run() {
         for (let index = 0; index < notes.length; index += 1) {
             const note = notes[index];
             if (!note || typeof note !== 'object') continue;
-            const images = Array.isArray(note.images) ? note.images : [];
-            const external = images.filter(isExternalImageUrl);
-            if (external.length === 0) continue;
 
-            summary.notes_with_external_images += 1;
-            summary.urls_found += external.length;
+            for (const field of RESCUE_FIELDS) {
+                const held = Array.isArray(note[field.source]) ? note[field.source] : [];
+                const external = held.filter(isExternalImageUrl);
+                if (external.length === 0) continue;
 
-            if (!args.apply) {
-                const probes = await mapLimit(external, args.concurrency, probe);
-                probes.forEach(result => {
-                    if (result.alive) summary.urls_alive += 1;
-                    else summary.urls_dead += 1;
+                summary.notes_with_external_images += 1;
+                summary.urls_found += external.length;
+
+                if (!args.apply) {
+                    const probes = await mapLimit(external, args.concurrency, probe);
+                    probes.forEach(result => {
+                        if (result.alive) summary.urls_alive += 1;
+                        else summary.urls_dead += 1;
+                    });
+                    continue;
+                }
+
+                const outcomes = await mapLimit(external, args.concurrency, async url => {
+                    const got = await download(url);
+                    if (!got.ok) return { url, ok: false, status: got.status, error: got.error };
+                    try {
+                        const contentType = contentTypeFor(fileNameFromUrl(url), got.contentType);
+                        const stored = await storeImage(
+                            args.companyId, job.id, note, index, url, got.buffer, contentType
+                        );
+                        return { url, ok: true, ...stored };
+                    } catch (err) {
+                        return { url, ok: false, status: got.status, error: String(err.message || err) };
+                    }
                 });
-                continue;
-            }
 
-            const outcomes = await mapLimit(external, args.concurrency, async url => {
-                const got = await download(url);
-                if (!got.ok) return { url, ok: false, status: got.status, error: got.error };
-                try {
-                    const contentType = contentTypeFor(fileNameFromUrl(url), got.contentType);
-                    const stored = await storeImage(
-                        args.companyId, job.id, note, index, url, got.buffer, contentType
-                    );
-                    return { url, ok: true, ...stored };
-                } catch (err) {
-                    return { url, ok: false, status: got.status, error: String(err.message || err) };
+                const rescuedUrls = new Set();
+                for (const outcome of outcomes) {
+                    if (outcome.ok) {
+                        summary.rescued += 1;
+                        summary.urls_alive += 1;
+                        summary.bytes_stored += outcome.bytes;
+                        rescuedUrls.add(outcome.url);
+                    } else {
+                        summary.failed += 1;
+                        if (outcome.status === 404 || outcome.status === 410) summary.urls_dead += 1;
+                        console.warn(`[ZBImageRescue] job ${job.id} note ${index} ${field.source}: ${outcome.url} — ${outcome.error || 'HTTP ' + outcome.status}`);
+                    }
                 }
-            });
 
-            const rescuedUrls = new Set();
-            for (const outcome of outcomes) {
-                if (outcome.ok) {
-                    summary.rescued += 1;
-                    summary.urls_alive += 1;
-                    summary.bytes_stored += outcome.bytes;
-                    rescuedUrls.add(outcome.url);
-                } else {
-                    summary.failed += 1;
-                    if (outcome.status === 404 || outcome.status === 410) summary.urls_dead += 1;
-                    console.warn(`[ZBImageRescue] job ${job.id} note ${index}: ${outcome.url} — ${outcome.error || 'HTTP ' + outcome.status}`);
+                if (rescuedUrls.size > 0) {
+                    // The URL leaves the note so it stops reaching for the vendor
+                    // (the attachment now carries the file), and lands in the
+                    // archive field so where it came from is never lost.
+                    note[field.source] = held.filter(url => !rescuedUrls.has(url));
+                    note[field.archive] = [...(note[field.archive] || []), ...rescuedUrls];
+                    jobChanged = true;
                 }
-            }
-
-            if (rescuedUrls.size > 0) {
-                // The URL leaves `images` so the note stops rendering the remote
-                // copy (the attachment now carries it), and lands in
-                // `zb_images_rescued` so where it came from is never lost.
-                note.images = images.filter(url => !rescuedUrls.has(url));
-                note.zb_images_rescued = [...(note.zb_images_rescued || []), ...rescuedUrls];
-                jobChanged = true;
             }
         }
 
@@ -277,4 +307,4 @@ if (require.main === module) {
         });
 }
 
-module.exports = { parseArgs, isExternalImageUrl, fileNameFromUrl, contentTypeFor, mapLimit, run };
+module.exports = { parseArgs, isExternalImageUrl, fileNameFromUrl, contentTypeFor, mapLimit, run, RESCUE_FIELDS };

@@ -17,6 +17,7 @@ const {
     fileNameFromUrl,
     contentTypeFor,
     mapLimit,
+    RESCUE_FIELDS,
 } = require('../backend/src/cli/rescueZenbookerNoteImages');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
@@ -40,6 +41,19 @@ describe('ZB-IMAGE-RESCUE-001 — bringing job photos home', () => {
             expect(isExternalImageUrl('https://bubble.io.evil.example/f/x.jpg')).toBe(false);
             expect(isExternalImageUrl('not a url')).toBe(false);
             expect(isExternalImageUrl(null)).toBe(false);
+        });
+    });
+
+    describe('which parts of a note hold vendor files', () => {
+        it('covers photographs AND documents, each archived separately', () => {
+            // The first run only walked `images` and left 20 URLs behind in
+            // `files` — signed work orders and part invoices on the same CDN.
+            expect(RESCUE_FIELDS.map(field => field.source).sort()).toEqual(['files', 'images']);
+            const archives = RESCUE_FIELDS.map(field => field.archive);
+            expect(new Set(archives).size).toBe(archives.length);
+            // The archive field must never be the source field, or a rescued URL
+            // would be handed straight back to the next run.
+            RESCUE_FIELDS.forEach(field => expect(field.archive).not.toBe(field.source));
         });
     });
 
