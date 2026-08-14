@@ -576,17 +576,10 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                 <InvoiceSendDialog
                     open={showInvoiceSend}
                     onOpenChange={setShowInvoiceSend}
-                    invoiceId={selectedInvoice.id}
-                    contactEmail={selectedInvoice.contact_email || contactEmail || ''}
-                    contactPhone={selectedInvoice.contact_phone || contactPhone || ''}
-                    contactName={selectedInvoice.contact_name || ''}
-                    invoiceNumber={selectedInvoice.invoice_number}
-                    balanceDue={selectedInvoice.balance_due}
-                    total={selectedInvoice.total}
-                    dueDate={selectedInvoice.due_date}
-                    onSend={async (data) => {
+                    invoice={selectedInvoice}
+                    onSend={async (invoiceId, data) => {
                         try {
-                            await sendInvoice(selectedInvoice.id, data);
+                            await sendInvoice(invoiceId, data);
                             toast.success('Invoice sent');
                             refresh();
                         } catch (err: any) {

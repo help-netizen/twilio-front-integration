@@ -10,6 +10,8 @@ const TX_CLIENT = { query: jest.fn() };
 const mockListInvoices = jest.fn();
 const mockCreateInvoice = jest.fn();
 const mockUpdateInvoice = jest.fn();
+const mockDeleteInvoice = jest.fn();
+const mockVoidInvoice = jest.fn();
 const mockGetPayments = jest.fn();
 const mockWithTransaction = jest.fn(work => work(TX_CLIENT));
 
@@ -17,6 +19,8 @@ jest.mock('../backend/src/services/invoicesService', () => ({
     listInvoices: (...args) => mockListInvoices(...args),
     createInvoice: (...args) => mockCreateInvoice(...args),
     updateInvoice: (...args) => mockUpdateInvoice(...args),
+    deleteInvoice: (...args) => mockDeleteInvoice(...args),
+    voidInvoice: (...args) => mockVoidInvoice(...args),
     getPayments: (...args) => mockGetPayments(...args),
 }));
 jest.mock('../backend/src/services/aiGenerationLogService', () => ({ linkFinal: jest.fn() }));
@@ -60,6 +64,8 @@ beforeEach(() => {
     mockListInvoices.mockResolvedValue({ rows: [{ id: 57 }], total: 76 });
     mockCreateInvoice.mockResolvedValue({ id: 57, items: [] });
     mockUpdateInvoice.mockResolvedValue({ id: 57, items: [] });
+    mockDeleteInvoice.mockResolvedValue({ deleted: true });
+    mockVoidInvoice.mockResolvedValue({ id: 57, status: 'void' });
     mockGetPayments.mockResolvedValue([{ id: 81, invoice_id: 57 }]);
     mockWithTransaction.mockImplementation(work => work(TX_CLIENT));
 });
@@ -172,5 +178,49 @@ describe('invoice payment-history permission', () => {
 
         expect(response.status).toBe(403);
         expect(mockGetPayments).not.toHaveBeenCalled();
+    });
+});
+
+describe('invoice destructive-action route contract', () => {
+    it('passes the companyFilter scope and crmUser actor to draft deletion', async () => {
+        const response = await request(appWith(['invoices.create'])).delete('/57');
+
+        expect(response.status).toBe(200);
+        expect(mockDeleteInvoice).toHaveBeenCalledWith(
+            COMPANY_ID,
+            '57',
+            CRM_USER_ID,
+            TX_CLIENT,
+            { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' }
+        );
+        expect(mockDeleteInvoice.mock.calls[0]).not.toContain('keycloak-subject-must-not-be-used');
+        expect(mockDeleteInvoice.mock.calls[0]).not.toContain('LEGACY-COMPANY-MUST-NOT-BE-USED');
+    });
+
+    it('passes the same tenant and actor contract to issued-invoice void', async () => {
+        const response = await request(appWith(['invoices.create'])).post('/57/void');
+
+        expect(response.status).toBe(200);
+        expect(mockVoidInvoice).toHaveBeenCalledWith(
+            COMPANY_ID,
+            '57',
+            CRM_USER_ID,
+            TX_CLIENT,
+            { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' }
+        );
+        expect(mockVoidInvoice.mock.calls[0]).not.toContain('keycloak-subject-must-not-be-used');
+        expect(mockVoidInvoice.mock.calls[0]).not.toContain('LEGACY-COMPANY-MUST-NOT-BE-USED');
+    });
+
+    it.each([
+        ['draft delete', app => request(app).delete('/57')],
+        ['invoice void', app => request(app).post('/57/void')],
+    ])('denies %s to an invoices.view-only user before any write', async (_label, callRoute) => {
+        const response = await callRoute(appWith(['invoices.view']));
+
+        expect(response.status).toBe(403);
+        expect(mockWithTransaction).not.toHaveBeenCalled();
+        expect(mockDeleteInvoice).not.toHaveBeenCalled();
+        expect(mockVoidInvoice).not.toHaveBeenCalled();
     });
 });

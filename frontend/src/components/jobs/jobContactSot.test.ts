@@ -9,9 +9,11 @@ describe('JOB-EMAIL-SOT-001 job-linked send prefills', () => {
         expect(detailSource.match(/contactPhone=\{contactInfo\?\.phone \|\| job\.customer_phone\}/g)).toHaveLength(2);
     });
 
-    it('uses that identity for invoice and receipt prefills', () => {
-        expect(financialsSource).toContain("contactEmail={selectedInvoice.contact_email || contactEmail || ''}");
-        expect(financialsSource).toContain("contactPhone={selectedInvoice.contact_phone || contactPhone || ''}");
+    it('keeps invoice send identity atomic and uses the job identity for receipt prefills', () => {
+        expect(financialsSource).toContain('invoice={selectedInvoice}');
+        expect(financialsSource).toContain('onSend={async (invoiceId, data) =>');
+        expect(financialsSource).toContain('await sendInvoice(invoiceId, data)');
+        expect(financialsSource).not.toContain('await sendInvoice(selectedInvoice.id, data)');
         expect(financialsSource).toMatch(/<JobRecordPaymentDialog[\s\S]*?contactEmail=\{contactEmail\}/);
         expect(receiptSource).toContain("setReceiptEmail((contactEmail || '').trim())");
     });

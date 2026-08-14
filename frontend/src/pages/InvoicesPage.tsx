@@ -4,18 +4,23 @@ import { useInvoices } from '../hooks/useInvoices';
 import { InvoiceDetailPanel } from '../components/invoices/InvoiceDetailPanel';
 import { InvoiceEditorDialog } from '../components/invoices/InvoiceEditorDialog';
 import { InvoiceSendDialog } from '../components/invoices/InvoiceSendDialog';
+import { InvoiceConfirmDialog } from '../components/invoices/InvoiceConfirmDialog';
+import { InvoiceMobileRow } from '../components/invoices/InvoiceMobileRow';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import type { HydratedInvoice, Invoice, InvoiceCreateData } from '../services/invoicesApi';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { getInvoiceCapabilities } from '../hooks/useInvoice';
+import { useAuthz } from '../hooks/useAuthz';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
 const STATUS_OPTIONS = [
     { value: '', label: 'All Statuses' },
+    { value: 'unpaid', label: 'Unpaid' },
     { value: 'draft', label: 'Draft' },
     { value: 'sent', label: 'Sent' },
     { value: 'viewed', label: 'Viewed' },
@@ -50,10 +55,15 @@ function formatDate(value: string | null): string {
 
 export function InvoicesPage() {
     const page = useInvoices();
+    const { permissions = [] } = useAuthz();
     const [editorOpen, setEditorOpen] = useState(false);
     const [editingInvoice, setEditingInvoice] = useState<HydratedInvoice | null>(null);
-    const [sendDialogOpen, setSendDialogOpen] = useState(false);
-    const [sendInvoiceId, setSendInvoiceId] = useState<number | null>(null);
+    const [sendInvoice, setSendInvoice] = useState<Invoice | null>(null);
+    const [rowConfirm, setRowConfirm] = useState<{
+        invoice: Invoice;
+        action: 'void' | 'delete';
+    } | null>(null);
+    const [rowConfirmBusy, setRowConfirmBusy] = useState(false);
     const [searchParams, setSearchParams] = useSearchParams();
 
     // Auto-open invoice when navigated with ?openId=<id> (e.g. from estimate → invoice conversion).
@@ -93,44 +103,64 @@ export function InvoicesPage() {
         setEditingInvoice(null);
     };
 
-    const handleSend = (id: number) => {
-        setSendInvoiceId(id);
-        setSendDialogOpen(true);
+    const handleSend = (invoice: Invoice) => {
+        setSendInvoice(invoice);
     };
+
+    const confirmRowAction = async () => {
+        if (!rowConfirm || rowConfirmBusy) return;
+        setRowConfirmBusy(true);
+        try {
+            if (rowConfirm.action === 'delete') {
+                await page.handleDeleteInvoice(rowConfirm.invoice.id);
+            } else {
+                await page.handleVoidInvoice(rowConfirm.invoice.id);
+            }
+            setRowConfirm(null);
+        } finally {
+            setRowConfirmBusy(false);
+        }
+    };
+
+    const canCreateInvoice = permissions.includes('invoices.create');
 
     return (
         <div className="blanc-page-wrapper">
-            {/* ── Unified Header ──────────────────────────────────────── */}
-            <div className="blanc-unified-header">
-                <h1 className="blanc-header-title">Invoices</h1>
+            {/* ── Desktop header ──────────────────────────────────────── */}
+            <div className="hidden md:block">
+                <div className="blanc-unified-header">
+                    <h1 className="blanc-header-title">Invoices</h1>
 
-                <div className="blanc-search-wrapper">
-                    <input
-                        type="text"
-                        placeholder="type to find anything..."
-                        value={page.filters.search}
-                        onChange={e => page.setSearch(e.target.value)}
-                        className="blanc-search-input"
-                    />
-                </div>
+                    <div className="blanc-search-wrapper">
+                        <input
+                            type="text"
+                            placeholder="type to find anything..."
+                            value={page.filters.search}
+                            onChange={e => page.setSearch(e.target.value)}
+                            className="blanc-search-input"
+                        />
+                    </div>
 
-                <div className="blanc-controls-group">
-                    <Select
-                        value={page.filters.status || '_all'}
-                        onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
-                    >
-                        <SelectTrigger className="w-[160px]">
-                            <SelectValue placeholder="All Statuses" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {STATUS_OPTIONS.map(opt => (
-                                <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                    <button onClick={handleCreate} className="blanc-control-chip-primary">
-                        <Plus className="size-4" />New Invoice
-                    </button>
+                    <div className="blanc-controls-group">
+                        <Select
+                            value={page.filters.status || '_all'}
+                            onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
+                        >
+                            <SelectTrigger className="w-[160px]">
+                                <SelectValue placeholder="All Statuses" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {STATUS_OPTIONS.map(opt => (
+                                    <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        {canCreateInvoice ? (
+                            <button onClick={handleCreate} className="blanc-control-chip-primary">
+                                <Plus className="size-4" />New Invoice
+                            </button>
+                        ) : null}
+                    </div>
                 </div>
             </div>
 
@@ -139,18 +169,98 @@ export function InvoicesPage() {
             {/* ── Left: Invoices List ──────────────────────────────────── */}
             <div className="flex flex-1 flex-col overflow-hidden">
 
-                {/* Table */}
+                {/* Mobile list: one scroll surface; desktop retains the table. */}
                 <div className="flex-1 overflow-auto">
+                    <div className="-mx-2 px-[18px] pb-6 md:hidden">
+                        <h1
+                            className="px-0.5 pt-2.5 text-[26px] font-bold tracking-[-0.01em] text-[var(--blanc-ink-1)]"
+                            style={{ fontFamily: 'var(--blanc-font-heading)' }}
+                        >
+                            Invoices
+                        </h1>
+
+                        <label className="mt-2.5 flex h-[44px] items-center gap-2 rounded-xl bg-[var(--blanc-field)] px-[13px] text-[var(--blanc-ink-3)]">
+                            <Search className="size-[15px] shrink-0" aria-hidden />
+                            <span className="sr-only">Search invoices</span>
+                            <input
+                                type="search"
+                                placeholder="Search invoices…"
+                                value={page.filters.search}
+                                onChange={event => page.setSearch(event.target.value)}
+                                className="min-w-0 flex-1 bg-transparent text-[14px] text-[var(--blanc-ink-1)] outline-none placeholder:text-[var(--blanc-ink-3)]"
+                                data-testid="invoice-search"
+                            />
+                        </label>
+
+                        <div className="mt-3 flex flex-wrap gap-2 px-0.5" aria-label="Invoice filters">
+                            {[
+                                { value: '', label: 'All' },
+                                { value: 'unpaid', label: 'Unpaid' },
+                                { value: 'overdue', label: 'Overdue' },
+                                { value: 'draft', label: 'Draft' },
+                                { value: 'paid', label: 'Paid' },
+                            ].map(filter => {
+                                const active = page.filters.status === filter.value;
+                                return (
+                                    <button
+                                        key={filter.value || 'all'}
+                                        type="button"
+                                        className={`min-h-[32px] rounded-full border px-3 text-[12.5px] font-semibold ${active
+                                            ? 'border-[var(--blanc-ink-1)] bg-[var(--blanc-ink-1)] text-[var(--blanc-panel-surface)]'
+                                            : 'border-[var(--blanc-line)] bg-[var(--blanc-panel-surface)] text-[var(--blanc-ink-2)]'}`}
+                                        onClick={() => page.setStatus(filter.value)}
+                                        aria-pressed={active}
+                                        data-testid={`invoice-filter-${filter.value || 'all'}`}
+                                    >
+                                        {filter.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="mt-1">
+                            {page.loading ? (
+                                <div className="flex h-28 items-center justify-center">
+                                    <Loader2 className="size-6 animate-spin text-[var(--blanc-ink-3)]" />
+                                </div>
+                            ) : page.invoices.length === 0 ? (
+                                <div className="flex h-28 items-center justify-center text-sm text-[var(--blanc-ink-3)]">
+                                    No invoices found
+                                </div>
+                            ) : page.invoices.map(invoice => (
+                                <InvoiceMobileRow
+                                    key={invoice.id}
+                                    invoice={invoice}
+                                    onOpen={() => page.selectInvoice(invoice.id)}
+                                />
+                            ))}
+                        </div>
+
+                        {page.hasMore && !page.loading ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="mt-4 h-[46px] w-full rounded-[13px] text-[14.5px] font-semibold"
+                                onClick={page.loadMore}
+                                disabled={page.loadingMore}
+                                data-testid="invoice-load-more"
+                            >
+                                {page.loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
+                                {page.loadingMore ? 'Loading…' : 'Load more'}
+                            </Button>
+                        ) : null}
+                    </div>
+
                     {page.loading ? (
-                        <div className="flex items-center justify-center h-32">
-                            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+                        <div className="hidden h-32 items-center justify-center md:flex">
+                            <Loader2 className="size-6 animate-spin text-[var(--blanc-ink-3)]" />
                         </div>
                     ) : page.invoices.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-32 text-muted-foreground text-sm">
+                        <div className="hidden h-32 items-center justify-center text-sm text-[var(--blanc-ink-3)] md:flex">
                             No invoices found
                         </div>
                     ) : (
-                        <table className="w-full text-sm blanc-table-tiles">
+                        <table className="hidden w-full text-sm blanc-table-tiles md:table">
                             <thead>
                                 <tr>
                                     <th className="text-left px-4 py-1">#</th>
@@ -163,44 +273,44 @@ export function InvoicesPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {page.invoices.map(inv => (
-                                    <tr
-                                        key={inv.id}
-                                        className={`cursor-pointer ${page.selectedInvoice?.id === inv.id ? 'blanc-tile-row-selected' : ''}`}
-                                        onClick={() => page.selectInvoice(inv.id)}
-                                        data-testid="invoice-list-row"
-                                    >
-                                        <td className="px-4 py-2 font-mono text-xs">{inv.invoice_number}</td>
-                                        <td className="px-4 py-2 truncate max-w-[180px]">{inv.contact_name || inv.title || '-'}</td>
-                                        <td className="px-4 py-2">
-                                            <Badge variant={STATUS_VARIANT[inv.status] || 'secondary'} className="capitalize">
-                                                {inv.status}
-                                            </Badge>
-                                        </td>
-                                        <td className="px-4 py-2 text-right font-mono">${formatMoney(inv.total)}</td>
-                                        <td className="px-4 py-2 text-right font-mono">${formatMoney(inv.balance_due)}</td>
-                                        <td className="px-4 py-2 text-muted-foreground">{formatDate(inv.due_date)}</td>
-                                        <td className="px-4 py-2 text-right">
-                                            <DropdownMenu>
-                                                <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
-                                                    <Button variant="ghost" size="sm" className="size-7 p-0">
-                                                        <MoreHorizontal className="size-4" />
-                                                    </Button>
-                                                </DropdownMenuTrigger>
-                                                <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
-                                                    <DropdownMenuItem onClick={() => void handleEdit(inv)}>Edit</DropdownMenuItem>
-                                                    {inv.status === 'draft' && (
-                                                        <DropdownMenuItem onClick={() => handleSend(inv.id)}>Send</DropdownMenuItem>
-                                                    )}
-                                                    {inv.status !== 'void' && inv.status !== 'refunded' && (
-                                                        <DropdownMenuItem onClick={() => page.handleVoidInvoice(inv.id)}>Void</DropdownMenuItem>
-                                                    )}
-                                                    <DropdownMenuItem className="text-red-600" onClick={() => page.handleDeleteInvoice(inv.id)}>Delete</DropdownMenuItem>
-                                                </DropdownMenuContent>
-                                            </DropdownMenu>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {page.invoices.map(inv => {
+                                    const capabilities = getInvoiceCapabilities(permissions, inv);
+                                    const hasActions = capabilities.canEdit || capabilities.canSend || capabilities.canDelete || capabilities.canVoid;
+                                    return (
+                                        <tr
+                                            key={inv.id}
+                                            className={`cursor-pointer ${page.selectedInvoice?.id === inv.id ? 'blanc-tile-row-selected' : ''}`}
+                                            onClick={() => page.selectInvoice(inv.id)}
+                                            data-testid="invoice-list-row"
+                                        >
+                                            <td className="px-4 py-2 font-mono text-xs">{inv.invoice_number}</td>
+                                            <td className="px-4 py-2 truncate max-w-[180px]">{inv.contact_name || inv.title || '-'}</td>
+                                            <td className="px-4 py-2">
+                                                <Badge variant={STATUS_VARIANT[inv.status] || 'secondary'} className="capitalize">
+                                                    {inv.status}
+                                                </Badge>
+                                            </td>
+                                            <td className="px-4 py-2 text-right font-mono">${formatMoney(inv.total)}</td>
+                                            <td className="px-4 py-2 text-right font-mono">${formatMoney(inv.balance_due)}</td>
+                                            <td className="px-4 py-2 text-muted-foreground">{formatDate(inv.due_date)}</td>
+                                            <td className="px-4 py-2 text-right">
+                                                {hasActions ? <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
+                                                        <Button variant="ghost" size="sm" className="size-7 p-0">
+                                                            <MoreHorizontal className="size-4" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
+                                                        {capabilities.canEdit ? <DropdownMenuItem onClick={() => void handleEdit(inv)}>Edit</DropdownMenuItem> : null}
+                                                        {capabilities.canSend ? <DropdownMenuItem onClick={() => handleSend(inv)}>{inv.status === 'draft' ? 'Send' : 'Resend'}</DropdownMenuItem> : null}
+                                                        {capabilities.canDelete ? <DropdownMenuItem className="text-[var(--blanc-danger)]" onClick={() => setRowConfirm({ invoice: inv, action: 'delete' })}>Delete draft</DropdownMenuItem> : null}
+                                                        {capabilities.canVoid ? <DropdownMenuItem className="text-[var(--blanc-danger)]" onClick={() => setRowConfirm({ invoice: inv, action: 'void' })}>Void invoice</DropdownMenuItem> : null}
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu> : null}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     )}
@@ -208,7 +318,7 @@ export function InvoicesPage() {
 
                 {/* Pagination */}
                 {page.totalPages > 1 && (
-                    <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+                    <div className="hidden px-4 py-2 text-sm text-[var(--blanc-ink-3)] md:flex md:items-center md:justify-between">
                         <span>{page.total} invoice{page.total !== 1 ? 's' : ''}</span>
                         <div className="flex items-center gap-1">
                             <Button
@@ -241,19 +351,12 @@ export function InvoicesPage() {
                 onSave={handleEditorSave}
             />
 
-            {sendInvoiceId != null && (
+            {sendInvoice && (
                 <InvoiceSendDialog
-                    open={sendDialogOpen}
-                    onOpenChange={open => { setSendDialogOpen(open); if (!open) setSendInvoiceId(null); }}
-                    invoiceId={sendInvoiceId}
-                    contactEmail={page.selectedInvoice?.contact_email || ''}
-                    contactPhone={page.selectedInvoice?.contact_phone || ''}
-                    contactName={page.selectedInvoice?.contact_name || ''}
-                    invoiceNumber={page.selectedInvoice?.invoice_number || ''}
-                    balanceDue={page.selectedInvoice?.balance_due}
-                    total={page.selectedInvoice?.total}
-                    dueDate={page.selectedInvoice?.due_date}
-                    onSend={data => page.handleSendInvoice(sendInvoiceId, data)}
+                    open
+                    onOpenChange={open => { if (!open) setSendInvoice(null); }}
+                    invoice={sendInvoice}
+                    onSend={(invoiceId, data) => page.handleSendInvoice(invoiceId, data)}
                 />
             )}
             </div>
@@ -265,7 +368,7 @@ export function InvoicesPage() {
                         events={page.events}
                         loading={page.detailLoading}
                         onClose={page.closeDetail}
-                        onSend={() => handleSend(page.selectedInvoice!.id)}
+                        onSend={() => handleSend(page.selectedInvoice!)}
                         onVoid={() => page.handleVoidInvoice(page.selectedInvoice!.id)}
                         onSyncEstimate={() => page.handleSyncItems(page.selectedInvoice!.id)}
                         onDelete={() => page.handleDeleteInvoice(page.selectedInvoice!.id)}
@@ -273,6 +376,23 @@ export function InvoicesPage() {
                     />
                 )}
             </FloatingDetailPanel>
+
+            {rowConfirm ? (
+                <InvoiceConfirmDialog
+                    open
+                    onOpenChange={open => { if (!open) setRowConfirm(null); }}
+                    title={rowConfirm.action === 'delete'
+                        ? `Delete draft ${rowConfirm.invoice.invoice_number}?`
+                        : `Void ${rowConfirm.invoice.invoice_number}?`}
+                    description={rowConfirm.action === 'delete'
+                        ? `This permanently deletes the draft and its $${formatMoney(rowConfirm.invoice.balance_due)} balance. This can’t be undone.`
+                        : `This clears the $${formatMoney(rowConfirm.invoice.balance_due)} balance and marks the invoice void. This can’t be undone.`}
+                    confirmLabel={rowConfirm.action === 'delete' ? 'Delete draft' : 'Void invoice'}
+                    confirmTestId={rowConfirm.action === 'delete' ? 'invoice-delete-confirm' : 'invoice-void-confirm'}
+                    onConfirm={confirmRowAction}
+                    busy={rowConfirmBusy}
+                />
+            ) : null}
         </div>
     );
 }

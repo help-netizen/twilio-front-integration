@@ -300,56 +300,35 @@ async function updateInvoice(companyId, userId, id, data, client = null, activit
     return getInvoice(companyId, id, client);
 }
 
-/**
- * Delete an invoice. Hard delete if draft; void if not draft.
- */
+/** Delete a draft invoice. Issued invoices must use the explicit void action. */
 async function deleteInvoice(companyId, id, userId, client = null, activityActor = null) {
     const existing = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!existing) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    if (existing.status === 'draft') {
-        await invoicesQueries.deleteInvoice(id, companyId, client);
-        if (activityActor) {
-            await logFinancialActivity({
-                companyId,
-                entityType: 'invoice',
-                action: 'invoice.deleted',
-                entity: existing,
-                actor: activityActor,
-            }, { client });
-        }
-        return { deleted: true };
-    } else {
-        const updated = await invoicesQueries.updateInvoiceStatus(
-            id,
-            companyId,
-            'void',
-            'voided_at',
-            client
+    if (existing.status !== 'draft') {
+        throw new InvoicesServiceError(
+            'INVALID_STATUS',
+            `Only draft invoices can be deleted; '${existing.status}' invoices must be voided.`,
+            409
         );
-        await invoicesQueries.createEvent(
-            companyId,
-            id,
-            'voided',
-            'user',
-            userId,
-            null,
-            client
-        );
-        if (activityActor) {
-            await logFinancialActivity({
-                companyId,
-                entityType: 'invoice',
-                action: 'invoice.voided',
-                entity: updated,
-                actor: activityActor,
-                summary: { status: 'void' },
-            }, { client });
-        }
-        return { voided: true, invoice: updated };
     }
+
+    const deleted = await invoicesQueries.deleteInvoice(id, companyId, client);
+    if (!deleted) {
+        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
+    }
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'invoice',
+            action: 'invoice.deleted',
+            entity: existing,
+            actor: activityActor,
+        }, { client });
+    }
+    return { deleted: true };
 }
 
 // =============================================================================
@@ -747,11 +726,13 @@ async function voidInvoice(
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    if (['void', 'refunded'].includes(invoice.status)) {
+    if (invoice.status === 'draft' || ['void', 'refunded'].includes(invoice.status)) {
         throw new InvoicesServiceError(
             'INVALID_STATUS',
-            `Cannot void invoice with status '${invoice.status}'.`,
-            400
+            invoice.status === 'draft'
+                ? 'Draft invoices must be deleted, not voided.'
+                : `Cannot void invoice with status '${invoice.status}'.`,
+            409
         );
     }
 

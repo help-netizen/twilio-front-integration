@@ -165,7 +165,7 @@ router.put('/:id', requirePermission('invoices.create'), async (req, res) => {
     }
 });
 
-// DELETE /api/invoices/:id — Delete/void invoice
+// DELETE /api/invoices/:id — Delete a draft (issued records use POST /:id/void)
 router.delete('/:id', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);

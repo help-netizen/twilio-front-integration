@@ -22,6 +22,12 @@ export interface InvoiceFilters {
     limit: number;
 }
 
+/** Preserve loaded order while preventing a repeated offset page from duplicating rows. */
+export function appendInvoicesById(current: Invoice[], next: Invoice[]): Invoice[] {
+    const seen = new Set(current.map(invoice => invoice.id));
+    return [...current, ...next.filter(invoice => !seen.has(invoice.id))];
+}
+
 const DEFAULT_FILTERS: InvoiceFilters = {
     status: '',
     search: '',
@@ -32,6 +38,7 @@ const DEFAULT_FILTERS: InvoiceFilters = {
 export function useInvoices() {
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
@@ -67,6 +74,27 @@ export function useInvoices() {
     useEffect(() => {
         loadInvoices();
     }, [filters.status, filters.search, filters.page, filters.limit]);
+
+    const loadMore = useCallback(async () => {
+        if (loadingMore || invoices.length >= total) return;
+        setLoadingMore(true);
+        try {
+            const params: InvoicesListParams = {
+                offset: invoices.length,
+                limit: filters.limit,
+            };
+            if (filters.status) params.status = filters.status;
+            if (filters.search) params.search = filters.search;
+            const result = await invoicesApi.fetchInvoices(params);
+            setInvoices(current => appendInvoicesById(current, result.invoices));
+            setTotal(result.total);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Failed to load more invoices';
+            toast.error('Failed to load more invoices', { description: msg });
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [filters.limit, filters.search, filters.status, invoices.length, loadingMore, total]);
 
     // ── Select / detail ──────────────────────────────────────────────────────
     const selectInvoice = useCallback(async (id: number) => {
@@ -181,6 +209,7 @@ export function useInvoices() {
     return {
         invoices,
         loading,
+        loadingMore,
         error,
         selectedInvoice,
         detailLoading,
@@ -189,6 +218,8 @@ export function useInvoices() {
         totalPages,
         events,
         loadInvoices,
+        loadMore,
+        hasMore: invoices.length < total,
         hydrateInvoice,
         selectInvoice,
         closeDetail,

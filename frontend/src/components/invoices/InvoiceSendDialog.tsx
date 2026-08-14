@@ -1,276 +1,346 @@
 import { useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
-import { Send } from 'lucide-react';
-import type { InvoiceSendData } from '../../services/invoicesApi';
-import { ensureInvoicePublicLink } from '../../services/invoicesApi';
+import { Loader2, Mail, MessageSquare, Send } from 'lucide-react';
 import { useAuth } from '../../auth/AuthProvider';
-
-// ── Props ────────────────────────────────────────────────────────────────────
+import {
+    ensureInvoicePublicLink,
+    type Invoice,
+    type InvoiceSendData,
+} from '../../services/invoicesApi';
+import {
+    Dialog,
+    DialogBody,
+    DialogContent,
+    DialogDescription,
+    DialogPanelFooter,
+    DialogPanelHeader,
+    DialogTitle,
+} from '../ui/dialog';
+import { Button } from '../ui/button';
+import { Checkbox } from '../ui/checkbox';
+import { FloatingField } from '../ui/floating-field';
+import { PhoneInput, isValidUSPhone, toE164 } from '../ui/PhoneInput';
 
 interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    invoiceId: number;
-    contactEmail?: string;
-    contactPhone?: string;
-    /** Used in the default message body — e.g. "INVOICE L-53-5". */
-    invoiceNumber?: string;
-    /** Used to address the customer in the default message body. */
-    contactName?: string;
-    /** Remaining balance. Drives the "please pay" vs. "thanks for the payment" tone. */
-    balanceDue?: number | string;
-    /** Invoice total — included in the friendly message body. */
-    total?: number | string;
-    /** Due date — appended to the message when present and the invoice is unpaid. */
-    dueDate?: string | null;
-    onSend: (data: InvoiceSendData) => Promise<any>;
+    /** One object owns the ID and every prefill, preventing cross-invoice recipient pairing. */
+    invoice: Invoice;
+    onSend: (invoiceId: number, data: InvoiceSendData) => Promise<unknown>;
+}
+
+export function getInvoiceSendPrefill(invoice: Invoice) {
+    return {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoice_number,
+        contactName: invoice.contact_name || '',
+        emailRecipient: invoice.contact_email || '',
+        phoneRecipient: invoice.contact_phone || '',
+        balanceDue: Number(invoice.balance_due) || 0,
+        total: Number(invoice.total) || 0,
+        dueDate: invoice.due_date,
+        channel: invoice.contact_email ? 'email' as const : invoice.contact_phone ? 'sms' as const : 'email' as const,
+        includePaymentLink: Number(invoice.balance_due) > 0,
+    };
 }
 
 function firstName(fullName?: string): string {
     if (!fullName) return 'there';
-    const first = fullName.trim().split(/\s+/)[0];
-    return first || 'there';
+    return fullName.trim().split(/\s+/)[0] || 'there';
 }
 
 function fmtMoney(value: number | string | null | undefined): string {
-    const n = Number(value || 0);
-    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '$' + Number(value || 0).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
 }
 
 function fmtDate(value: string | null | undefined): string {
     if (!value) return '';
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function buildDefaultMessage(
+export function buildDefaultInvoiceMessage(
     channel: 'email' | 'sms',
-    opts: {
+    options: {
         invoiceNumber: string;
         name: string;
         url: string;
         balanceDue: number;
         total: number;
         dueDate: string | null;
-        /** First name (or full name) of the currently logged-in user — appended after "Thanks,". */
         signOff: string;
-    }
+    },
 ): string {
-    const { invoiceNumber, name, url, balanceDue, total, dueDate, signOff } = opts;
-    // Numbers like "INVOICE L-53-5" already start with the word "INVOICE"; trim the
-    // prefix so "invoice INVOICE L-53-5" doesn't read doubled in the message body.
+    const { invoiceNumber, name, url, balanceDue, total, dueDate, signOff } = options;
     const shortNumber = invoiceNumber ? invoiceNumber.replace(/^INVOICE\s+/i, '') : '';
     const label = shortNumber || 'your invoice';
     const isPaid = balanceDue <= 0 && total > 0;
-    const dueStr = fmtDate(dueDate);
+    const due = fmtDate(dueDate);
     const signature = signOff ? `\n${signOff}` : '';
 
     if (channel === 'sms') {
         if (isPaid) {
             return url
-                ? `Hi ${name}! Thanks so much for your payment on invoice ${label}. Here's your receipt: ${url} 🙌`
-                : `Hi ${name}! Thanks so much for your payment on invoice ${label} 🙌`;
+                ? `Hi ${name}! Thanks for your payment on invoice ${label}. Here's your receipt: ${url}`
+                : `Hi ${name}! Thanks for your payment on invoice ${label}.`;
         }
-        const amountStr = fmtMoney(balanceDue || total);
+        const amount = fmtMoney(balanceDue || total);
         return url
-            ? `Hi ${name}! Here's your invoice ${label} for ${amountStr}. You can view & pay it anytime: ${url} — let us know if anything looks off. Thanks!`
-            : `Hi ${name}! Your invoice ${label} for ${amountStr} is ready. Thanks!`;
+            ? `Hi ${name}! Here's invoice ${label} for ${amount}. View and pay securely: ${url}`
+            : `Hi ${name}! Invoice ${label} for ${amount} is ready.`;
     }
 
-    // Email — longer, friendly, with a payment CTA when unpaid.
     if (isPaid) {
         return [
             `Hi ${name},`,
             '',
-            `Thank you so much — your payment on invoice ${label} has been received! 🙌`,
+            `Thank you — your payment on invoice ${label} has been received.`,
             '',
-            url ? `Your receipt is saved here whenever you need it:\n${url}` : null,
+            url ? `Your receipt is available here:\n${url}` : null,
             '',
-            'It was a pleasure working with you. If anything else comes up, just reply to this email — we are always happy to help.',
-            '',
-            `Warm regards,${signature}`,
-        ].filter(s => s !== null).join('\n');
+            `Thanks,${signature}`,
+        ].filter(line => line !== null).join('\n');
     }
+
     const amount = fmtMoney(balanceDue || total);
-    const dueLine = dueStr ? `The balance of ${amount} is due by ${dueStr}.` : `The balance due is ${amount}.`;
+    const dueLine = due ? `The ${amount} balance is due by ${due}.` : `The balance due is ${amount}.`;
     return [
         `Hi ${name},`,
         '',
-        `Thanks so much for letting us take care of the job — here's invoice ${label} for the work we wrapped up. ${dueLine}`,
+        `Here's invoice ${label} for the work we completed. ${dueLine}`,
         '',
-        url ? `Whenever you're ready, you can view and pay it online here:\n${url}` : null,
+        url ? `View and pay securely here:\n${url}` : null,
         '',
-        'Feel free to reply if you have any questions.',
+        'Reply if you have any questions.',
         '',
         `Thanks,${signature}`,
-    ].filter(s => s !== null).join('\n');
+    ].filter(line => line !== null).join('\n');
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
-
-export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail, contactPhone, invoiceNumber, contactName, balanceDue, total, dueDate, onSend }: Props) {
+export function InvoiceSendDialog({ open, onOpenChange, invoice, onSend }: Props) {
     const { user } = useAuth();
     const operatorSignOff = firstName(user?.name);
-
     const [channel, setChannel] = useState<'email' | 'sms'>('email');
-    const [emailRecipient, setEmailRecipient] = useState(contactEmail || '');
-    const [phoneRecipient, setPhoneRecipient] = useState(contactPhone || '');
+    const [emailRecipient, setEmailRecipient] = useState('');
+    const [phoneRecipient, setPhoneRecipient] = useState('');
     const [message, setMessage] = useState('');
     const [sending, setSending] = useState(false);
-    const [publicUrl, setPublicUrl] = useState<string>('');
+    const [publicUrl, setPublicUrl] = useState('');
     const [userEditedMessage, setUserEditedMessage] = useState(false);
-    // F018: include the customer pay/view link by default when there's a balance due.
-    const [includePaymentLink, setIncludePaymentLink] = useState<boolean>((Number(balanceDue) || 0) > 0);
+    const [includePaymentLink, setIncludePaymentLink] = useState(false);
 
-    // Re-sync prefills when the dialog opens (or when the underlying contact changes).
+    // Key reset to the open cycle + invoice identity. A same-invoice refresh
+    // must not erase recipient/message edits while this sheet is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     useEffect(() => {
-        if (open) {
-            setEmailRecipient(contactEmail || '');
-            setPhoneRecipient(contactPhone || '');
-            setUserEditedMessage(false);
-            setIncludePaymentLink((Number(balanceDue) || 0) > 0);
-        }
-    }, [open, contactEmail, contactPhone]);
+        if (!open) return;
+        const prefill = getInvoiceSendPrefill(invoice);
+        setChannel(prefill.channel);
+        setEmailRecipient(prefill.emailRecipient);
+        setPhoneRecipient(prefill.phoneRecipient);
+        setUserEditedMessage(false);
+        setIncludePaymentLink(prefill.includePaymentLink);
+        setPublicUrl('');
+    }, [invoice.id, open]);
 
-    // Mint (or fetch) a tokenized public link when the dialog opens so the default
-    // message body can reference it. Idempotent on the backend.
     useEffect(() => {
-        if (!open || !invoiceId) return;
+        if (!open || !invoice.id) return;
         let cancelled = false;
-        ensureInvoicePublicLink(invoiceId)
-            // The public-link endpoint returns the /i/<token> PDF viewer; the message
-            // should point at /pay/<token> (same token) — the page with the Pay button.
-            .then(({ url }) => { if (!cancelled) setPublicUrl(url.replace('/i/', '/pay/')); })
-            .catch(() => { if (!cancelled) setPublicUrl(''); });
+        ensureInvoicePublicLink(invoice.id)
+            .then(({ url }) => {
+                if (!cancelled) setPublicUrl(url.replace('/i/', '/pay/'));
+            })
+            .catch(() => {
+                if (!cancelled) setPublicUrl('');
+            });
         return () => { cancelled = true; };
-    }, [open, invoiceId]);
+    }, [invoice.id, open]);
 
-    // Re-build the default message whenever the channel, link, or contact name changes
-    // — unless the user has already edited the textarea (we don't want to clobber their typing).
     useEffect(() => {
         if (!open || userEditedMessage) return;
-        setMessage(buildDefaultMessage(channel, {
-            invoiceNumber: invoiceNumber || '',
-            name: firstName(contactName),
+        setMessage(buildDefaultInvoiceMessage(channel, {
+            invoiceNumber: invoice.invoice_number,
+            name: firstName(invoice.contact_name),
             url: includePaymentLink ? publicUrl : '',
-            balanceDue: Number(balanceDue) || 0,
-            total: Number(total) || 0,
-            dueDate: dueDate || null,
+            balanceDue: Number(invoice.balance_due) || 0,
+            total: Number(invoice.total) || 0,
+            dueDate: invoice.due_date,
             signOff: operatorSignOff,
         }));
-    }, [open, channel, publicUrl, includePaymentLink, invoiceNumber, contactName, balanceDue, total, dueDate, operatorSignOff, userEditedMessage]);
+    }, [
+        channel,
+        includePaymentLink,
+        invoice.balance_due,
+        invoice.contact_name,
+        invoice.due_date,
+        invoice.invoice_number,
+        invoice.total,
+        open,
+        operatorSignOff,
+        publicUrl,
+        userEditedMessage,
+    ]);
 
-    const recipient = channel === 'email' ? emailRecipient : phoneRecipient;
-    const setRecipient = (v: string) => {
-        if (channel === 'email') setEmailRecipient(v);
-        else setPhoneRecipient(v);
-    };
-
-    const canSubmit = recipient.trim().length > 0 && message.trim().length > 0;
+    const recipient = channel === 'email' ? emailRecipient.trim() : toE164(phoneRecipient);
+    const recipientValid = channel === 'email'
+        ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)
+        : isValidUSPhone(phoneRecipient);
 
     const handleSend = async () => {
-        if (!canSubmit) return;
+        if (!recipientValid || sending) return;
         setSending(true);
         try {
-            await onSend({
+            await onSend(invoice.id, {
                 channel,
-                recipient: recipient.trim(),
-                message: message.trim(),
+                recipient,
+                message: message.trim() || undefined,
                 includePaymentLink,
             });
             onOpenChange(false);
-        } catch {
-            // error toast handled upstream
         } finally {
             setSending(false);
         }
     };
 
+    const actionButtons = (
+        <div className="space-y-2.5">
+            <Button
+                type="button"
+                className="h-[52px] w-full rounded-[15px] text-[16px] font-semibold"
+                onClick={handleSend}
+                disabled={sending || !recipientValid}
+                data-testid="invoice-send-submit"
+            >
+                {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-5" />}
+                {sending ? 'Sending…' : 'Send invoice'}
+            </Button>
+            <Button
+                type="button"
+                variant="outline"
+                className="h-[46px] w-full rounded-[14px] text-[15px] font-semibold"
+                onClick={() => onOpenChange(false)}
+                disabled={sending}
+            >
+                Cancel
+            </Button>
+        </div>
+    );
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-md">
-                <DialogHeader>
-                    <DialogTitle>Send Invoice</DialogTitle>
-                </DialogHeader>
+            <DialogContent variant="panel" size="default" data-testid="invoice-send-dialog">
+                <DialogPanelHeader className="max-md:hidden">
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight text-[var(--blanc-ink-1)]"
+                        style={{ fontFamily: 'var(--blanc-font-heading)' }}
+                    >
+                        Send invoice
+                    </DialogTitle>
+                    <DialogDescription>
+                        {invoice.invoice_number} · {fmtMoney(invoice.total)} · {invoice.contact_name || 'Customer'}
+                    </DialogDescription>
+                </DialogPanelHeader>
 
-                <div className="space-y-4 py-2">
-                    {/* Channel */}
-                    <div>
-                        <Label className="text-xs mb-2 block">Channel</Label>
-                        <div className="flex gap-2">
-                            <Button
-                                type="button"
-                                variant={channel === 'email' ? 'default' : 'outline'}
-                                size="sm"
-                                onClick={() => setChannel('email')}
+                <DialogBody className="px-5 pb-6 pt-9 md:px-8 md:py-7">
+                    <div className="mx-auto w-full max-w-[520px]">
+                        <div className="mb-5 md:hidden">
+                            <h3
+                                className="text-[20px] font-semibold leading-tight text-[var(--blanc-ink-1)]"
+                                style={{ fontFamily: 'var(--blanc-font-heading)' }}
                             >
-                                Email
-                            </Button>
-                            <Button
-                                type="button"
-                                variant={channel === 'sms' ? 'default' : 'outline'}
-                                size="sm"
-                                onClick={() => setChannel('sms')}
-                            >
-                                SMS
-                            </Button>
+                                Send invoice
+                            </h3>
+                            <p className="mt-1 text-[12.5px] text-[var(--blanc-ink-3)]">
+                                {invoice.invoice_number} · {fmtMoney(invoice.total)} · {invoice.contact_name || 'Customer'}
+                            </p>
                         </div>
-                    </div>
 
-                    {/* Include payment link (F018) */}
-                    {(Number(balanceDue) || 0) > 0 && (
-                        <label className="flex items-center gap-2 text-sm cursor-pointer select-none" style={{ color: 'var(--blanc-ink-2)' }}>
-                            <input
-                                type="checkbox"
-                                checked={includePaymentLink}
-                                onChange={e => { setIncludePaymentLink(e.target.checked); setUserEditedMessage(false); }}
+                        <div className="grid grid-cols-2 gap-3">
+                            <button
+                                type="button"
+                                className={`min-h-[84px] rounded-[14px] border-[1.5px] p-3 text-center text-[14px] font-semibold ${channel === 'email'
+                                    ? 'border-[var(--blanc-accent)] bg-[var(--blanc-accent-soft)] text-[var(--blanc-ink-1)]'
+                                    : 'border-[var(--blanc-line)] text-[var(--blanc-ink-2)]'}`}
+                                onClick={() => setChannel('email')}
+                                aria-pressed={channel === 'email'}
+                                data-testid="invoice-send-method-email"
+                            >
+                                <span className="mx-auto mb-1.5 flex size-[34px] items-center justify-center rounded-[10px] bg-[var(--blanc-panel-surface)] text-[var(--blanc-accent)]">
+                                    <Mail className="size-[18px]" />
+                                </span>
+                                Email
+                            </button>
+                            <button
+                                type="button"
+                                className={`min-h-[84px] rounded-[14px] border-[1.5px] p-3 text-center text-[14px] font-semibold ${channel === 'sms'
+                                    ? 'border-[var(--blanc-accent)] bg-[var(--blanc-accent-soft)] text-[var(--blanc-ink-1)]'
+                                    : 'border-[var(--blanc-line)] text-[var(--blanc-ink-2)]'}`}
+                                onClick={() => setChannel('sms')}
+                                aria-pressed={channel === 'sms'}
+                                data-testid="invoice-send-method-sms"
+                            >
+                                <span className="mx-auto mb-1.5 flex size-[34px] items-center justify-center rounded-[10px] bg-[var(--blanc-panel-surface)] text-[var(--blanc-accent)]">
+                                    <MessageSquare className="size-[18px]" />
+                                </span>
+                                Text (SMS)
+                            </button>
+                        </div>
+
+                        <div className="mt-3.5 space-y-3.5">
+                            <div data-testid="invoice-send-recipient">
+                                {channel === 'email' ? (
+                                    <FloatingField
+                                        label="To (email)"
+                                        type="email"
+                                        autoComplete="email"
+                                        value={emailRecipient}
+                                        onChange={event => setEmailRecipient(event.target.value)}
+                                        disabled={sending}
+                                    />
+                                ) : (
+                                    <PhoneInput
+                                        label="To (phone)"
+                                        autoComplete="tel"
+                                        value={phoneRecipient}
+                                        onChange={setPhoneRecipient}
+                                        disabled={sending}
+                                    />
+                                )}
+                            </div>
+                            <FloatingField
+                                label="Message (optional)"
+                                textarea
+                                rows={5}
+                                value={message}
+                                onChange={event => {
+                                    setMessage(event.target.value);
+                                    setUserEditedMessage(true);
+                                }}
+                                disabled={sending}
                             />
-                            Include payment link
+                        </div>
+
+                        <label className="mt-3.5 flex min-h-10 cursor-pointer items-center gap-2 text-[13px] text-[var(--blanc-ink-2)]">
+                            <Checkbox
+                                checked={includePaymentLink}
+                                onCheckedChange={checked => {
+                                    setIncludePaymentLink(!!checked);
+                                }}
+                                disabled={sending}
+                            />
+                            {channel === 'email' ? 'Attach PDF + a secure pay link' : 'Include a secure pay link'}
                         </label>
-                    )}
 
-                    {/* Recipient */}
-                    <div>
-                        <Label className="text-xs">
-                            {channel === 'email' ? 'Email Address' : 'Phone Number'}
-                        </Label>
-                        <Input
-                            value={recipient}
-                            onChange={e => setRecipient(e.target.value)}
-                            placeholder={channel === 'email' ? 'customer@example.com' : '+1234567890'}
-                            type={channel === 'email' ? 'email' : 'tel'}
-                        />
+                        <div className="mt-4 md:hidden">{actionButtons}</div>
                     </div>
+                </DialogBody>
 
-                    {/* Message — required */}
-                    <div>
-                        <Label className="text-xs">Message <span className="text-red-600">*</span></Label>
-                        <Textarea
-                            value={message}
-                            onChange={e => { setMessage(e.target.value); setUserEditedMessage(true); }}
-                            placeholder="Add a personal message..."
-                            rows={5}
-                        />
-                        {!message.trim() && (
-                            <p className="mt-1 text-xs text-red-600">Message is required.</p>
-                        )}
-                    </div>
-                </div>
-
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={sending}>
-                        Cancel
-                    </Button>
-                    <Button onClick={handleSend} disabled={sending || !canSubmit}>
-                        <Send className="mr-1 size-3.5" />
-                        {sending ? 'Sending...' : 'Send Invoice'}
-                    </Button>
-                </DialogFooter>
+                <DialogPanelFooter className="max-md:hidden">
+                    <div className="ml-auto w-full max-w-[360px]">{actionButtons}</div>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

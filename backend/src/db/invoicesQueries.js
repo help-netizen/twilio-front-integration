@@ -73,7 +73,12 @@ async function listInvoices(companyId, filters = {}) {
     const params = [companyId];
     let idx = 1;
 
-    if (status) {
+    if (status === 'unpaid') {
+        // Mobile quick-filter: issued invoices that still belong to the unpaid
+        // workflow. Fully settled records transition to `paid`; drafts/terminal
+        // records are intentionally excluded.
+        conditions.push("i.status IN ('sent', 'viewed', 'partial', 'overdue')");
+    } else if (status) {
         idx++;
         conditions.push(`i.status = $${idx}`);
         params.push(status);

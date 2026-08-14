@@ -72,6 +72,23 @@ test('invoice list surfaces normalize every row without changing the tenant filt
     expect(sql).toContain('c.company_id = i.company_id');
 });
 
+test('mobile unpaid filter stays tenant-scoped and uses the requested offset', async () => {
+    db.query.mockResolvedValueOnce({ rows: [] });
+
+    await invoicesQueries.listInvoices(COMPANY_A, {
+        status: 'unpaid',
+        limit: 25,
+        offset: 50,
+    });
+
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('i.company_id = $1');
+    expect(sql).toContain("i.status IN ('sent', 'viewed', 'partial', 'overdue')");
+    expect(sql).not.toContain('i.status = $2');
+    expect(params).toEqual([COMPANY_A, 25, 50]);
+    expect(sql).toContain('LIMIT $2 OFFSET $3');
+});
+
 test('public-token invoice reads also normalize the balance for PDF/public consumers', async () => {
     db.query.mockResolvedValueOnce({
         rows: [{
