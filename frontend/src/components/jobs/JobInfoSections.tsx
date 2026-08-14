@@ -312,7 +312,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                                 )}
                             </div>
                             <div
-                                className="text-lg leading-tight font-semibold"
+                                className={`${flat ? 'text-[15px]' : 'text-lg'} leading-tight font-semibold`}
                                 style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.03em', color: 'var(--blanc-ink-1)', ...indent }}
                             >
                                 {new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}

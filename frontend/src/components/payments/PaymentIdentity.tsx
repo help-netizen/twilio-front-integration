@@ -24,7 +24,7 @@ export function StatusPill({ label }: { label: string }) {
         || { background: 'rgba(25,25,25,.06)', color: 'var(--blanc-ink-2)' };
     return (
         <span
-            className="inline-flex items-center px-2.5 text-[11.5px] font-semibold"
+            className="inline-flex items-center px-2.5 text-[11px] font-semibold"
             style={{ ...tone, minHeight: 24, borderRadius: 8 }}
         >
             {label}
@@ -51,7 +51,7 @@ export function PaymentIdentity({
                 {formatCurrency(detail.amount_paid)}
             </h2>
 
-            <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13.5px]" style={{ color: 'var(--blanc-ink-2)' }}>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
                 {detail.transaction_status && <StatusPill label={detail.transaction_status} />}
                 {method && <span>{method}</span>}
                 {method && <span className="size-[3px] rounded-full" style={{ background: 'var(--blanc-ink-3)' }} />}
@@ -61,7 +61,7 @@ export function PaymentIdentity({
                         <PopoverTrigger asChild>
                             <button
                                 type="button"
-                                className="inline-flex items-center px-2.5 text-[11.5px] font-semibold"
+                                className="inline-flex items-center px-2.5 text-[11px] font-semibold"
                                 style={{
                                     background: detail.check_deposited ? 'rgba(27,139,99,.10)' : 'rgba(240,80,63,.10)',
                                     color: detail.check_deposited ? 'var(--blanc-success)' : 'var(--blanc-danger)',
@@ -84,7 +84,7 @@ export function PaymentIdentity({
             </div>
 
             {detail._warning && (
-                <p className="mt-3 text-[12.5px]" style={{ color: 'var(--blanc-warning)' }}>{detail._warning}</p>
+                <p className="mt-3 text-[12px]" style={{ color: 'var(--blanc-warning)' }}>{detail._warning}</p>
             )}
         </div>
     );
@@ -112,7 +112,7 @@ export function InvoiceFigures({ invoice }: { invoice: PaymentDetail['invoice'] 
             >
                 {formatCurrency(value)}
             </div>
-            <div className="mt-0.5 text-[11.5px]" style={{ color: 'var(--blanc-ink-3)' }}>{label}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>{label}</div>
         </div>
     );
 

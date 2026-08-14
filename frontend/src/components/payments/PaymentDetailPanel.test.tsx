@@ -70,4 +70,16 @@ describe('payment card parity with the job card', () => {
         expect(jobSectionsRaw).toContain('>Tags<');
         expect(jobSectionsRaw.match(/w-\[58px\]/g)?.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('keeps one type scale — no in-between sizes creep back', () => {
+        // Refinement by refinement this column grew eleven sizes. These are the
+        // steps the codebase already had; 13.5, 12.5 and 11.5 were invented and
+        // are what made the card look like a font sampler.
+        const allowed = new Set(['11', '12', '13', '15', '20', '32']);
+        for (const source of [identityRaw, jobSectionsRaw]) {
+            for (const match of source.matchAll(/text-\[([0-9.]+)px\]/g)) {
+                expect(allowed.has(match[1])).toBe(true);
+            }
+        }
+    });
 });

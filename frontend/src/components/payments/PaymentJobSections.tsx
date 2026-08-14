@@ -15,7 +15,7 @@ function Pill({ text }: { text: string }) {
     const styles = { background: 'rgba(27,139,99,.10)', color: 'var(--blanc-success)' };
     return (
         <span
-            className="inline-flex items-center px-2.5 text-[11.5px] font-semibold"
+            className="inline-flex items-center px-2.5 text-[11px] font-semibold"
             style={{ ...styles, minHeight: 24, borderRadius: 8 }}
         >
             {text}
