@@ -4,7 +4,7 @@ import { uploadStagedAttachment, deleteStagedAttachment, type NoteEntityType } f
 import { isHeicOrHeif, yieldToMainThread } from '../../lib/imageCompression';
 import { NOTE_ATTACHMENT_MAX_FILE_SIZE, prepareImageAttachmentForUpload } from './noteAttachmentPreparation';
 
-const MAX_FILES = 5;
+const MAX_FILES = 10;
 const ACCEPT = 'image/*,application/pdf,.doc,.docx,.xls,.xlsx';
 const THUMB = 40; // px — a hair under the 44px attach button, per the owner ("no bigger than the attach icon")
 
@@ -180,16 +180,72 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
 
     // ---- 'round' composer variant: attach button + inline thumbnails (image previews) ----
     if (variant === 'round') {
-        // Collapse past a few: show the first 2 + a "+N" chip (owner — don't spill into rows).
-        const visible = items.length > 3 ? items.slice(0, 2) : items;
-        const hidden = items.slice(visible.length);
-        const overflow = hidden.length;
-        const hiddenBusy = hidden.some(i => isBusyStatus(i.status));
-        const hiddenError = hidden.some(i => i.status === 'error');
-
+        // Show EVERY attachment as its own thumbnail. The previews live in a full-width
+        // strip that wraps onto new rows (flexBasis:100% forces it onto its own line above
+        // the composer's action bar); the round attach button flows inline with the bar's
+        // controls. (Owner reversed the earlier "first 2 + N chip" collapse — MAX is 10.)
         return (
-            <div className="flex items-center gap-1.5">
+            <>
                 {fileInput}
+                {items.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5" style={{ flexBasis: '100%', minWidth: 0 }}>
+                        {items.map(item => {
+                            const busy = isBusyStatus(item.status);
+                            const err = item.status === 'error';
+                            return (
+                                <div
+                                    key={item.key}
+                                    className="relative shrink-0"
+                                    style={{ width: THUMB, height: THUMB }}
+                                    title={err ? (item.error || 'Upload failed') : item.name}
+                                >
+                                    {item.isImage && item.previewUrl ? (
+                                        <img
+                                            src={item.previewUrl}
+                                            alt={item.name}
+                                            className="h-full w-full object-cover"
+                                            style={{ borderRadius: 10, border: '1px solid var(--blanc-line)' }}
+                                        />
+                                    ) : (
+                                        <div
+                                            className="flex h-full w-full items-center justify-center"
+                                            style={{ borderRadius: 10, background: 'rgba(25,25,25,0.06)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)' }}
+                                        >
+                                            <FileText className="size-4" />
+                                        </div>
+                                    )}
+                                    {busy && (
+                                        <div className="absolute inset-0 flex items-center justify-center" style={{ borderRadius: 10, background: 'rgba(25,25,25,0.45)' }}>
+                                            <Loader2 className="size-4 animate-spin" style={{ color: '#fff' }} />
+                                        </div>
+                                    )}
+                                    {err && (
+                                        <button
+                                            type="button"
+                                            onMouseDown={e => e.preventDefault()}
+                                            onClick={() => retry(item.key)}
+                                            title="Retry upload"
+                                            className="absolute inset-0 flex items-center justify-center"
+                                            style={{ borderRadius: 10, background: 'rgba(180,35,24,0.5)' }}
+                                        >
+                                            <RotateCcw className="size-4" style={{ color: '#fff' }} />
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onMouseDown={e => e.preventDefault()}
+                                        onClick={() => removeItem(item.key)}
+                                        aria-label="Remove attachment"
+                                        className="absolute flex items-center justify-center"
+                                        style={{ top: -5, right: -5, width: 18, height: 18, borderRadius: 999, background: 'var(--blanc-ink-1)', color: '#fff', border: '2px solid var(--blanc-surface-strong)' }}
+                                    >
+                                        <X className="size-2.5" />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
                 <button
                     type="button"
                     onMouseDown={e => e.preventDefault()}
@@ -202,77 +258,7 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                 >
                     <Paperclip className="size-5" />
                 </button>
-
-                {visible.map(item => {
-                    const busy = isBusyStatus(item.status);
-                    const err = item.status === 'error';
-                    return (
-                        <div
-                            key={item.key}
-                            className="relative shrink-0"
-                            style={{ width: THUMB, height: THUMB }}
-                            title={err ? (item.error || 'Upload failed') : item.name}
-                        >
-                            {item.isImage && item.previewUrl ? (
-                                <img
-                                    src={item.previewUrl}
-                                    alt={item.name}
-                                    className="h-full w-full object-cover"
-                                    style={{ borderRadius: 10, border: '1px solid var(--blanc-line)' }}
-                                />
-                            ) : (
-                                <div
-                                    className="flex h-full w-full items-center justify-center"
-                                    style={{ borderRadius: 10, background: 'rgba(25,25,25,0.06)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)' }}
-                                >
-                                    <FileText className="size-4" />
-                                </div>
-                            )}
-                            {busy && (
-                                <div className="absolute inset-0 flex items-center justify-center" style={{ borderRadius: 10, background: 'rgba(25,25,25,0.45)' }}>
-                                    <Loader2 className="size-4 animate-spin" style={{ color: '#fff' }} />
-                                </div>
-                            )}
-                            {err && (
-                                <button
-                                    type="button"
-                                    onMouseDown={e => e.preventDefault()}
-                                    onClick={() => retry(item.key)}
-                                    title="Retry upload"
-                                    className="absolute inset-0 flex items-center justify-center"
-                                    style={{ borderRadius: 10, background: 'rgba(180,35,24,0.5)' }}
-                                >
-                                    <RotateCcw className="size-4" style={{ color: '#fff' }} />
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                onMouseDown={e => e.preventDefault()}
-                                onClick={() => removeItem(item.key)}
-                                aria-label="Remove attachment"
-                                className="absolute flex items-center justify-center"
-                                style={{ top: -5, right: -5, width: 18, height: 18, borderRadius: 999, background: 'var(--blanc-ink-1)', color: '#fff', border: '2px solid var(--blanc-surface-strong)' }}
-                            >
-                                <X className="size-2.5" />
-                            </button>
-                        </div>
-                    );
-                })}
-
-                {overflow > 0 && (
-                    // +N chip; spins while any hidden upload is still in flight (owner: keep
-                    // spinning until everything is loaded, however many there are).
-                    <div
-                        className="flex shrink-0 items-center justify-center"
-                        style={{ width: THUMB, height: THUMB, borderRadius: 10, background: 'rgba(25,25,25,0.06)', border: '1px solid var(--blanc-line)', color: hiddenError ? '#b42318' : 'var(--blanc-ink-2)' }}
-                        title={`${overflow} more`}
-                    >
-                        {hiddenBusy
-                            ? <Loader2 className="size-4 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
-                            : <span className="text-xs font-semibold">+{overflow}</span>}
-                    </div>
-                )}
-            </div>
+            </>
         );
     }
 

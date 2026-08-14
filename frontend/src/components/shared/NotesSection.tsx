@@ -388,19 +388,17 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         }}
                         autoFocus
                     />
-                    <div className="flex items-center justify-between" style={{ marginTop: 8 }}>
-                        <div className="flex items-center gap-3">
-                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
-                            {renderPolishButton(44)}
-                            <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>⌘ + Enter</p>
-                        </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2" style={{ marginTop: 8 }}>
+                        <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                        {renderPolishButton(44)}
+                        <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>⌘ + Enter</p>
                         <button
                             type="button"
                             onMouseDown={e => e.preventDefault()}
                             onClick={handleSubmit}
                             disabled={!canSubmit}
                             aria-label="Add note"
-                            className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                            className="ml-auto flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
                             style={{ width: 44, height: 44, background: 'var(--blanc-accent)', color: '#fff' }}
                         >
                             {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
@@ -481,17 +479,15 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         ref={el => { if (el) growComposer(el); }}
                         autoFocus
                     />
-                    <div className="flex items-center justify-between gap-3" style={{ marginTop: 6 }}>
-                        <div className="flex items-center gap-2">
-                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
-                            {renderPolishButton(40)}
-                        </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-2" style={{ marginTop: 6 }}>
+                        <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                        {renderPolishButton(40)}
                         <button
                             type="button"
                             onClick={handleSubmit}
                             disabled={!canSubmit}
                             aria-label="Add note"
-                            className="flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
+                            className="ml-auto flex shrink-0 items-center justify-center rounded-full transition-opacity disabled:opacity-40"
                             style={{ width: 40, height: 40, background: 'var(--blanc-accent)', color: '#fff' }}
                         >
                             {submitting ? <Loader2 className="size-5 animate-spin" /> : <ArrowUp className="size-5" />}
@@ -530,9 +526,9 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                             </div>
                         )}
                         {editError && <p className="text-xs" style={{ color: '#b42318', marginTop: 8 }}>{editError}</p>}
-                        <div className="flex items-center justify-end gap-4" style={{ marginTop: 6 }}>
-                            <div className="mr-auto"><NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" /></div>
-                            <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2" style={{ marginTop: 6 }}>
+                            <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="ml-auto text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
                                 Cancel
                             </button>
                             <button
@@ -630,9 +626,9 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                 )}
 
                                 {/* Composer-canon action row: round attach + Cancel + round violet Save. */}
-                                <div className="flex items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
                                     <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
-                                    <div className="flex items-center gap-4">
+                                    <div className="ml-auto flex items-center gap-4">
                                         <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
                                             Cancel
                                         </button>

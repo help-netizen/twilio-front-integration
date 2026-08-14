@@ -10,7 +10,7 @@ const storageService = require('./storageService');
 const sharp = require('sharp');
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-const MAX_FILES_PER_NOTE = 5;
+const MAX_FILES_PER_NOTE = 10;
 const THUMBNAIL_MAX_SIZE = 320;
 const THUMBNAIL_JPEG_QUALITY = 75;
 const ALLOWED_TYPES = new Set([
