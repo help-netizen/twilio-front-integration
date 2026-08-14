@@ -77,6 +77,7 @@ export function WizardStep3(s: WizardState) {
             )}
 
             <CustomTimeModal
+                allowPast
                 open={showCustomTime}
                 onClose={() => setShowCustomTime(false)}
                 newJobCoords={s.coords}

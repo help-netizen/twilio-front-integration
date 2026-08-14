@@ -435,6 +435,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
             )}
 
             <CustomTimeModal
+                allowPast
                 open={showReschedule}
                 onClose={() => setShowReschedule(false)}
                 onConfirm={handleRescheduleConfirm}

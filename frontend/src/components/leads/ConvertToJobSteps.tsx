@@ -158,6 +158,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, recsLoading, recsE
             </div>
 
             <CustomTimeModal
+                allowPast
                 open={showCustomTime}
                 onClose={() => setShowCustomTime(false)}
                 newJobCoords={coords}

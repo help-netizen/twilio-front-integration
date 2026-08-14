@@ -56,6 +56,13 @@ interface CustomTimeModalProps {
     /** Pre-populate the green badge with an existing timeslot (for reschedule) */
     initialSlot?: { techId: string; start: string; end: string };
     /**
+     * Allow choosing a date/time in the past (e.g. back-dating a job, or moving an
+     * existing one to a time that already happened). Past dates become selectable
+     * and the confirm step only WARNS instead of blocking ("Book anyway"). Default
+     * false → future-only, as before (keeps robot-call / future-only callers safe).
+     */
+    allowPast?: boolean;
+    /**
      * Preferred technician (e.g. copied from a duplicated job). When set AND no
      * slot is chosen yet, this tech's lane is visually emphasized ("Preselected")
      * so the user knows where to pick a time. Does NOT auto-create a slot.
@@ -607,7 +614,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId, recommendTechId, title = 'Pick a time', confirmLabel }: CustomTimeModalProps) {
+export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId, recommendTechId, title = 'Pick a time', confirmLabel, allowPast = false }: CustomTimeModalProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
     const navigate = useNavigate();
@@ -840,8 +847,10 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
 
     const handleConfirm = () => {
         if (!selectedSlot) return;
-        // Prevent confirming a timeslot in the past
-        if (selectedSlot.start.getTime() < serverNow()) {
+        // A timeslot in the past is blocked ONLY when the caller is future-only.
+        // When allowPast is set, past is permitted — the footer warns and the
+        // button reads "Book anyway", so no hard stop here.
+        if (selectedSlot.start.getTime() < serverNow() && !allowPast) {
             alert('Selected time is in the past. Please choose a future time.');
             return;
         }
@@ -863,7 +872,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         const [y, m, d] = selectedDate.split('-').map(Number);
         const prev = new Date(Date.UTC(y, m - 1, d - 1));
         const prevStr = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}-${String(prev.getUTCDate()).padStart(2, '0')}`;
-        if (prevStr >= today) setSelectedDate(prevStr);
+        if (allowPast || prevStr >= today) setSelectedDate(prevStr);
     };
     const nextDate = () => {
         const [y, m, d] = selectedDate.split('-').map(Number);
@@ -876,7 +885,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     //    mobile bottom sheet), so the 7 call sites stay on a single component. ──
     const dateNav = (
         <div className="ctm-date-nav">
-            <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={prevDate} disabled={selectedDate <= today}>
+            <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={prevDate} disabled={!allowPast && selectedDate <= today}>
                 <ChevronLeft className="w-4" />
             </Button>
             <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
@@ -891,7 +900,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                         mode="single"
                         selected={dateObj}
                         onSelect={(day) => { if (day) { const ds = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`; setSelectedDate(ds); setCalendarOpen(false); } }}
-                        disabled={{ before: new Date(today + 'T00:00:00') }}
+                        disabled={allowPast ? undefined : { before: new Date(today + 'T00:00:00') }}
                         defaultMonth={dateObj}
                     />
                 </PopoverContent>
@@ -1135,11 +1144,17 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const territoryWarn = territoryWarningText
         ? <span className="ctm-footer__territory-warn">⚠ {territoryWarningText}</span>
         : null;
+    const isSelectedPast = !!selectedSlot && selectedSlot.start.getTime() < serverNow();
+    const pastWarn = allowPast && isSelectedPast
+        ? <span className="ctm-footer__territory-warn">⚠ This time is in the past — it will be booked anyway.</span>
+        : null;
     const confirmButton = (
         <Button onClick={handleConfirm} disabled={!selectedSlot} className={isMobile ? 'flex-1' : undefined}>
-            {selectedSlot
-                ? (confirmLabel ?? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}`)
-                : 'Select a time'}
+            {!selectedSlot
+                ? 'Select a time'
+                : (allowPast && isSelectedPast)
+                    ? 'Book anyway'
+                    : (confirmLabel ?? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}`)}
         </Button>
     );
 
@@ -1156,6 +1171,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                 footer={
                     <div className="ctm-footer--sheet">
                         {territoryWarn}
+                        {pastWarn}
                         <div className="ctm-footer__actions">
                             <Button variant="ghost" onClick={onClose}>Cancel</Button>
                             {confirmButton}
@@ -1184,6 +1200,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                 </div>
                 <DialogFooter className="ctm-footer">
                     {territoryWarn}
+                    {pastWarn}
                     <Button variant="ghost" onClick={onClose}>Cancel</Button>
                     {confirmButton}
                 </DialogFooter>

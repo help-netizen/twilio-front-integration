@@ -490,6 +490,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
             </Dialog>
 
             <CustomTimeModal
+                allowPast
                 open={timeOpen}
                 onClose={() => setTimeOpen(false)}
                 onConfirm={handleSlotConfirm}
