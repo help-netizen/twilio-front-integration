@@ -18,7 +18,19 @@
 -- evidence aborts the transaction before the first persistent write.
 -- =============================================================================
 
-LOCK TABLE timelines IN SHARE ROW EXCLUSIVE MODE;
+-- No LOCK TABLE and no explicit transaction here, deliberately. Both staging and
+-- production apply migrations with `psql -f` in autocommit, where LOCK TABLE is
+-- rejected outright ("can only be used in transaction blocks") and would in any
+-- case be released the moment its own statement committed. Wrapping the file in
+-- BEGIN/COMMIT is not an option either: the migration's DB test applies it inside
+-- its own transaction for isolation, and a COMMIT in here would commit the test's
+-- fixtures out from under it.
+--
+-- What still holds: the conflict check below runs BEFORE any ownership write, so
+-- under ON_ERROR_STOP a contradiction aborts the run without having touched a row.
+-- What is given up: if a timeline is inserted concurrently between the backfill and
+-- SET NOT NULL, that statement fails — loudly, and the file is idempotent, so the
+-- fix is to re-run it.
 
 DO $$
 BEGIN
