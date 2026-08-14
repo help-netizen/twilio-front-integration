@@ -845,15 +845,9 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         });
     }, [selectedDate]);
 
-    const handleConfirm = () => {
+    const [pastConfirmOpen, setPastConfirmOpen] = useState(false);
+    const bookSelectedSlot = () => {
         if (!selectedSlot) return;
-        // A timeslot in the past is blocked ONLY when the caller is future-only.
-        // When allowPast is set, past is permitted — the footer warns and the
-        // button reads "Book anyway", so no hard stop here.
-        if (selectedSlot.start.getTime() < serverNow() && !allowPast) {
-            alert('Selected time is in the past. Please choose a future time.');
-            return;
-        }
         const dateLabel = formatCompanyTime(selectedSlot.start, { weekday: 'short', month: 'short', day: 'numeric' }, companyTz);
         const techName = techGroups.find(g => g.id === selectedSlot.techId)?.name || '';
         const formatted = `${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)} — ${dateLabel}${techName ? ` (${techName})` : ''}`;
@@ -864,6 +858,21 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             formatted,
             techId: selectedSlot.techId,
         });
+    };
+    const handleConfirm = () => {
+        if (!selectedSlot) return;
+        const isPast = selectedSlot.start.getTime() < serverNow();
+        if (isPast && !allowPast) {
+            // Future-only caller: a past slot stays a hard stop.
+            alert('Selected time is in the past. Please choose a future time.');
+            return;
+        }
+        if (isPast) {
+            // allowPast: don't block — ask the user to confirm the past time first.
+            setPastConfirmOpen(true);
+            return;
+        }
+        bookSelectedSlot();
     };
 
     // Date navigation — use company timezone for "today"
@@ -1144,24 +1153,55 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const territoryWarn = territoryWarningText
         ? <span className="ctm-footer__territory-warn">⚠ {territoryWarningText}</span>
         : null;
-    const isSelectedPast = !!selectedSlot && selectedSlot.start.getTime() < serverNow();
-    const pastWarn = allowPast && isSelectedPast
-        ? <span className="ctm-footer__territory-warn">⚠ This time is in the past — it will be booked anyway.</span>
-        : null;
     const confirmButton = (
-        <Button onClick={handleConfirm} disabled={!selectedSlot} className={isMobile ? 'flex-1' : undefined}>
-            {!selectedSlot
-                ? 'Select a time'
-                : (allowPast && isSelectedPast)
-                    ? 'Book anyway'
-                    : (confirmLabel ?? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}`)}
+        <Button onClick={handleConfirm} disabled={!selectedSlot} data-testid="ctm-confirm" className={isMobile ? 'flex-1' : undefined}>
+            {selectedSlot
+                ? (confirmLabel ?? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}`)
+                : 'Select a time'}
         </Button>
+    );
+    // Past-time confirmation (allowPast callers) — instead of blocking, a small
+    // confirm step: mobile bottom-sheet / desktop centre dialog, showing the chosen
+    // time. "Book it anyway" proceeds; "Change time" returns to the picker.
+    const pastChosenLabel = selectedSlot
+        ? `${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}, ${formatCompanyTime(selectedSlot.start, { weekday: 'short', month: 'short', day: 'numeric' }, companyTz)}`
+        : '';
+    const pastConfirmActions = (
+        <>
+            <Button variant="ghost" onClick={() => setPastConfirmOpen(false)} data-testid="ctm-past-change">Change time</Button>
+            <Button onClick={() => { setPastConfirmOpen(false); bookSelectedSlot(); }} data-testid="ctm-past-yes">Book it anyway</Button>
+        </>
+    );
+    const pastConfirmBody = (
+        <p className="text-[15px] leading-relaxed text-[var(--blanc-ink-1)]">
+            The time you picked{pastChosenLabel ? <> — <strong className="font-semibold">{pastChosenLabel}</strong></> : null} is in the past. Book the job at this time anyway?
+        </p>
+    );
+    const pastConfirmOverlay = isMobile ? (
+        <BottomSheet
+            open={pastConfirmOpen}
+            onClose={() => setPastConfirmOpen(false)}
+            size="auto"
+            title="This time is in the past"
+            footer={<div className="flex justify-end gap-2">{pastConfirmActions}</div>}
+        >
+            <div className="px-1 py-1" data-testid="ctm-past-confirm">{pastConfirmBody}</div>
+        </BottomSheet>
+    ) : (
+        <Dialog open={pastConfirmOpen} onOpenChange={v => { if (!v) setPastConfirmOpen(false); }}>
+            <DialogContent variant="dialog" className="max-w-md" data-testid="ctm-past-confirm">
+                <DialogTitle className="text-lg font-semibold text-[var(--blanc-ink-1)]">This time is in the past</DialogTitle>
+                <div className="mt-1">{pastConfirmBody}</div>
+                <DialogFooter className="mt-5 gap-2">{pastConfirmActions}</DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 
     // ── Mobile: the canonical bottom sheet. Times pane (recommendations strip +
     //    hour grid) fills the height; the map is the second pane on demand. ──
     if (isMobile) {
         return (
+            <>
             <BottomSheet
                 open={open}
                 onClose={onClose}
@@ -1171,7 +1211,6 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                 footer={
                     <div className="ctm-footer--sheet">
                         {territoryWarn}
-                        {pastWarn}
                         <div className="ctm-footer__actions">
                             <Button variant="ghost" onClick={onClose}>Cancel</Button>
                             {confirmButton}
@@ -1184,11 +1223,14 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     {mobilePane === 'map' ? mapPanel : (<>{recsPanel}{timelinesPanel}</>)}
                 </div>
             </BottomSheet>
+            {pastConfirmOverlay}
+            </>
         );
     }
 
     // ── Desktop: unchanged three-pane dialog. ──
     return (
+        <>
         <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
             <DialogContent className="md:max-w-5xl max-h-[90vh] ctm-dialog" aria-describedby={undefined}>
                 <DialogTitle className="sr-only">{title}</DialogTitle>
@@ -1200,11 +1242,12 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                 </div>
                 <DialogFooter className="ctm-footer">
                     {territoryWarn}
-                    {pastWarn}
                     <Button variant="ghost" onClick={onClose}>Cancel</Button>
                     {confirmButton}
                 </DialogFooter>
             </DialogContent>
         </Dialog>
+        {pastConfirmOverlay}
+        </>
     );
 }
