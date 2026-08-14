@@ -17,6 +17,7 @@ import { getCompanyTimezone, formatUnavailabilityPeriod } from './timeOffWarning
 import { JobTechnicianControl } from './JobTechnicianControl';
 import { useNavigate } from 'react-router-dom';
 import { googleMapsUrl } from '../../utils/routeFormat';
+import { LEVEL_TWO_QUIET, LEVEL_TWO_HEADING, LEVEL_TWO_LABEL_WIDTH } from '../../styles/levelTwo';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -72,27 +73,53 @@ const infoLabel: React.CSSProperties = {
     width: '72px',
 };
 
+// Flat rows carry no dashed rule between them: on the level-two rule the grey
+// label already marks where one field ends and the next begins, and a dotted
+// line across a phone-width column is noise pretending to be structure.
+const flatRow: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '3px 0',
+};
+
+const flatLabel: React.CSSProperties = {
+    ...LEVEL_TWO_QUIET,
+    flexShrink: 0,
+    width: `${LEVEL_TWO_LABEL_WIDTH}px`,
+};
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'card' }: JobInfoSectionsProps) {
     const section = variant === 'flat' ? flatSection : sectionCard;
-    // The payment card asked for one heading scale across its left column, so in
-    // flat mode these labels become the same section heading Description uses.
     const flat = variant === 'flat';
+    // Flat runs the level-two rule: the group's heading is the SAME size as the
+    // rows under it and is made a heading by weight and colour alone — black
+    // and bold against the grey labels it introduces. Eleven sizes were doing
+    // the work those two do better.
     const label: React.CSSProperties = flat
-        ? { fontFamily: 'var(--blanc-font-heading)', fontSize: '15px', fontWeight: 500,
-            letterSpacing: '-0.01em', color: 'var(--blanc-ink-1)', marginBottom: '8px',
-            display: 'flex', alignItems: 'center', gap: '7px' }
+        ? { ...LEVEL_TWO_HEADING, marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '7px' }
         : eyebrow;
-    // The rows sit slightly in from their heading so the group reads as one —
-    // the shift alone does it, with no line to eat width on a phone.
-    // Tried the rows shifted in behind the icon; the icon and the lighter weight
-    // already say "this belongs to the heading", and the shift only cost width.
-    const row: React.CSSProperties = infoRow;
-    const indent: React.CSSProperties = {};
+    const row: React.CSSProperties = flat ? flatRow : infoRow;
+    const rowLabel: React.CSSProperties = flat ? flatLabel : infoLabel;
+    // Values differ from their labels by colour alone, so the class carries no
+    // size or weight of its own. The card variant keeps what it always had.
+    const value = flat ? 'blanc-l2' : 'text-[13px] font-semibold';
+    // The icon belongs to the heading, so it takes the heading's colour — a
+    // grey mark in front of black bold text reads as two separate things.
     const icon = flat
-        ? { size: 15, style: { color: 'var(--blanc-ink-3)', flexShrink: 0 } as React.CSSProperties }
+        ? { size: 15, style: { color: 'var(--blanc-ink-1)', flexShrink: 0 } as React.CSSProperties }
         : null;
+    // Groups inside one card: dashed rules on the job card, plain space on the
+    // flat one — flat has no frame to divide, so a line would be the only edge
+    // on the page and would read as a mistake.
+    const groupGap = (hasNext: boolean): React.CSSProperties => {
+        if (!hasNext) return {};
+        return flat
+            ? { marginBottom: 18 }
+            : { paddingBottom: 14, marginBottom: 14, borderBottom: '1px dashed rgba(25,25,25,0.12)' };
+    };
     const [showReschedule, setShowReschedule] = useState(false);
     const [rescheduling, setRescheduling] = useState(false);
     const [editingAddress, setEditingAddress] = useState(false);
@@ -203,7 +230,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
     const customerName = contactInfo?.name || job.customer_name;
 
     return (
-        <div className="px-4 py-4 space-y-3">
+        <div className={flat ? 'space-y-5' : 'px-4 py-4 space-y-3'}>
 
             {/* ── CONTACT ── */}
             {(customerName || phone || secondaryPhone || email) && (
@@ -211,25 +238,25 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                     <p style={label}>{icon && <User size={icon.size} style={icon.style} />}Contact</p>
                     {customerName && (
                         <div style={row}>
-                            <span style={infoLabel}>Customer</span>
+                            <span style={rowLabel}>Customer</span>
                             {(contactInfo?.id || job.contact_id) ? (
                                 <button
                                     type="button"
                                     onClick={() => navigate(`/contacts/${contactInfo?.id ?? job.contact_id}`)}
-                                    className="flex items-center gap-1 text-[13px] font-semibold hover:underline"
-                                    style={{ color: 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}
+                                    className={`flex items-center gap-1 hover:underline ${value}`}
+                                    style={{ color: flat ? 'var(--blanc-ink-1)' : 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}
                                 >
                                     {customerName}
-                                    <ChevronRight className="size-3 flex-shrink-0" />
+                                    <ChevronRight className="size-3 flex-shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
                                 </button>
                             ) : (
-                                <span className="text-[13px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{customerName}</span>
+                                <span className={value} style={{ color: 'var(--blanc-ink-1)' }}>{customerName}</span>
                             )}
                         </div>
                     )}
                     {phone && (
                         <div style={row}>
-                            <span style={infoLabel}>Phone</span>
+                            <span style={rowLabel}>Phone</span>
                             {/* Masking replaces the number AND the call action — a masked
                                 call is the only dial a masked viewer gets. Messaging is not a
                                 masking concern (Pulse redacts on its own and sends to an opaque
@@ -239,7 +266,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                             <div className="flex items-center gap-2">
                                 <MaskedCallLine entityType="job" entityId={job.id} maskedLabel="Call">
                                     <div className="flex items-center gap-2">
-                                        <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                        <a href={`tel:${phone}`} className={`hover:underline ${value}`} style={{ color: 'var(--blanc-ink-1)' }}>
                                             {formatPhone(phone)}
                                         </a>
                                         <ClickToCallButton phone={phone} contactName={customerName || undefined} />
@@ -259,11 +286,11 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                                 collapses both numbers to ONE masked dial, so the stored label
                                 ("Wife", "Office"…) is the only way a masked viewer tells the
                                 rows apart — mirrors ContactInfoSections exactly. */}
-                            <span style={infoLabel}>{secondaryPhoneName || 'Phone 2'}</span>
+                            <span style={rowLabel}>{secondaryPhoneName || 'Phone 2'}</span>
                             <div className="flex items-center gap-2">
                                 <MaskedCallLine entityType="job" entityId={job.id} maskedLabel="Call">
                                     <div className="flex items-center gap-2">
-                                        <a href={`tel:${secondaryPhone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                        <a href={`tel:${secondaryPhone}`} className={`hover:underline ${value}`} style={{ color: 'var(--blanc-ink-1)' }}>
                                             {formatPhone(secondaryPhone)}
                                         </a>
                                         <ClickToCallButton phone={secondaryPhone} contactName={customerName || undefined} />
@@ -278,11 +305,11 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                         </div>
                     )}
                     {email && (
-                        <div style={{ ...infoRow, borderBottom: 'none', paddingBottom: 0 }}>
-                            <span style={infoLabel}>Email</span>
+                        <div style={{ ...row, borderBottom: 'none', paddingBottom: flat ? 3 : 0 }}>
+                            <span style={rowLabel}>Email</span>
                             <a
                                 href={`mailto:${email}`}
-                                className="text-[13px] font-semibold hover:underline"
+                                className={`hover:underline ${value}`}
                                 style={{ color: 'var(--blanc-ink-1)', wordBreak: 'break-all' }}
                             >
                                 {email}
@@ -298,14 +325,14 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
 
                     {/* Schedule */}
                     {job.start_date && (
-                        <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
-                            <div className="flex items-center justify-between mb-2">
+                        <div style={groupGap(!!(job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0))}>
+                            <div className={`flex items-center justify-between ${flat ? 'mb-0.5' : 'mb-2'}`}>
                                 <p style={{ ...label, marginBottom: 0 }}>{icon && <CalendarClock size={icon.size} style={icon.style} />}Schedule</p>
                                 {canReschedule && (
                                     <button
                                         onClick={() => setShowReschedule(true)}
                                         disabled={rescheduling}
-                                        className="inline-flex items-center gap-1 text-[11px] font-medium transition-opacity hover:opacity-70 disabled:opacity-40"
+                                        className={`inline-flex items-center gap-1 transition-opacity hover:opacity-70 disabled:opacity-40 ${flat ? 'blanc-l2' : 'text-[11px] font-medium'}`}
                                         style={{ color: 'var(--blanc-ink-3)' }}
                                     >
                                         {rescheduling ? <Loader2 className="size-3 animate-spin" /> : <CalendarClock className="size-3" />}
@@ -314,14 +341,16 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                                 )}
                             </div>
                             <div
-                                className={`${flat ? 'text-[15px]' : 'text-lg'} leading-tight font-semibold`}
-                                style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.03em', color: 'var(--blanc-ink-1)', ...indent }}
+                                className={flat ? value : 'text-lg leading-tight font-semibold'}
+                                style={flat
+                                    ? { color: 'var(--blanc-ink-1)' }
+                                    : { fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.03em', color: 'var(--blanc-ink-1)' }}
                             >
                                 {new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                                 {', '}
                                 {new Date(job.start_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
                                 {job.end_date && (
-                                    <span style={{ color: 'var(--blanc-ink-2)' }}>
+                                    <span style={{ color: flat ? 'var(--blanc-ink-3)' : 'var(--blanc-ink-2)' }}>
                                         {' – '}
                                         {new Date(job.end_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
                                     </span>
@@ -331,17 +360,17 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                     )}
 
                     {/* Location — SCHED-ROUTE-001 FR-002/FR-003: clickable Maps link + inline edit */}
-                    <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
-                        <div className="flex items-center gap-1.5 mb-1">
+                    <div style={groupGap((job.assigned_techs?.length ?? 0) > 0)}>
+                        <div className={`flex items-center gap-1.5 ${flat ? 'mb-0.5' : 'mb-1'}`}>
                             <p style={{ ...label, marginBottom: 0 }}>{icon && <MapPin size={icon.size} style={icon.style} />}Location</p>
                             {job.territory && (
-                                <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>· {job.territory}</span>
+                                <span className={flat ? 'blanc-l2' : 'text-[11px] font-medium'} style={{ color: 'var(--blanc-ink-3)' }}>· {job.territory}</span>
                             )}
                             {!editingAddress && (
                                 <button
                                     type="button"
                                     onClick={beginEditAddress}
-                                    className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium hover:opacity-100 opacity-70"
+                                    className={`ml-auto inline-flex items-center gap-1 hover:opacity-100 opacity-70 ${flat ? 'blanc-l2' : 'text-[11px] font-medium'}`}
                                     style={{ color: 'var(--blanc-ink-3)' }}
                                     title="Edit address"
                                 >
@@ -382,8 +411,10 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                         ) : job.address ? (() => {
                             // FR-003: clickable Maps link (prefers stored coords; generated, no Google call).
                             const mapsUrl = googleMapsUrl({ lat: job.lat, lng: job.lng, address: job.address });
-                            const cls = 'text-[15px] leading-snug font-semibold';
-                            const sty = { fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' } as const;
+                            const cls = flat ? value : 'text-[15px] leading-snug font-semibold';
+                            const sty = flat
+                                ? { color: 'var(--blanc-ink-1)' } as const
+                                : { fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' } as const;
                             return mapsUrl ? (
                                 <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:underline`} style={sty}>
                                     {job.address}
@@ -392,12 +423,12 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                                 <div className={cls} style={sty}>{job.address}</div>
                             );
                         })() : (
-                            <p className="text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>No address</p>
+                            <p className={flat ? 'blanc-l2' : 'text-[13px]'} style={{ color: 'var(--blanc-ink-3)' }}>No address</p>
                         )}
                     </div>
 
                     {/* Technician — assign / change / unassign WITHOUT rescheduling (JOB-TECH-ASSIGN-001) */}
-                    <JobTechnicianControl job={job} onJobUpdated={onJobUpdated} />
+                    <JobTechnicianControl job={job} onJobUpdated={onJobUpdated} variant={variant} />
                 </div>
             )}
 

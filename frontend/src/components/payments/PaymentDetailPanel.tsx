@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChevronDown, Loader2, Receipt } from 'lucide-react';
+import { ChevronDown, Loader2, MapPin, Receipt } from 'lucide-react';
+import { LEVEL_TWO_QUIET, LEVEL_TWO_HEADING } from '../../styles/levelTwo';
 import { useJobDetail } from '../../hooks/useJobDetail';
 import { JobInfoSections } from '../jobs/JobInfoSections';
 import { JobDescription } from '../jobs/JobDescription';
@@ -67,22 +68,26 @@ export function PaymentDetailPanel({
                        by the icon-led secondary headings and the rows shifted in
                        behind them. */
                     <div className="space-y-5" style={{ marginTop: '-4px' }}>
-                        {/* The job card's own sections — flat here, framed there. */}
+                        {/* The job card's own sections — flat here, framed there.
+                            Provider comes with them (JobTechnicianControl), which
+                            is why PaymentProviders only covers the branch below. */}
                         <JobInfoSections
                             job={job}
                             contactInfo={jobDetail.contactInfo}
                             onJobUpdated={jobDetail.handleJobUpdated}
                             variant="flat"
                         />
-                        <PaymentProviders detail={detail} job={job} />
                     </div>
                 ) : (
                     <>
                         <PaymentProviders detail={detail} job={null} />
                         {detail.job?.service_address && (
                             <div>
-                                <p className="blanc-eyebrow mb-2">Location</p>
-                                <p className="text-[15px] font-medium">{detail.job.service_address}</p>
+                                <p style={{ ...LEVEL_TWO_HEADING, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 7 }}>
+                                    <MapPin size={15} style={{ color: 'var(--blanc-ink-1)', flexShrink: 0 }} />
+                                    Location
+                                </p>
+                                <p className="blanc-l2">{detail.job.service_address}</p>
                             </div>
                         )}
                     </>
@@ -130,18 +135,18 @@ function MetadataSection({ metadata, showMetadata, setShowMetadata }: {
         <div>
             <button
                 onClick={() => setShowMetadata(!showMetadata)}
-                className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest transition-opacity hover:opacity-70"
-                style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.14em', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                className="blanc-l2 flex items-center gap-1.5 transition-opacity hover:opacity-70"
+                style={{ color: 'var(--blanc-ink-3)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
             >
-                <ChevronDown className="size-3" style={{ transform: showMetadata ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
+                <ChevronDown className="size-3.5" style={{ transform: showMetadata ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
                 Transaction Metadata
             </button>
             {showMetadata && (
-                <div className="mt-2 space-y-1">
+                <div className="mt-2">
                     {Object.entries(metadata).map(([key, val]) => val ? (
-                        <div key={key} className="flex gap-2 text-[12px]">
-                            <span style={{ color: 'var(--blanc-ink-3)', minWidth: 100, textTransform: 'capitalize' as const }}>{key.replace(/_/g, ' ')}</span>
-                            <span className="font-mono text-[11px]" style={{ color: 'var(--blanc-ink-1)', wordBreak: 'break-all' as const }}>{val}</span>
+                        <div key={key} className="flex gap-2.5 py-1">
+                            <span style={{ ...LEVEL_TWO_QUIET, minWidth: 100, textTransform: 'capitalize' as const }}>{key.replace(/_/g, ' ')}</span>
+                            <span className="blanc-l2" style={{ wordBreak: 'break-all' as const }}>{val}</span>
                         </div>
                     ) : null)}
                 </div>

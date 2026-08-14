@@ -20,10 +20,13 @@ import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from '../ui/command';
 import { FullScreenSearchPicker, SearchPickerRow } from '../shared/FullScreenSearchPicker';
 import { Button } from '../ui/button';
+import { LEVEL_TWO_HEADING } from '../../styles/levelTwo';
 
 interface JobTechnicianControlProps {
     job: LocalJob;
     onJobUpdated?: (job: LocalJob) => void;
+    /** 'flat' follows the payment card's level-two rule (see styles/levelTwo). */
+    variant?: 'card' | 'flat';
 }
 
 const eyebrow: CSSProperties = {
@@ -31,7 +34,8 @@ const eyebrow: CSSProperties = {
     textTransform: 'uppercase', color: 'var(--blanc-ink-3)', marginBottom: 8,
 };
 
-export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControlProps) {
+export function JobTechnicianControl({ job, onJobUpdated, variant = 'card' }: JobTechnicianControlProps) {
+    const flat = variant === 'flat';
     const { hasPermission } = useAuthz();
     const canAssign = hasPermission('schedule.dispatch');
     const isMobile = useIsMobile();
@@ -133,8 +137,8 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
         <button
             type="button"
             onClick={isMobile ? () => setOpen(true) : undefined}
-            className="inline-flex items-center gap-1 min-h-[34px] px-3 rounded-full text-[12px] font-semibold transition-opacity hover:opacity-70"
-            style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)', background: '#fff' }}
+            className={`inline-flex items-center gap-1 min-h-[34px] px-3 rounded-full transition-opacity hover:opacity-70 ${flat ? 'blanc-l2' : 'text-[12px] font-semibold'}`}
+            style={{ border: '1px solid var(--blanc-line)', color: flat ? 'var(--blanc-ink-3)' : 'var(--blanc-ink-2)', background: '#fff' }}
         >
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Pencil className="size-3.5" />}
             {assigned.length ? 'Change' : 'Assign'}
@@ -143,13 +147,20 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
 
     return (
         <div>
-            <p style={eyebrow}>Provider</p>
+            {flat ? (
+                <p style={{ ...LEVEL_TWO_HEADING, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <UserRound size={15} style={{ color: 'var(--blanc-ink-1)', flexShrink: 0 }} />
+                    Provider
+                </p>
+            ) : (
+                <p style={eyebrow}>Provider</p>
+            )}
             <div className="flex items-center gap-2 flex-wrap">
                 {assigned.length > 0 ? (
                     assigned.map((t) => (
                         <span
                             key={t.id}
-                            className="inline-flex items-center gap-1.5 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
+                            className={`inline-flex items-center gap-1.5 min-h-[34px] px-3.5 rounded-full ${flat ? 'blanc-l2' : 'text-[13px] font-medium'}`}
                             style={{ background: 'rgba(25,25,25,0.05)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
                         >
                             <UserRound className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
@@ -157,7 +168,7 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
                         </span>
                     ))
                 ) : (
-                    <span className="text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>Unassigned</span>
+                    <span className={flat ? 'blanc-l2' : 'text-[13px]'} style={{ color: 'var(--blanc-ink-3)' }}>Unassigned</span>
                 )}
 
                 {canAssign && !isMobile && (

@@ -886,6 +886,33 @@ table tbody tr:hover {
     margin-bottom: 12px;
 }
 
+/* Level two — everything below a section heading.
+   ONE size for the field group's own heading, its labels and its values alike;
+   what separates them is colour and weight, never a size of their own. A page
+   that needs eleven sizes to be understood is a page whose hierarchy is doing
+   no work. */
+.blanc-l2 {
+    font-family: var(--blanc-font-body);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 20px;
+    letter-spacing: 0.005em;
+    color: var(--blanc-ink-1);
+}
+
+/* Names a value. */
+.blanc-l2-quiet {
+    color: var(--blanc-ink-3);
+}
+
+/* Names a GROUP of them — black and bold so the eye lands on Contact, Schedule
+   or Location without hunting for it, and still the same size as the rows it
+   introduces. */
+.blanc-l2-heading {
+    color: var(--blanc-ink-1);
+    font-weight: 600;
+}
+
 /* Page heading (Manrope) */
 .blanc-heading {
     font-family: var(--blanc-font-heading);
