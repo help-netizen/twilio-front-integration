@@ -43,7 +43,7 @@ export function PaymentIdentity({
 
     return (
         <div>
-            <p className="blanc-eyebrow">Payment</p>
+            <p className="blanc-section-heading">Payment</p>
             <h2
                 className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
                 style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)', letterSpacing: '-0.025em' }}
@@ -118,7 +118,7 @@ export function InvoiceFigures({ invoice }: { invoice: PaymentDetail['invoice'] 
 
     return (
         <div>
-            <p className="blanc-eyebrow mb-2.5">Invoice</p>
+            <p className="blanc-section-heading">Invoice</p>
             <div className="flex flex-wrap gap-x-7 gap-y-3">
                 {figure('Total', invoice.total)}
                 {figure('Paid', invoice.amount_paid)}

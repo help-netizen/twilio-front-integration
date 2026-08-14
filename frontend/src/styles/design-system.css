@@ -874,6 +874,18 @@ table tbody tr:hover {
     margin-bottom: 8px;
 }
 
+/* Section heading — the size the job card gives Description and Finance.
+   Named here so every surface that wants a real section title uses one
+   definition instead of retyping text-xl + Manrope + tracking at each site. */
+.blanc-section-heading {
+    font-family: var(--blanc-font-heading);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--blanc-ink-1);
+    margin-bottom: 12px;
+}
+
 /* Page heading (Manrope) */
 .blanc-heading {
     font-family: var(--blanc-font-heading);

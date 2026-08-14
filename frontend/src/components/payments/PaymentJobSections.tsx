@@ -34,13 +34,13 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
 
     return (
         <div>
-            <p className="blanc-eyebrow mb-2.5 flex flex-wrap items-center gap-2">
+            <p className="blanc-section-heading flex flex-wrap items-center gap-2">
                 <button
                     type="button"
                     disabled={!detail.local_job_id}
                     onClick={() => detail.local_job_id && navigate(`/jobs/${detail.local_job_id}`)}
-                    className="blanc-eyebrow hover:underline disabled:no-underline"
-                    style={{ background: 'none', border: 'none', padding: 0, cursor: detail.local_job_id ? 'pointer' : 'default' }}
+                    className="blanc-section-heading hover:underline disabled:no-underline"
+                    style={{ background: 'none', border: 'none', padding: 0, margin: 0, cursor: detail.local_job_id ? 'pointer' : 'default' }}
                 >
                     Job {jobNumber ? `#${jobNumber}` : ''}
                 </button>

@@ -76,6 +76,12 @@ const infoLabel: React.CSSProperties = {
 
 export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'card' }: JobInfoSectionsProps) {
     const section = variant === 'flat' ? flatSection : sectionCard;
+    // The payment card asked for one heading scale across its left column, so in
+    // flat mode these labels become the same section heading Description uses.
+    const label: React.CSSProperties = variant === 'flat'
+        ? { fontFamily: 'var(--blanc-font-heading)', fontSize: '20px', fontWeight: 600,
+            letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)', marginBottom: '12px' }
+        : eyebrow;
     const [showReschedule, setShowReschedule] = useState(false);
     const [rescheduling, setRescheduling] = useState(false);
     const [editingAddress, setEditingAddress] = useState(false);
@@ -191,7 +197,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
             {/* ── CONTACT ── */}
             {(customerName || phone || secondaryPhone || email) && (
                 <div style={section}>
-                    <p style={eyebrow}>Contact</p>
+                    <p style={label}>Contact</p>
                     {customerName && (
                         <div style={infoRow}>
                             <span style={infoLabel}>Customer</span>
@@ -283,7 +289,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                     {job.start_date && (
                         <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
                             <div className="flex items-center justify-between mb-2">
-                                <p style={{ ...eyebrow, marginBottom: 0 }}>Schedule</p>
+                                <p style={{ ...label, marginBottom: 0 }}>Schedule</p>
                                 {canReschedule && (
                                     <button
                                         onClick={() => setShowReschedule(true)}
@@ -316,7 +322,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                     {/* Location — SCHED-ROUTE-001 FR-002/FR-003: clickable Maps link + inline edit */}
                     <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
                         <div className="flex items-center gap-1.5 mb-1">
-                            <p style={{ ...eyebrow, marginBottom: 0 }}>Location</p>
+                            <p style={{ ...label, marginBottom: 0 }}>Location</p>
                             {job.territory && (
                                 <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>· {job.territory}</span>
                             )}
