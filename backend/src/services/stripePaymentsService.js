@@ -1586,10 +1586,17 @@ async function applyStripeRefund(
             const refundAmt = Math.abs(Number(amount));
             const origTotal = Math.abs(Number(original.amount)) || refundAmt;
             const origTip = Math.max(0, Number(original.metadata?.tip || 0) || 0);
-            const origBalancePortion = Math.max(0, origTotal - origTip);
-            const invoiceReversal = origTip > 0 && origTotal > 0
+            const uncappedBalancePortion = Math.max(0, origTotal - origTip);
+            const configuredCreditRaw = original.metadata?.document_credit_amount;
+            const configuredCredit = configuredCreditRaw == null || configuredCreditRaw === ''
+                ? Number.NaN
+                : Number(configuredCreditRaw);
+            const origBalancePortion = Number.isFinite(configuredCredit)
+                ? Math.min(uncappedBalancePortion, Math.max(0, configuredCredit))
+                : uncappedBalancePortion;
+            const invoiceReversal = origTotal > 0
                 ? Number((refundAmt * (origBalancePortion / origTotal)).toFixed(2))
-                : refundAmt;
+                : 0;
             await invoicesQueries.createEvent(
                 companyId,
                 original.invoice_id,
@@ -1841,10 +1848,19 @@ async function createPublicPayIntent(
 
 async function applyStripePayment(
     companyId,
-    { externalId, invoiceId, contactId, jobId, amount, currency, metadata },
+    payment,
     client = null,
     activityActor = null
 ) {
+    const { externalId, invoiceId, contactId, jobId, amount, currency, metadata } = payment;
+    if (invoiceId && !client?.query) {
+        return withTransaction(transactionClient => applyStripePayment(
+            companyId,
+            payment,
+            transactionClient,
+            activityActor
+        ));
+    }
     // Idempotency: a ledger row already exists for this external id?
     const existing = await paymentsQueries.findByExternalSourceId(
         companyId,
@@ -1855,8 +1871,18 @@ async function applyStripePayment(
     if (existing) return { tx: existing, deduped: true };
     let invoice = null;
     if (invoiceId) {
+        const locked = await invoicesQueries.lockInvoiceById(companyId, invoiceId, client);
+        if (!locked) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
         invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
         if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+        if (['void', 'voided', 'refunded'].includes(invoice.status)) {
+            return {
+                tx: null,
+                deduped: false,
+                ignored: true,
+                reason: 'INVOICE_TERMINAL',
+            };
+        }
     }
     const resolvedContactId = invoice?.contact_id || contactId || null;
     const resolvedJobId = invoice?.job_id || jobId || null;
@@ -1885,6 +1911,14 @@ async function applyStripePayment(
     // invoice; the tip is recorded on the ledger row's metadata for reporting.
     const tip = Math.max(0, Number(metadata?.tip || 0) || 0);
     const balancePortion = Math.max(0, Number((amount - tip).toFixed(2)));
+    const documentCredit = invoice
+        ? Math.min(
+            balancePortion,
+            Math.max(0, Number(Number(invoice.balance_due || 0).toFixed(2)))
+        )
+        : balancePortion;
+    const transactionMetadata = { ...(metadata || {}), tip };
+    if (invoice) transactionMetadata.document_credit_amount = documentCredit;
 
     let tx;
     try {
@@ -1901,7 +1935,7 @@ async function applyStripePayment(
             job_id: resolvedJobId,
             external_id: externalId,
             external_source: 'stripe',
-            metadata: { ...(metadata || {}), tip },
+            metadata: transactionMetadata,
             processed_at: new Date().toISOString(),
         }, client);
     } catch (err) {
@@ -1927,7 +1961,7 @@ async function applyStripePayment(
             'system',
             null,
             {
-                amount: balancePortion,
+                amount: documentCredit,
                 tip,
                 payment_method: 'credit_card',
                 source: 'stripe',
@@ -1958,7 +1992,7 @@ async function applyStripePayment(
                 entity: invoice,
                 actor: activityActor,
                 summary: {
-                    amount: balancePortion,
+                    amount: documentCredit,
                     currency: tx.currency,
                     payment_id: tx.id,
                 },

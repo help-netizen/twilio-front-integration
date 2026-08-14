@@ -33,6 +33,24 @@ class InvoicesServiceError extends Error {
     }
 }
 
+const WORKFLOW_CONTROLLED_UPDATE_FIELDS = new Set([
+    'company_id',
+    'invoice_number',
+    'status',
+    'subtotal',
+    'tax_amount',
+    'total',
+    'amount_paid',
+    'balance_due',
+    'sent_at',
+    'paid_at',
+    'voided_at',
+    'created_by',
+    'updated_by',
+    'created_at',
+    'updated_at',
+]);
+
 // =============================================================================
 // Invoice CRUD
 // =============================================================================
@@ -237,6 +255,15 @@ async function updateInvoice(companyId, userId, id, data, client = null, activit
     if (!existing) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
+    const attemptedWorkflowField = Object.keys(data || {})
+        .find(field => WORKFLOW_CONTROLLED_UPDATE_FIELDS.has(field));
+    if (attemptedWorkflowField) {
+        throw new InvoicesServiceError(
+            'WORKFLOW_FIELD_READ_ONLY',
+            `Invoice field '${attemptedWorkflowField}' can only be changed by its dedicated workflow.`,
+            400
+        );
+    }
     await validateLinkedEntities(companyId, data, client);
     const updateData = {
         ...data,
@@ -302,22 +329,27 @@ async function updateInvoice(companyId, userId, id, data, client = null, activit
 
 /** Delete a draft invoice. Issued invoices must use the explicit void action. */
 async function deleteInvoice(companyId, id, userId, client = null, activityActor = null) {
-    const existing = await invoicesQueries.getInvoiceById(companyId, id, client);
-    if (!existing) {
+    const locked = await invoicesQueries.lockInvoiceById(companyId, id, client);
+    if (!locked) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    if (existing.status !== 'draft') {
+    if (locked.status !== 'draft') {
         throw new InvoicesServiceError(
             'INVALID_STATUS',
-            `Only draft invoices can be deleted; '${existing.status}' invoices must be voided.`,
+            `Only draft invoices can be deleted; '${locked.status}' invoices must be voided.`,
             409
         );
     }
 
+    const existing = await invoicesQueries.getInvoiceById(companyId, id, client);
     const deleted = await invoicesQueries.deleteInvoice(id, companyId, client);
     if (!deleted) {
-        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
+        throw new InvoicesServiceError(
+            'INVALID_STATUS',
+            'Invoice status changed before the draft delete completed.',
+            409
+        );
     }
     if (activityActor) {
         await logFinancialActivity({
@@ -721,28 +753,29 @@ async function voidInvoice(
     client = null,
     activityActor = null
 ) {
-    const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
-    if (!invoice) {
+    const locked = await invoicesQueries.lockInvoiceById(companyId, id, client);
+    if (!locked) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    if (invoice.status === 'draft' || ['void', 'refunded'].includes(invoice.status)) {
+    if (locked.status === 'draft' || ['void', 'refunded'].includes(locked.status)) {
         throw new InvoicesServiceError(
             'INVALID_STATUS',
-            invoice.status === 'draft'
+            locked.status === 'draft'
                 ? 'Draft invoices must be deleted, not voided.'
-                : `Cannot void invoice with status '${invoice.status}'.`,
+                : `Cannot void invoice with status '${locked.status}'.`,
             409
         );
     }
 
-    const updated = await invoicesQueries.updateInvoiceStatus(
-        id,
-        companyId,
-        'void',
-        'voided_at',
-        client
-    );
+    const updated = await invoicesQueries.voidIssuedInvoice(id, companyId, client);
+    if (!updated) {
+        throw new InvoicesServiceError(
+            'INVALID_STATUS',
+            'Invoice status changed before the void completed.',
+            409
+        );
+    }
 
     await invoicesQueries.createEvent(
         companyId,

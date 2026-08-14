@@ -103,6 +103,7 @@ beforeEach(() => {
     estimatesQueries.getJobContext.mockImplementation(
         async (companyId, id) => (companyId === COMPANY ? { id, company_id: companyId } : null)
     );
+    invoicesQueries.lockInvoiceById.mockResolvedValue({ id: 42, status: 'sent' });
     invoicesQueries.getInvoiceById.mockImplementation(
         async (companyId, id) => (
             companyId === COMPANY
@@ -112,12 +113,131 @@ beforeEach(() => {
                     contact_id: 5,
                     job_id: null,
                     estimate_id: null,
+                    status: 'sent',
                     balance_due: 0,
                     amount_paid: 50,
                 }
                 : null
         )
     );
+});
+
+describe('invoice-bound Stripe settlement safety', () => {
+    it.each(['void', 'refunded'])(
+        'does not create ledger credit when the locked invoice is %s',
+        async status => {
+            const terminalInvoice = {
+                id: 42,
+                company_id: COMPANY,
+                contact_id: 5,
+                job_id: 7,
+                status,
+                balance_due: 40,
+            };
+            invoicesQueries.lockInvoiceById.mockResolvedValue({ id: 42, status });
+            invoicesQueries.getInvoiceById.mockResolvedValue(terminalInvoice);
+
+            await expect(svc.applyStripePayment(COMPANY, {
+                externalId: `pi_${status}`,
+                invoiceId: 42,
+                contactId: 5,
+                jobId: 7,
+                amount: 40,
+                currency: 'usd',
+                metadata: { tip: 0 },
+            }, mockTransactionClient)).resolves.toMatchObject({
+                tx: null,
+                ignored: true,
+                reason: 'INVOICE_TERMINAL',
+            });
+
+            expect(invoicesQueries.lockInvoiceById).toHaveBeenCalledWith(
+                COMPANY,
+                42,
+                mockTransactionClient
+            );
+            expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+            expect(invoicesQueries.createEvent).not.toHaveBeenCalled();
+            expect(eventBus.emit).not.toHaveBeenCalled();
+        }
+    );
+
+    it('records the full processor charge but caps document credit to the locked balance', async () => {
+        const liveInvoice = {
+            id: 42,
+            company_id: COMPANY,
+            contact_id: 5,
+            job_id: 7,
+            status: 'partial',
+            balance_due: 30,
+        };
+        invoicesQueries.lockInvoiceById.mockResolvedValue({ id: 42, status: 'partial' });
+        invoicesQueries.getInvoiceById.mockResolvedValue(liveInvoice);
+        invoicesService.getInvoice.mockResolvedValue({ ...liveInvoice, status: 'paid', balance_due: 0 });
+        invoicesQueries.createEvent.mockResolvedValue({ id: 12 });
+
+        await svc.applyStripePayment(COMPANY, {
+            externalId: 'pi_over_balance',
+            invoiceId: 42,
+            contactId: 5,
+            jobId: 7,
+            amount: 50,
+            currency: 'usd',
+            metadata: { surface: 'manual_card', tip: 0 },
+        }, mockTransactionClient);
+
+        expect(invoicesQueries.lockInvoiceById).toHaveBeenCalledWith(
+            COMPANY,
+            42,
+            mockTransactionClient
+        );
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                amount: 50,
+                invoice_id: 42,
+                job_id: 7,
+                metadata: expect.objectContaining({
+                    tip: 0,
+                    document_credit_amount: 30,
+                }),
+            }),
+            mockTransactionClient
+        );
+        expect(invoicesQueries.createEvent).toHaveBeenCalledWith(
+            COMPANY,
+            42,
+            'payment_recorded',
+            'system',
+            null,
+            expect.objectContaining({ amount: 30, external_id: 'pi_over_balance' }),
+            mockTransactionClient
+        );
+    });
+
+    it('keeps job-level Stripe collection unchanged when no invoice is bound', async () => {
+        await svc.applyStripePayment(COMPANY, {
+            externalId: 'pi_job_only',
+            invoiceId: null,
+            contactId: 5,
+            jobId: 7,
+            amount: 50,
+            currency: 'usd',
+            metadata: { surface: 'saved_card', tip: 0 },
+        }, mockTransactionClient);
+
+        expect(invoicesQueries.lockInvoiceById).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                amount: 50,
+                invoice_id: null,
+                job_id: 7,
+                metadata: { surface: 'saved_card', tip: 0 },
+            }),
+            mockTransactionClient
+        );
+    });
 });
 
 // ── TC-01..06: readiness state machine (pure) ───────────────────────────────
@@ -1563,6 +1683,37 @@ describe('refunds (Phase 5)', () => {
             null
         );
         expect(invoicesQueries.recordPayment).toBeUndefined();
+    });
+
+    it('refunds only the capped document credit from an over-balance charge', async () => {
+        paymentsQueries.findByExternalSourceId
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({
+                id: 100,
+                invoice_id: 42,
+                amount: 50,
+                metadata: { tip: 0, document_credit_amount: 30 },
+            });
+        paymentsQueries.createTransaction.mockResolvedValue({ id: 202, external_id: 're_capped' });
+        paymentsQueries.updateTransactionStatus.mockResolvedValue({});
+        invoicesQueries.createEvent.mockResolvedValue({});
+
+        await svc.applyStripeRefund(COMPANY, {
+            refundId: 're_capped',
+            paymentIntentId: 'pi_capped',
+            amount: 50,
+        });
+
+        expect(Number(paymentsQueries.createTransaction.mock.calls[0][1].amount)).toBe(-50);
+        expect(invoicesQueries.createEvent).toHaveBeenCalledWith(
+            COMPANY,
+            42,
+            'payment_recorded',
+            'system',
+            null,
+            expect.objectContaining({ amount: -30, tip_refunded: 20, refund: true }),
+            null
+        );
     });
 });
 

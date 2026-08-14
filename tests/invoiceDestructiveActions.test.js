@@ -8,16 +8,22 @@ const TX_CLIENT = { query: jest.fn() };
 const ACTOR = { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' };
 
 const mockGetInvoiceById = jest.fn();
+const mockLockInvoiceById = jest.fn();
 const mockDeleteInvoice = jest.fn();
-const mockUpdateInvoiceStatus = jest.fn();
+const mockVoidIssuedInvoice = jest.fn();
+const mockUpdateInvoice = jest.fn();
+const mockCreateRevision = jest.fn();
 const mockCreateEvent = jest.fn();
 const mockLogFinancialActivity = jest.fn();
 const mockRecordManualPayment = jest.fn();
 
 jest.mock('../backend/src/db/invoicesQueries', () => ({
     getInvoiceById: (...args) => mockGetInvoiceById(...args),
+    lockInvoiceById: (...args) => mockLockInvoiceById(...args),
     deleteInvoice: (...args) => mockDeleteInvoice(...args),
-    updateInvoiceStatus: (...args) => mockUpdateInvoiceStatus(...args),
+    voidIssuedInvoice: (...args) => mockVoidIssuedInvoice(...args),
+    updateInvoice: (...args) => mockUpdateInvoice(...args),
+    createRevision: (...args) => mockCreateRevision(...args),
     createEvent: (...args) => mockCreateEvent(...args),
 }));
 jest.mock('../backend/src/db/estimatesQueries', () => ({}));
@@ -53,14 +59,42 @@ beforeEach(() => {
     jest.clearAllMocks();
     TX_CLIENT.query.mockResolvedValue({ rows: [{ id: INVOICE_ID }] });
     mockDeleteInvoice.mockResolvedValue(true);
+    mockVoidIssuedInvoice.mockResolvedValue(invoice('void'));
     mockCreateEvent.mockResolvedValue({ id: 1 });
     mockLogFinancialActivity.mockResolvedValue({ id: 2 });
     mockRecordManualPayment.mockResolvedValue({ id: 81, invoice_id: INVOICE_ID });
 });
 
+describe('workflow-controlled invoice fields', () => {
+    it.each(['draft', 'paid', 'sent', 'void'])(
+        'rejects a general PUT attempt to force status=%s without a write or audit event',
+        async forcedStatus => {
+            mockGetInvoiceById.mockResolvedValue(invoice('sent'));
+
+            await expect(invoicesService.updateInvoice(
+                COMPANY_A,
+                CRM_USER_ID,
+                INVOICE_ID,
+                { status: forcedStatus },
+                TX_CLIENT,
+                ACTOR
+            )).rejects.toMatchObject({
+                code: 'WORKFLOW_FIELD_READ_ONLY',
+                httpStatus: 400,
+            });
+
+            expect(mockUpdateInvoice).not.toHaveBeenCalled();
+            expect(mockCreateRevision).not.toHaveBeenCalled();
+            expect(mockCreateEvent).not.toHaveBeenCalled();
+            expect(mockLogFinancialActivity).not.toHaveBeenCalled();
+        }
+    );
+});
+
 describe('draft-only invoice deletion', () => {
     it('hard-deletes an own-company draft and scopes every query to that company', async () => {
         const draft = invoice('draft');
+        mockLockInvoiceById.mockResolvedValue(draft);
         mockGetInvoiceById.mockResolvedValue(draft);
 
         await expect(invoicesService.deleteInvoice(
@@ -71,9 +105,10 @@ describe('draft-only invoice deletion', () => {
             ACTOR
         )).resolves.toEqual({ deleted: true });
 
+        expect(mockLockInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
         expect(mockGetInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
         expect(mockDeleteInvoice).toHaveBeenCalledWith(INVOICE_ID, COMPANY_A, TX_CLIENT);
-        expect(mockUpdateInvoiceStatus).not.toHaveBeenCalled();
+        expect(mockVoidIssuedInvoice).not.toHaveBeenCalled();
         expect(mockLogFinancialActivity).toHaveBeenCalledWith(
             expect.objectContaining({
                 companyId: COMPANY_A,
@@ -86,7 +121,7 @@ describe('draft-only invoice deletion', () => {
     });
 
     it('rejects issued records without silently changing them to void', async () => {
-        mockGetInvoiceById.mockResolvedValue(invoice('sent'));
+        mockLockInvoiceById.mockResolvedValue(invoice('sent'));
 
         await expect(invoicesService.deleteInvoice(
             COMPANY_A,
@@ -97,15 +132,13 @@ describe('draft-only invoice deletion', () => {
         )).rejects.toMatchObject({ code: 'INVALID_STATUS', httpStatus: 409 });
 
         expect(mockDeleteInvoice).not.toHaveBeenCalled();
-        expect(mockUpdateInvoiceStatus).not.toHaveBeenCalled();
+        expect(mockVoidIssuedInvoice).not.toHaveBeenCalled();
         expect(mockCreateEvent).not.toHaveBeenCalled();
         expect(mockLogFinancialActivity).not.toHaveBeenCalled();
     });
 
     it('returns tenant-safe not found for a foreign invoice and leaves both companies unchanged', async () => {
-        mockGetInvoiceById.mockImplementation(companyId => (
-            companyId === COMPANY_B ? invoice('draft', COMPANY_B) : null
-        ));
+        mockLockInvoiceById.mockResolvedValue(null);
 
         await expect(invoicesService.deleteInvoice(
             COMPANY_A,
@@ -115,9 +148,29 @@ describe('draft-only invoice deletion', () => {
             ACTOR
         )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
 
-        expect(mockGetInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
+        expect(mockLockInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
+        expect(mockGetInvoiceById).not.toHaveBeenCalled();
         expect(mockDeleteInvoice).not.toHaveBeenCalled();
-        expect(mockUpdateInvoiceStatus).not.toHaveBeenCalled();
+        expect(mockVoidIssuedInvoice).not.toHaveBeenCalled();
+        expect(mockCreateEvent).not.toHaveBeenCalled();
+        expect(mockLogFinancialActivity).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when the status-qualified DELETE affects zero rows', async () => {
+        const draft = invoice('draft');
+        mockLockInvoiceById.mockResolvedValue(draft);
+        mockGetInvoiceById.mockResolvedValue(draft);
+        mockDeleteInvoice.mockResolvedValue(false);
+
+        await expect(invoicesService.deleteInvoice(
+            COMPANY_A,
+            INVOICE_ID,
+            CRM_USER_ID,
+            TX_CLIENT,
+            ACTOR
+        )).rejects.toMatchObject({ code: 'INVALID_STATUS', httpStatus: 409 });
+
+        expect(mockDeleteInvoice).toHaveBeenCalledWith(INVOICE_ID, COMPANY_A, TX_CLIENT);
         expect(mockCreateEvent).not.toHaveBeenCalled();
         expect(mockLogFinancialActivity).not.toHaveBeenCalled();
     });
@@ -127,8 +180,8 @@ describe('issued-only invoice void', () => {
     it('voids an own-company issued invoice with the crmUser actor', async () => {
         const issued = invoice('sent');
         const voided = { ...issued, status: 'void', voided_at: '2026-08-14T12:00:00Z' };
-        mockGetInvoiceById.mockResolvedValue(issued);
-        mockUpdateInvoiceStatus.mockResolvedValue(voided);
+        mockLockInvoiceById.mockResolvedValue(issued);
+        mockVoidIssuedInvoice.mockResolvedValue(voided);
 
         await expect(invoicesService.voidInvoice(
             COMPANY_A,
@@ -138,12 +191,10 @@ describe('issued-only invoice void', () => {
             ACTOR
         )).resolves.toEqual(voided);
 
-        expect(mockGetInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
-        expect(mockUpdateInvoiceStatus).toHaveBeenCalledWith(
+        expect(mockLockInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
+        expect(mockVoidIssuedInvoice).toHaveBeenCalledWith(
             INVOICE_ID,
             COMPANY_A,
-            'void',
-            'voided_at',
             TX_CLIENT
         );
         expect(mockCreateEvent).toHaveBeenCalledWith(
@@ -170,7 +221,7 @@ describe('issued-only invoice void', () => {
     it.each(['draft', 'void', 'refunded'])(
         'rejects %s records without any destructive write',
         async status => {
-            mockGetInvoiceById.mockResolvedValue(invoice(status));
+            mockLockInvoiceById.mockResolvedValue(invoice(status));
 
             await expect(invoicesService.voidInvoice(
                 COMPANY_A,
@@ -181,16 +232,14 @@ describe('issued-only invoice void', () => {
             )).rejects.toMatchObject({ code: 'INVALID_STATUS', httpStatus: 409 });
 
             expect(mockDeleteInvoice).not.toHaveBeenCalled();
-            expect(mockUpdateInvoiceStatus).not.toHaveBeenCalled();
+            expect(mockVoidIssuedInvoice).not.toHaveBeenCalled();
             expect(mockCreateEvent).not.toHaveBeenCalled();
             expect(mockLogFinancialActivity).not.toHaveBeenCalled();
         }
     );
 
     it('returns tenant-safe not found for a foreign invoice before any status write', async () => {
-        mockGetInvoiceById.mockImplementation(companyId => (
-            companyId === COMPANY_B ? invoice('sent', COMPANY_B) : null
-        ));
+        mockLockInvoiceById.mockResolvedValue(null);
 
         await expect(invoicesService.voidInvoice(
             COMPANY_A,
@@ -200,9 +249,31 @@ describe('issued-only invoice void', () => {
             ACTOR
         )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
 
-        expect(mockGetInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
+        expect(mockLockInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
+        expect(mockGetInvoiceById).not.toHaveBeenCalled();
         expect(mockDeleteInvoice).not.toHaveBeenCalled();
-        expect(mockUpdateInvoiceStatus).not.toHaveBeenCalled();
+        expect(mockVoidIssuedInvoice).not.toHaveBeenCalled();
+        expect(mockCreateEvent).not.toHaveBeenCalled();
+        expect(mockLogFinancialActivity).not.toHaveBeenCalled();
+    });
+
+    it('returns 409 when the status-qualified void UPDATE affects zero rows', async () => {
+        mockLockInvoiceById.mockResolvedValue(invoice('sent'));
+        mockVoidIssuedInvoice.mockResolvedValue(null);
+
+        await expect(invoicesService.voidInvoice(
+            COMPANY_A,
+            INVOICE_ID,
+            CRM_USER_ID,
+            TX_CLIENT,
+            ACTOR
+        )).rejects.toMatchObject({ code: 'INVALID_STATUS', httpStatus: 409 });
+
+        expect(mockVoidIssuedInvoice).toHaveBeenCalledWith(
+            INVOICE_ID,
+            COMPANY_A,
+            TX_CLIENT
+        );
         expect(mockCreateEvent).not.toHaveBeenCalled();
         expect(mockLogFinancialActivity).not.toHaveBeenCalled();
     });

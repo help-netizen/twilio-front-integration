@@ -15,6 +15,7 @@ const mockVoidInvoice = jest.fn();
 const mockGetPayments = jest.fn();
 const mockRecordOfflinePayment = jest.fn();
 const mockEnsurePaymentLink = jest.fn();
+const mockGetPaymentLink = jest.fn();
 const mockCreateManualCardSession = jest.fn();
 const mockWithTransaction = jest.fn(work => work(TX_CLIENT));
 
@@ -40,6 +41,7 @@ jest.mock('../backend/src/services/transactionService', () => ({
 jest.mock('../backend/src/services/stripePaymentsService', () => ({
     StripePaymentsError: class StripePaymentsError extends Error {},
     ensurePaymentLink: (...args) => mockEnsurePaymentLink(...args),
+    getPaymentLink: (...args) => mockGetPaymentLink(...args),
     createManualCardSession: (...args) => mockCreateManualCardSession(...args),
 }));
 jest.mock('../backend/src/services/auditService', () => ({
@@ -75,6 +77,7 @@ beforeEach(() => {
     mockGetPayments.mockResolvedValue([{ id: 81, invoice_id: 57 }]);
     mockRecordOfflinePayment.mockResolvedValue({ id: 81, invoice_id: 57 });
     mockEnsurePaymentLink.mockResolvedValue({ url: 'https://pay.test/invoice-57' });
+    mockGetPaymentLink.mockResolvedValue({ active: null, attempts: [] });
     mockCreateManualCardSession.mockResolvedValue({ session_id: 91, amount: 188.5 });
     mockWithTransaction.mockImplementation(work => work(TX_CLIENT));
 });
@@ -191,6 +194,26 @@ describe('invoice payment-history permission', () => {
 });
 
 describe('invoice collection route contract', () => {
+    it('reads invoice payment-link state only with invoice and payment view rights', async () => {
+        const response = await request(appWith(['invoices.view', 'payments.view']))
+            .get('/57/stripe-payment-link');
+
+        expect(response.status).toBe(200);
+        expect(mockGetPaymentLink).toHaveBeenCalledWith(COMPANY_ID, '57');
+    });
+
+    it.each([
+        ['payments.view only', ['payments.view']],
+        ['invoices.view only', ['invoices.view']],
+        ['neither permission', []],
+    ])('denies payment-link reads with %s', async (_label, permissions) => {
+        const response = await request(appWith(permissions))
+            .get('/57/stripe-payment-link');
+
+        expect(response.status).toBe(403);
+        expect(mockGetPaymentLink).not.toHaveBeenCalled();
+    });
+
     it('creates an online pay link with companyFilter and the crmUser actor', async () => {
         const response = await request(appWith(['payments.collect_online']))
             .post('/57/stripe-payment-link')

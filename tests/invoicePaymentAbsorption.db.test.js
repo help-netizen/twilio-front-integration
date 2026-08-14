@@ -6,6 +6,7 @@ const { randomUUID } = require('crypto');
 const db = require('../backend/src/db/connection');
 const estimatesQueries = require('../backend/src/db/estimatesQueries');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
+const invoicesService = require('../backend/src/services/invoicesService');
 const paymentsService = require('../backend/src/services/paymentsService');
 const { listJobPaymentRollups } = require('../backend/src/db/jobFinanceQueries');
 
@@ -44,17 +45,18 @@ async function createPayment({
     amount,
     source = 'stripe',
     status = 'completed',
+    metadata = {},
 }) {
     const { rows } = await client.query(
         `INSERT INTO payment_transactions (
             company_id, job_id, invoice_id, transaction_type, payment_method,
-            status, amount, currency, external_source, processed_at, recorded_by
+            status, amount, currency, external_source, metadata, processed_at, recorded_by
          ) VALUES (
             $1, $2, $3, 'payment', 'cash',
-            $4, $5, 'USD', $6, NOW(), $7
+            $4, $5, 'USD', $6, $7::JSONB, NOW(), $8
          )
          RETURNING *`,
-        [companyId, jobId, invoiceId, status, amount, source, userId]
+        [companyId, jobId, invoiceId, status, amount, source, JSON.stringify(metadata), userId]
     );
     return rows[0];
 }
@@ -240,6 +242,103 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         const [rollup] = await listJobPaymentRollups(companyA, [job.id], client);
         expect(Number(rollup.total_paid)).toBe(150);
         expect(Number(rollup.total_due)).toBe(50);
+    });
+
+    test('caps invoice document credit while preserving the full Stripe charge in Job paid', async () => {
+        const job = await createJob();
+        const invoice = await createInvoice({
+            jobId: job.id,
+            label: 'settlement-cap',
+            total: 30,
+        });
+        await createPayment({
+            jobId: job.id,
+            invoiceId: invoice.id,
+            amount: 50,
+            metadata: { document_credit_amount: 30, tip: 0 },
+        });
+
+        expect(money(await invoicesQueries.getInvoiceById(companyA, invoice.id, client)))
+            .toEqual({ amount_paid: 30, balance_due: 0, status: 'paid', allocated: 30 });
+        const [rollup] = await listJobPaymentRollups(companyA, [job.id], client);
+        expect(Number(rollup.total_paid)).toBe(50);
+        expect(Number(rollup.total_due)).toBe(0);
+    });
+
+    test.each(['draft', 'paid', 'sent', 'void'])(
+        'general update cannot mass-assign status=%s or fabricate an event',
+        async forcedStatus => {
+            const job = await createJob();
+            const invoice = await createInvoice({
+                jobId: job.id,
+                label: `status-guard-${forcedStatus}`,
+                total: 30,
+            });
+            await invoicesQueries.updateInvoiceStatus(
+                invoice.id,
+                companyA,
+                'sent',
+                'sent_at',
+                client
+            );
+            const { rows: beforeEvents } = await client.query(
+                `SELECT COUNT(*)::INT AS count
+                 FROM invoice_events
+                 WHERE invoice_id = $1`,
+                [invoice.id]
+            );
+
+            await expect(invoicesService.updateInvoice(
+                companyA,
+                userA,
+                invoice.id,
+                { status: forcedStatus },
+                client,
+                null
+            )).rejects.toMatchObject({
+                code: 'WORKFLOW_FIELD_READ_ONLY',
+                httpStatus: 400,
+            });
+
+            const unchanged = await rawInvoice(companyA, invoice.id);
+            expect(unchanged.status).toBe('sent');
+            const { rows: afterEvents } = await client.query(
+                `SELECT COUNT(*)::INT AS count
+                 FROM invoice_events
+                 WHERE invoice_id = $1`,
+                [invoice.id]
+            );
+            expect(afterEvents[0].count).toBe(beforeEvents[0].count);
+            await expect(invoicesService.deleteInvoice(
+                companyA,
+                invoice.id,
+                userA,
+                client,
+                null
+            )).rejects.toMatchObject({ code: 'INVALID_STATUS', httpStatus: 409 });
+            expect(await rawInvoice(companyA, invoice.id)).not.toBeNull();
+        }
+    );
+
+    test('status-qualified destructive queries reject wrong-status and foreign rows', async () => {
+        const job = await createJob();
+        const issued = await createInvoice({ jobId: job.id, label: 'delete-predicate', total: 10 });
+        await invoicesQueries.updateInvoiceStatus(
+            issued.id,
+            companyA,
+            'sent',
+            'sent_at',
+            client
+        );
+        const draft = await createInvoice({ jobId: job.id, label: 'void-predicate', total: 10 });
+
+        await expect(invoicesQueries.deleteInvoice(issued.id, companyA, client)).resolves.toBe(false);
+        await expect(invoicesQueries.deleteInvoice(issued.id, companyB, client)).resolves.toBe(false);
+        await expect(invoicesQueries.voidIssuedInvoice(draft.id, companyA, client)).resolves.toBeNull();
+        await expect(invoicesQueries.voidIssuedInvoice(issued.id, companyB, client)).resolves.toBeNull();
+
+        expect((await rawInvoice(companyA, issued.id)).status).toBe('sent');
+        expect((await rawInvoice(companyA, draft.id)).status).toBe('draft');
     });
 
     test('keeps linked Zenbooker behavior and excludes standalone ZB money from document Due', async () => {

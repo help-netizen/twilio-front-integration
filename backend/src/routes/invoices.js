@@ -135,7 +135,9 @@ router.put('/:id', requirePermission('invoices.create'), async (req, res) => {
         // A list-row invoice intentionally omits `items`. Requiring the hydrated
         // update seam for whole-array replacement prevents an editor initialized
         // from that summary from accidentally clearing the persisted item set.
-        // Scalar-only detail edits do not need the header, and create uses POST.
+        // This caller-asserted header is an accidental-loss guard, NOT a security
+        // or authorization boundary; tenant scope + invoices.create remain the
+        // write boundary. Scalar-only detail edits do not need it, and create uses POST.
         if (
             Array.isArray(data?.items)
             && req.get('x-invoice-items-hydrated') !== 'true'
@@ -497,12 +499,17 @@ function stripeError(err, req, res, tag) {
 }
 
 // GET /api/invoices/:id/stripe-payment-link — active link + attempt history.
-router.get('/:id/stripe-payment-link', requirePermission('payments.view'), async (req, res) => {
-    try {
-        const data = await stripePaymentsService.getPaymentLink(getCompanyId(req), req.params.id);
-        res.json({ ok: true, data });
-    } catch (err) { stripeError(err, req, res, 'stripe-payment-link GET'); }
-});
+router.get(
+    '/:id/stripe-payment-link',
+    requirePermission('invoices.view'),
+    requirePermission('payments.view'),
+    async (req, res) => {
+        try {
+            const data = await stripePaymentsService.getPaymentLink(getCompanyId(req), req.params.id);
+            res.json({ ok: true, data });
+        } catch (err) { stripeError(err, req, res, 'stripe-payment-link GET'); }
+    }
+);
 
 // POST /api/invoices/:id/stripe-payment-link — create/reuse an invoice-bound link.
 router.post('/:id/stripe-payment-link', requirePermission('payments.collect_online'), async (req, res) => {

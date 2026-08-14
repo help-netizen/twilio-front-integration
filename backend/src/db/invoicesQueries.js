@@ -308,7 +308,7 @@ async function updateInvoice(id, companyId, data, client = null) {
     const allowedFields = [
         'contact_id', 'lead_id', 'job_id', 'estimate_id',
         'title', 'notes', 'internal_note',
-        'tax_rate', 'discount_amount', 'payment_terms', 'due_date', 'status',
+        'tax_rate', 'discount_amount', 'payment_terms', 'due_date',
         'order_list',
     ];
 
@@ -352,10 +352,45 @@ async function updateInvoice(id, companyId, data, client = null) {
 async function deleteInvoice(id, companyId, client = null) {
     const query = queryFor(client);
     const { rowCount } = await query(
-        `DELETE FROM invoices WHERE id = $1 AND company_id = $2`,
+        `DELETE FROM invoices
+         WHERE id = $1 AND company_id = $2 AND status = 'draft'`,
         [id, companyId]
     );
     return rowCount > 0;
+}
+
+/**
+ * Lock one tenant-owned invoice row before a destructive/payment decision.
+ * The caller must hold an explicit transaction so the lock survives through
+ * the guarded mutation.
+ */
+async function lockInvoiceById(companyId, id, client = null) {
+    if (!client?.query) {
+        throw new Error('lockInvoiceById requires an active transaction');
+    }
+    const { rows } = await client.query(
+        `SELECT id, company_id, status
+         FROM invoices
+         WHERE id = $1 AND company_id = $2
+         FOR UPDATE`,
+        [id, companyId]
+    );
+    return rows[0] || null;
+}
+
+/** Void an issued tenant-owned invoice only; draft/terminal rows never mutate. */
+async function voidIssuedInvoice(id, companyId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `UPDATE invoices
+         SET status = 'void', voided_at = NOW(), updated_at = NOW()
+         WHERE id = $1
+           AND company_id = $2
+           AND status IN ('sent', 'viewed', 'partial', 'overdue', 'paid')
+         RETURNING *`,
+        [id, companyId]
+    );
+    return withCalculatedBalance(rows[0] || null);
 }
 
 /**
@@ -792,6 +827,8 @@ module.exports = {
     buildInvoiceNumber,
     updateInvoice,
     deleteInvoice,
+    lockInvoiceById,
+    voidIssuedInvoice,
     updateInvoiceStatus,
     getInvoiceItems,
     addInvoiceItem,

@@ -12,6 +12,33 @@ function uniqueJobIds(rows) {
         .filter(Number.isFinite))];
 }
 
+/**
+ * Amount from one payment that may settle document balances. Stripe records the
+ * full processor charge in `amount`, while settlement can cap the document
+ * credit in metadata after rechecking the live invoice balance under lock.
+ */
+function paymentDocumentAmountSql(alias) {
+    const gross = `GREATEST(
+        ${alias}.amount - GREATEST(
+            CASE
+                WHEN ${alias}.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                    THEN (${alias}.metadata->>'tip')::NUMERIC
+                ELSE 0
+            END,
+            0
+        ),
+        0
+    )`;
+    return `CASE
+        WHEN ${alias}.metadata->>'document_credit_amount' ~ '^[0-9]+([.][0-9]+)?$'
+            THEN LEAST(
+                ${gross},
+                GREATEST((${alias}.metadata->>'document_credit_amount')::NUMERIC, 0)
+            )
+        ELSE ${gross}
+    END`;
+}
+
 /*
  * One native transaction effect, shared by invoice allocation, estimate paid
  * display, and the Job rollup. A refunded payment remains gross while its
@@ -22,14 +49,7 @@ const LEDGER_EFFECTS_CTE = `
         SELECT refund.id AS refund_id,
                original.external_source,
                original.amount,
-               GREATEST(
-                   CASE
-                       WHEN original.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
-                           THEN (original.metadata->>'tip')::NUMERIC
-                       ELSE 0
-                   END,
-                   0
-               ) AS tip
+               ${paymentDocumentAmountSql('original')} AS document_amount
         FROM payment_transactions refund
         LEFT JOIN payment_transactions original
           ON original.company_id = refund.company_id
@@ -68,22 +88,12 @@ const LEDGER_EFFECTS_CTE = `
                    WHEN pt.voided_at IS NOT NULL THEN 0::NUMERIC
                    WHEN pt.transaction_type = 'payment'
                     AND pt.status IN ('completed', 'refunded')
-                       THEN GREATEST(
-                           pt.amount - GREATEST(
-                               CASE
-                                   WHEN pt.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
-                                       THEN (pt.metadata->>'tip')::NUMERIC
-                                   ELSE 0
-                               END,
-                               0
-                           ),
-                           0
-                       )
+                       THEN ${paymentDocumentAmountSql('pt')}
                    WHEN pt.transaction_type = 'refund'
                     AND pt.status = 'completed'
                        THEN -ABS(pt.amount) * CASE
                            WHEN COALESCE(ABS(op.amount), 0) > 0
-                               THEN GREATEST(ABS(op.amount) - op.tip, 0) / ABS(op.amount)
+                               THEN op.document_amount / ABS(op.amount)
                            ELSE 1
                        END
                    ELSE 0::NUMERIC
@@ -94,22 +104,12 @@ const LEDGER_EFFECTS_CTE = `
                    -- contribution before applying the currently-active Job pool.
                    WHEN pt.transaction_type = 'payment'
                     AND (pt.status IN ('completed', 'refunded', 'voided') OR pt.voided_at IS NOT NULL)
-                       THEN GREATEST(
-                           pt.amount - GREATEST(
-                               CASE
-                                   WHEN pt.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
-                                       THEN (pt.metadata->>'tip')::NUMERIC
-                                   ELSE 0
-                               END,
-                               0
-                           ),
-                           0
-                       )
+                       THEN ${paymentDocumentAmountSql('pt')}
                    WHEN pt.transaction_type = 'refund'
                     AND pt.status = 'completed'
                        THEN -ABS(pt.amount) * CASE
                            WHEN COALESCE(ABS(op.amount), 0) > 0
-                               THEN GREATEST(ABS(op.amount) - op.tip, 0) / ABS(op.amount)
+                               THEN op.document_amount / ABS(op.amount)
                            ELSE 1
                        END
                    ELSE 0::NUMERIC
@@ -280,6 +280,7 @@ async function applyEstimatePayments(companyId, estimates, client = null) {
 
 module.exports = {
     LEDGER_EFFECTS_CTE,
+    paymentDocumentAmountSql,
     getInvoiceAllocations,
     getJobPaymentPools,
     applyInvoiceAllocations,
