@@ -139,7 +139,7 @@ Deterministic, plain-text-only. Applied to a **copy** of `body_text` for display
    - **Leading-`>` block**: the first line of a contiguous run of `>`-prefixed lines (`/^\s*>/`). A single stray `>` mid-body does not trigger; the cut is at the first line of the first run that continues to (or past) end-of-body, i.e. the trailing quoted block.
 3. From the kept region, **trim trailing blank lines** and a trailing run of pure-quote leftovers; **collapse** 3+ consecutive blank lines to 1.
 4. **Keep the signature**: do NOT strip a trailing signature delimiter (`-- `) or the lines after it — signatures are retained (AC-4 keeps "new body + signature"). Only the quoted **history** is removed.
-5. If stripping would remove everything (e.g. a body that is only a quote), fall back to `snippet` (and if that is empty, to the original `body_text` truncated) so the bubble is never blank.
+5. **EMAIL-QUOTE-FALLBACK-001:** if stripping would remove everything (e.g. a body that is only a quote), return the **full normalized original text without truncation**. A provider `snippet` is used only when neither `body_text` nor HTML-derived text exists. Gmail snippets are HTML-entity decoded before display (at minimum `&lt;`, `&gt;`, `&amp;`, `&quot;`, `&#39;`, and decimal/hex numeric entities) so escaped addresses and punctuation never leak into the bubble.
 
 Result example (AC-4): body `Sounds good, Tuesday works\n\nOn Mon, … <agent@co.com> wrote:\n> previous…` → timeline body `Sounds good, Tuesday works` (+ signature if present); the inbox still shows the full original.
 

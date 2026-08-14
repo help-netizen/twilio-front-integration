@@ -40,8 +40,12 @@ describe('projectEmailTimelineItem — body fallback chain', () => {
         expect(item.body_text).not.toContain('quoted history');
     });
 
-    test('empty body_text and body_html fall back to snippet', () => {
-        expect(projectEmailTimelineItem(emailRow()).body_text).toBe('short provider snippet');
+    test('empty body_text and body_html fall back to an entity-decoded snippet', () => {
+        const item = projectEmailTimelineItem(emailRow({
+            snippet: 'From &lt;a@b.com&gt; about tomorrow&#39;s repair &amp; &#x2019;quote&#x2019;',
+        }));
+
+        expect(item.body_text).toBe("From <a@b.com> about tomorrow's repair & ’quote’");
     });
 
     test('non-empty body_text remains primary and still has quoted history stripped', () => {
@@ -51,5 +55,21 @@ describe('projectEmailTimelineItem — body fallback chain', () => {
         }));
 
         expect(item.body_text).toBe('Fresh reply');
+    });
+
+    test('quote-only body_text is returned in full instead of the provider snippet', () => {
+        const quoteOnly = [
+            'On Thu, Aug 13, 2026 at 8:18 PM <help@bostonmasters.com> wrote:',
+            '',
+            '> Hello Maressa, Of course, you can cancel tomorrow’s repair.',
+            `> ${'Complete quoted message content. '.repeat(10).trim()}`,
+        ].join('\n');
+        const item = projectEmailTimelineItem(emailRow({
+            body_text: quoteOnly,
+            snippet: 'On Thu, Aug 13 &lt;help@bostonmasters.com&gt; wrote: short',
+        }));
+
+        expect(quoteOnly.length).toBeGreaterThan(280);
+        expect(item.body_text).toBe(quoteOnly);
     });
 });

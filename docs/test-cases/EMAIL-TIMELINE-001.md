@@ -103,10 +103,10 @@ Derived from `docs/specs/EMAIL-TIMELINE-001.md` + the FR/AC in `docs/requirement
 - **Input:** body with a `-- ` signature but **no** quoted history.
 - **Expected:** full body incl. signature returned (nothing stripped).
 
-### TC-ET-017: Quote-only body falls back to snippet/original (never blank)
+### TC-ET-017: Quote-only body keeps the full original (never blank)
 - **Priority:** P2 · **Type:** Unit · **File:** `tests/toTimelineBody.test.js`
-- **Input:** body that is entirely a quote.
-- **Expected:** falls back to `snippet` (then truncated original) → non-empty bubble text.
+- **Input:** non-empty body that starts with `On … wrote:` and consists entirely of a long `>` quote, plus a short HTML-escaped Gmail snippet.
+- **Expected:** returns the full normalized original body without the 280-character fallback cap; the snippet is ignored. If body text and HTML-derived text are both empty, the decoded snippet is returned (`&lt;a@b.com&gt;` → `<a@b.com>`, numeric entities decoded).
 
 ### TC-ET-018: HTML-only email → text extracted then stripped (E-8)
 - **Priority:** P2 · **Type:** Unit · **File:** `tests/toTimelineBody.test.js` · **Fixture:** `html-only.html`

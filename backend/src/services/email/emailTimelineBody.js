@@ -20,8 +20,9 @@
  *   - KEEP the author's signature. We do NOT strip `-- `, "Sent from my iPhone",
  *     or contact blocks. Only quoted *history* is removed.
  *   - Trim leading/trailing blank lines; collapse 3+ blank lines to 1.
- *   - If stripping yields empty (the whole body was a quote), fall back to
- *     `opts.snippet` (trimmed), then to the original trimmed text — never blank.
+ *   - If stripping yields empty (the whole body was a quote), return the FULL
+ *     original trimmed text. Use `opts.snippet` only when no body text exists.
+ *   - Provider snippets are HTML-entity decoded before display.
  *   - Conservative: when no delimiter matches, return the input trimmed.
  *   - Never throws.
  *
@@ -58,9 +59,6 @@ const RE_COLLAPSED_HEADER_RUN =
 const RE_QUOTE = /^\s*>/;
 /** RFC 3676 signature delimiter line: exactly `--` or `-- ` (optional trailing ws). */
 const RE_SIG_DELIM = /^--\s?$/;
-
-/** Fallback truncation length for a never-blank bubble. */
-const FALLBACK_MAX = 280;
 
 /**
  * Find the earliest 0-based line index at which quoted history begins, or -1 if
@@ -245,6 +243,38 @@ function recoverSignature(lines, cut) {
 }
 
 /**
+ * Decode HTML entities used by Gmail snippets and HTML-only bodies. Supports the
+ * common named entities plus decimal/hex numeric entities. Pure, best-effort —
+ * not a full HTML parser.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function decodeHtmlEntities(text) {
+  if (typeof text !== 'string' || text === '') return '';
+
+  return text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (entity, hex, decimal) => {
+      const codePoint = Number.parseInt(hex || decimal, hex ? 16 : 10);
+      if (
+        !Number.isInteger(codePoint) ||
+        codePoint < 1 ||
+        codePoint > 0x10ffff ||
+        (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ) {
+        return entity;
+      }
+      return String.fromCodePoint(codePoint);
+    });
+}
+
+/**
  * Minimal HTML→text extraction for the HTML-only fallback (E-8). Strips tags and
  * collapses whitespace; converts `<br>` / block-closers to newlines so the quote
  * stripper still sees line structure. Pure, best-effort — not a full parser.
@@ -262,14 +292,7 @@ function htmlToText(html) {
   s = s.replace(/<\s*\/\s*(p|div|blockquote|li|tr|h[1-6])\s*>/gi, '\n');
   // Remaining tags → gone.
   s = s.replace(/<[^>]+>/g, '');
-  // Decode the handful of entities that matter for text.
-  s = s
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
+  s = decodeHtmlEntities(s);
   // Collapse intra-line whitespace but preserve newlines.
   s = s
     .split('\n')
@@ -285,16 +308,17 @@ function htmlToText(html) {
  *
  * @param {string} rawText  the email's plain-text body (`body_text`).
  * @param {object} [opts]
- * @param {string} [opts.snippet]  provider snippet, used as the first fallback if
- *                                 stripping empties the body.
+ * @param {string} [opts.snippet]  HTML-escaped provider snippet, used only when
+ *                                 `rawText` has no usable content.
  * @returns {string} the timeline body (never blank unless every source is empty).
  */
 function toTimelineBody(rawText, opts) {
   const snippet = opts && typeof opts.snippet === 'string' ? opts.snippet : '';
+  const decodedSnippet = decodeHtmlEntities(snippet).trim();
 
   if (typeof rawText !== 'string' || rawText.trim() === '') {
     // Nothing usable in the body → fall back to snippet, else empty string.
-    return snippet.trim();
+    return decodedSnippet;
   }
 
   try {
@@ -317,15 +341,16 @@ function toTimelineBody(rawText, opts) {
 
     if (result !== '') return result;
 
-    // Stripping emptied the body (whole thing was a quote) → never blank.
-    if (snippet.trim() !== '') return snippet.trim();
+    // Stripping emptied the body (whole thing was a quote) → preserve the full
+    // original. A provider snippet is only a fallback when no body exists at all.
     const original = normalize(rawText.replace(/\r\n?/g, '\n').split('\n'));
-    if (original.length <= FALLBACK_MAX) return original;
-    return `${original.slice(0, FALLBACK_MAX).trimEnd()}…`;
+    if (original !== '') return original;
+    return decodedSnippet;
   } catch (_err) {
     // Defensive: never throw. Return a best-effort trimmed input.
-    return typeof rawText === 'string' ? rawText.trim() : snippet.trim();
+    const original = typeof rawText === 'string' ? rawText.trim() : '';
+    return original || decodedSnippet;
   }
 }
 
-module.exports = { toTimelineBody, htmlToText };
+module.exports = { toTimelineBody, htmlToText, decodeHtmlEntities };

@@ -25,6 +25,7 @@ function projectEmailTimelineItem(row) {
         from_name: row.from_name || null,
         to_email: row.to_recipients_json || [],
         subject: row.subject || null,
+        // toTimelineBody decodes Gmail entities if this reaches snippet fallback.
         body_text: toTimelineBody(timelineText, { snippet: row.snippet }),
         display_html: stripTimelineHtml(row.body_html),
         // EMAIL-TS-ORDER-001: for outbound rows our own insert time is the send

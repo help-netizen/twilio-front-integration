@@ -15,6 +15,7 @@ const path = require('path');
 const {
   toTimelineBody,
   htmlToText,
+  decodeHtmlEntities,
 } = require('../backend/src/services/email/emailTimelineBody');
 
 const OUTLOOK_79436_TEXT = fs.readFileSync(
@@ -200,12 +201,27 @@ describe('toTimelineBody — quote/thread stripper (EMAIL-TIMELINE-001 §3c)', (
     expect(toTimelineBody(body)).toBe('On my way.\n\nSent from my iPhone');
   });
 
-  // ── TC-ET-017: quote-only body falls back (never blank) ──
+  // ── TC-ET-017: quote-only body preserves the full original (never blank) ──
 
-  test('TC-ET-017: quote-only body falls back to snippet', () => {
-    const quoteOnly = '> previous message line 1\n> previous message line 2';
-    expect(toTimelineBody(quoteOnly, { snippet: 'Re: Booking confirmed' })).toBe(
-      'Re: Booking confirmed'
+  test('TC-ET-017: real-shape attribution-and-quote-only body stays full, not snippet', () => {
+    const quoteOnly = [
+      'On Thu, Aug 13, 2026 at 8:18 PM <help@bostonmasters.com> wrote:',
+      '',
+      '> Hello Maressa,',
+      '>',
+      '> Of course, you can cancel tomorrow’s repair. We have removed the visit from the schedule and no technician will be dispatched.',
+      '> If you would like to choose another day, reply with the date and time window that works best for you.',
+      '>',
+      '> Boston Masters Appliance Repair',
+      '> Customer Care Team',
+      '> Phone: (617) 555-0100',
+    ].join('\n');
+    const snippet = 'On Thu, Aug 13 &lt;help@bostonmasters.com&gt; wrote: …';
+
+    expect(quoteOnly.length).toBeGreaterThan(280);
+    expect(toTimelineBody(quoteOnly, { snippet })).toBe(quoteOnly);
+    expect(toTimelineBody(quoteOnly, { snippet })).not.toBe(
+      'On Thu, Aug 13 <help@bostonmasters.com> wrote: …'
     );
   });
 
@@ -215,9 +231,16 @@ describe('toTimelineBody — quote/thread stripper (EMAIL-TIMELINE-001 §3c)', (
     expect(toTimelineBody(quoteOnly)).toBe('> only a quote here');
   });
 
-  test('TC-ET-017c: attribution-then-quote-only falls back to snippet', () => {
+  test('TC-ET-017c: attribution-then-quote-only ignores snippet and keeps original', () => {
     const body = 'On Mon Agent <a@co.com> wrote:\n> earlier';
-    expect(toTimelineBody(body, { snippet: 'snip' })).toBe('snip');
+    expect(toTimelineBody(body, { snippet: 'snip' })).toBe(body);
+  });
+
+  test('TC-ET-017d: empty body uses an entity-decoded snippet', () => {
+    const snippet = 'From &lt;a@b.com&gt;: tomorrow&#39;s note &amp; &#x2019;quote&#x2019;';
+    expect(toTimelineBody('', { snippet })).toBe(
+      "From <a@b.com>: tomorrow's note & ’quote’"
+    );
   });
 
   // ── TC-ET-018: HTML-only → text extracted then stripped ──
@@ -233,6 +256,12 @@ describe('toTimelineBody — quote/thread stripper (EMAIL-TIMELINE-001 §3c)', (
   test('TC-ET-018b: htmlToText strips tags, decodes entities, collapses whitespace', () => {
     expect(htmlToText('<p>Hi&nbsp;&amp;   welcome</p><p>Line two</p>')).toBe(
       'Hi & welcome\nLine two'
+    );
+  });
+
+  test('TC-ET-018c: shared decoder handles named, decimal, and hex entities', () => {
+    expect(decodeHtmlEntities('&lt;x&gt; &quot;y&quot; &#39;z&#39; &#x2019;')).toBe(
+      `<x> "y" 'z' ’`
     );
   });
 
