@@ -524,10 +524,35 @@ describe('ensurePaymentLink', () => {
 
     it('TC-23 reuses an existing open session (no duplicate)', async () => {
         q.getAccountByCompany.mockResolvedValue(readyAccount);
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 100, total: 100, currency: 'USD' });
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 100, total: 100, currency: 'USD', job_id: 7 });
         q.findOpenSession.mockResolvedValue({ id: 5, url: 'https://pay/existing', expires_at: null });
         const link = await svc.ensurePaymentLink(COMPANY, { id: null }, 42);
         expect(link).toMatchObject({ reused: true, url: 'https://pay/existing' });
+        expect(q.insertSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects a link amount above the live invoice balance before Stripe writes', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 80, total: 80, currency: 'USD', job_id: 7 });
+
+        await expect(svc.ensurePaymentLink(COMPANY, { id: null }, 42, { amount: 80.01 }))
+            .rejects.toMatchObject({ code: 'INVALID_AMOUNT' });
+
+        expect(q.insertSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects draft or jobless invoice links before Stripe writes', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        provider.createCheckoutSession = jest.fn();
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'draft', balance_due: 80, total: 80, job_id: 7 });
+        await expect(svc.ensurePaymentLink(COMPANY, { id: null }, 42))
+            .rejects.toMatchObject({ code: 'INVALID_STATUS' });
+
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 80, total: 80, job_id: null });
+        await expect(svc.ensurePaymentLink(COMPANY, { id: null }, 42))
+            .rejects.toMatchObject({ code: 'JOB_REQUIRED' });
+
+        expect(provider.createCheckoutSession).not.toHaveBeenCalled();
         expect(q.insertSession).not.toHaveBeenCalled();
     });
 });
@@ -542,7 +567,7 @@ describe('createManualCardSession (Phase 3)', () => {
 
     it('creates a card-only PaymentIntent + session and returns client_secret', async () => {
         q.getAccountByCompany.mockResolvedValue(readyAccount);
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 80, total: 80, currency: 'USD', contact_id: 5 });
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 80, total: 80, currency: 'USD', contact_id: 5, job_id: 7 });
         provider.createCardPaymentIntent.mockResolvedValue({ id: 'pi_m', client_secret: 'pi_m_secret' });
         q.insertSession.mockResolvedValue({ id: 11 });
         const res = await svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 });
@@ -559,6 +584,20 @@ describe('createManualCardSession (Phase 3)', () => {
     it('blocks when Stripe not ready', async () => {
         q.getAccountByCompany.mockResolvedValue(null);
         await expect(svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 })).rejects.toMatchObject({ code: 'NOT_READY' });
+    });
+
+    it('rejects draft or jobless invoice card sessions before provider/session writes', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'draft', balance_due: 80, total: 80, job_id: 7 });
+        await expect(svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 }))
+            .rejects.toMatchObject({ code: 'INVALID_STATUS' });
+
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 80, total: 80, job_id: null });
+        await expect(svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 }))
+            .rejects.toMatchObject({ code: 'JOB_REQUIRED' });
+
+        expect(provider.createCardPaymentIntent).not.toHaveBeenCalled();
+        expect(q.insertSession).not.toHaveBeenCalled();
     });
 });
 

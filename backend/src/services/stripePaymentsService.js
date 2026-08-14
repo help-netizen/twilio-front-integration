@@ -341,8 +341,15 @@ async function ensurePaymentLink(
     const account = await assertCollectable(companyId);
     const invoice = await invoicesService.getInvoice(companyId, invoiceId, client); // 404 if foreign
     if (!invoice) throw new StripePaymentsError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
-    if (['void', 'refunded', 'paid'].includes(invoice.status)) {
+    if (['draft', 'void', 'refunded', 'paid'].includes(invoice.status)) {
         throw new StripePaymentsError('INVALID_STATUS', `Cannot collect on invoice with status '${invoice.status}'`, 400);
+    }
+    if (invoice.job_id == null) {
+        throw new StripePaymentsError(
+            'JOB_REQUIRED',
+            'This invoice must be linked to a job before it can accept payment',
+            400
+        );
     }
     const balance = invoiceBalance(invoice);
     const payAmount = amount != null ? Number(amount) : balance;
@@ -634,8 +641,15 @@ async function resolveSurfaceContext(
     if (invoiceId) {
         const invoice = await invoicesService.getInvoice(companyId, invoiceId, client);
         if (!invoice) throw new StripePaymentsError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
-        if (['void', 'refunded', 'paid'].includes(invoice.status)) {
+        if (['draft', 'void', 'refunded', 'paid'].includes(invoice.status)) {
             throw new StripePaymentsError('INVALID_STATUS', `Cannot collect on invoice with status '${invoice.status}'`, 400);
+        }
+        if (invoice.job_id == null) {
+            throw new StripePaymentsError(
+                'JOB_REQUIRED',
+                'This invoice must be linked to a job before it can accept payment',
+                400
+            );
         }
         const balance = invoiceBalance(invoice);
         ctx.amount = amount != null ? Number(amount) : balance;

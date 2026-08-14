@@ -504,4 +504,58 @@ router.get('/:id/stripe-payment-link', requirePermission('payments.view'), async
     } catch (err) { stripeError(err, req, res, 'stripe-payment-link GET'); }
 });
 
+// POST /api/invoices/:id/stripe-payment-link — create/reuse an invoice-bound link.
+router.post('/:id/stripe-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const actorId = getCrmUserId(req);
+        const data = await withTransaction(client => stripePaymentsService.ensurePaymentLink(
+            companyId,
+            { id: actorId },
+            req.params.id,
+            { amount: req.body?.amount },
+            client,
+            userActor(actorId)
+        ));
+        res.json({ ok: true, data });
+    } catch (err) { stripeError(err, req, res, 'stripe-payment-link POST'); }
+});
+
+// POST /api/invoices/:id/stripe-manual-card-session — keyed card, invoice-bound.
+router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const actorId = getCrmUserId(req);
+        const data = await withTransaction(client => stripePaymentsService.createManualCardSession(
+            companyId,
+            { id: actorId },
+            { invoiceId: req.params.id, amount: req.body?.amount },
+            client,
+            userActor(actorId)
+        ));
+        res.json({ ok: true, data });
+    } catch (err) { stripeError(err, req, res, 'stripe-manual-card-session POST'); }
+});
+
+// POST /api/invoices/:id/record-payment — cash/check, invoice-bound.
+router.post('/:id/record-payment', requirePermission('payments.collect_offline'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const actorId = getCrmUserId(req);
+        const data = await withTransaction(client => invoicesService.recordOfflinePayment(
+            companyId,
+            actorId,
+            req.params.id,
+            req.body,
+            client,
+            userActor(actorId)
+        ));
+        res.json({ ok: true, data });
+    } catch (err) {
+        console.error('[Invoices] POST /:id/record-payment error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 module.exports = router;

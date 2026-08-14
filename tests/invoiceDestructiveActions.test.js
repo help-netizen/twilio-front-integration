@@ -12,6 +12,7 @@ const mockDeleteInvoice = jest.fn();
 const mockUpdateInvoiceStatus = jest.fn();
 const mockCreateEvent = jest.fn();
 const mockLogFinancialActivity = jest.fn();
+const mockRecordManualPayment = jest.fn();
 
 jest.mock('../backend/src/db/invoicesQueries', () => ({
     getInvoiceById: (...args) => mockGetInvoiceById(...args),
@@ -20,7 +21,9 @@ jest.mock('../backend/src/db/invoicesQueries', () => ({
     createEvent: (...args) => mockCreateEvent(...args),
 }));
 jest.mock('../backend/src/db/estimatesQueries', () => ({}));
-jest.mock('../backend/src/services/paymentsService', () => ({}));
+jest.mock('../backend/src/services/paymentsService', () => ({
+    recordManualPayment: (...args) => mockRecordManualPayment(...args),
+}));
 jest.mock('../backend/src/services/documentSendNoteService', () => ({
     recordDocumentSendNote: jest.fn(),
 }));
@@ -41,14 +44,18 @@ function invoice(status, companyId = COMPANY_A) {
         invoice_number: 'INV-1042',
         status,
         balance_due: '188.50',
+        job_id: 1658,
+        contact_id: 42,
     };
 }
 
 beforeEach(() => {
     jest.clearAllMocks();
+    TX_CLIENT.query.mockResolvedValue({ rows: [{ id: INVOICE_ID }] });
     mockDeleteInvoice.mockResolvedValue(true);
     mockCreateEvent.mockResolvedValue({ id: 1 });
     mockLogFinancialActivity.mockResolvedValue({ id: 2 });
+    mockRecordManualPayment.mockResolvedValue({ id: 81, invoice_id: INVOICE_ID });
 });
 
 describe('draft-only invoice deletion', () => {
@@ -198,5 +205,112 @@ describe('issued-only invoice void', () => {
         expect(mockUpdateInvoiceStatus).not.toHaveBeenCalled();
         expect(mockCreateEvent).not.toHaveBeenCalled();
         expect(mockLogFinancialActivity).not.toHaveBeenCalled();
+    });
+});
+
+describe('invoice-bound offline collection', () => {
+    it('records an own-company cash payment against the selected invoice and crmUser actor', async () => {
+        mockGetInvoiceById.mockResolvedValue(invoice('partial'));
+
+        await expect(invoicesService.recordOfflinePayment(
+            COMPANY_A,
+            CRM_USER_ID,
+            INVOICE_ID,
+            { amount: 188.5, payment_method: 'cash', memo: 'Counter payment' },
+            TX_CLIENT,
+            ACTOR
+        )).resolves.toEqual({ id: 81, invoice_id: INVOICE_ID });
+
+        expect(mockGetInvoiceById).toHaveBeenCalledWith(COMPANY_A, INVOICE_ID, TX_CLIENT);
+        expect(TX_CLIENT.query).toHaveBeenCalledWith(
+            expect.stringContaining('FOR UPDATE'),
+            [INVOICE_ID, COMPANY_A]
+        );
+        expect(mockRecordManualPayment).toHaveBeenCalledWith(
+            COMPANY_A,
+            CRM_USER_ID,
+            expect.objectContaining({
+                invoice_id: INVOICE_ID,
+                job_id: 1658,
+                contact_id: 42,
+                amount: 188.5,
+                payment_method: 'cash',
+                memo: 'Counter payment',
+            }),
+            TX_CLIENT,
+            ACTOR
+        );
+    });
+
+    it.each([
+        ['over the live balance', { amount: 188.51, payment_method: 'cash' }, 'INVALID_AMOUNT'],
+        ['sub-cent precision', { amount: 10.005, payment_method: 'cash' }, 'INVALID_AMOUNT'],
+        ['unsupported method', { amount: 10, payment_method: 'credit_card' }, 'VALIDATION'],
+    ])('rejects %s before the canonical ledger write', async (_label, data, code) => {
+        mockGetInvoiceById.mockResolvedValue(invoice('sent'));
+
+        await expect(invoicesService.recordOfflinePayment(
+            COMPANY_A,
+            CRM_USER_ID,
+            INVOICE_ID,
+            data,
+            TX_CLIENT,
+            ACTOR
+        )).rejects.toMatchObject({ code });
+
+        expect(mockRecordManualPayment).not.toHaveBeenCalled();
+    });
+
+    it.each(['draft', 'paid', 'void', 'refunded'])(
+        'rejects %s invoices before a ledger write',
+        async status => {
+            mockGetInvoiceById.mockResolvedValue(invoice(status));
+
+            await expect(invoicesService.recordOfflinePayment(
+                COMPANY_A,
+                CRM_USER_ID,
+                INVOICE_ID,
+                { amount: 10, payment_method: 'check' },
+                TX_CLIENT,
+                ACTOR
+            )).rejects.toMatchObject({ code: 'INVALID_STATUS', httpStatus: 409 });
+
+            expect(mockRecordManualPayment).not.toHaveBeenCalled();
+        }
+    );
+
+    it('returns tenant-safe not found for a foreign invoice and leaves both ledgers unchanged', async () => {
+        TX_CLIENT.query.mockResolvedValueOnce({ rows: [] });
+
+        await expect(invoicesService.recordOfflinePayment(
+            COMPANY_A,
+            CRM_USER_ID,
+            INVOICE_ID,
+            { amount: 10, payment_method: 'cash' },
+            TX_CLIENT,
+            ACTOR
+        )).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+
+        expect(TX_CLIENT.query).toHaveBeenCalledWith(
+            expect.stringContaining('company_id = $2'),
+            [INVOICE_ID, COMPANY_A]
+        );
+        expect(mockGetInvoiceById).not.toHaveBeenCalled();
+        expect(mockRecordManualPayment).not.toHaveBeenCalled();
+    });
+
+    it('does not start an un-settleable payment for an invoice without a job', async () => {
+        mockGetInvoiceById.mockResolvedValue({ ...invoice('sent'), job_id: null });
+
+        await expect(invoicesService.recordOfflinePayment(
+            COMPANY_A,
+            CRM_USER_ID,
+            INVOICE_ID,
+            { amount: 10, payment_method: 'cash' },
+            TX_CLIENT,
+            ACTOR
+        )).rejects.toMatchObject({ code: 'JOB_REQUIRED', httpStatus: 409 });
+
+        expect(mockRecordManualPayment).not.toHaveBeenCalled();
     });
 });

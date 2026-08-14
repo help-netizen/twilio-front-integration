@@ -13,6 +13,9 @@ const mockUpdateInvoice = jest.fn();
 const mockDeleteInvoice = jest.fn();
 const mockVoidInvoice = jest.fn();
 const mockGetPayments = jest.fn();
+const mockRecordOfflinePayment = jest.fn();
+const mockEnsurePaymentLink = jest.fn();
+const mockCreateManualCardSession = jest.fn();
 const mockWithTransaction = jest.fn(work => work(TX_CLIENT));
 
 jest.mock('../backend/src/services/invoicesService', () => ({
@@ -22,6 +25,7 @@ jest.mock('../backend/src/services/invoicesService', () => ({
     deleteInvoice: (...args) => mockDeleteInvoice(...args),
     voidInvoice: (...args) => mockVoidInvoice(...args),
     getPayments: (...args) => mockGetPayments(...args),
+    recordOfflinePayment: (...args) => mockRecordOfflinePayment(...args),
 }));
 jest.mock('../backend/src/services/aiGenerationLogService', () => ({ linkFinal: jest.fn() }));
 jest.mock('../backend/src/services/documentSendNoteService', () => ({
@@ -35,6 +39,8 @@ jest.mock('../backend/src/services/transactionService', () => ({
 }));
 jest.mock('../backend/src/services/stripePaymentsService', () => ({
     StripePaymentsError: class StripePaymentsError extends Error {},
+    ensurePaymentLink: (...args) => mockEnsurePaymentLink(...args),
+    createManualCardSession: (...args) => mockCreateManualCardSession(...args),
 }));
 jest.mock('../backend/src/services/auditService', () => ({
     log: jest.fn(() => Promise.resolve()),
@@ -67,6 +73,9 @@ beforeEach(() => {
     mockDeleteInvoice.mockResolvedValue({ deleted: true });
     mockVoidInvoice.mockResolvedValue({ id: 57, status: 'void' });
     mockGetPayments.mockResolvedValue([{ id: 81, invoice_id: 57 }]);
+    mockRecordOfflinePayment.mockResolvedValue({ id: 81, invoice_id: 57 });
+    mockEnsurePaymentLink.mockResolvedValue({ url: 'https://pay.test/invoice-57' });
+    mockCreateManualCardSession.mockResolvedValue({ session_id: 91, amount: 188.5 });
     mockWithTransaction.mockImplementation(work => work(TX_CLIENT));
 });
 
@@ -178,6 +187,112 @@ describe('invoice payment-history permission', () => {
 
         expect(response.status).toBe(403);
         expect(mockGetPayments).not.toHaveBeenCalled();
+    });
+});
+
+describe('invoice collection route contract', () => {
+    it('creates an online pay link with companyFilter and the crmUser actor', async () => {
+        const response = await request(appWith(['payments.collect_online']))
+            .post('/57/stripe-payment-link')
+            .send({ amount: 188.5 });
+
+        expect(response.status).toBe(200);
+        expect(mockEnsurePaymentLink).toHaveBeenCalledWith(
+            COMPANY_ID,
+            { id: CRM_USER_ID },
+            '57',
+            { amount: 188.5 },
+            TX_CLIENT,
+            { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' }
+        );
+        expect(mockEnsurePaymentLink.mock.calls[0]).not.toContain('keycloak-subject-must-not-be-used');
+    });
+
+    it('creates a keyed-card session bound to the selected invoice', async () => {
+        const response = await request(appWith(['payments.collect_keyed']))
+            .post('/57/stripe-manual-card-session')
+            .send({ amount: 125 });
+
+        expect(response.status).toBe(200);
+        expect(mockCreateManualCardSession).toHaveBeenCalledWith(
+            COMPANY_ID,
+            { id: CRM_USER_ID },
+            { invoiceId: '57', amount: 125 },
+            TX_CLIENT,
+            { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' }
+        );
+    });
+
+    it('records cash/check through the invoice service with tenant scope and crmUser actor', async () => {
+        const body = { amount: 50, payment_method: 'check' };
+        const response = await request(appWith(['payments.collect_offline']))
+            .post('/57/record-payment')
+            .send(body);
+
+        expect(response.status).toBe(200);
+        expect(mockRecordOfflinePayment).toHaveBeenCalledWith(
+            COMPANY_ID,
+            CRM_USER_ID,
+            '57',
+            body,
+            TX_CLIENT,
+            { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' }
+        );
+    });
+
+    it.each([
+        ['online link', '/57/stripe-payment-link', 'payments.collect_online', ['payments.collect_keyed', 'payments.collect_offline'], mockEnsurePaymentLink],
+        ['keyed card', '/57/stripe-manual-card-session', 'payments.collect_keyed', ['payments.collect_online', 'payments.collect_offline'], mockCreateManualCardSession],
+        ['offline payment', '/57/record-payment', 'payments.collect_offline', ['payments.collect_online', 'payments.collect_keyed'], mockRecordOfflinePayment],
+    ])('denies %s without %s even when other collection rights exist', async (_label, path, _permission, wrongPermissions, write) => {
+        const response = await request(appWith(['invoices.view', ...wrongPermissions]))
+            .post(path)
+            .send({ amount: 10, payment_method: 'cash' });
+
+        expect(response.status).toBe(403);
+        expect(write).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['online link', '/57/stripe-payment-link', 'payments.collect_online', mockEnsurePaymentLink],
+        ['keyed card', '/57/stripe-manual-card-session', 'payments.collect_keyed', mockCreateManualCardSession],
+        ['offline payment', '/57/record-payment', 'payments.collect_offline', mockRecordOfflinePayment],
+    ])('preserves tenant-safe not found for %s', async (_label, path, permission, write) => {
+        write.mockRejectedValueOnce(Object.assign(
+            new Error('Invoice 57 not found'),
+            { code: 'NOT_FOUND', httpStatus: 404 }
+        ));
+
+        const response = await request(appWith([permission]))
+            .post(path)
+            .send({ amount: 10, payment_method: 'cash' });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error.code).toBe('NOT_FOUND');
+        expect(write).toHaveBeenCalled();
+        expect(write.mock.calls[0][0]).toBe(COMPANY_ID);
+    });
+
+    it('passes the selected invoice id through a tenant-safe offline 404', async () => {
+        mockRecordOfflinePayment.mockRejectedValueOnce(Object.assign(
+            new Error('Invoice 57 not found'),
+            { code: 'NOT_FOUND', httpStatus: 404 }
+        ));
+
+        const response = await request(appWith(['payments.collect_offline']))
+            .post('/57/record-payment')
+            .send({ amount: 10, payment_method: 'cash' });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error.code).toBe('NOT_FOUND');
+        expect(mockRecordOfflinePayment).toHaveBeenCalledWith(
+            COMPANY_ID,
+            CRM_USER_ID,
+            '57',
+            expect.any(Object),
+            TX_CLIENT,
+            expect.any(Object)
+        );
     });
 });
 

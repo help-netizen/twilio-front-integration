@@ -54,6 +54,16 @@ describe('invoice permission selector', () => {
         expect(getInvoiceCapabilities(permissions, issuedInvoice))
             .toMatchObject({ canDelete: false, canVoid: true });
     });
+
+    it('does not open the invoice sheet for a terminal-only collector', () => {
+        expect(getInvoiceCapabilities([
+            'invoices.view',
+            'payments.collect_terminal',
+        ], issuedInvoice)).toMatchObject({
+            canCollect: false,
+            canCollectTerminal: true,
+        });
+    });
 });
 
 describe('payment-history fetch gate', () => {

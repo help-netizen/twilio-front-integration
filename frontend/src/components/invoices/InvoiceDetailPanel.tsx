@@ -42,6 +42,7 @@ import type { PaymentTransaction } from '../../services/paymentsCanonicalApi';
 import { PaymentStatusChip, isVoidablePayment } from '../payments/paymentStatus';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
+import { InvoiceCollectPaymentDialog } from './InvoiceCollectPaymentDialog';
 import { InvoiceItemSheet, type InvoiceItemDraft } from './InvoiceItemSheet';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -138,6 +139,7 @@ export function InvoiceDetailPanel({
     const [voidPayment, setVoidPayment] = useState<PaymentTransaction | null>(null);
     const [destructiveAction, setDestructiveAction] = useState<'void' | 'delete' | null>(null);
     const [destructiveBusy, setDestructiveBusy] = useState(false);
+    const [collectOpen, setCollectOpen] = useState(false);
 
     useEffect(() => {
         setInvoice(initialInvoice);
@@ -376,8 +378,8 @@ export function InvoiceDetailPanel({
 
                     {!editing ? (
                         <section className="space-y-2.5">
-                            {capabilities.canCollect && onCollect ? (
-                                <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={onCollect} data-testid="invoice-collect">
+                            {capabilities.canCollect ? (
+                                <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={onCollect || (() => setCollectOpen(true))} data-testid="collect-open">
                                     <CreditCard className="mr-2 size-5" /> Collect payment
                                 </Button>
                             ) : invoice.status === 'draft' && capabilities.canSend ? (
@@ -658,6 +660,16 @@ export function InvoiceDetailPanel({
                 confirmTestId={destructiveAction === 'delete' ? 'invoice-delete-confirm' : 'invoice-void-confirm'}
                 onConfirm={confirmDestructive}
                 busy={destructiveBusy}
+            />
+            <InvoiceCollectPaymentDialog
+                open={collectOpen}
+                onOpenChange={setCollectOpen}
+                invoice={invoice}
+                capabilities={capabilities}
+                onPaymentConfirmed={async () => {
+                    const fresh = await refresh();
+                    return !!fresh && Number(fresh.balance_due) < balanceDue;
+                }}
             />
         </div>
     );

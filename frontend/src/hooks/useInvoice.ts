@@ -10,13 +10,6 @@ import {
 } from '../services/invoicesApi';
 
 const TERMINAL_STATUSES = new Set<HydratedInvoice['status']>(['void', 'refunded']);
-const COLLECTION_PERMISSIONS = [
-    'payments.collect_online',
-    'payments.collect_keyed',
-    'payments.collect_terminal',
-    'payments.collect_offline',
-] as const;
-
 export interface InvoiceCapabilities {
     canView: boolean;
     canEdit: boolean;
@@ -48,7 +41,7 @@ export function getInvoiceCapabilities(
     const canCollectKeyed = collectionEligible && granted.has('payments.collect_keyed');
     const canCollectTerminal = collectionEligible && granted.has('payments.collect_terminal');
     const canCollectOffline = collectionEligible && granted.has('payments.collect_offline');
-    const hasCollectionPermission = COLLECTION_PERMISSIONS.some(key => granted.has(key));
+    const hasCollectionPermission = canCollectOnline || canCollectKeyed || canCollectOffline;
     const canViewPayments = granted.has('invoices.view') && granted.has('payments.view');
 
     return {

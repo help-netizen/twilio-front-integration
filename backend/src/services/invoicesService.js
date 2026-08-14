@@ -791,6 +791,98 @@ async function voidPayment(
 }
 
 /**
+ * Record an offline payment from an invoice surface. The canonical payment
+ * service owns the ledger write; this adapter owns invoice eligibility and the
+ * balance ceiling so a client cannot over-collect or create an orphan payment.
+ */
+async function recordOfflinePayment(
+    companyId,
+    userId,
+    invoiceId,
+    data = {},
+    client = null,
+    activityActor = null
+) {
+    // Serialize invoice-level offline collections inside the route transaction.
+    // Without the row lock, two simultaneous cash/check requests could both
+    // validate against the same pre-payment balance and over-collect it.
+    if (client?.query) {
+        const { rows } = await client.query(
+            `SELECT id
+             FROM invoices
+             WHERE id = $1 AND company_id = $2
+             FOR UPDATE`,
+            [invoiceId, companyId]
+        );
+        if (!rows[0]) {
+            throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
+        }
+    }
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+    if (!invoice) {
+        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
+    }
+    if (!['sent', 'viewed', 'partial', 'overdue'].includes(invoice.status)) {
+        throw new InvoicesServiceError(
+            'INVALID_STATUS',
+            `Cannot collect on invoice with status '${invoice.status}'.`,
+            409
+        );
+    }
+    if (invoice.job_id == null) {
+        throw new InvoicesServiceError(
+            'JOB_REQUIRED',
+            'This invoice must be linked to a job before it can accept payment.',
+            409
+        );
+    }
+
+    const numericAmount = Number(data.amount);
+    const amountCents = Number.isFinite(numericAmount)
+        ? Math.round(numericAmount * 100)
+        : NaN;
+    const balanceCents = Math.round(Number(invoice.balance_due || 0) * 100);
+    const hasSubCentPrecision = Number.isFinite(numericAmount)
+        && Math.abs(numericAmount - (amountCents / 100)) > 1e-8;
+    if (
+        !Number.isInteger(amountCents)
+        || amountCents <= 0
+        || hasSubCentPrecision
+        || amountCents > balanceCents
+    ) {
+        throw new InvoicesServiceError(
+            'INVALID_AMOUNT',
+            'Amount must be greater than 0 and no more than the invoice balance.',
+            400
+        );
+    }
+    if (!['cash', 'check'].includes(data.payment_method)) {
+        throw new InvoicesServiceError(
+            'VALIDATION',
+            'payment_method must be one of: cash, check',
+            400
+        );
+    }
+
+    return paymentsService.recordManualPayment(
+        companyId,
+        userId,
+        {
+            invoice_id: invoice.id,
+            job_id: invoice.job_id,
+            contact_id: invoice.contact_id || null,
+            amount: amountCents / 100,
+            payment_method: data.payment_method,
+            reference_number: data.reference_number,
+            memo: data.memo,
+            processed_at: data.payment_date || data.processed_at || undefined,
+        },
+        client,
+        activityActor
+    );
+}
+
+/**
  * Sync line items from an estimate to this invoice.
  */
 async function syncItemsFromEstimate(
@@ -923,6 +1015,7 @@ module.exports = {
     sendInvoice,
     voidInvoice,
     voidPayment,
+    recordOfflinePayment,
     syncItemsFromEstimate,
     getRevisions,
     getEvents,

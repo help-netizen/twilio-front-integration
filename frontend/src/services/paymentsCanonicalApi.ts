@@ -186,6 +186,16 @@ export async function recordJobPayment(
     });
 }
 
+export async function recordInvoicePayment(
+    invoiceId: number | string,
+    data: RecordJobPaymentData,
+): Promise<PaymentTransaction> {
+    return paymentsRequest<PaymentTransaction>(`/api/invoices/${invoiceId}/record-payment`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
 export async function refundTransaction(id: number, data: RefundData): Promise<PaymentTransaction> {
     return paymentsRequest<PaymentTransaction>(`${PAYMENTS_BASE}/${id}/refund`, {
         method: 'POST',
