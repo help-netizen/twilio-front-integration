@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
-import { Dialog, DialogContent } from '../ui/dialog';
 import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
 import { Plus, Loader2 } from 'lucide-react';
 import { useLeadFinancials } from '../../hooks/useLeadFinancials';
@@ -268,8 +267,7 @@ export function LeadFinancialsTab({ leadId }: Props) {
 
             {/* Invoice detail dialog */}
             {selectedInvoice && (
-                <Dialog open={!!selectedInvoice} onOpenChange={(o) => { if (!o) setSelectedInvoice(null); }}>
-                    <DialogContent className="p-0 max-w-96 overflow-hidden">
+                <FloatingDetailPanel open={!!selectedInvoice} onClose={() => setSelectedInvoice(null)} wide>
                         <InvoiceDetailPanel
                             invoice={selectedInvoice}
                             events={invoiceEvents}
@@ -302,8 +300,7 @@ export function LeadFinancialsTab({ leadId }: Props) {
                                 } catch (err: any) { toast.error(err.message); }
                             }}
                         />
-                    </DialogContent>
-                </Dialog>
+                </FloatingDetailPanel>
             )}
 
             {/* Invoice send dialog — operator confirms recipient/message (no empty-recipient sends) */}
