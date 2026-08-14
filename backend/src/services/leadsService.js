@@ -555,6 +555,21 @@ async function createLead(fields, companyId, {
     }
     const columns = mapFieldsToColumns(fields);
 
+    // Converted is not a status a caller may assert — it is what linking a job
+    // MAKES true, and leadConversionService sets it together with
+    // converted_to_job. updateLead has refused this since mig245; createLead did
+    // not, so a lead born "Converted" carried converted_to_job = false, which the
+    // constraint refuses. The whole INSERT rolled back and the lead was lost —
+    // invisibly, because the operator then made the job by hand and only the
+    // channel attribution went missing with it.
+    if (columns.status === 'Converted') {
+        throw new LeadsServiceError(
+            'CONVERSION_REQUIRED',
+            'Converted status can only be set by linking a job',
+            409
+        );
+    }
+
     // Normalize phone to E.164 format (+1XXXXXXXXXX for US)
     if (columns.phone) {
         const digits = columns.phone.replace(/\D/g, '');

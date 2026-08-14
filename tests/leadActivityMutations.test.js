@@ -195,6 +195,21 @@ test('LEAD-AUTOCONVERT-STATUS-PRIMITIVE: status-only Converted is rejected befor
     expect(mockLogLeadContactActivity).not.toHaveBeenCalled();
 });
 
+test('LEAD-AUTOCONVERT-CREATE-GUARD: a lead cannot be BORN Converted either', async () => {
+    // The guard existed on update and not on create, and the timeline wizard
+    // created its lead as Converted before converting it. mig245's CHECK
+    // ((status = 'Converted') = converted_to_job) refused the row, the INSERT
+    // rolled back, and the lead vanished — the operator made the job by hand and
+    // the channel attribution went with it. A 409 says what is wrong; a
+    // constraint violation inside a transaction says nothing and loses the row.
+    await expect(
+        leadsService.createLead({ FirstName: 'Marie', LastName: 'Delcore', Status: 'Converted' }, COMPANY_A)
+    ).rejects.toMatchObject({ code: 'CONVERSION_REQUIRED', httpStatus: 409 });
+
+    // Rejected before anything is written: no insert, no activity.
+    expect(mockLogLeadContactActivity).not.toHaveBeenCalled();
+});
+
 test('LEAD-AUTOCONVERT-SYSTEM-ACTOR: a null internal actor records an explicit system activity', async () => {
     await leadsService.updateLead('ABC123', { FirstName: 'Automation' }, COMPANY_A);
 

@@ -144,7 +144,14 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
                 City: city || undefined, State: state || undefined, PostalCode: matchedZip || (/^\d/.test(postalCode) ? postalCode : undefined),
                 Latitude: finalCoords?.lat || undefined, Longitude: finalCoords?.lng || undefined,
                 JobType: jobType || undefined, Description: description || undefined,
-                Status: withJob ? 'Converted' : 'Submitted', JobSource: 'Phone Call',
+                // Always Submitted, even when a job follows: convertLead below is
+                // what turns the lead Converted, and it does so by linking the job
+                // it creates. Claiming the end state here instead was fatal — the
+                // row said Converted while converted_to_job was still false, which
+                // mig245's CHECK refuses, so the INSERT rolled back and the lead
+                // was never created at all (the operator then made the job by hand
+                // and the channel attribution was lost).
+                Status: 'Submitted', JobSource: 'Phone Call',
                 // Link to the timeline's contact (attach = no dedup, no phone fabrication) when opened from a contact card.
                 ...(contactId ? { selected_contact_id: contactId, contact_update_mode: 'attach' } : {}),
             };
