@@ -62,6 +62,20 @@ export interface CreatedEstimate {
 export interface CreatedInvoice {
     id: number;
     marker: string;
+    invoiceNumber: string;
+}
+
+export interface InvoiceSeedItem {
+    name: string;
+    description?: string;
+    quantity?: number;
+    unitPrice: number;
+    taxable?: boolean;
+}
+
+export interface CreatedPriceBookItem {
+    id: number;
+    marker: string;
 }
 
 export interface CreatedTask {
@@ -77,6 +91,7 @@ export type CleanupEntity =
     | { type: 'job'; id: number }
     | { type: 'estimate'; id: number }
     | { type: 'invoice'; id: number }
+    | { type: 'price_book_item'; id: number }
     | { type: 'task'; id: number };
 
 interface Envelope<T> {
@@ -410,15 +425,73 @@ export class ApiClient {
         return { id: asNumber(data.id, 'estimate.id'), marker };
     }
 
-    async createInvoice(jobId: number, label = 'Invoice', unitPrice = 125): Promise<CreatedInvoice> {
+    async createInvoiceWithItems(
+        jobId: number,
+        label: string,
+        items: InvoiceSeedItem[],
+    ): Promise<CreatedInvoice> {
         const marker = prefixed(label);
         const data = await this.post<JsonObject>('/api/invoices', {
             job_id: jobId,
             notes: marker,
             tax_rate: 0,
-            items: [{ name: `${marker} item`, description: marker, quantity: 1, unit_price: unitPrice, taxable: false }],
+            items: items.map((item) => ({
+                name: item.name,
+                description: item.description ?? marker,
+                quantity: item.quantity ?? 1,
+                unit_price: item.unitPrice,
+                taxable: item.taxable ?? false,
+            })),
         });
-        return { id: asNumber(data.id, 'invoice.id'), marker };
+        return {
+            id: asNumber(data.id, 'invoice.id'),
+            marker,
+            invoiceNumber: String(data.invoice_number || ''),
+        };
+    }
+
+    async createInvoice(jobId: number, label = 'Invoice', unitPrice = 125): Promise<CreatedInvoice> {
+        const marker = prefixed(label);
+        return this.createInvoiceWithItems(jobId, marker, [{
+            name: `${marker} item`,
+            description: marker,
+            quantity: 1,
+            unitPrice,
+            taxable: false,
+        }]);
+    }
+
+    async createPriceBookItem(label = 'Price Book item', unitPrice = 75): Promise<CreatedPriceBookItem> {
+        const marker = prefixed(label);
+        const data = await this.post<JsonObject>('/api/estimate-item-presets', {
+            name: marker,
+            description: `${marker} seeded for Playwright`,
+            default_quantity: 1,
+            default_unit_price: unitPrice,
+            default_taxable: false,
+        });
+        return { id: asNumber(data.id, 'price_book_item.id'), marker };
+    }
+
+    async issueInvoice(invoiceId: number, recipient: string): Promise<JsonObject> {
+        return this.post<JsonObject>(`/api/invoices/${invoiceId}/send`, {
+            channel: 'email',
+            recipient,
+            message: prefixed('Playwright invoice issue'),
+            includePaymentLink: false,
+        });
+    }
+
+    async recordInvoicePayment(
+        invoiceId: number,
+        options: { amount: number; method?: 'cash' | 'check' },
+    ): Promise<{ id: number }> {
+        const data = await this.post<JsonObject>(`/api/invoices/${invoiceId}/record-payment`, {
+            amount: options.amount,
+            payment_method: options.method || 'cash',
+            memo: prefixed('Playwright invoice payment'),
+        });
+        return { id: asNumber(data.id, 'invoice payment.id') };
     }
 
     async getEstimate(id: number): Promise<JsonObject> {
@@ -574,7 +647,18 @@ export class ApiClient {
     async deleteEntity(entity: CleanupEntity): Promise<void> {
         try {
             if (entity.type === 'estimate') await this.delete(`/api/estimates/${entity.id}`);
-            else if (entity.type === 'invoice') await this.delete(`/api/invoices/${entity.id}`);
+            else if (entity.type === 'invoice') {
+                try {
+                    await this.delete(`/api/invoices/${entity.id}`);
+                } catch {
+                    // Issued invoices cannot be deleted. Void them so residual
+                    // RUN_ID data is terminal and cannot be collected or resent.
+                    await this.post(`/api/invoices/${entity.id}/void`);
+                }
+            }
+            else if (entity.type === 'price_book_item') {
+                await this.delete(`/api/estimate-item-presets/${entity.id}`);
+            }
             else if (entity.type === 'task') await this.delete(`/api/tasks/${entity.id}`);
             else if (entity.type === 'job') await this.post(`/api/jobs/${entity.id}/cancel`, { reason: 'E2E cleanup' });
             else if (entity.type === 'lead') await this.post(`/api/leads/${encodeURIComponent(entity.id)}/mark-lost`, { reason: 'E2E cleanup' });

@@ -1,0 +1,96 @@
+import { expect, test } from '../fixtures/test';
+import { ApiClient, type CleanupEntity } from '../fixtures/api';
+import { hasAdmin, JOBS_BLOCKED_REASON, JOBS_NATIVE } from '../fixtures/env';
+import { InvoicesPage } from '../pages/InvoicesPage';
+
+const COLLECTION_PERMISSIONS = [
+    'payments.collect_keyed',
+    'payments.collect_offline',
+    'payments.collect_online',
+];
+
+test.describe('@suite:invoice-redesign detail', () => {
+    test.skip(!hasAdmin(), 'requires E2E_ADMIN_USER / E2E_ADMIN_PASS');
+    test.skip(!JOBS_NATIVE, JOBS_BLOCKED_REASON);
+
+    test('@p0 detail-actions exposes issued actions and status-safe destruction', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const job = await api.createJob({ label: 'Invoice detail actions Job' });
+            cleanup.push(
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+                { type: 'job', id: job.id },
+            );
+            const issued = await api.createInvoice(job.id, 'Invoice detail partial', 200);
+            cleanup.push({ type: 'invoice', id: issued.id });
+            await api.issueInvoice(issued.id, job.contact.email);
+            await api.recordInvoicePayment(issued.id, { amount: 50, method: 'cash' });
+
+            const draft = await api.createInvoice(job.id, 'Invoice detail draft', 25);
+            cleanup.push({ type: 'invoice', id: draft.id });
+
+            const invoices = new InvoicesPage(page);
+            const detail = await invoices.openInvoice(issued.id, issued.invoiceNumber);
+            await expect(detail.root.getByText('partial', { exact: true })).toBeVisible();
+            await detail.expectIssuedActions();
+            await expect(detail.voidInvoice).toHaveClass(/text-\[var\(--blanc-ink-3\)\]/);
+            await expect(detail.root.getByRole('button').last()).toHaveText(/Void invoice/);
+
+            await detail.openVoidConfirm(issued.invoiceNumber, '$150.00');
+            const voidDialog = page.getByRole('dialog').filter({
+                has: page.getByRole('heading', { name: `Void ${issued.invoiceNumber}?`, exact: true }),
+            });
+            await voidDialog.getByRole('button', { name: 'Keep', exact: true }).click();
+            await expect(detail.voidConfirm).toBeHidden();
+
+            await invoices.openInvoice(draft.id, draft.invoiceNumber);
+            await expect(detail.root.getByText('draft', { exact: true })).toBeVisible();
+            await detail.expectDraftActions();
+            await detail.deleteDraft.click();
+            await expect(detail.deleteConfirm).toBeVisible();
+            await expect(page.getByRole('heading', {
+                name: `Delete draft ${draft.invoiceNumber}?`,
+                exact: true,
+            })).toBeVisible();
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
+
+    test('@p1 collect-payment prefills balance and exposes only permitted methods', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const permissions = api.session.permissions || [];
+            test.skip(
+                !COLLECTION_PERMISSIONS.some(permission => permissions.includes(permission)),
+                'staging admin has no invoice collection permission',
+            );
+            const job = await api.createJob({ label: 'Invoice collect Job' });
+            cleanup.push(
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+                { type: 'job', id: job.id },
+            );
+            const invoice = await api.createInvoice(job.id, 'Invoice collect', 188.50);
+            cleanup.push({ type: 'invoice', id: invoice.id });
+            await api.issueInvoice(invoice.id, job.contact.email);
+
+            const detail = await new InvoicesPage(page).openInvoice(invoice.id, invoice.invoiceNumber);
+            const collect = await detail.openCollect();
+            await expect(collect.amount).toHaveValue('188.50');
+            await expect(collect.methodChooser).toBeVisible();
+            await collect.expectPermissionGates(permissions);
+            await expect(collect.charge).toBeVisible();
+            await expect(collect.charge).toBeEnabled();
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
+});

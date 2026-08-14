@@ -296,7 +296,7 @@ export function InvoicesPage() {
                                             <td className="px-4 py-2 text-right">
                                                 {hasActions ? <DropdownMenu>
                                                     <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
-                                                        <Button variant="ghost" size="sm" className="size-7 p-0">
+                                                        <Button variant="ghost" size="sm" className="size-7 p-0" data-testid="invoice-row-actions">
                                                             <MoreHorizontal className="size-4" />
                                                         </Button>
                                                     </DropdownMenuTrigger>
