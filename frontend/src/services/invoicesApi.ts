@@ -5,6 +5,7 @@
 
 import { authedFetch } from './apiClient';
 import type { OrderListApiPart } from './estimatesApi';
+import type { PaymentTransaction } from './paymentsCanonicalApi';
 
 const INVOICES_BASE = '/api/invoices';
 
@@ -64,6 +65,11 @@ export interface Invoice {
     job_number?: string | null;
 }
 
+export type HydratedInvoice = Invoice & {
+    items: InvoiceItem[];
+    readonly __itemsHydrated: true;
+};
+
 export interface InvoiceEvent {
     id: number;
     invoice_id: number;
@@ -90,7 +96,7 @@ export interface InvoicesListParams {
     job_id?: number;
     estimate_id?: number;
     search?: string;
-    page?: number;
+    offset?: number;
     limit?: number;
 }
 
@@ -99,6 +105,10 @@ export interface InvoicesListResult {
     total: number;
     page: number;
     limit: number;
+}
+
+export function invoicePageOffset(page: number, limit: number): number {
+    return (Math.max(1, page) - 1) * Math.max(1, limit);
 }
 
 export interface InvoiceCreateData {
@@ -147,8 +157,11 @@ interface ApiResponse<T> {
 
 async function invoicesRequest<T>(url: string, options?: RequestInit): Promise<T> {
     const res = await authedFetch(url, {
-        headers: { 'Content-Type': 'application/json' },
         ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...options?.headers,
+        },
     });
     const json: ApiResponse<T> = await res.json();
     if (!res.ok || !json.ok) throw new Error(json.error?.message || `Invoices API error ${res.status}`);
@@ -165,20 +178,51 @@ export async function fetchInvoices(filters: InvoicesListParams = {}): Promise<I
     if (filters.job_id) params.set('job_id', String(filters.job_id));
     if (filters.estimate_id) params.set('estimate_id', String(filters.estimate_id));
     if (filters.search) params.set('search', filters.search);
-    if (filters.page != null) params.set('page', String(filters.page));
+    if (filters.offset != null) params.set('offset', String(filters.offset));
     if (filters.limit != null) params.set('limit', String(filters.limit));
     const qs = params.toString();
     const raw = await invoicesRequest<any>(`${INVOICES_BASE}${qs ? `?${qs}` : ''}`);
+    const limit = filters.limit ?? 50;
+    const offset = filters.offset ?? 0;
     return {
         invoices: raw.rows ?? raw.invoices ?? [],
         total: raw.total ?? 0,
-        page: filters.page ?? 1,
-        limit: filters.limit ?? 50,
+        page: Math.floor(offset / limit) + 1,
+        limit,
     };
 }
 
 export async function fetchInvoice(id: number): Promise<Invoice> {
     return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}`);
+}
+
+export class InvoiceItemsNotHydratedError extends Error {
+    constructor() {
+        super('Reload the full invoice before replacing its line items.');
+        this.name = 'InvoiceItemsNotHydratedError';
+    }
+}
+
+export function isHydratedInvoice(invoice: Invoice | null | undefined): invoice is HydratedInvoice {
+    return !!invoice
+        && Array.isArray(invoice.items)
+        && (invoice as Partial<HydratedInvoice>).__itemsHydrated === true;
+}
+
+function markInvoiceHydrated(invoice: Invoice): HydratedInvoice {
+    if (!Array.isArray(invoice.items)) throw new InvoiceItemsNotHydratedError();
+    return { ...invoice, items: invoice.items, __itemsHydrated: true };
+}
+
+/** The detail endpoint is the only invoice read contract that includes line items. */
+export async function fetchHydratedInvoice(id: number): Promise<HydratedInvoice> {
+    const invoice = await fetchInvoice(id);
+    return markInvoiceHydrated(invoice);
+}
+
+/** Reuse an already-hydrated invoice; otherwise replace a list summary with detail. */
+export async function hydrateInvoice(invoice: Invoice): Promise<HydratedInvoice> {
+    return isHydratedInvoice(invoice) ? invoice : fetchHydratedInvoice(invoice.id);
 }
 
 export async function createInvoice(data: InvoiceCreateData): Promise<Invoice> {
@@ -188,11 +232,30 @@ export async function createInvoice(data: InvoiceCreateData): Promise<Invoice> {
     });
 }
 
-export async function updateInvoice(id: number, data: Partial<InvoiceCreateData>): Promise<Invoice> {
-    return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}`, {
+export async function updateInvoice(id: number, data: Partial<InvoiceCreateData>): Promise<HydratedInvoice> {
+    if (Array.isArray(data.items)) throw new InvoiceItemsNotHydratedError();
+    const updated = await invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
     });
+    return markInvoiceHydrated(updated);
+}
+
+/**
+ * Whole-array item replacement is intentionally reachable only through a full
+ * invoice. The matching request header is enforced again by the backend route.
+ */
+export async function updateHydratedInvoice(
+    invoice: HydratedInvoice,
+    data: Partial<InvoiceCreateData>,
+): Promise<HydratedInvoice> {
+    if (!isHydratedInvoice(invoice)) throw new InvoiceItemsNotHydratedError();
+    const updated = await invoicesRequest<Invoice>(`${INVOICES_BASE}/${invoice.id}`, {
+        method: 'PUT',
+        headers: { 'X-Invoice-Items-Hydrated': 'true' },
+        body: JSON.stringify(data),
+    });
+    return markInvoiceHydrated(updated);
 }
 
 export async function deleteInvoice(id: number): Promise<void> {
@@ -254,8 +317,8 @@ export async function fetchInvoiceRevisions(id: number): Promise<InvoiceRevision
     return invoicesRequest<InvoiceRevision[]>(`${INVOICES_BASE}/${id}/revisions`);
 }
 
-export async function fetchInvoicePayments(id: number): Promise<any[]> {
-    return invoicesRequest<any[]>(`${INVOICES_BASE}/${id}/payments`);
+export async function fetchInvoicePayments(id: number): Promise<PaymentTransaction[]> {
+    return invoicesRequest<PaymentTransaction[]>(`${INVOICES_BASE}/${id}/payments`);
 }
 
 /** OB-31: void a manually recorded payment — it stays in history (grayed, listed

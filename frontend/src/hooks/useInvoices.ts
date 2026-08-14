@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import * as invoicesApi from '../services/invoicesApi';
 import type {
     Invoice,
+    HydratedInvoice,
     InvoicesListParams,
     InvoicesListResult,
     InvoiceCreateData,
@@ -45,7 +46,7 @@ export function useInvoices() {
         try {
             const f = { ...filters, ...overrideFilters };
             const params: InvoicesListParams = {
-                page: f.page,
+                offset: invoicesApi.invoicePageOffset(f.page, f.limit),
                 limit: f.limit,
             };
             if (f.status) params.status = f.status;
@@ -71,7 +72,7 @@ export function useInvoices() {
     const selectInvoice = useCallback(async (id: number) => {
         setDetailLoading(true);
         try {
-            const invoice = await invoicesApi.fetchInvoice(id);
+            const invoice = await invoicesApi.fetchHydratedInvoice(id);
             setSelectedInvoice(invoice);
             // load events
             const evts = await invoicesApi.fetchInvoiceEvents(id);
@@ -82,6 +83,10 @@ export function useInvoices() {
             setDetailLoading(false);
         }
     }, []);
+
+    const hydrateInvoice = useCallback((invoice: Invoice) => (
+        invoicesApi.hydrateInvoice(invoice)
+    ), []);
 
     const closeDetail = useCallback(() => {
         setSelectedInvoice(null);
@@ -96,8 +101,20 @@ export function useInvoices() {
         return invoice;
     }, [loadInvoices]);
 
-    const handleUpdateInvoice = useCallback(async (id: number, data: Partial<InvoiceCreateData>) => {
-        const invoice = await invoicesApi.updateInvoice(id, data);
+    const handleUpdateInvoice = useCallback(async (
+        id: number,
+        data: Partial<InvoiceCreateData>,
+        hydratedSource?: HydratedInvoice,
+    ) => {
+        let invoice: Invoice;
+        if (Array.isArray(data.items)) {
+            if (!hydratedSource || hydratedSource.id !== id) {
+                throw new invoicesApi.InvoiceItemsNotHydratedError();
+            }
+            invoice = await invoicesApi.updateHydratedInvoice(hydratedSource, data);
+        } else {
+            invoice = await invoicesApi.updateInvoice(id, data);
+        }
         toast.success('Invoice updated');
         await loadInvoices();
         if (selectedInvoice?.id === id) {
@@ -172,6 +189,7 @@ export function useInvoices() {
         totalPages,
         events,
         loadInvoices,
+        hydrateInvoice,
         selectInvoice,
         closeDetail,
         handleCreateInvoice,

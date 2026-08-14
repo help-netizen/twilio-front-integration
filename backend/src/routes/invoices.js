@@ -132,6 +132,23 @@ router.put('/:id', requirePermission('invoices.create'), async (req, res) => {
         const { id } = req.params;
         const data = req.body;
 
+        // A list-row invoice intentionally omits `items`. Requiring the hydrated
+        // update seam for whole-array replacement prevents an editor initialized
+        // from that summary from accidentally clearing the persisted item set.
+        // Scalar-only detail edits do not need the header, and create uses POST.
+        if (
+            Array.isArray(data?.items)
+            && req.get('x-invoice-items-hydrated') !== 'true'
+        ) {
+            return res.status(409).json({
+                ok: false,
+                error: {
+                    code: 'INVOICE_ITEMS_NOT_HYDRATED',
+                    message: 'Reload the full invoice before replacing its line items.',
+                },
+            });
+        }
+
         const result = await withTransaction(client => invoicesService.updateInvoice(
             companyId,
             userId,
@@ -330,19 +347,24 @@ router.get('/:id/events', requirePermission('invoices.view'), async (req, res) =
 });
 
 // GET /api/invoices/:id/payments — List payments for invoice
-router.get('/:id/payments', requirePermission('payments.view'), async (req, res) => {
-    try {
-        const companyId = getCompanyId(req);
-        const { id } = req.params;
+router.get(
+    '/:id/payments',
+    requirePermission('invoices.view'),
+    requirePermission('payments.view'),
+    async (req, res) => {
+        try {
+            const companyId = getCompanyId(req);
+            const { id } = req.params;
 
-        const result = await invoicesService.getPayments(companyId, id);
-        res.json({ ok: true, data: result });
-    } catch (err) {
-        console.error('[Invoices] GET /:id/payments error:', err.message);
-        const status = err.httpStatus || 500;
-        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+            const result = await invoicesService.getPayments(companyId, id);
+            res.json({ ok: true, data: result });
+        } catch (err) {
+            console.error('[Invoices] GET /:id/payments error:', err.message);
+            const status = err.httpStatus || 500;
+            res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+        }
     }
-});
+);
 
 // =============================================================================
 // Line items
