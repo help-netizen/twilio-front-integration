@@ -162,7 +162,11 @@ describe('invoice-bound Stripe settlement safety', () => {
         }
     );
 
-    it('records the full processor charge but caps document credit to the locked balance', async () => {
+    it('records the FULL charge as document credit even above the locked balance (over-collection allowed)', async () => {
+        // OWNER decision: over-collection is valid. A $50 settlement on a $30-balance
+        // invoice records the full $50 as the payment's document credit — no cap to the
+        // live balance. (The pay-jobcentric allocator later caps the invoice's absorbed
+        // amount at its total and holds the $20 excess as job-level credit.)
         const liveInvoice = {
             id: 42,
             company_id: COMPANY,
@@ -191,26 +195,27 @@ describe('invoice-bound Stripe settlement safety', () => {
             42,
             mockTransactionClient
         );
+        // Full $50 recorded; NO capped document_credit_amount stored anymore.
         expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
             COMPANY,
             expect.objectContaining({
                 amount: 50,
                 invoice_id: 42,
                 job_id: 7,
-                metadata: expect.objectContaining({
-                    tip: 0,
-                    document_credit_amount: 30,
-                }),
+                metadata: { surface: 'manual_card', tip: 0 },
             }),
             mockTransactionClient
         );
+        const txMeta = paymentsQueries.createTransaction.mock.calls[0][1].metadata;
+        expect(txMeta).not.toHaveProperty('document_credit_amount');
+        // The invoice credit event carries the FULL $50, not the $30 balance.
         expect(invoicesQueries.createEvent).toHaveBeenCalledWith(
             COMPANY,
             42,
             'payment_recorded',
             'system',
             null,
-            expect.objectContaining({ amount: 30, external_id: 'pi_over_balance' }),
+            expect.objectContaining({ amount: 50, external_id: 'pi_over_balance' }),
             mockTransactionClient
         );
     });
@@ -1685,7 +1690,10 @@ describe('refunds (Phase 5)', () => {
         expect(invoicesQueries.recordPayment).toBeUndefined();
     });
 
-    it('refunds only the capped document credit from an over-balance charge', async () => {
+    it('refunds the FULL non-tip charge from an over-balance payment, ignoring any legacy cap', async () => {
+        // The honor-cap is gone (over-collection is valid). Even a legacy row that
+        // still carries a stale document_credit_amount is refunded on its full
+        // non-tip portion — matching the now-uncapped invoice-balance computation.
         paymentsQueries.findByExternalSourceId
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce({
@@ -1711,7 +1719,7 @@ describe('refunds (Phase 5)', () => {
             'payment_recorded',
             'system',
             null,
-            expect.objectContaining({ amount: -30, tip_refunded: 20, refund: true }),
+            expect.objectContaining({ amount: -50, tip_refunded: 0, refund: true }),
             null
         );
     });

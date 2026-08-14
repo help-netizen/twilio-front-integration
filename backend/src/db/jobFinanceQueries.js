@@ -4,7 +4,6 @@ const { requireCompanyId } = require('./crmUtils');
 const {
     getInvoiceAllocations,
     getJobPaymentPools,
-    paymentDocumentAmountSql,
 } = require('./documentPaymentQueries');
 
 /**
@@ -80,12 +79,31 @@ function outstandingDueExpr(jobAlias, companyParam) {
                              AND (
                                  linked.status IN ('completed','refunded','voided')
                                  OR linked.voided_at IS NOT NULL
-                             ) THEN ${paymentDocumentAmountSql('linked')}
+                             ) THEN GREATEST(
+                                 linked.amount - GREATEST(
+                                     CASE
+                                         WHEN linked.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                                             THEN (linked.metadata->>'tip')::NUMERIC
+                                         ELSE 0
+                                     END,
+                                     0
+                                 ),
+                                 0
+                             )
                             WHEN linked.transaction_type = 'refund'
                              AND linked.status = 'completed' THEN -ABS(linked.amount) * CASE
                                  WHEN COALESCE(ABS(linked_origin.amount), 0) > 0 THEN
-                                     ${paymentDocumentAmountSql('linked_origin')}
-                                         / ABS(linked_origin.amount)
+                                     GREATEST(
+                                         ABS(linked_origin.amount) - GREATEST(
+                                             CASE
+                                                 WHEN linked_origin.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                                                     THEN (linked_origin.metadata->>'tip')::NUMERIC
+                                                 ELSE 0
+                                             END,
+                                             0
+                                         ),
+                                         0
+                                     ) / ABS(linked_origin.amount)
                                  ELSE 1
                              END
                             ELSE 0 END)
@@ -107,12 +125,31 @@ function outstandingDueExpr(jobAlias, companyParam) {
         - COALESCE((
             SELECT SUM(CASE
                          WHEN pt.transaction_type = 'payment' AND pt.status IN ('completed','refunded') THEN
-                             ${paymentDocumentAmountSql('pt')}
+                             GREATEST(
+                                 pt.amount - GREATEST(
+                                     CASE
+                                         WHEN pt.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                                             THEN (pt.metadata->>'tip')::NUMERIC
+                                         ELSE 0
+                                     END,
+                                     0
+                                 ),
+                                 0
+                             )
                          WHEN pt.transaction_type = 'refund'  AND pt.status = 'completed' THEN
                              -ABS(pt.amount) * CASE
                                  WHEN COALESCE(ABS(refund_origin.amount), 0) > 0 THEN
-                                     ${paymentDocumentAmountSql('refund_origin')}
-                                         / ABS(refund_origin.amount)
+                                     GREATEST(
+                                         ABS(refund_origin.amount) - GREATEST(
+                                             CASE
+                                                 WHEN refund_origin.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                                                     THEN (refund_origin.metadata->>'tip')::NUMERIC
+                                                 ELSE 0
+                                             END,
+                                             0
+                                         ),
+                                         0
+                                     ) / ABS(refund_origin.amount)
                                  ELSE 1
                              END
                          ELSE 0 END)

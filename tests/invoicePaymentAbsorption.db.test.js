@@ -244,25 +244,32 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         expect(Number(rollup.total_due)).toBe(50);
     });
 
-    test('caps invoice document credit while preserving the full Stripe charge in Job paid', async () => {
+    test('over-collection: full charge preserved, invoice capped at its total by the allocator, excess is job credit', async () => {
+        // OWNER decision: over-collection is valid and NOT capped at settlement. A $50
+        // payment on a $30 invoice records the full $50 into the job pool; the
+        // pay-jobcentric allocator caps THIS invoice's absorbed amount at its own $30
+        // total (invoice balance_due 0, never negative). The $20 excess is NOT dropped
+        // or clamped — it surfaces as a negative job-level Due (a customer credit) that
+        // a later corrected document can absorb.
         const job = await createJob();
         const invoice = await createInvoice({
             jobId: job.id,
-            label: 'settlement-cap',
+            label: 'over-collection',
             total: 30,
         });
         await createPayment({
             jobId: job.id,
             invoiceId: invoice.id,
             amount: 50,
-            metadata: { document_credit_amount: 30, tip: 0 },
+            metadata: { tip: 0 },
         });
 
         expect(money(await invoicesQueries.getInvoiceById(companyA, invoice.id, client)))
             .toEqual({ amount_paid: 30, balance_due: 0, status: 'paid', allocated: 30 });
         const [rollup] = await listJobPaymentRollups(companyA, [job.id], client);
         expect(Number(rollup.total_paid)).toBe(50);
-        expect(Number(rollup.total_due)).toBe(0);
+        // $20 over-collected → job Due goes negative (credit), not clamped to 0.
+        expect(Number(rollup.total_due)).toBe(-20);
     });
 
     test.each(['draft', 'paid', 'sent', 'void'])(

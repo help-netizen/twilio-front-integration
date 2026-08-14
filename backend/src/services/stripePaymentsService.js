@@ -1586,17 +1586,13 @@ async function applyStripeRefund(
             const refundAmt = Math.abs(Number(amount));
             const origTotal = Math.abs(Number(original.amount)) || refundAmt;
             const origTip = Math.max(0, Number(original.metadata?.tip || 0) || 0);
-            const uncappedBalancePortion = Math.max(0, origTotal - origTip);
-            const configuredCreditRaw = original.metadata?.document_credit_amount;
-            const configuredCredit = configuredCreditRaw == null || configuredCreditRaw === ''
-                ? Number.NaN
-                : Number(configuredCreditRaw);
-            const origBalancePortion = Number.isFinite(configuredCredit)
-                ? Math.min(uncappedBalancePortion, Math.max(0, configuredCredit))
-                : uncappedBalancePortion;
-            const invoiceReversal = origTotal > 0
+            // Over-collection is valid (OWNER decision): a card/pay-link may settle
+            // for MORE than the invoice balance, so we no longer cap the credit — the
+            // refund reverses the full non-tip portion of the original payment.
+            const origBalancePortion = Math.max(0, origTotal - origTip);
+            const invoiceReversal = origTip > 0 && origTotal > 0
                 ? Number((refundAmt * (origBalancePortion / origTotal)).toFixed(2))
-                : 0;
+                : refundAmt;
             await invoicesQueries.createEvent(
                 companyId,
                 original.invoice_id,
@@ -1910,15 +1906,14 @@ async function applyStripePayment(
     // applied to the invoice balance — only the (amount - tip) portion settles the
     // invoice; the tip is recorded on the ledger row's metadata for reporting.
     const tip = Math.max(0, Number(metadata?.tip || 0) || 0);
+    // Over-collection is valid (OWNER decision): a card/pay-link may settle for MORE
+    // than the live invoice balance (e.g. an added sale; documents are corrected
+    // later). Record the FULL non-tip portion as the payment's document credit — do
+    // NOT cap it to the live balance. The pay-jobcentric allocator caps each invoice's
+    // absorbed amount at its own total and holds any excess as job-level credit, so
+    // the excess is never dropped and the invoice can absorb it once corrected.
     const balancePortion = Math.max(0, Number((amount - tip).toFixed(2)));
-    const documentCredit = invoice
-        ? Math.min(
-            balancePortion,
-            Math.max(0, Number(Number(invoice.balance_due || 0).toFixed(2)))
-        )
-        : balancePortion;
     const transactionMetadata = { ...(metadata || {}), tip };
-    if (invoice) transactionMetadata.document_credit_amount = documentCredit;
 
     let tx;
     try {
@@ -1961,7 +1956,7 @@ async function applyStripePayment(
             'system',
             null,
             {
-                amount: documentCredit,
+                amount: balancePortion,
                 tip,
                 payment_method: 'credit_card',
                 source: 'stripe',
@@ -1992,7 +1987,7 @@ async function applyStripePayment(
                 entity: invoice,
                 actor: activityActor,
                 summary: {
-                    amount: documentCredit,
+                    amount: balancePortion,
                     currency: tx.currency,
                     payment_id: tx.id,
                 },
