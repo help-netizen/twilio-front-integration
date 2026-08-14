@@ -62,9 +62,11 @@ export function PaymentDetailPanel({
                 <PaymentJobSection detail={detail} job={job} />
 
                 {job ? (
-                    <>
-                        {/* Contact, Scheduled and Location exactly as the job card
-                            renders them — flat here, framed there. */}
+                    /* Indented under the job heading: Schedule, Location and Contact
+                       describe THAT job, and the shift says so without drawing a
+                       frame or a rail to say it. */
+                    <div className="space-y-5 border-l pl-4" style={{ borderColor: 'var(--blanc-line)', marginTop: '-4px' }}>
+                        {/* The job card's own sections — flat here, framed there. */}
                         <JobInfoSections
                             job={job}
                             contactInfo={jobDetail.contactInfo}
@@ -72,7 +74,7 @@ export function PaymentDetailPanel({
                             variant="flat"
                         />
                         <PaymentProviders detail={detail} job={job} />
-                    </>
+                    </div>
                 ) : (
                     <>
                         <PaymentProviders detail={detail} job={null} />

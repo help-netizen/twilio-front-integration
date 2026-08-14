@@ -34,40 +34,33 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
 
     return (
         <div>
-            <p className="blanc-section-heading flex flex-wrap items-center gap-2">
-                <button
-                    type="button"
-                    disabled={!detail.local_job_id}
-                    onClick={() => detail.local_job_id && navigate(`/jobs/${detail.local_job_id}`)}
-                    className="blanc-section-heading hover:underline disabled:no-underline"
-                    style={{ background: 'none', border: 'none', padding: 0, margin: 0, cursor: detail.local_job_id ? 'pointer' : 'default' }}
-                >
-                    Job {jobNumber ? `#${jobNumber}` : ''}
-                </button>
-            </p>
-            <div className="flex flex-wrap items-center gap-2 text-[15px] font-semibold" style={{ letterSpacing: '-0.01em' }}>
-                {service || '—'}
+            {/* One title, one thought: the job number and what was done read as a
+                single line, and everything under it belongs to that job. */}
+            <button
+                type="button"
+                disabled={!detail.local_job_id}
+                onClick={() => detail.local_job_id && navigate(`/jobs/${detail.local_job_id}`)}
+                className="blanc-section-heading block text-left hover:underline disabled:no-underline"
+                style={{
+                    background: 'none', border: 'none', padding: 0, marginBottom: 8,
+                    cursor: detail.local_job_id ? 'pointer' : 'default',
+                }}
+            >
+                {jobNumber ? `Job #${jobNumber}` : 'Job'}{service ? ` · ${service}` : ''}
+            </button>
+
+            <div className="flex flex-wrap items-center gap-1.5">
                 {status && <Pill text={status} />}
-            </div>
-            {tags.length > 0 && (
-                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                {tags.map(tag => (
                     <span
-                        className="text-[10px] font-semibold uppercase"
-                        style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
+                        key={tag.id}
+                        className="inline-flex items-center px-2.5 text-[11px] font-semibold"
+                        style={{ height: 22, borderRadius: 6, background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
                     >
-                        Tags
+                        {tag.name}
                     </span>
-                    {tags.map(tag => (
-                        <span
-                            key={tag.id}
-                            className="inline-flex items-center px-2.5 text-[11px] font-semibold"
-                            style={{ height: 22, borderRadius: 6, background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
-                        >
-                            {tag.name}
-                        </span>
-                    ))}
-                </div>
-            )}
+                ))}
+            </div>
         </div>
     );
 }

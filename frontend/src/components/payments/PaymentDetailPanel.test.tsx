@@ -33,18 +33,27 @@ describe('payment card parity with the job card', () => {
         expect(identityRaw).toContain('var(--blanc-success)');
     });
 
-    it('puts the job number in the heading and the status in a pill', () => {
-        expect(jobSectionsRaw).toContain('Job {jobNumber');
+    it('titles the job in one line and puts status and tags beneath it', () => {
+        // "Job #389493 · COD Service" is one heading, not a label plus a value.
+        expect(jobSectionsRaw).toContain('`Job #${jobNumber}`');
+        expect(jobSectionsRaw).toContain('` · ${service}`');
         // The lead source is deliberately absent: on a payment it answers a
         // question nobody is asking here.
         expect(jobSectionsRaw).not.toContain('job_source');
         expect(jobSectionsRaw).toContain('{status &&');
-        expect(jobSectionsRaw).toContain('Tags');
+        expect(jobSectionsRaw).toContain('tags.map');
     });
 
     it('survives a payment with no job behind it', () => {
         // Imported rows can lack a local job; the card must still open.
         expect(panelRaw).toContain('not linked to a job');
         expect(panelRaw).toContain('job ? (');
+    });
+
+    it('nests the job’s own sections under that title', () => {
+        // Schedule, Location and Contact describe the job above them, and the
+        // indent is what says so — no frame, no repeated heading.
+        expect(panelRaw).toContain('pl-4');
+        expect(panelRaw).toContain('Indented under the job heading');
     });
 });

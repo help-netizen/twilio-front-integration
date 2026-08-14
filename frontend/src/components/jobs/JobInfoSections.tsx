@@ -79,8 +79,8 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
     // The payment card asked for one heading scale across its left column, so in
     // flat mode these labels become the same section heading Description uses.
     const label: React.CSSProperties = variant === 'flat'
-        ? { fontFamily: 'var(--blanc-font-heading)', fontSize: '20px', fontWeight: 600,
-            letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)', marginBottom: '12px' }
+        ? { fontFamily: 'var(--blanc-font-heading)', fontSize: '15px', fontWeight: 600,
+            letterSpacing: '-0.01em', color: 'var(--blanc-ink-1)', marginBottom: '8px' }
         : eyebrow;
     const [showReschedule, setShowReschedule] = useState(false);
     const [rescheduling, setRescheduling] = useState(false);
