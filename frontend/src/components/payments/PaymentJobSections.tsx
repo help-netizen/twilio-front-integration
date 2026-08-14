@@ -49,18 +49,33 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
                 {jobNumber ? `Job #${jobNumber}` : 'Job'}{service ? ` · ${service}` : ''}
             </button>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-                {status && <Pill text={status} />}
-                {tags.map(tag => (
+            {/* Two lines, not one: where the job stands and how it is labelled are
+                separate facts, and running them together made a pill soup where
+                neither could be scanned. */}
+            {status && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <Pill text={status} />
+                </div>
+            )}
+            {tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span
-                        key={tag.id}
-                        className="inline-flex items-center px-2.5 text-[11px] font-semibold"
-                        style={{ height: 22, borderRadius: 6, background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
+                        className="text-[10px] font-semibold uppercase"
+                        style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
                     >
-                        {tag.name}
+                        Tags
                     </span>
-                ))}
-            </div>
+                    {tags.map(tag => (
+                        <span
+                            key={tag.id}
+                            className="inline-flex items-center px-2.5 text-[11px] font-semibold"
+                            style={{ height: 22, borderRadius: 6, background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}
+                        >
+                            {tag.name}
+                        </span>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
