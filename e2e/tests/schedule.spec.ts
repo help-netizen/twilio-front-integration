@@ -119,6 +119,35 @@ test.describe('@suite:schedule', () => {
         }
     });
 
+    test('@p0 SCH-05 reschedule a job to a PAST slot (confirm the past time, then book)', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const [techA] = await api.fetchTechs(1);
+            const job = await api.createJob({ label: 'SCH-05 Job' });
+            await api.reassignJob(job.id, [techA]);
+            cleanup.push(
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+                { type: 'job', id: job.id },
+            );
+            const before = await api.getJob(job.id);
+
+            await new JobsPage(page).openJob(job.id, job.marker);
+            // Past slot: the picker must ask to confirm (dialog/sheet), then book it.
+            await new JobPanel(page).rescheduleToPast(techA.name);
+
+            await expect.poll(async () => (await api.getJob(job.id)).start_date).not.toBe(before.start_date);
+            const updated = await api.getJob(job.id);
+            // The confirm step allowed booking to an earlier (past) date.
+            expect(String(updated.start_date) < String(before.start_date)).toBe(true);
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
+
     test('@p0 SCH-04 reassign replaces technician A with technician B', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];

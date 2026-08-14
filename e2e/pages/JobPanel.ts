@@ -147,4 +147,28 @@ export class JobPanel {
         }
         await expect(success).toBeVisible();
     }
+
+    /** Reschedule to a PAST day — the slot picker's confirm step must be accepted. */
+    async rescheduleToPast(technicianName?: string): Promise<void> {
+        await expect(async () => {
+            if (await this.slotPicker.title.isVisible()) return;
+            await this.page.getByRole('button', { name: 'Reschedule', exact: true }).dispatchEvent('click');
+            await expect(this.slotPicker.title).toBeVisible({ timeout: 2000 });
+        }).toPass({ timeout: 20_000 });
+        await this.slotPicker.pickPastDaySlot(technicianName);
+        const warning = this.page.getByRole('dialog').filter({ hasText: 'Blocked by time off' });
+        const success = this.page.getByText('Job rescheduled', { exact: true });
+        const outcome = await Promise.race([
+            warning.waitFor({ state: 'visible' }).then(() => 'warning' as const),
+            success.waitFor({ state: 'visible' }).then(() => 'success' as const),
+        ]);
+        if (outcome === 'warning') {
+            await expect(async () => {
+                if (await success.isVisible()) return;
+                await warning.getByRole('button', { name: 'Reschedule', exact: true }).dispatchEvent('click');
+                await expect(success).toBeVisible({ timeout: 5000 });
+            }).toPass({ timeout: 30_000 });
+        }
+        await expect(success).toBeVisible();
+    }
 }
