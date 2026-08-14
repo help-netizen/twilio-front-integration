@@ -86,8 +86,10 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
         : eyebrow;
     // The rows sit slightly in from their heading so the group reads as one —
     // the shift alone does it, with no line to eat width on a phone.
-    const row: React.CSSProperties = flat ? { ...infoRow, paddingLeft: '23px' } : infoRow;
-    const indent: React.CSSProperties = flat ? { paddingLeft: '23px' } : {};
+    // Tried the rows shifted in behind the icon; the icon and the lighter weight
+    // already say "this belongs to the heading", and the shift only cost width.
+    const row: React.CSSProperties = infoRow;
+    const indent: React.CSSProperties = {};
     const icon = flat
         ? { size: 15, style: { color: 'var(--blanc-ink-3)', flexShrink: 0 } as React.CSSProperties }
         : null;

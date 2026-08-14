@@ -55,7 +55,9 @@ describe('payment card parity with the job card', () => {
         // A phone cannot afford a 16px gutter down the whole card, so the
         // secondary headings carry an icon and their rows shift in behind them.
         expect(panelRaw).not.toContain('border-l');
-        expect(jobInfoRaw).toContain("paddingLeft: '23px'");
+        // Neither a rail nor an indent: the icon and the lighter weight carry it,
+        // and every pixel of width stays with the data.
+        expect(jobInfoRaw).not.toContain("paddingLeft: '23px'");
         expect(jobInfoRaw).toContain('<CalendarClock size={icon.size}');
         expect(jobInfoRaw).toContain('<User size={icon.size}');
         expect(jobInfoRaw).toContain('<MapPin size={icon.size}');
