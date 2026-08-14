@@ -271,7 +271,12 @@ export function InvoiceEditorDialog({
     const openNewItem = () => {
         setEditingItemKey(null);
         setItemDraft(emptyItem());
-        setSavePresetOnNextItem(false);
+        // Any item hand-typed via this sheet is a NEW custom item that did not
+        // exist in the Price Book → save it to the catalog (when allowed). Picking
+        // a preset/group add-and-closes the sheet without ever reaching saveItem,
+        // and edits go through openEditItem (flag stays false), so this only ever
+        // flags genuinely-manual new items.
+        setSavePresetOnNextItem(canManagePriceBook);
         setItemSheetOpen(true);
     };
 
