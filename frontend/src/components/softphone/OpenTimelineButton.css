@@ -1,24 +1,29 @@
-/* OpenTimelineButton — hover-reveal message button */
+/* OpenTimelineButton — hover-reveal message button.
+   TYPE-CANON-001, same pass as ClickToCallButton: it was an indigo gradient,
+   which put a THIRD colour next to the green call chip on a card whose whole
+   palette is ink plus one violet. Both are now the same quiet chip. */
 
 .open-timeline-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     /* Visual size stays small, but clickable area is bigger via padding */
-    padding: 4px 6px;
-    background: linear-gradient(135deg, #6366f1, #818cf8);
-    color: #fff;
+    padding: 3px 7px;
+    background: var(--blanc-field);
+    color: var(--blanc-ink-2);
     border: none;
-    border-radius: 4px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 11px;
-    font-weight: 600;
+    font-family: var(--blanc-font-body);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 20px;
+    letter-spacing: 0.005em;
     white-space: nowrap;
     opacity: 0;
     transform: scale(0.9);
-    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
     vertical-align: middle;
-    line-height: 1;
     margin-left: 2px;
     /* Invisible extended hit area around button */
     position: relative;
@@ -35,7 +40,8 @@
 }
 
 .open-timeline-btn:hover {
-    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    background: var(--blanc-accent-soft);
+    color: var(--blanc-accent);
 }
 
 .open-timeline-btn:disabled {

@@ -1,25 +1,31 @@
-/* ClickToCallButton — hover-reveal call button */
+/* ClickToCallButton — hover-reveal call button.
+   TYPE-CANON-001: level-two type, --blanc-* only. It used to be an 11px/600
+   chip on a hardcoded green gradient, which on a neutral card read as a
+   warning light rather than an action. Quiet field fill at rest, the violet
+   accent on hover — the accent is what the app uses to mean "you can do this". */
 
 .click-to-call-btn {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 5px;
     /* Visual size stays small, but clickable area is bigger via padding */
-    padding: 4px 10px;
-    background: linear-gradient(135deg, #059669, #10b981);
-    color: #fff;
+    padding: 3px 10px;
+    background: var(--blanc-field);
+    color: var(--blanc-ink-2);
     border: none;
-    border-radius: 4px;
+    border-radius: 8px;
     cursor: pointer;
+    font-family: var(--blanc-font-body);
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 20px;
+    letter-spacing: 0.005em;
     text-decoration: none; /* renders as <a tel:> on mobile — no underline */
-    font-size: 11px;
-    font-weight: 600;
     white-space: nowrap;
     opacity: 0;
     transform: scale(0.9);
-    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
     vertical-align: middle;
-    line-height: 1;
     margin-left: 4px;
     /* Invisible extended hit area around button */
     position: relative;
@@ -36,7 +42,8 @@
 }
 
 .click-to-call-btn:hover {
-    background: linear-gradient(135deg, #047857, #059669);
+    background: var(--blanc-accent-soft);
+    color: var(--blanc-accent);
 }
 
 /* Show on parent hover — parent needs .click-to-call-row class */

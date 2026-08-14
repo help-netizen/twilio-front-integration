@@ -25,6 +25,7 @@ export function StatusPill({ label }: { label: string }) {
         || { background: 'rgba(25,25,25,.06)', color: 'var(--blanc-ink-2)' };
     return (
         <span
+            data-testid="payment-status"
             className="blanc-l2 inline-flex items-center px-2.5"
             style={{ ...tone, minHeight: 26, borderRadius: 8 }}
         >
@@ -43,9 +44,10 @@ export function PaymentIdentity({
     const isCheck = method.toLowerCase() === 'check';
 
     return (
-        <div>
+        <div data-testid="payment-identity">
             <p className="blanc-section-heading">Payment</p>
             <h2
+                data-testid="payment-amount"
                 className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
                 style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)', letterSpacing: '-0.025em' }}
             >
@@ -115,6 +117,7 @@ export function InvoiceFigures({ invoice }: { invoice: PaymentDetail['invoice'] 
         <div className="flex items-baseline gap-2">
             <span style={LEVEL_TWO_QUIET}>{label}</span>
             <span
+                data-testid={`invoice-${label.toLowerCase()}`}
                 className="blanc-l2 tabular-nums"
                 style={{ ...LEVEL_TWO_HEADING, color: color || 'var(--blanc-ink-1)' }}
             >

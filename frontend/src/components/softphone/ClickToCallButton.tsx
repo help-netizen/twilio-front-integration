@@ -49,7 +49,7 @@ export const ClickToCallButton: React.FC<ClickToCallButtonProps> = ({
                 onClick={(e) => e.stopPropagation()}
                 title={label}
             >
-                <Phone size={12} />
+                <Phone size={14} />
                 <span>Call</span>
             </a>
         );
@@ -65,7 +65,7 @@ export const ClickToCallButton: React.FC<ClickToCallButtonProps> = ({
             }}
             title={label}
         >
-            <Phone size={12} />
+            <Phone size={14} />
             <span>Call</span>
         </button>
     );

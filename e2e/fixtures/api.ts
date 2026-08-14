@@ -370,6 +370,35 @@ export class ApiClient {
         return { ...data, id: asNumber(data.id, 'job.id') };
     }
 
+    /**
+     * Record a manual payment against a job — the same endpoint the job card's
+     * Record-payment sheet posts to. Cash and check only; card runs through
+     * Stripe and has no place in an automated run.
+     */
+    async recordJobPayment(
+        jobId: number,
+        options: { amount: number; method?: 'cash' | 'check'; memo?: string },
+    ): Promise<{ id: number }> {
+        const data = await this.post<JsonObject>(`/api/jobs/${jobId}/record-payment`, {
+            amount: options.amount,
+            payment_method: options.method || 'cash',
+            ...(options.memo ? { memo: options.memo } : {}),
+        });
+        const payload = isObject(data.data) ? data.data : data;
+        return { id: asNumber(payload.id, 'payment.id') };
+    }
+
+    /** Note bodies on a job, so a test can prove where a note actually landed. */
+    async getJobNotes(jobId: number): Promise<string[]> {
+        const data = await this.get<unknown>(`/api/jobs/${jobId}/notes`);
+        const rows = Array.isArray(data)
+            ? data
+            : isObject(data) && Array.isArray(data.notes) ? data.notes : [];
+        return rows
+            .filter(isObject)
+            .map((row) => String(row.text ?? row.note ?? row.body ?? ''));
+    }
+
     async createEstimate(jobId: number, label = 'Estimate', unitPrice = 125): Promise<CreatedEstimate> {
         const marker = prefixed(label);
         const data = await this.post<JsonObject>('/api/estimates', {

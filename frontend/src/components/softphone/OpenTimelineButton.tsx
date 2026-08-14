@@ -75,9 +75,9 @@ export const OpenTimelineButton: React.FC<OpenTimelineButtonProps> = ({
             disabled={loading}
         >
             {loading ? (
-                <Loader2 size={12} className="animate-spin" />
+                <Loader2 size={14} className="animate-spin" />
             ) : (
-                <MessageCircle size={12} />
+                <MessageCircle size={14} />
             )}
         </button>
     );

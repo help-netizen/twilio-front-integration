@@ -44,7 +44,11 @@ export function PaymentDetailPanel({
 
     if (!detail) {
         return (
-            <div className="flex h-full flex-col items-center justify-center gap-3" style={{ color: 'var(--blanc-ink-3)' }}>
+            <div
+                data-testid="payment-load-error"
+                className="flex h-full flex-col items-center justify-center gap-3"
+                style={{ color: 'var(--blanc-ink-3)' }}
+            >
                 <Receipt className="size-10 opacity-20" />
                 <p className="text-sm">Unable to load payment details.</p>
             </div>
@@ -54,7 +58,7 @@ export function PaymentDetailPanel({
     const job = jobDetail.job;
 
     return (
-        <div className="flex h-full flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+        <div data-testid="payment-card" className="flex h-full flex-col overflow-y-auto md:flex-row md:overflow-hidden">
 
             {/* ═══ LEFT — the payment, then the job it paid for ═══ */}
             <div className="w-full space-y-6 px-5 py-5 md:w-1/2 md:overflow-y-auto">

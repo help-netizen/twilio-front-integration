@@ -232,7 +232,7 @@ export default function PaymentsPage() {
                             </tr></thead>
                             <tbody>
                                 {pm.rows.map(row => (
-                                    <tr key={row.id} className={pm.selectedId === row.id ? 'selected' : ''} onClick={() => pm.handleSelectRow(row.id)}>
+                                    <tr key={row.id} data-testid={`payment-row-${row.id}`} className={pm.selectedId === row.id ? 'selected' : ''} onClick={() => pm.handleSelectRow(row.id)}>
                                         <td>{formatPaymentDate(row.payment_date)}</td>
                                         <td className="amount-cell">{formatCurrency(row.amount_paid)}</td>
                                         <td className={`due-cell${row.invoice_amount_due && parseFloat(row.invoice_amount_due) > 0 ? ' due-outstanding' : ''}`}>{row.invoice_amount_due ? formatCurrency(row.invoice_amount_due) : '—'}</td>

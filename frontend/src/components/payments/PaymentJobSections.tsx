@@ -44,6 +44,7 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
                 single line, and everything under it belongs to that job. */}
             <button
                 type="button"
+                data-testid="payment-job-title"
                 disabled={!detail.local_job_id}
                 onClick={() => detail.local_job_id && navigate(`/jobs/${detail.local_job_id}`)}
                 className="blanc-section-heading block text-left hover:underline disabled:no-underline"
