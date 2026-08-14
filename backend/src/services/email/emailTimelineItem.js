@@ -28,12 +28,9 @@ function projectEmailTimelineItem(row) {
         // toTimelineBody decodes Gmail entities if this reaches snippet fallback.
         body_text: toTimelineBody(timelineText, { snippet: row.snippet }),
         display_html: stripTimelineHtml(row.body_html),
-        // EMAIL-TS-ORDER-001: for outbound rows our own insert time is the send
-        // moment and is trustworthy; provider dates on agent-path outbound have
-        // shown hour-scale timezone skew. Inbound keeps the provider date.
-        sent_at: isOutbound
-            ? (row.created_at || row.gmail_internal_at)
-            : (row.gmail_internal_at || row.created_at),
+        // EMAIL-OCCURRED-AT-001: ingestion owns timestamp reconciliation; every
+        // projection reads the same stored absolute instant.
+        sent_at: row.occurred_at,
         thread_id: row.thread_id,
         sent_by_user_email: row.sent_by_user_email || null,
     };

@@ -18,6 +18,7 @@ import { JobTechnicianControl } from './JobTechnicianControl';
 import { useNavigate } from 'react-router-dom';
 import { googleMapsUrl } from '../../utils/routeFormat';
 import { LEVEL_TWO_QUIET, LEVEL_TWO_HEADING, LEVEL_TWO_LABEL_WIDTH } from '../../styles/levelTwo';
+import { useCompanyTime } from '../../lib/companyTime';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,7 @@ const flatLabel: React.CSSProperties = {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'card' }: JobInfoSectionsProps) {
+    const { format } = useCompanyTime();
     const section = variant === 'flat' ? flatSection : sectionCard;
     const flat = variant === 'flat';
     // Flat runs the level-two rule: the group's heading is the SAME size as the
@@ -346,13 +348,13 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                                     ? { color: 'var(--blanc-ink-1)' }
                                     : { fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.03em', color: 'var(--blanc-ink-1)' }}
                             >
-                                {new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                {format(job.start_date, { month: 'short', day: 'numeric', year: 'numeric' })}
                                 {', '}
-                                {new Date(job.start_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                                {format(job.start_date, { hour: 'numeric', minute: '2-digit', hour12: true })}
                                 {job.end_date && (
                                     <span style={{ color: flat ? 'var(--blanc-ink-3)' : 'var(--blanc-ink-2)' }}>
                                         {' – '}
-                                        {new Date(job.end_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                                        {format(job.end_date, { hour: 'numeric', minute: '2-digit', hour12: true })}
                                     </span>
                                 )}
                             </div>

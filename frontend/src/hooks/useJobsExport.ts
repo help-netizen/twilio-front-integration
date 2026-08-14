@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { authedFetch } from '../services/apiClient';
 import type { LocalJob } from '../services/jobsApi';
+import { useCompanyTime } from '../lib/companyTime';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,7 @@ interface UseJobsExportParams {
 export function useJobsExport({
     sortBy, sortOrder, startDate, endDate,
 }: UseJobsExportParams) {
+    const { format } = useCompanyTime();
     const [exporting, setExporting] = useState(false);
 
     const handleExportCSV = async () => {
@@ -57,7 +59,7 @@ export function useJobsExport({
             const formatDateOnly = (d?: string) => {
                 if (!d) return '';
                 try {
-                    return new Date(d).toLocaleDateString('en-US', {
+                    return format(d, {
                         month: '2-digit', day: '2-digit', year: '2-digit',
                     });
                 } catch { return ''; }

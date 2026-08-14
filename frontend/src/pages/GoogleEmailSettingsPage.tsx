@@ -9,6 +9,7 @@ import { CloudBanner } from '../components/ui/CloudBanner';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { SettingsSection } from '../components/settings/SettingsSection';
 import { getMailboxSettings, startGoogleConnect, disconnectMailbox, triggerManualSync, type EmailMailbox } from '../services/emailApi';
+import { formatCompanyTime, useCompanyTime } from '../lib/companyTime';
 
 /**
  * Google Email marketplace app setup surface (SEND-DOC-001, app_key `google-email`).
@@ -24,13 +25,13 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.
     disconnected: { label: 'Disconnected', color: 'var(--blanc-ink-3)', icon: <XCircle className="size-4" style={{ color: 'var(--blanc-ink-3)' }} /> },
 };
 
-function formatSyncTime(iso: string | null): string {
+function formatSyncTime(iso: string | null, timeZone: string): string {
     if (!iso) return 'Never';
-    const d = new Date(iso);
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return formatCompanyTime(iso, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }, timeZone);
 }
 
 export default function GoogleEmailSettingsPage() {
+    const { timeZone } = useCompanyTime();
     const queryClient = useQueryClient();
     const [searchParams, setSearchParams] = useSearchParams();
     const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -163,7 +164,7 @@ export default function GoogleEmailSettingsPage() {
                         </div>
 
                         <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
-                            <span>Last synced {formatSyncTime(mailbox.last_synced_at)}</span>
+                            <span>Last synced {formatSyncTime(mailbox.last_synced_at, timeZone)}</span>
                             {mailbox.last_sync_error && (
                                 <span style={{ color: 'var(--blanc-warning)' }}> {mailbox.last_sync_error}</span>
                             )}

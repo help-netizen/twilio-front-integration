@@ -469,12 +469,12 @@ async function getRecentCommunications(companyId, record, client = null) {
         ? query(
             `SELECT message.id, message.direction, message.from_name, message.from_email,
                     message.subject, COALESCE(message.body_text, message.snippet) AS body_text,
-                    COALESCE(message.gmail_internal_at, message.created_at) AS occurred_at
+                    message.occurred_at
              FROM email_messages message
              WHERE message.company_id = $1
                AND message.contact_id = $2
                AND message.is_draft_artifact = false
-             ORDER BY COALESCE(message.gmail_internal_at, message.created_at) DESC
+             ORDER BY message.occurred_at DESC
              LIMIT 5`,
             [companyId, contactId]
         )

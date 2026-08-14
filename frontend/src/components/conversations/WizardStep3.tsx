@@ -6,6 +6,7 @@ import type { WizardState, Step } from './wizardTypes';
 import { serverDate } from '../../utils/serverClock';
 import { CustomTimeModal } from './CustomTimeModal';
 import { slotRecommendationToSchedule } from '../leads/useConvertToJob';
+import { formatCompanyTime } from '../../lib/companyTime';
 
 // Canon field skin for raw inputs that FloatingField can't host (date input needs min).
 const dateInputClass =
@@ -47,7 +48,7 @@ export function WizardStep3(s: WizardState) {
                 {s.recommendations.map((rec: any) => {
                     const sched = slotRecommendationToSchedule(rec, s.companyTz);
                     const selected = s.selectedSchedule?.source === 'engine' && s.selectedSchedule.start === sched.start && s.selectedSchedule.techId === sched.techId;
-                    const day = new Date(`${rec.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                    const day = formatCompanyTime(rec.date, { weekday: 'short', month: 'short', day: 'numeric' }, s.companyTz);
                     return (
                         <button
                             key={`${rec.rank}-${rec.date}-${rec.time_frame.start}-${sched.techId ?? 'any'}`}

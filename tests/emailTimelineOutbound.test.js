@@ -40,6 +40,7 @@ function outboundRow(overrides = {}) {
         body_html: '<p>hi</p><div class="gmail_quote">OLD-HTML</div>',
         snippet: null,
         gmail_internal_at: '2026-06-23T13:00:00.000Z',
+        occurred_at: '2026-06-23T13:00:00.000Z',
         sent_by_user_email: 'agent@co.com',
         ...overrides,
     };
@@ -469,6 +470,7 @@ function linkedOutboundRow(overrides = {}) {
         subject: 'Re: your booking', body_text: 'on our way', snippet: 'on our way',
         body_html: '<p>on our way</p><div class="gmail_quote">OLD-HTML</div>',
         gmail_internal_at: '2026-06-23T14:00:00.000Z', sent_by_user_email: 'agent@co.com',
+        occurred_at: '2026-06-23T14:00:00.000Z',
         ...overrides,
     };
 }

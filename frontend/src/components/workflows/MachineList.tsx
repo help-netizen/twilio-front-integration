@@ -1,13 +1,14 @@
 import { useNavigate } from 'react-router-dom';
 import { useFsmMachines, type FsmMachine } from '../../hooks/useFsmEditor';
 import { Badge } from '../ui/badge';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
-function formatDate(iso: string): string {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+function formatDate(iso: string, timeZone: string): string {
+    return formatCompanyTime(iso, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 function MachineCard({ machine, onSelect }: { machine: FsmMachine; onSelect: () => void }) {
+    const { timeZone } = useCompanyTime();
     return (
         <div
             className="border border-[var(--blanc-line)] rounded-xl p-4 hover:border-[rgba(25,25,25,0.24)] transition-colors"
@@ -29,7 +30,7 @@ function MachineCard({ machine, onSelect }: { machine: FsmMachine; onSelect: () 
                                     v{machine.active_version.version_number}
                                 </Badge>
                                 <span className="text-xs text-[var(--blanc-ink-3)]">
-                                    Published {formatDate(machine.active_version.published_at)}
+                                    Published {formatDate(machine.active_version.published_at, timeZone)}
                                 </span>
                             </>
                         )}

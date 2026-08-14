@@ -4,6 +4,7 @@ import type { EmailMessage } from '../../services/emailApi';
 import { getAttachmentDownloadUrl } from '../../services/emailApi';
 import { AttachmentsSection, type AttachmentItem } from '../shared/AttachmentsSection';
 import SafeEmailHtml from './SafeEmailHtml';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
 
@@ -12,10 +13,9 @@ interface EmailMessageItemProps {
     isLast: boolean;
 }
 
-function formatDateTime(iso: string | null): string {
+function formatDateTime(iso: string | null, timeZone: string): string {
     if (!iso) return '';
-    const d = new Date(iso);
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return formatCompanyTime(iso, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }, timeZone);
 }
 
 function formatRecipients(recipients: { name?: string; email: string }[]): string {
@@ -23,6 +23,7 @@ function formatRecipients(recipients: { name?: string; email: string }[]): strin
 }
 
 export function EmailMessageItem({ message, isLast }: EmailMessageItemProps) {
+    const { timeZone } = useCompanyTime();
     const [expanded, setExpanded] = useState(isLast);
     const [allowImages, setAllowImages] = useState(false);
     const isOutbound = message.direction === 'outbound';
@@ -73,7 +74,7 @@ export function EmailMessageItem({ message, isLast }: EmailMessageItemProps) {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                     <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
-                        {formatDateTime(message.gmail_internal_at)}
+                        {formatDateTime(message.occurred_at, timeZone)}
                     </span>
                     {expanded ? <ChevronUp className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} /> : <ChevronDown className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />}
                 </div>

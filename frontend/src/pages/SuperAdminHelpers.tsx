@@ -1,6 +1,7 @@
 import React from 'react';
 import { Card, CardContent } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
+import { formatCompanyTime } from '../lib/companyTime';
 
 export interface SessionInfo { id: string; userId: string; username: string; email: string; ipAddress: string; start: number; lastAccess: number; }
 
@@ -18,9 +19,12 @@ export function fmt(seconds: number) {
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
-export function fmtDate(ts: number) {
+export function fmtDate(ts: number, timeZone?: string | null) {
     if (!ts) return '—';
-    return new Date(ts).toLocaleString();
+    return formatCompanyTime(ts, {
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric',
+    }, timeZone);
 }
 
 export function PolicyCard({ icon: Icon, label, value, variant }: {

@@ -6,6 +6,7 @@ import { Skeleton } from '../ui/skeleton';
 import { CreateLeadJobWizard } from './CreateLeadJobWizard';
 import type { Lead } from '../../types/lead';
 import './LeadCard.css';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface LeadCardProps {
     phone: string;
@@ -32,10 +33,9 @@ function statusClass(status: string): string {
     return 'lead-card__status--new';
 }
 
-function formatDate(iso: string | null | undefined): string {
+function formatDate(iso: string | null | undefined, timeZone: string): string {
     if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(iso, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 function buildAddress(lead: Lead): string | null {
@@ -46,6 +46,7 @@ function buildAddress(lead: Lead): string | null {
 /* ────────────────────────────────────── */
 
 export function LeadCard({ phone, hasActiveCall }: LeadCardProps) {
+    const { timeZone } = useCompanyTime();
     const { lead, isLoading } = useLeadByPhone(phone);
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
@@ -192,7 +193,7 @@ export function LeadCard({ phone, hasActiveCall }: LeadCardProps) {
 
                     {/* Created */}
                     <InfoItem icon={<Calendar />} label="Created">
-                        {formatDate(lead.CreatedDate)}
+                        {formatDate(lead.CreatedDate, timeZone)}
                     </InfoItem>
                 </div>
             </div>
@@ -225,4 +226,3 @@ function InfoItem({
         </div>
     );
 }
-

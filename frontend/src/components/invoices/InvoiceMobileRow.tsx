@@ -1,4 +1,5 @@
 import type { Invoice } from '../../services/invoicesApi';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface Props {
     invoice: Invoice;
@@ -26,22 +27,22 @@ export function invoiceStatusTone(status: Invoice['status']): string {
     return 'bg-[var(--blanc-field)] text-[var(--blanc-ink-2)]';
 }
 
-function shortDate(value: string | null | undefined): string {
+function shortDate(value: string | null | undefined, timeZone?: string): string {
     if (!value) return '';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return formatCompanyTime(/^\d{4}-\d{2}-\d{2}$/.test(value) ? value : date, { month: 'short', day: 'numeric' }, timeZone);
 }
 
-export function invoiceTimingLabel(invoice: Invoice): string {
+export function invoiceTimingLabel(invoice: Invoice, timeZone?: string): string {
     if (invoice.status === 'draft') return 'Not sent';
     if (invoice.status === 'paid') {
-        const paid = shortDate(invoice.paid_at);
+        const paid = shortDate(invoice.paid_at, timeZone);
         return paid ? `Paid ${paid}` : 'Paid';
     }
     if (invoice.status === 'void') return 'Voided';
     if (invoice.status === 'refunded') return 'Refunded';
-    const due = shortDate(invoice.due_date);
+    const due = shortDate(invoice.due_date, timeZone);
     return due ? `Due ${due}` : 'No due date';
 }
 
@@ -60,6 +61,7 @@ function money(value: string | number | null | undefined): string {
 }
 
 export function InvoiceMobileRow({ invoice, onOpen }: Props) {
+    const { timeZone } = useCompanyTime();
     const balance = Number(invoice.balance_due) || 0;
     const total = Number(invoice.total) || 0;
     const showTotal = balance > 0 && total > 0 && balance !== total;
@@ -94,7 +96,7 @@ export function InvoiceMobileRow({ invoice, onOpen }: Props) {
                     {customerJob}
                 </span>
                 <span className={`mt-0.5 block text-[11.5px] ${invoice.status === 'overdue' ? 'text-[var(--blanc-danger)]' : 'text-[var(--blanc-ink-3)]'}`}>
-                    {invoiceTimingLabel(invoice)}
+                    {invoiceTimingLabel(invoice, timeZone)}
                 </span>
             </span>
             <span className="shrink-0 pt-0.5 text-right">

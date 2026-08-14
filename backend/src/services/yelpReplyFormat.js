@@ -40,7 +40,7 @@ function formatAttributionDate(date, timeZone = 'America/New_York') {
 /**
  * Compose the {html, text} reply bodies: the reply text on top, then the Gmail-style
  * attribution + quoted original. `quote` = the inbound row we're answering
- * ({ body_text, body_html, from_email, from_name, gmail_internal_at }); with no
+ * ({ body_text, body_html, from_email, from_name, occurred_at }); with no
  * usable quote the reply degrades to unquoted (better a maybe-bounced reply than
  * none) — callers still send BOTH parts so the message stays multipart/alternative.
  *
@@ -60,7 +60,7 @@ function buildReplyBodies(replyText, quote) {
     const who = quote.from_name
         ? `${quote.from_name} <${quote.from_email || ''}>`
         : `<${quote.from_email || ''}>`;
-    const when = formatAttributionDate(quote.gmail_internal_at);
+    const when = formatAttributionDate(quote.occurred_at);
     const attribution = when ? `On ${when} ${who} wrote:` : `On an earlier date ${who} wrote:`;
 
     // text/plain: "> "-prefix every line of the original (Gmail quoting).

@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Estimate, EstimateCreateData } from '../services/estimatesApi';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { formatCompanyTime, useCompanyTime } from '../lib/companyTime';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
@@ -35,14 +36,15 @@ function formatMoney(value: string | number): string {
     return Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, timeZone: string): string {
     if (!value) return '-';
-    return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(value, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function EstimatesPage() {
+    const { timeZone } = useCompanyTime();
     const page = useEstimates();
     const [editorOpen, setEditorOpen] = useState(false);
     const [editingEstimate, setEditingEstimate] = useState<Estimate | null>(null);
@@ -169,7 +171,7 @@ export function EstimatesPage() {
                                             {est.archived_at && <Badge variant="outline" className="ml-1">Archived</Badge>}
                                         </td>
                                         <td className="px-4 py-2 text-right font-mono">${formatMoney(est.total)}</td>
-                                        <td className="px-4 py-2 text-muted-foreground">{formatDate(est.created_at)}</td>
+                                        <td className="px-4 py-2 text-muted-foreground">{formatDate(est.created_at, timeZone)}</td>
                                         <td className="px-4 py-2 text-right">
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>

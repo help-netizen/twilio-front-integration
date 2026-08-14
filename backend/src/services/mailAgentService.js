@@ -120,11 +120,10 @@ async function reviewInboundEmail(companyId, msg, ctx = {}) {
 
         // MAIL-AGENT-002: only mail that ARRIVED after the agent went live.
         // History re-walks and full resyncs funnel months-old letters through
-        // this hook — gate on the email's OWN Gmail timestamp, silently (no
+        // this hook — gate on the email's canonical event timestamp, silently (no
         // review row: historical mail is re-touched by every sync pass and
         // would flood the decisions feed).
-        const emailDate = msg.internal_at ? new Date(msg.internal_at)
-            : (emailRow.gmail_internal_at ? new Date(emailRow.gmail_internal_at) : null);
+        const emailDate = emailRow.occurred_at ? new Date(emailRow.occurred_at) : null;
         const activatedAt = settings.activated_at ? new Date(settings.activated_at) : null;
         if (!activatedAt || !emailDate || Number.isNaN(emailDate.getTime()) || emailDate < activatedAt) {
             return { skipped: 'historical' };

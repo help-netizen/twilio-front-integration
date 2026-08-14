@@ -18,6 +18,7 @@ import { ContactSavedCardsSection } from './ContactSavedCardsSection';
 import { EditContactDialog } from './EditContactDialog';
 import { JobsList } from './ContactJobsList';
 import { LEAD_STATUS_COLORS, hexToRgba } from '../leads/leadStatusStyles';
+import { useCompanyTime } from '../../lib/companyTime';
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ interface ContactDetailPanelProps {
 
 export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged, onContactChanged }: ContactDetailPanelProps) {
     const navigate = useNavigate();
+    const { format } = useCompanyTime();
     const [editOpen, setEditOpen] = useState(false);
     const [onlyOpen, setOnlyOpen] = useState(true);
 
@@ -119,8 +121,8 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         <ActivitySection leads={filteredLeads} contactId={contact.id} onlyOpen={onlyOpen} onOnlyOpenChange={setOnlyOpen} />
                         {/* Timestamps */}
                         <div className="flex gap-6 text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                            {contact.created_at && <span>Created: {new Date(contact.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
-                            {contact.updated_at && <span>Updated: {new Date(contact.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
+                            {contact.created_at && <span>Created: {format(contact.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
+                            {contact.updated_at && <span>Updated: {format(contact.updated_at, { month: 'short', day: 'numeric', year: 'numeric' })}</span>}
                         </div>
                     </div>
                 </div>
@@ -145,6 +147,7 @@ function ActivitySection({ leads, contactId, onlyOpen, onOnlyOpenChange }: {
     onOnlyOpenChange: (v: boolean) => void;
 }) {
     const navigate = useNavigate();
+    const { format } = useCompanyTime();
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
 
@@ -179,7 +182,7 @@ function ActivitySection({ leads, contactId, onlyOpen, onOnlyOpenChange }: {
                                         <span className="text-[11px] font-mono" style={{ color: 'var(--blanc-ink-3)' }}>#{lead.serial_id}</span>
                                     </div>
                                     <div className="text-[12px] mt-1" style={{ color: 'var(--blanc-ink-3)' }}>
-                                        {new Date(lead.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        {format(lead.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}
                                         {canViewSource && lead.job_source && ` · ${lead.job_source}`}
                                     </div>
                                 </div>

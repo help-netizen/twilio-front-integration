@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-08-14 — EMAIL-OCCURRED-AT-001: canonical email time + company timezone
+
+Migration 261 adds required `email_messages.occurred_at`, backfills the approved
+inbound/outbound/history bands, adds occurred-time indexes, and rebuilds thread
+last-message caches while preserving draft-only threads. Its permanent `now()`
+default keeps the old poller write-compatible between migration and container
+rollout. Live polling repairs outbound provider timestamps more than ten minutes
+from observation; initial/history-gap imports preserve provider time.
+Email workspace, Pulse/timeline, Inspector, Mail Secretary, reply-read, Yelp, and
+cache consumers now use the one stored convention; raw Gmail time remains evidence.
+
+Frontend date/time output now goes through one `AuthProvider.company.timezone`
+helper with New York fallback and a source ratchet for unzoned locale calls. The
+same instant is stable between UTC+5 and New York browsers. Local prod-copy result:
+10,328 rows, 0 null canonical times, 0 thread-cache mismatches. Focused backend
+279/279, real-PG 6/6, frontend time/ratchet 5/5, production build passed; all three
+required sabotages went red and were restored green. No production run, no push
+service/DRAFT-guard change, and no ChatGPT MCP email projection change. **НЕ задеплоено.**
+
 ## 2026-08-14 — EMAIL-DRAFT-INGEST-001: Gmail autosaves excluded + reversible prune CLI
 
 Polling now excludes Gmail `DRAFT` messages at `threads.list`, immediately after `threads.get`, and in the per-message history path before normalization. Migration 260 adds the reversible `email_messages.is_draft_artifact` marker; a dry-run-first, company+mailbox-scoped CLI classifies historical outbound rows by Gmail message existence and marks only 404s, with bounded rollout, pacing, retry backoff, and fail-closed errors. Missing candidates log only row/message ids, Gmail timestamp, and body length—never body PII. Mark/unmark transactionally refreshes the four cached last-message display fields from the newest visible message while preserving `unread_count`; a draft-only thread cache is left unchanged. Marked rows are excluded from email/timeline/Pulse/Inspector read projections; no physical deletion, frontend, push-path, or ChatGPT MCP tool change. Verification: focused 27/27 and real-PG 4/4; DRAFT-upsert, tenant-guard, and thread-cache sabotages red→restore→green. **НЕ задеплоено.**

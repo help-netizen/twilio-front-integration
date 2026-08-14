@@ -8,7 +8,6 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { ArrowUp, ArrowDown, ArrowUpDown, PhoneIncoming, PhoneOutgoing, Download } from 'lucide-react';
-import { format } from 'date-fns';
 import { telephonyApi } from '../../services/telephonyApi';
 import { Button } from '../../components/ui/button';
 import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
@@ -16,6 +15,7 @@ import { DateRangePickerPopover } from '../../components/ui/DateRangePickerPopov
 import { FloatingDetailPanel } from '../../components/ui/FloatingDetailPanel';
 import type { RoutingLogEntry, UserGroup } from '../../types/telephony';
 import { authedFetch } from '../../services/apiClient';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 // ── Result styling ───────────────────────────────────────────────────────
 
@@ -28,35 +28,33 @@ const RESULT_CONFIG: Record<string, { bg: string; text: string; label: string }>
 
 // ── Date helpers ─────────────────────────────────────────────────────────
 
-function dateKey(ts: string): string {
+function dateKey(ts: string | Date, timeZone: string): string {
     try {
         const d = new Date(ts);
         if (isNaN(d.getTime())) return '';
-        return d.toLocaleDateString('en-CA');
+        return formatCompanyTime(d, { year: 'numeric', month: '2-digit', day: '2-digit' }, timeZone, 'en-CA');
     } catch { return ''; }
 }
 
-function formatDayHeading(ts: string): string {
+function formatDayHeading(ts: string, timeZone: string): string {
     try {
         const d = new Date(ts);
         if (isNaN(d.getTime())) return ts;
         const now = new Date();
-        const todayKey = now.toLocaleDateString('en-CA');
-        const yesterday = new Date(now);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayKey = yesterday.toLocaleDateString('en-CA');
-        const dk = d.toLocaleDateString('en-CA');
+        const todayKey = dateKey(now, timeZone);
+        const yesterdayKey = dateKey(new Date(now.getTime() - 86400000), timeZone);
+        const dk = dateKey(d, timeZone);
         if (dk === todayKey) return 'Today';
         if (dk === yesterdayKey) return 'Yesterday';
-        return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        return formatCompanyTime(d, { weekday: 'short', month: 'short', day: 'numeric' }, timeZone);
     } catch { return ts; }
 }
 
-function formatTime(ts: string): string {
+function formatTime(ts: string, timeZone: string): string {
     try {
         const d = new Date(ts);
         if (isNaN(d.getTime())) return '';
-        return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        return formatCompanyTime(d, { hour: 'numeric', minute: '2-digit', hour12: true }, timeZone);
     } catch { return ''; }
 }
 
@@ -113,18 +111,18 @@ interface DayGroup {
     logs: RoutingLogEntry[];
 }
 
-function groupByDay(logs: RoutingLogEntry[]): DayGroup[] {
+function groupByDay(logs: RoutingLogEntry[], timeZone: string): DayGroup[] {
     const map = new Map<string, RoutingLogEntry[]>();
     const order: string[] = [];
     for (const log of logs) {
-        const dk = dateKey(log.timestamp);
+        const dk = dateKey(log.timestamp, timeZone);
         if (!dk) continue;
         if (!map.has(dk)) { map.set(dk, []); order.push(dk); }
         map.get(dk)!.push(log);
     }
     return order.map(dk => ({
         key: dk,
-        heading: formatDayHeading(map.get(dk)![0].timestamp),
+        heading: formatDayHeading(map.get(dk)![0].timestamp, timeZone),
         logs: map.get(dk)!,
     }));
 }
@@ -138,19 +136,19 @@ function escapeCsv(val: string): string {
     return val;
 }
 
-function formatDateForCsv(ts: string): string {
+function formatDateForCsv(ts: string, timeZone: string): string {
     try {
         const d = new Date(ts);
         if (isNaN(d.getTime())) return '';
-        return d.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        return formatCompanyTime(d, { year: 'numeric', month: '2-digit', day: '2-digit' }, timeZone);
     } catch { return ''; }
 }
 
-function exportToCsv(logs: RoutingLogEntry[]) {
+function exportToCsv(logs: RoutingLogEntry[], timeZone: string) {
     const header = ['Date', 'Time', 'Direction', 'Group', 'Caller', 'Phone', 'To', 'Result', 'Duration (s)'];
     const rows = logs.map(log => [
-        escapeCsv(formatDateForCsv(log.timestamp)),
-        escapeCsv(formatTime(log.timestamp)),
+        escapeCsv(formatDateForCsv(log.timestamp, timeZone)),
+        escapeCsv(formatTime(log.timestamp, timeZone)),
         escapeCsv(log.direction === 'outbound' ? 'Outbound' : 'Inbound'),
         escapeCsv(log.group_name || ''),
         escapeCsv(log.contact_name || ''),
@@ -194,19 +192,19 @@ const gridTemplate = COLUMNS.map(c => c.width).join(' ');
 
 // ── Component ────────────────────────────────────────────────────────────
 
-function defaultDateFrom(): string {
-    const d = new Date(); d.setDate(d.getDate() - 7);
-    return format(d, 'yyyy-MM-dd');
+function defaultDateFrom(timeZone: string): string {
+    return dateKey(new Date(Date.now() - (7 * 86400000)), timeZone);
 }
 
 export default function RoutingLogsPage() {
+    const { timeZone } = useCompanyTime();
     const [logs, setLogs] = useState<RoutingLogEntry[]>([]);
     const [selected, setSelected] = useState<RoutingLogEntry | null>(null);
     const [loading, setLoading] = useState(true);
     const [sortBy, setSortBy] = useState<SortField>('timestamp');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
-    const [dateFrom, setDateFrom] = useState<string>(defaultDateFrom);
-    const [dateTo, setDateTo] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
+    const [dateFrom, setDateFrom] = useState<string>(() => defaultDateFrom(timeZone));
+    const [dateTo, setDateTo] = useState<string>(() => dateKey(new Date(), timeZone));
     const [groups, setGroups] = useState<UserGroup[]>([]);
     const [groupId, setGroupId] = useState('');
     const [error, setError] = useState<string | null>(null);
@@ -244,16 +242,16 @@ export default function RoutingLogsPage() {
     const filtered = useMemo(() => {
         if (!dateFrom && !dateTo) return logs;
         return logs.filter(log => {
-            const dk = dateKey(log.timestamp);
+            const dk = dateKey(log.timestamp, timeZone);
             if (!dk) return false;
             if (dateFrom && dk < dateFrom) return false;
             if (dateTo && dk > dateTo) return false;
             return true;
         });
-    }, [logs, dateFrom, dateTo]);
+    }, [logs, dateFrom, dateTo, timeZone]);
 
     const sorted = useMemo(() => sortLogs(filtered, sortBy, sortOrder), [filtered, sortBy, sortOrder]);
-    const dayGroups = useMemo(() => groupByDay(sorted), [sorted]);
+    const dayGroups = useMemo(() => groupByDay(sorted, timeZone), [sorted, timeZone]);
 
     const handleHeaderClick = (col: ColDef) => {
         if (!col.sortKey) return;
@@ -318,7 +316,7 @@ export default function RoutingLogsPage() {
             actions={
                 <>
                     {filterActions}
-                    <Button variant="outline" size="sm" onClick={() => exportToCsv(sorted)}>
+                    <Button variant="outline" size="sm" onClick={() => exportToCsv(sorted, timeZone)}>
                         <Download size={14} />
                         Export CSV
                     </Button>
@@ -386,6 +384,7 @@ export default function RoutingLogsPage() {
                             <LogRow
                                 key={log.id}
                                 log={log}
+                                timeZone={timeZone}
                                 isSelected={selected?.id === log.id}
                                 onClick={() => setSelected(selected?.id === log.id ? null : log)}
                             />
@@ -399,14 +398,14 @@ export default function RoutingLogsPage() {
             </div>
 
             {/* Detail drawer — overlay so the list keeps full width (no column crush) */}
-            {selected && <DetailPanel log={selected} onClose={() => setSelected(null)} />}
+            {selected && <DetailPanel log={selected} timeZone={timeZone} onClose={() => setSelected(null)} />}
         </SettingsPageShell>
     );
 }
 
 // ── Sub-components ───────────────────────────────────────────────────────
 
-function LogRow({ log, isSelected, onClick }: { log: RoutingLogEntry; isSelected: boolean; onClick: () => void }) {
+function LogRow({ log, timeZone, isSelected, onClick }: { log: RoutingLogEntry; timeZone: string; isSelected: boolean; onClick: () => void }) {
     const rc = RESULT_CONFIG[log.result] || RESULT_CONFIG.error;
     const DirIcon = log.direction === 'outbound' ? PhoneOutgoing : PhoneIncoming;
 
@@ -432,7 +431,7 @@ function LogRow({ log, isSelected, onClick }: { log: RoutingLogEntry; isSelected
         >
             {/* Time */}
             <span style={{ fontSize: 12, color: 'var(--blanc-ink-2)', padding: '0 6px' }}>
-                {formatTime(log.timestamp)}
+                {formatTime(log.timestamp, timeZone)}
             </span>
 
             {/* Caller name */}
@@ -490,7 +489,7 @@ function LogRow({ log, isSelected, onClick }: { log: RoutingLogEntry; isSelected
     );
 }
 
-function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => void }) {
+function DetailPanel({ log, timeZone, onClose }: { log: RoutingLogEntry; timeZone: string; onClose: () => void }) {
     const rc = RESULT_CONFIG[log.result] || RESULT_CONFIG.error;
 
     return (
@@ -517,7 +516,7 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
             <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 10, background: rc.bg, color: rc.text }}>{rc.label}</span>
                 <span style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>{formatDuration(log.duration_sec)}</span>
-                <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{formatTime(log.timestamp)}</span>
+                <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{formatTime(log.timestamp, timeZone)}</span>
             </div>
 
             <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', marginBottom: 14, wordBreak: 'break-all' }}>{log.session_id}</div>

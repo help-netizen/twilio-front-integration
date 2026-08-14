@@ -54,7 +54,7 @@ async function markReadAfterReply(companyId, { timelineId, contactId = null, rep
         // Newer-inbound guard across all three channels.
         const { rows: guard } = await db.query(
             `SELECT GREATEST(
-                (SELECT max(em.gmail_internal_at) FROM email_messages em
+                (SELECT max(em.occurred_at) FROM email_messages em
                   WHERE em.timeline_id = $1 AND em.company_id = $2 AND em.direction = 'inbound'),
                 (SELECT max(c2.started_at) FROM calls c2
                   WHERE c2.timeline_id = $1 AND c2.direction ILIKE 'inbound%'),

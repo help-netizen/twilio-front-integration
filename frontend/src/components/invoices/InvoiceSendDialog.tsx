@@ -19,6 +19,7 @@ import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { FloatingField } from '../ui/floating-field';
 import { PhoneInput, isValidUSPhone, toE164 } from '../ui/PhoneInput';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface Props {
     open: boolean;
@@ -55,11 +56,11 @@ function fmtMoney(value: number | string | null | undefined): string {
     });
 }
 
-function fmtDate(value: string | null | undefined): string {
+function fmtDate(value: string | null | undefined, timeZone?: string): string {
     if (!value) return '';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00Z` : date, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 export function buildDefaultInvoiceMessage(
@@ -72,13 +73,14 @@ export function buildDefaultInvoiceMessage(
         total: number;
         dueDate: string | null;
         signOff: string;
+        timeZone?: string;
     },
 ): string {
-    const { invoiceNumber, name, url, balanceDue, total, dueDate, signOff } = options;
+    const { invoiceNumber, name, url, balanceDue, total, dueDate, signOff, timeZone } = options;
     const shortNumber = invoiceNumber ? invoiceNumber.replace(/^INVOICE\s+/i, '') : '';
     const label = shortNumber || 'your invoice';
     const isPaid = balanceDue <= 0 && total > 0;
-    const due = fmtDate(dueDate);
+    const due = fmtDate(dueDate, timeZone);
     const signature = signOff ? `\n${signOff}` : '';
 
     if (channel === 'sms') {
@@ -122,6 +124,7 @@ export function buildDefaultInvoiceMessage(
 
 export function InvoiceSendDialog({ open, onOpenChange, invoice, onSend }: Props) {
     const { user } = useAuth();
+    const { timeZone } = useCompanyTime();
     const operatorSignOff = firstName(user?.name);
     const [channel, setChannel] = useState<'email' | 'sms'>('email');
     const [emailRecipient, setEmailRecipient] = useState('');
@@ -169,6 +172,7 @@ export function InvoiceSendDialog({ open, onOpenChange, invoice, onSend }: Props
             total: Number(invoice.total) || 0,
             dueDate: invoice.due_date,
             signOff: operatorSignOff,
+            timeZone,
         }));
     }, [
         channel,
@@ -180,6 +184,7 @@ export function InvoiceSendDialog({ open, onOpenChange, invoice, onSend }: Props
         invoice.total,
         open,
         operatorSignOff,
+        timeZone,
         publicUrl,
         userEditedMessage,
     ]);

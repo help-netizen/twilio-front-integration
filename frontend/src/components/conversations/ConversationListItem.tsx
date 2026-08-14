@@ -4,6 +4,7 @@ import type { Call } from '../../types/models';
 import { PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
 import { formatPhoneDisplay as formatPhoneNumber } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface ConversationListItemProps {
     call: Call;
@@ -34,7 +35,7 @@ function DirectionIcon({ direction, status }: { direction: string; status: strin
     return <PhoneOutgoing className="size-4" style={{ color }} />;
 }
 
-function getTimeAgo(date: Date): string {
+function getTimeAgo(date: Date, timeZone: string): string {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     const hours = Math.floor(diff / (1000 * 60 * 60));
@@ -43,21 +44,22 @@ function getTimeAgo(date: Date): string {
     if (hours < 1) return 'now';
     if (hours < 24) return `${hours}h ago`;
     if (days < 7) return `${days}d ago`;
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return formatCompanyTime(date, { month: 'short', day: 'numeric' }, timeZone);
 }
 
-function getFullDateTime(date: Date): string {
-    return date.toLocaleDateString('en-US', {
+function getFullDateTime(date: Date, timeZone: string): string {
+    return formatCompanyTime(date, {
         month: 'short',
         day: 'numeric',
-    }) + ', ' + date.toLocaleTimeString('en-US', {
+    }, timeZone) + ', ' + formatCompanyTime(date, {
         hour: 'numeric',
         minute: '2-digit',
         hour12: true,
-    });
+    }, timeZone);
 }
 
 export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call, prefetchedLead }) => {
+    const { timeZone } = useCompanyTime();
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -140,9 +142,9 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
 
                     {/* Row 3: Metadata */}
                     <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <span>{getTimeAgo(displayDate)}</span>
+                        <span>{getTimeAgo(displayDate, timeZone)}</span>
                         <span className="text-gray-400">•</span>
-                        <span>{getFullDateTime(displayDate)}</span>
+                        <span>{getFullDateTime(displayDate, timeZone)}</span>
                     </div>
                 </div>
             </div>

@@ -12,6 +12,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useAuth } from '@/auth/AuthProvider';
+import { formatCompanyTime } from '@/lib/companyTime';
 
 export interface PlayerTrack {
     callSid: string;
@@ -68,8 +69,8 @@ export const buildAudioSrc = (audioUrl: string, token: string | null | undefined
     token ? `${audioUrl}?token=${encodeURIComponent(token)}` : audioUrl;
 
 /** One-line bar label: "(857) 389-5812 · 1:18 PM". */
-export const buildTrackLabel = (phoneDisplay: string, startTime: Date): string =>
-    `${phoneDisplay} · ${startTime.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+export const buildTrackLabel = (phoneDisplay: string, startTime: Date, timeZone?: string): string =>
+    `${phoneDisplay} · ${formatCompanyTime(startTime, { hour: 'numeric', minute: '2-digit', hour12: true }, timeZone)}`;
 
 const INERT: PulsePlayerApi = {
     track: null, isPlaying: false, currentTime: 0, duration: 0, rate: 1,

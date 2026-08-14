@@ -7,6 +7,7 @@ import type {
     LayoutPreset,
 } from '../../types/documentTemplates';
 import './TemplateLivePreview.css';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 const WIDTH_SPAN: Record<SectionWidth, number> = { full: 6, two_thirds: 4, half: 3, third: 2 };
 
@@ -169,10 +170,10 @@ function money(value: number) {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function formatDate(iso: string) {
+function formatDate(iso: string, timeZone: string) {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(d, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 function visible(d: TemplateDescriptorV1, key: SectionKey) {
@@ -212,7 +213,7 @@ function SectionHeading({ children, color, accent, tokens }: { children: React.R
     );
 }
 
-function renderSection(key: SectionKey, descriptor: TemplateDescriptorV1, data: PreviewEstimate) {
+function renderSection(key: SectionKey, descriptor: TemplateDescriptorV1, data: PreviewEstimate, timeZone: string) {
     const { brand, theme } = descriptor;
     const ach = brand.ach;
     const tokens = getPreset(descriptor);
@@ -264,7 +265,7 @@ function renderSection(key: SectionKey, descriptor: TemplateDescriptorV1, data: 
                     <div className="shrink-0">
                         <p className={tokens.estimateLabelClass} style={{ color: muted }}>Estimate</p>
                         <p className={tokens.estimateNumberClass} style={{ color: accent }}>{data.estimate_number.replace(/^ESTIMATE\s+/i, '')}</p>
-                        <p className={`${tokens.estimateMetaClass} mt-1`} style={{ color: muted }}>Date: <span style={{ color: theme.ink }}>{formatDate(data.updated_at)}</span></p>
+                        <p className={`${tokens.estimateMetaClass} mt-1`} style={{ color: muted }}>Date: <span style={{ color: theme.ink }}>{formatDate(data.updated_at, timeZone)}</span></p>
                         <p className={tokens.estimateMetaClass} style={{ color: muted }}>Status: <span style={{ color: theme.ink }}>{data.status}</span></p>
                     </div>
                 )}
@@ -276,7 +277,7 @@ function renderSection(key: SectionKey, descriptor: TemplateDescriptorV1, data: 
             <div className={`${tokens.sectionPadding} h-full`}>
                 <p className={tokens.estimateLabelClass} style={{ color: muted }}>Estimate</p>
                 <p className={tokens.estimateNumberClass} style={{ color: accent }}>{data.estimate_number.replace(/^ESTIMATE\s+/i, '')}</p>
-                <p className={`${tokens.estimateMetaClass} mt-2`} style={{ color: muted }}>Date: <span style={{ color: theme.ink }}>{formatDate(data.updated_at)}</span></p>
+                <p className={`${tokens.estimateMetaClass} mt-2`} style={{ color: muted }}>Date: <span style={{ color: theme.ink }}>{formatDate(data.updated_at, timeZone)}</span></p>
                 <p className={tokens.estimateMetaClass} style={{ color: muted }}>Status: <span className="capitalize" style={{ color: theme.ink }}>{data.status}</span></p>
             </div>
         );
@@ -409,6 +410,7 @@ interface Props {
 }
 
 export function TemplateLivePreview({ descriptor, estimate }: Props) {
+    const { timeZone } = useCompanyTime();
     const { theme } = descriptor;
     const scale = descriptor.font_scale ?? 1;
     const data: PreviewEstimate = estimate ?? FIXTURE;
@@ -437,7 +439,7 @@ export function TemplateLivePreview({ descriptor, estimate }: Props) {
                                 className="tlp-cell"
                                 style={{ '--tlp-span': span, textAlign: align } as React.CSSProperties}
                             >
-                                {renderSection(s.key, descriptor, data)}
+                                {renderSection(s.key, descriptor, data, timeZone)}
                             </div>
                         );
                     }
@@ -451,7 +453,7 @@ export function TemplateLivePreview({ descriptor, estimate }: Props) {
                                 const align = s.text_align ?? (s.key === 'document_meta' ? 'right' : 'left');
                                 return (
                                     <div key={`${s.key}:${i}`} style={{ textAlign: align }} className="tlp-glue-item shrink-0">
-                                        {renderSection(s.key, descriptor, data)}
+                                        {renderSection(s.key, descriptor, data, timeZone)}
                                     </div>
                                 );
                             })}

@@ -9,6 +9,7 @@ function emailRow(overrides = {}) {
         body_text: '',
         body_html: '',
         snippet: 'short provider snippet',
+        occurred_at: '2026-08-14T12:00:00.000Z',
         ...overrides,
     };
 }

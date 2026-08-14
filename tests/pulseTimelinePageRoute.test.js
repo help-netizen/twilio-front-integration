@@ -119,6 +119,7 @@ const GOLDEN_DATA = {
         body_text: 'Fresh reply\n\nOn Sun, Jul 12, 2026 at 9:00 AM Support <support@example.com> wrote:\n> quoted text',
         body_html: '<p>Fresh reply</p><blockquote>quoted text</blockquote>', snippet: 'Fresh reply',
         gmail_internal_at: '2026-07-12T13:00:00.000Z', sent_by_user_email: null,
+        occurred_at: '2026-07-12T13:00:00.000Z',
         is_outbound: false, ts: '2026-07-12T13:00:00.000000Z',
     }],
     estimates: [{
@@ -180,6 +181,7 @@ function makeWalkData() {
                 to_recipients_json: ['receiver@example.com'], subject: `Email ${index}`,
                 body_text: `Email body ${index}`, body_html: null, snippet: `Email body ${index}`,
                 gmail_internal_at: displayTs(ts), sent_by_user_email: null,
+                occurred_at: displayTs(ts),
                 is_outbound: index % 2 === 0, ts,
             });
         } else if (kind === 'estimate') {

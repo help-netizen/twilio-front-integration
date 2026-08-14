@@ -1,4 +1,5 @@
 // Utility functions for formatting data
+import { formatCompanyTime } from '../lib/companyTime';
 
 export const formatPhoneNumber = (number: string): string => {
     if (!number) return 'Unknown';
@@ -46,20 +47,18 @@ export const formatDurationLong = (seconds: number): string => {
     return parts.join(' ');
 };
 
-export const formatDateTime = (timestamp: number | string): string => {
-    const date = new Date(timestamp);
-
-    return date.toLocaleString('en-US', {
+export const formatDateTime = (timestamp: number | string, timeZone?: string | null): string => {
+    return formatCompanyTime(timestamp, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true
-    });
+        hour12: true,
+    }, timeZone);
 };
 
-export const formatRelativeTime = (timestamp: number): string => {
+export const formatRelativeTime = (timestamp: number, timeZone?: string | null): string => {
     const now = Date.now();
     const diff = now - timestamp;
 
@@ -73,7 +72,7 @@ export const formatRelativeTime = (timestamp: number): string => {
     if (hours < 24) return `${hours}h ago`;
     if (days < 7) return `${days}d ago`;
 
-    return formatDateTime(timestamp);
+    return formatDateTime(timestamp, timeZone);
 };
 
 export const getCallStatusColor = (status: string): 'success' | 'error' | 'warning' | 'info' => {
@@ -94,7 +93,7 @@ export const getCallStatusColor = (status: string): 'success' | 'error' | 'warni
 /**
  * Format timestamp as absolute time (e.g., "Feb 5, 11:39 AM")
  */
-export function formatAbsoluteTime(timestamp: number): string {
+export function formatAbsoluteTime(timestamp: number, timeZone?: string | null): string {
     const date = new Date(timestamp);
     const now = new Date();
 
@@ -107,11 +106,13 @@ export function formatAbsoluteTime(timestamp: number): string {
     };
 
     // If same year, don't show year
-    if (date.getFullYear() !== now.getFullYear()) {
+    const dateYear = formatCompanyTime(date, { year: 'numeric' }, timeZone);
+    const currentYear = formatCompanyTime(now, { year: 'numeric' }, timeZone);
+    if (dateYear !== currentYear) {
         options.year = 'numeric';
     }
 
-    return date.toLocaleString('en-US', options);
+    return formatCompanyTime(date, options, timeZone);
 }
 
 /**

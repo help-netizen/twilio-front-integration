@@ -86,7 +86,7 @@ async function saveSettings(companyId, patch, updatedBy) {
 async function getEmailMessage(companyId, providerMessageId) {
     const { rows } = await db.query(
         `SELECT id, from_name, from_email, subject, body_text, contact_id, timeline_id,
-                direction, gmail_internal_at
+                direction, gmail_internal_at, occurred_at
          FROM email_messages
          WHERE company_id = $1 AND provider_message_id = $2`,
         [companyId, providerMessageId]
@@ -152,7 +152,7 @@ async function listRecentInbound(companyId, limit = 10) {
         `SELECT id, from_name, from_email, subject, body_text, contact_id
          FROM email_messages
          WHERE company_id = $1 AND direction = 'inbound'
-         ORDER BY COALESCE(gmail_internal_at, created_at) DESC
+         ORDER BY occurred_at DESC
          LIMIT $2`,
         [companyId, Math.max(1, Math.min(20, limit))]
     );

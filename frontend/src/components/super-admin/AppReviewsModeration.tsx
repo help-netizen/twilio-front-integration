@@ -7,6 +7,7 @@ import {
     type AppModerationReview, type AppReviewStatus,
 } from '../../services/marketplaceApi';
 import { Stars } from '../settings/marketplace/marketplaceUi';
+import { formatCompanyTime } from '../../lib/companyTime';
 
 /**
  * MARKETPLACE-RATINGS-001 super-admin queue — the "Apps reviews" section on the
@@ -36,7 +37,7 @@ function ReviewTile({ r, onModerate, busy }: {
                         <Stars value={r.stars} size={13} />
                     </div>
                     <div className="mt-0.5 text-[12.5px] text-[var(--blanc-ink-3)]">
-                        {r.reviewer_first_name || 'Someone'} · {r.company_name} · {new Date(r.created_at).toLocaleDateString()}
+                        {r.reviewer_first_name || 'Someone'} · {r.company_name} · {formatCompanyTime(r.created_at, { year: 'numeric', month: 'numeric', day: 'numeric' }, r.company_timezone)}
                     </div>
                 </div>
                 <div className="flex shrink-0 gap-2">

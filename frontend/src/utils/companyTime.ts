@@ -4,6 +4,7 @@
 // components in a named IANA timezone to proper UTC Date objects.
 
 import { serverDate } from './serverClock';
+import { formatCompanyTime } from '../lib/companyTime';
 
 const DEFAULT_TZ = 'America/New_York';
 
@@ -77,21 +78,19 @@ export function minutesSinceMidnight(d: Date, tz?: string): number {
  * Format a Date as a short time string ("9:00 AM") in the given timezone.
  */
 export function formatTimeInTZ(d: Date, tz?: string): string {
-    return d.toLocaleTimeString('en-US', {
+    return formatCompanyTime(d, {
         hour: 'numeric', minute: '2-digit', hour12: true,
-        ...(tz && { timeZone: tz }),
-    });
+    }, tz);
 }
 
 /**
  * Format a Date as full date + time string ("Mar 30, 2026 1:00 PM") in the given timezone.
  */
 export function formatDateTimeInTZ(d: Date, tz?: string): string {
-    return d.toLocaleDateString('en-US', {
+    return formatCompanyTime(d, {
         month: 'short', day: 'numeric', year: 'numeric',
         hour: 'numeric', minute: '2-digit', hour12: true,
-        ...(tz && { timeZone: tz }),
-    });
+    }, tz);
 }
 
 /**

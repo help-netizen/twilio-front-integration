@@ -23,16 +23,17 @@ import { AvatarsPanel } from '../components/settings/AvatarsPanel';
 import { GoogleAdsPanel } from '../components/settings/GoogleAdsPanel';
 import { useAuth } from '../auth/AuthProvider';
 import { INTEGRATION_TAB_COPY, integrationTabFromSearchParams } from './integrationSettingsTabs';
+import { formatCompanyTime, useCompanyTime } from '../lib/companyTime';
 
-function formatDate(dateStr: string | null | undefined) {
+function formatDate(dateStr: string | null | undefined, timeZone: string) {
     if (!dateStr) return '';
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return formatCompanyTime(dateStr, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-    });
+    }, timeZone);
 }
 
 function MarketplaceConnectDialog({
@@ -145,6 +146,7 @@ function MarketplaceDisconnectDialog({
 }
 
 export function IntegrationsPage() {
+    const { timeZone } = useCompanyTime();
     const navigate = useNavigate();
     const { user, company } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -345,7 +347,7 @@ export function IntegrationsPage() {
                         <div className="text-center py-12 border border-[var(--blanc-line)] rounded-xl"><Key className="h-12 w-12 text-[var(--blanc-ink-3)] mx-auto mb-4" /><p className="text-[var(--blanc-ink-2)]">No integrations yet</p><p className="text-sm text-[var(--blanc-ink-3)] mt-1">Create your first manual integration to start accepting leads via API.</p></div>
                     ) : (
                         <div className="border border-[var(--blanc-line)] rounded-xl overflow-hidden"><Table><TableHeader><TableRow className="bg-[rgba(25,25,25,0.03)]"><TableHead className="font-semibold">Client</TableHead><TableHead className="font-semibold">API Key</TableHead><TableHead className="font-semibold">Status</TableHead><TableHead className="font-semibold">Scopes</TableHead><TableHead className="font-semibold">Last Used</TableHead><TableHead className="font-semibold">Created</TableHead><TableHead className="font-semibold text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{integrations.map(integration => (
-                            <TableRow key={integration.id}><TableCell className="font-medium">{integration.client_name}</TableCell><TableCell><code className="text-xs bg-[rgba(25,25,25,0.03)] px-2 py-1 rounded font-mono">{integration.key_id.slice(0, 12)}…</code><button onClick={() => copyToClipboard(integration.key_id, 'API Key')} className="ml-2 text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)] transition-colors" title="Copy full key"><Copy className="h-3.5 w-3.5 inline" /></button></TableCell><TableCell>{getStatusBadge(integration)}</TableCell><TableCell><div className="flex gap-1 flex-wrap">{(integration.scopes || []).map(scope => <Badge key={scope} variant="outline" className="text-xs">{scope}</Badge>)}</div></TableCell><TableCell className="text-sm text-[var(--blanc-ink-2)]">{formatDate(integration.last_used_at)}</TableCell><TableCell className="text-sm text-[var(--blanc-ink-2)]">{formatDate(integration.created_at)}</TableCell><TableCell className="text-right">{!integration.revoked_at && <Button variant="ghost" size="sm" className="text-[var(--blanc-danger)] hover:text-[var(--blanc-danger)] hover:bg-[rgba(212,77,60,0.08)]" onClick={() => setRevokeTarget(integration)}><ShieldOff className="h-4 w-4 mr-1" />Revoke</Button>}</TableCell></TableRow>
+                            <TableRow key={integration.id}><TableCell className="font-medium">{integration.client_name}</TableCell><TableCell><code className="text-xs bg-[rgba(25,25,25,0.03)] px-2 py-1 rounded font-mono">{integration.key_id.slice(0, 12)}…</code><button onClick={() => copyToClipboard(integration.key_id, 'API Key')} className="ml-2 text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)] transition-colors" title="Copy full key"><Copy className="h-3.5 w-3.5 inline" /></button></TableCell><TableCell>{getStatusBadge(integration)}</TableCell><TableCell><div className="flex gap-1 flex-wrap">{(integration.scopes || []).map(scope => <Badge key={scope} variant="outline" className="text-xs">{scope}</Badge>)}</div></TableCell><TableCell className="text-sm text-[var(--blanc-ink-2)]">{formatDate(integration.last_used_at, timeZone)}</TableCell><TableCell className="text-sm text-[var(--blanc-ink-2)]">{formatDate(integration.created_at, timeZone)}</TableCell><TableCell className="text-right">{!integration.revoked_at && <Button variant="ghost" size="sm" className="text-[var(--blanc-danger)] hover:text-[var(--blanc-danger)] hover:bg-[rgba(212,77,60,0.08)]" onClick={() => setRevokeTarget(integration)}><ShieldOff className="h-4 w-4 mr-1" />Revoke</Button>}</TableCell></TableRow>
                         ))}</TableBody></Table></div>
                     )}
                 </TabsContent>

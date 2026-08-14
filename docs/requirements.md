@@ -7147,3 +7147,22 @@ Outside work schedule… убрать вообще». Кастомные **Time 
 
 Full draft, contracts, Tenancy & Roles matrix, and verification ledger:
 `docs/specs/LEAD-CHANNEL-ANALYTICS-001.md`.
+
+## EMAIL-OCCURRED-AT-001 — one email instant + company-time display (2026-08-14)
+
+- `email_messages.occurred_at TIMESTAMPTZ NOT NULL` is the sole event-time value
+  for email ordering, cursors, aggregates, caches, and projections;
+  `gmail_internal_at` remains raw provider evidence.
+- Live inbound uses provider time (or observation when absent). Live outbound uses
+  provider time only within an inclusive ten-minute discrepancy and otherwise uses
+  the polling observation. Initial/history-gap backfill always uses provider time.
+- Migration 261 adds the column with a permanent `DEFAULT now()` for compatibility
+  with the old poller during migration-before-container deploys, backfills the
+  approved five branches, creates occurred-time indexes, and recomputes thread
+  caches without changing unread counts or draft-only thread timestamps.
+- Every unzoned frontend date/time formatter uses the existing company timezone
+  source through one helper, with `America/New_York` fallback. A source ratchet
+  rejects new unzoned date calls and ledgers number/currency exceptions.
+- Existing tenant and RBAC boundaries remain unchanged; no route or permission is
+  added. Full draft and verification ledger:
+  `docs/specs/EMAIL-OCCURRED-AT-001.md`.

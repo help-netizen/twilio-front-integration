@@ -9,6 +9,7 @@ import { RuleEditor } from '../components/automation/RuleEditor';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { Button } from '../components/ui/button';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { useCompanyTime } from '../lib/companyTime';
 
 const INK2 = 'var(--blanc-ink-2, #536070)';
 const INK3 = 'var(--blanc-ink-3, #7d8796)';
@@ -22,6 +23,7 @@ function humanizeDur(s?: number | null): string {
 }
 
 export default function AutomationPage() {
+    const { format } = useCompanyTime();
     const [rules, setRules] = useState<AutomationRule[]>([]);
     const [catalog, setCatalog] = useState<Catalog | null>(null);
     const [loading, setLoading] = useState(true);
@@ -143,7 +145,7 @@ export default function AutomationPage() {
                             <div key={run.id} style={{ padding: '12px 0' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                                     <span style={{ fontWeight: 600, color: run.status === 'succeeded' ? 'var(--blanc-success, #1b8b63)' : run.status === 'failed' ? 'var(--blanc-danger, #d44d3c)' : INK2 }}>{run.status}</span>
-                                    <span style={{ color: INK3 }}>{new Date(run.created_at).toLocaleString()}</span>
+                                    <span style={{ color: INK3 }}>{format(run.created_at, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })}</span>
                                 </div>
                                 {run.error_text && <div style={{ fontSize: 12, color: 'var(--blanc-danger, #d44d3c)', marginTop: 4 }}>{run.error_text}</div>}
                             </div>

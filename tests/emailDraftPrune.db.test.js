@@ -68,9 +68,9 @@ async function seedMessage({
         `INSERT INTO email_messages
             (company_id, mailbox_id, thread_id, provider_message_id, direction,
              from_name, from_email, to_recipients_json, contact_id, timeline_id,
-             on_timeline, body_text, snippet, gmail_internal_at, is_draft_artifact)
+             on_timeline, body_text, snippet, gmail_internal_at, occurred_at, is_draft_artifact)
          VALUES ($1, $2, $3, $4, $5, $6, $7, '["customer@example.com"]'::jsonb,
-                 $8, $9, $10, $11, $12, $13, false)`,
+                 $8, $9, $10, $11, $12, $13, $13, false)`,
         [
             companyId,
             mailboxId,

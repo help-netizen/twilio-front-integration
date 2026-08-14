@@ -34,6 +34,7 @@ import {
 } from '../../services/estimatesApi';
 import { openAuthedPdf } from '../../lib/openAuthedPdf';
 import { toast } from 'sonner';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     draft: 'secondary',
@@ -47,9 +48,9 @@ function money(value: string | number | null | undefined): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmtDateTime(value: string | null | undefined): string {
+function fmtDateTime(value: string | null | undefined, timeZone: string): string {
     if (!value) return '-';
-    return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return formatCompanyTime(value, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }, timeZone);
 }
 
 interface Props {
@@ -71,6 +72,7 @@ interface Props {
 }
 
 export function EstimateDetailPanel({ estimate: initialEstimate, events, loading, onClose: _onClose, onSend, onApprove, onDecline, onArchive, onRestore, onLinkJob, onInvoiceCreated, onChanged }: Props) {
+    const { timeZone } = useCompanyTime();
     const navigate = useNavigate();
     const { hasPermission } = useAuthz();
     const canSend = hasPermission('estimates.send');
@@ -680,7 +682,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                     <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
                                     <div>
                                         <p className="font-medium">Signed by {estimate.signature_name || 'customer'}</p>
-                                        <p className="text-xs text-[var(--blanc-ink-3)]">{fmtDateTime(estimate.signature_consented_at)}</p>
+                                        <p className="text-xs text-[var(--blanc-ink-3)]">{fmtDateTime(estimate.signature_consented_at, timeZone)}</p>
                                     </div>
                                 </div>
                             ) : (
@@ -702,7 +704,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 {events.map(evt => (
                                     <div key={evt.id} className="text-xs">
                                         <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
-                                        <p className="text-[var(--blanc-ink-3)]">{fmtDateTime(evt.created_at)}</p>
+                                        <p className="text-[var(--blanc-ink-3)]">{fmtDateTime(evt.created_at, timeZone)}</p>
                                     </div>
                                 ))}
                             </div>

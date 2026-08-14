@@ -1,5 +1,6 @@
 import { Paperclip } from 'lucide-react';
 import type { EmailThread } from '../../services/emailApi';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface EmailThreadRowProps {
     thread: EmailThread;
@@ -7,16 +8,19 @@ interface EmailThreadRowProps {
     onClick: () => void;
 }
 
-function formatTime(iso: string | null): string {
+function formatTime(iso: string | null, timeZone: string): string {
     if (!iso) return '';
     const d = new Date(iso);
     const now = new Date();
-    const isToday = d.toDateString() === now.toDateString();
-    if (isToday) return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dayOptions = { year: 'numeric', month: '2-digit', day: '2-digit' } as const;
+    const isToday = formatCompanyTime(d, dayOptions, timeZone, 'en-CA')
+        === formatCompanyTime(now, dayOptions, timeZone, 'en-CA');
+    if (isToday) return formatCompanyTime(d, { hour: 'numeric', minute: '2-digit' }, timeZone);
+    return formatCompanyTime(d, { month: 'short', day: 'numeric' }, timeZone);
 }
 
 export function EmailThreadRow({ thread, isSelected, onClick }: EmailThreadRowProps) {
+    const { timeZone } = useCompanyTime();
     const isUnread = thread.unread_count > 0;
 
     return (
@@ -39,7 +43,7 @@ export function EmailThreadRow({ thread, isSelected, onClick }: EmailThreadRowPr
                     {thread.last_message_from || 'Unknown'}
                 </p>
                 <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
-                    {formatTime(thread.last_message_at)}
+                    {formatTime(thread.last_message_at, timeZone)}
                 </span>
             </div>
 

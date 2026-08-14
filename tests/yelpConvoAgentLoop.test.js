@@ -111,7 +111,7 @@ const histRow = (o = {}) => ({
     direction: 'inbound',
     body_text: 'hello',
     snippet: null,
-    gmail_internal_at: '2026-07-11T21:39:12.000Z',
+    occurred_at: '2026-07-11T21:39:12.000Z',
     ...o,
 });
 const formattedLogLines = (spy) => spy.mock.calls.map(call => util.format(...call));
@@ -145,7 +145,7 @@ beforeEach(() => {
         body_html: RAW_YELP_QUOTE_HTML,
         from_email: 'reply+aa11bb22cc33dd44@messaging.yelp.com',
         from_name: 'Yelp Inbox',
-        gmail_internal_at: '2026-07-11T21:39:23.000Z',
+        occurred_at: '2026-07-11T21:39:23.000Z',
         timeline_id: 3207,
     });
     jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -781,7 +781,7 @@ describe('TC-A1-02 · prior messages reach the first prompt oldest-first', () =>
                 provider_message_id: 'ymsg-G1',
                 direction: 'outbound',
                 body_text: 'Hi Kim — happy to help.',
-                gmail_internal_at: '2026-07-11T21:41:05.000Z',
+                occurred_at: '2026-07-11T21:41:05.000Z',
             }),
             histRow({ body_text: 'My Maytag dishwasher is stuck.' }),
         ]);
@@ -862,7 +862,7 @@ describe('TC-A6-01 · exact untrusted history layout and SECURITY wording', () =
                 provider_message_id: 'ymsg-G1',
                 direction: 'outbound',
                 body_text: 'Hi Kim — happy to help.',
-                gmail_internal_at: '2026-07-11T21:41:05.000Z',
+                occurred_at: '2026-07-11T21:41:05.000Z',
             }),
             histRow({ body_text: 'My Maytag dishwasher is stuck.' }),
         ]);
@@ -903,7 +903,7 @@ describe('TC-A6-01 · exact untrusted history layout and SECURITY wording', () =
                 provider_message_id: 'ymsg-newest',
                 direction: 'outbound',
                 body_text: 'newest',
-                gmail_internal_at: '2026-07-11T21:41:05.000Z',
+                occurred_at: '2026-07-11T21:41:05.000Z',
             }),
             histRow({ provider_message_id: 'ymsg-older', body_text: 'older' }),
         ]);
@@ -1088,7 +1088,7 @@ describe('TC-A11-01 · history is composed once and reused across a multi-step t
                 provider_message_id: 'ymsg-G1',
                 direction: 'outbound',
                 body_text: 'Hi Kim — happy to help.',
-                gmail_internal_at: '2026-07-11T21:41:05.000Z',
+                occurred_at: '2026-07-11T21:41:05.000Z',
             }),
             histRow({ body_text: 'My Maytag dishwasher is stuck.' }),
         ]);
@@ -1174,7 +1174,7 @@ describe('TC-D1-01 · history observability is exact and once per turn', () => {
                 provider_message_id: 'ymsg-G1',
                 direction: 'outbound',
                 body_text: 'Hi Kim — happy to help.',
-                gmail_internal_at: '2026-07-11T21:41:05.000Z',
+                occurred_at: '2026-07-11T21:41:05.000Z',
             }),
             histRow({ body_text: 'My Maytag dishwasher is stuck.' }),
         ]);

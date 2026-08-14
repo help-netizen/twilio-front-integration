@@ -14,6 +14,7 @@ jest.mock('../../backend/src/db/emailQueries', () => ({
     upsertThread: jest.fn(),
     upsertMessage: jest.fn(),
     upsertAttachments: jest.fn(),
+    refreshThreadLastMessage: jest.fn(),
     upsertSyncState: jest.fn(),
     updateMailboxStatus: jest.fn(),
 }));
@@ -34,13 +35,14 @@ const {
     importGmailThread,
     runInitialBackfill,
     pullChangesNormalized,
+    computeOccurredAt,
 } = require('../../backend/src/services/emailSyncService');
 
 const COMPANY_ID = '00000000-0000-0000-0000-00000000000a';
 const MAILBOX_ID = '11111111-1111-1111-1111-111111111111';
 const MAILBOX_EMAIL = 'dispatch@example.com';
 
-function gmailMessage({ id, from, to, subject, at, labels = [], snippet, attachment = false }) {
+function gmailMessage({ id, from, to, subject, at, labels = [], snippet, attachment = false, inReplyTo = null }) {
     const parts = [{
         mimeType: 'text/plain',
         body: { data: Buffer.from(`${id} body`).toString('base64url') },
@@ -67,6 +69,7 @@ function gmailMessage({ id, from, to, subject, at, labels = [], snippet, attachm
                 { name: 'To', value: to },
                 { name: 'Subject', value: subject },
                 { name: 'Message-ID', value: `<${id}@example.com>` },
+                ...(inReplyTo ? [{ name: 'In-Reply-To', value: inReplyTo }] : []),
             ],
             parts,
         },
@@ -98,6 +101,7 @@ beforeEach(() => {
     emailQueries.upsertThread.mockResolvedValue({ id: 77 });
     emailQueries.upsertMessage.mockImplementation(async data => ({ id: data.provider_message_id }));
     emailQueries.upsertAttachments.mockResolvedValue([]);
+    emailQueries.refreshThreadLastMessage.mockResolvedValue({ id: 77 });
     emailMailboxService.getValidAccessToken.mockResolvedValue('access-token');
     emailMailboxService.getGmailProfile.mockResolvedValue({ history_id: 'cursor-new' });
 });
@@ -289,7 +293,14 @@ describe('emailSyncService — Gmail draft polling guards', () => {
         });
         const gmail = gmailClient({ threadMessages: [inbound, draft, sent] });
 
-        await importGmailThread(gmail, 'thread-1', COMPANY_ID, MAILBOX_ID, MAILBOX_EMAIL);
+        await importGmailThread(
+            gmail,
+            'thread-1',
+            COMPANY_ID,
+            MAILBOX_ID,
+            MAILBOX_EMAIL,
+            { observedAt: new Date(2500) }
+        );
 
         expect(emailQueries.upsertMessage).toHaveBeenCalledTimes(2);
         expect(emailQueries.upsertMessage.mock.calls.map(([row]) => row.provider_message_id))
@@ -308,6 +319,72 @@ describe('emailSyncService — Gmail draft polling guards', () => {
         const aggregate = emailQueries.upsertThread.mock.calls[0][0];
         expect(aggregate.participants_json.map(person => person.email).sort())
             .toEqual([MAILBOX_EMAIL, 'customer@example.com'].sort());
+    });
+
+    test('live poll repairs a nine-hour outbound skew while inbound keeps provider time and reply follows parent', async () => {
+        const parentAt = new Date('2026-08-14T15:39:00.000Z');
+        const observedAt = new Date('2026-08-14T15:40:33.000Z');
+        const skewedAt = new Date('2026-08-14T06:40:27.000Z');
+        const parent = gmailMessage({
+            id: 'parent-live', from: 'Customer <customer@example.com>', to: MAILBOX_EMAIL,
+            subject: 'Need service', at: parentAt.getTime(), labels: ['INBOX'], snippet: 'parent',
+        });
+        const reply = gmailMessage({
+            id: 'reply-live', from: MAILBOX_EMAIL, to: 'customer@example.com',
+            subject: 'Re: Need service', at: skewedAt.getTime(), labels: ['SENT'], snippet: 'reply',
+            inReplyTo: '<parent-live@example.com>',
+        });
+        const gmail = gmailClient({ threadMessages: [parent, reply] });
+
+        await importGmailThread(
+            gmail,
+            'thread-1',
+            COMPANY_ID,
+            MAILBOX_ID,
+            MAILBOX_EMAIL,
+            { observedAt }
+        );
+
+        const persisted = emailQueries.upsertMessage.mock.calls.map(([row]) => row);
+        const parentRow = persisted.find(row => row.provider_message_id === parent.id);
+        const replyRow = persisted.find(row => row.provider_message_id === reply.id);
+        expect(parentRow.occurred_at).toEqual(parentAt);
+        expect(replyRow.occurred_at).toEqual(observedAt);
+        expect(replyRow.in_reply_to_header).toBe('<parent-live@example.com>');
+        expect(replyRow.occurred_at.getTime()).toBeGreaterThan(parentRow.occurred_at.getTime());
+        expect(emailQueries.upsertThread).toHaveBeenCalledWith(expect.objectContaining({
+            last_message_at: observedAt,
+            last_message_direction: 'outbound',
+        }));
+        expect(emailQueries.refreshThreadLastMessage).toHaveBeenCalledWith(77, COMPANY_ID, MAILBOX_ID);
+    });
+
+    test('initial backfill always persists provider time despite a large observation gap', async () => {
+        const providerAt = new Date('2025-01-02T03:04:05.000Z');
+        const sent = gmailMessage({
+            id: 'sent-historical', from: MAILBOX_EMAIL, to: 'customer@example.com',
+            subject: 'Historical', at: providerAt.getTime(), labels: ['SENT'], snippet: 'old send',
+        });
+        const gmail = gmailClient({ threads: [{ id: 'thread-1' }], threadMessages: [sent] });
+        mockGoogleGmail.mockReturnValue(gmail);
+
+        await runInitialBackfill(COMPANY_ID);
+
+        expect(emailQueries.upsertMessage).toHaveBeenCalledWith(expect.objectContaining({
+            provider_message_id: sent.id,
+            gmail_internal_at: providerAt,
+            occurred_at: providerAt,
+        }));
+    });
+
+    test('ten-minute boundary is inclusive for live outbound provider time', () => {
+        const observedAt = new Date('2026-08-14T15:40:00.000Z');
+        const gmailInternalAt = new Date('2026-08-14T15:30:00.000Z');
+        expect(computeOccurredAt({
+            direction: 'outbound',
+            gmailInternalAt,
+            observedAt,
+        })).toEqual(gmailInternalAt);
     });
 
     test('both threads.list queries include -in:draft and normalized backfill omits DRAFT messages', async () => {

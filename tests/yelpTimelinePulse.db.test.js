@@ -74,8 +74,8 @@ async function seedEmail(companyId, timelineId, { pmid, at, subject, contactId =
         `INSERT INTO email_messages
             (company_id, mailbox_id, thread_id, provider_message_id, direction,
              contact_id, timeline_id, on_timeline, from_email, from_name, subject,
-             body_text, gmail_internal_at)
-         VALUES ($1,$2,$3,$4,'inbound',$5,$6,true,$9,'Kim L.',$7,'hi',$8)`,
+             body_text, gmail_internal_at, occurred_at)
+         VALUES ($1,$2,$3,$4,'inbound',$5,$6,true,$9,'Kim L.',$7,'hi',$8,$8)`,
         [companyId, mbId, thId, pmid, contactId, timelineId, subject || 'Yelp', at || new Date().toISOString(), fromEmail]);
 }
 
@@ -154,20 +154,20 @@ describe('TC-07 · contactless Yelp timeline surfaces in the unified list (P0)',
         expect(pageB.find(r => String(r.tl_id) === String(tlA.id))).toBeUndefined();
     });
 
-    it('(5) email_by_timeline can be served by idx_email_messages_timeline (enable_seqscan=off)', async () => {
+    it('(5) email_by_timeline can be served by idx_email_messages_timeline_occurred (enable_seqscan=off)', async () => {
         if (!dbReady) return console.warn('TC-07-explain SKIPPED-NEEDS-DB');
         const client = await db.getClient();
         try {
             await client.query('BEGIN');
             await client.query('SET LOCAL enable_seqscan = off');
             const plan = await client.query(
-                `EXPLAIN SELECT em.timeline_id, MAX(em.gmail_internal_at)
+                `EXPLAIN SELECT em.timeline_id, MAX(em.occurred_at)
                    FROM email_messages em
                   WHERE em.company_id = $1 AND em.timeline_id IS NOT NULL AND em.on_timeline = true
                   GROUP BY em.timeline_id`,
                 [DEFAULT_COMPANY_ID]);
             const text = plan.rows.map(r => r['QUERY PLAN']).join('\n');
-            expect(text).toMatch(/idx_email_messages_timeline/);
+            expect(text).toMatch(/idx_email_messages_timeline_occurred/);
         } finally {
             await client.query('ROLLBACK');
             client.release();

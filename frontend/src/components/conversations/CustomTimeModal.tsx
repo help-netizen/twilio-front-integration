@@ -19,6 +19,7 @@ import { fetchSlotRecommendations, type SlotRecommendation } from '../../service
 import { fetchTechnicianServiceAreaMatches, fetchUnavailability, unavailabilityLabel, type UnavailabilityBlock } from '../../services/scheduleApi';
 import { formatUnavailabilityPeriod } from '../jobs/timeOffWarning';
 import { serviceAreaSelectionWarning } from './serviceAreaWarning';
+import { formatCompanyTime } from '../../lib/companyTime';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -93,8 +94,9 @@ interface SelectedSlot {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDateLabel(date: Date) {
-    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+function formatDateLabel(date: Date, tz: string) {
+    const companyNoon = dateInTZ(date.getFullYear(), date.getMonth() + 1, date.getDate(), 12, 0, tz);
+    return formatCompanyTime(companyNoon, { weekday: 'short', month: 'short', day: 'numeric' }, tz);
 }
 
 function getRelativeDayHint(dateStr: string, tz: string): string | null {
@@ -843,7 +845,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             alert('Selected time is in the past. Please choose a future time.');
             return;
         }
-        const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const dateLabel = formatCompanyTime(selectedSlot.start, { weekday: 'short', month: 'short', day: 'numeric' }, companyTz);
         const techName = techGroups.find(g => g.id === selectedSlot.techId)?.name || '';
         const formatted = `${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)} — ${dateLabel}${techName ? ` (${techName})` : ''}`;
         onConfirm({
@@ -881,7 +883,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                 <PopoverTrigger asChild>
                     <button type="button" className="ctm-date-nav__trigger">
                         <CalendarIcon className="w-4 h-4 opacity-60" />
-                        <span className="ctm-date-nav__text">{formatDateLabel(dateObj)}</span>
+                        <span className="ctm-date-nav__text">{formatDateLabel(dateObj, companyTz)}</span>
                     </button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="center">
@@ -948,7 +950,11 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                         const { fillPct, colorVar, label } = tempFromRec(rec);
                                         const dayLabel = (() => {
                                             const [yy, mm, dd] = rec.date.split('-').map(Number);
-                                            return new Date(yy, mm - 1, dd).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                                            return formatCompanyTime(
+                                                dateInTZ(yy, mm, dd, 12, 0, companyTz),
+                                                { weekday: 'short', month: 'short', day: 'numeric' },
+                                                companyTz,
+                                            );
                                         })();
                                         return (
                                             <button

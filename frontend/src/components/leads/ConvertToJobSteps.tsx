@@ -11,6 +11,7 @@ import { Calendar, Clock, RefreshCw, X } from 'lucide-react';
 import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
 import type { Lead } from '../../types/lead';
 import type { SlotRecommendation } from '../../services/slotRecommendationsApi';
+import { formatCompanyTime } from '../../lib/companyTime';
 import type { CustomFieldDef, SelectedSchedule, Step } from './useConvertToJob';
 import { STEP_TITLES, slotRecommendationToSchedule } from './useConvertToJob';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
@@ -141,7 +142,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, recsLoading, recsE
                 {recommendations.map(rec => {
                     const sched = slotRecommendationToSchedule(rec, companyTz);
                     const selected = selectedSchedule?.source === 'engine' && selectedSchedule.start === sched.start && selectedSchedule.techId === sched.techId;
-                    const day = new Date(`${rec.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                    const day = formatCompanyTime(`${rec.date}T12:00:00`, { weekday: 'short', month: 'short', day: 'numeric' }, companyTz);
                     return (
                         <button
                             key={`${rec.rank}-${rec.date}-${rec.time_frame.start}-${sched.techId ?? 'any'}`}

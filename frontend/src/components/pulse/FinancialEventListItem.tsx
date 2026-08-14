@@ -1,15 +1,10 @@
 import { FileText, Receipt, CheckCircle, XCircle, Send, CreditCard } from 'lucide-react';
 import type { FinancialEvent } from '../../types/pulse';
+import { useCompanyTime } from '../../lib/companyTime';
 
 function money(v: string | number | null | undefined): string {
     if (v == null) return '$0.00';
     return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtTime(value: string): string {
-    return new Date(value).toLocaleString('en-US', {
-        hour: 'numeric', minute: '2-digit', hour12: true,
-    });
 }
 
 const EVENT_LABELS: Record<FinancialEvent['type'], string> = {
@@ -48,6 +43,7 @@ function EventIcon({ type }: { type: FinancialEvent['type'] }) {
 interface Props { event: FinancialEvent; }
 
 export function FinancialEventListItem({ event }: Props) {
+    const { format } = useCompanyTime();
     return (
         <div
             className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors"
@@ -63,7 +59,7 @@ export function FinancialEventListItem({ event }: Props) {
                 </div>
             </div>
             <span className="font-mono text-sm font-semibold shrink-0" style={{ color: 'var(--blanc-ink-1)' }}>{money(event.amount)}</span>
-            <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>{fmtTime(event.occurred_at)}</span>
+            <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>{format(event.occurred_at, { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
         </div>
     );
 }

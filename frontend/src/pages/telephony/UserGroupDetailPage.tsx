@@ -7,6 +7,7 @@ import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { getScheduleStatus } from './scheduleStatus';
 import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
 import { Button } from '../../components/ui/button';
+import { useCompanyTime } from '../../lib/companyTime';
 
 // UI-QA-001: chip text reuses `dot` — deep-tier hues so 11px text passes AA on the tint.
 const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
@@ -42,6 +43,7 @@ interface NumberOption {
 }
 
 export default function UserGroupDetailPage() {
+    const { format } = useCompanyTime();
     const { groupId } = useParams<{ groupId: string }>();
     const navigate = useNavigate();
     const [group, setGroup] = useState<UserGroupDetail | null>(null);
@@ -304,7 +306,7 @@ export default function UserGroupDetailPage() {
                     {group.flow ? (
                         <>
                             <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)', marginBottom: 12 }}>
-                                Updated {new Date(group.flow.updated_at).toLocaleString()} · {flowStates.length} states · {flowTransitions.length} transitions
+                                Updated {format(group.flow.updated_at, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })} · {flowStates.length} states · {flowTransitions.length} transitions
                             </div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                 {flowStates.map(s => {

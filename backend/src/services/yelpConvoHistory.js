@@ -59,17 +59,17 @@ function sanitizeEntry(rawText, opts = {}, maxEntryChars = HISTORY_DEFAULTS.maxE
 }
 
 /**
- * Format a stored Gmail timestamp in UTC at minute precision.
+ * Format the canonical stored event timestamp in UTC at minute precision.
  *
- * @param {*} gmailInternalAt
+ * @param {*} occurredAt
  * @returns {string|null}
  */
-function formatHistoryTimestamp(gmailInternalAt) {
-  if (gmailInternalAt == null || gmailInternalAt === '') return null;
+function formatHistoryTimestamp(occurredAt) {
+  if (occurredAt == null || occurredAt === '') return null;
   try {
-    const date = gmailInternalAt instanceof Date
-      ? gmailInternalAt
-      : new Date(gmailInternalAt);
+    const date = occurredAt instanceof Date
+      ? occurredAt
+      : new Date(occurredAt);
     if (Number.isNaN(date.getTime())) return null;
     return `${date.toISOString().slice(0, 16).replace('T', ' ')}Z`;
   } catch (_err) {
@@ -117,7 +117,7 @@ function composeTranscript(rowsNewestFirst, opts = {}) {
       );
       if (body === '') continue;
 
-      const timestamp = formatHistoryTimestamp(row.gmail_internal_at);
+      const timestamp = formatHistoryTimestamp(row.occurred_at);
       const label = row.direction === 'outbound' ? 'AGENT' : 'CUSTOMER';
       renderedLines.push(`${timestamp ? `[${timestamp}] ` : ''}${label}: ${body}`);
     }

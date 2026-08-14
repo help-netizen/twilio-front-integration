@@ -64,7 +64,7 @@ function armActive(settings = SETTINGS) {
 
 beforeEach(() => {
     jest.clearAllMocks();
-    q.getEmailMessage.mockResolvedValue({ id: 42, body_text: MSG.body_text, direction: 'inbound', gmail_internal_at: MSG.internal_at });
+    q.getEmailMessage.mockResolvedValue({ id: 42, body_text: MSG.body_text, direction: 'inbound', gmail_internal_at: MSG.internal_at, occurred_at: MSG.internal_at });
     q.hasReview.mockResolvedValue(false);
     emailQueries.findEmailContact.mockResolvedValue(null); // MAIL-AGENT-003: default = truly unknown sender
     timelinesQueries.createTask.mockResolvedValue({ id: 777 });
@@ -198,6 +198,10 @@ describe('mailAgentService.reviewInboundEmail', () => {
     test('MAIL-AGENT-002: email older than activation → silent historical skip, no LLM, no review row', async () => {
         armActive();
         const oldMsg = { ...MSG, internal_at: '2026-01-15T10:00:00.000Z' };
+        q.getEmailMessage.mockResolvedValue({
+            id: 42, body_text: oldMsg.body_text, direction: 'inbound',
+            gmail_internal_at: oldMsg.internal_at, occurred_at: oldMsg.internal_at,
+        });
         const res = await mailAgentService.reviewInboundEmail(COMPANY, oldMsg, { timelineId: 5 });
         expect(res).toEqual({ skipped: 'historical' });
         expect(classifyEmail).not.toHaveBeenCalled();
@@ -207,7 +211,7 @@ describe('mailAgentService.reviewInboundEmail', () => {
 
     test('MAIL-AGENT-002: missing email date → conservative historical skip', async () => {
         armActive();
-        q.getEmailMessage.mockResolvedValue({ id: 42, body_text: 'x', direction: 'inbound', gmail_internal_at: null });
+        q.getEmailMessage.mockResolvedValue({ id: 42, body_text: 'x', direction: 'inbound', gmail_internal_at: null, occurred_at: null });
         const res = await mailAgentService.reviewInboundEmail(COMPANY, { ...MSG, internal_at: null }, { timelineId: 5 });
         expect(res).toEqual({ skipped: 'historical' });
         expect(classifyEmail).not.toHaveBeenCalled();
@@ -219,7 +223,7 @@ describe('mailAgentService.reviewInboundEmail', () => {
         expect(out).toEqual({ skipped: 'outbound' });
         const draft = await mailAgentService.reviewInboundEmail(COMPANY, { ...MSG, labelIds: ['DRAFT'] }, { timelineId: 5 });
         expect(draft).toEqual({ skipped: 'draft_or_sent' });
-        q.getEmailMessage.mockResolvedValue({ id: 42, body_text: 'x', direction: 'outbound', gmail_internal_at: MSG.internal_at });
+        q.getEmailMessage.mockResolvedValue({ id: 42, body_text: 'x', direction: 'outbound', gmail_internal_at: MSG.internal_at, occurred_at: MSG.internal_at });
         const rowDir = await mailAgentService.reviewInboundEmail(COMPANY, MSG, { timelineId: 5 });
         expect(rowDir).toEqual({ skipped: 'not_inbound' });
         expect(classifyEmail).not.toHaveBeenCalled();

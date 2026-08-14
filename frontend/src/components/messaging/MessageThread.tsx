@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, FileText, Download, Paperclip, X } from 'lucide-react';
 import type { Message, MessageMedia } from '../../types/messaging';
 import { useAuth } from '../../auth/AuthProvider';
+import { formatCompanyTime } from '../../lib/companyTime';
 
 interface MessageThreadProps {
     messages: Message[];
@@ -9,9 +10,9 @@ interface MessageThreadProps {
     onSend: (body: string, file?: File) => Promise<void>;
 }
 
-function formatMessageTime(dateStr: string | null): string {
+function formatMessageTime(dateStr: string | null, tz: string): string {
     if (!dateStr) return '';
-    return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return formatCompanyTime(dateStr, { hour: '2-digit', minute: '2-digit' }, tz, []);
 }
 
 function toTZDateKey(d: Date, tz: string): string {
@@ -170,7 +171,7 @@ export function MessageThread({ messages, loading, onSend }: MessageThreadProps)
                                     {msg.media?.map(m => <MediaPreviewInline key={m.id} media={m} />)}
                                 </div>
                                 <div className="msg-bubble__meta">
-                                    <span>{formatMessageTime(msg.date_created_remote || msg.created_at)}</span>
+                                    <span>{formatMessageTime(msg.date_created_remote || msg.created_at, companyTz)}</span>
                                     {msg.direction === 'outbound' && msg.delivery_status && (
                                         <span className={`msg-bubble__status msg-bubble__status--${msg.delivery_status}`}>{getDeliveryIcon(msg.delivery_status)}</span>
                                     )}

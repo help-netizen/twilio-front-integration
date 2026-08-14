@@ -6,6 +6,7 @@ import { FloatingField } from '../ui/floating-field';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
 import type { AppSchedule as Schedule, Cadence, CostForecast } from '../../services/appViewsApi';
+import { useCompanyTime } from '../../lib/companyTime';
 
 /**
  * When an app runs on its own (APP-VIEW-001 §5). Cadence is a closed set rather
@@ -80,6 +81,7 @@ export interface AppScheduleEditorProps {
 }
 
 export function AppScheduleEditor({ schedule, saving, onSave }: AppScheduleEditorProps) {
+    const { format } = useCompanyTime();
     const [enabled, setEnabled] = useState(schedule.enabled);
     const [cadence, setCadence] = useState<Cadence>(schedule.cadence || defaultsFor('daily'));
 
@@ -198,7 +200,7 @@ export function AppScheduleEditor({ schedule, saving, onSave }: AppScheduleEdito
 
             {schedule.next_run_at && enabled && (
                 <p className="text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                    Next run {new Date(schedule.next_run_at).toLocaleString('en-US', {
+                    Next run {format(schedule.next_run_at, {
                         month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
                     })}
                 </p>

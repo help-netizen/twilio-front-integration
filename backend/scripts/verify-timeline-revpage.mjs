@@ -319,28 +319,28 @@ function buildEmailPageQuery(scope, companyId, entityId, { limit, predicate }) {
     let cursorClause = '';
     if (predicate?.mode === 'tuple') {
         params.push(predicate.ts, predicate.id);
-        cursorClause = 'AND (COALESCE(gmail_internal_at, created_at), id) < ($3::timestamptz, $4::bigint)';
+        cursorClause = 'AND (occurred_at, id) < ($3::timestamptz, $4::bigint)';
     } else if (predicate) {
         params.push(predicate.ts);
         const operator = predicate.mode === 'lte' ? '<=' : '<';
-        cursorClause = `AND COALESCE(gmail_internal_at, created_at) ${operator} $3::timestamptz`;
+        cursorClause = `AND occurred_at ${operator} $3::timestamptz`;
     }
     params.push(limit);
     const keyColumn = scope === 'contact' ? 'contact_id' : 'timeline_id';
     return {
         params,
         text: `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
-                      to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                      to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at, occurred_at,
                       sent_by_user_email,
                       (direction = 'outbound') AS is_outbound,
-                      to_char(COALESCE(gmail_internal_at, created_at) AT TIME ZONE 'UTC',
+                      to_char(occurred_at AT TIME ZONE 'UTC',
                               'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts,
                       to_char(gmail_internal_at AT TIME ZONE 'UTC',
                               'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS legacy_ts
                FROM email_messages
                WHERE company_id = $1 AND ${keyColumn} = $2 AND on_timeline = true
                  ${cursorClause}
-               ORDER BY COALESCE(gmail_internal_at, created_at) DESC, id DESC
+               ORDER BY occurred_at DESC, id DESC
                LIMIT $${params.length}`,
     };
 }
@@ -355,16 +355,16 @@ async function fetchLegacyEmailRows(client, scope, companyId, entityId) {
     const keyColumn = scope === 'contact' ? 'contact_id' : 'timeline_id';
     const { rows } = await client.query(
         `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
-                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at, occurred_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound,
-                to_char(COALESCE(gmail_internal_at, created_at) AT TIME ZONE 'UTC',
+                to_char(occurred_at AT TIME ZONE 'UTC',
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts,
                 to_char(gmail_internal_at AT TIME ZONE 'UTC',
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS legacy_ts
          FROM email_messages
          WHERE company_id = $1 AND ${keyColumn} = $2 AND on_timeline = true
-         ORDER BY gmail_internal_at ASC, id ASC`,
+         ORDER BY occurred_at ASC, id ASC`,
         [companyId, entityId]
     );
     return rows;

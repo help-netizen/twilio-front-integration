@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { authedFetch } from '../services/apiClient';
 import { toast } from 'sonner';
+import { useCompanyTime } from '../lib/companyTime';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -24,6 +25,7 @@ export type EditUserForm = {
 };
 
 export function useCompanyUsers() {
+    const { format } = useCompanyTime();
     const [data, setData] = useState<PaginatedResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
@@ -176,7 +178,7 @@ export function useCompanyUsers() {
         } catch { toast.error('Connection error'); } finally { setActionLoading(null); }
     };
 
-    const fmtDate = (d: string | null) => { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
+    const fmtDate = (d: string | null) => { if (!d) return '—'; return format(d, { month: 'short', day: 'numeric', year: 'numeric' }); };
     const totalPages = data ? Math.ceil(data.total / limit) : 0;
     const users = data?.users || [];
 

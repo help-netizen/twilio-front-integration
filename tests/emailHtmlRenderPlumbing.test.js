@@ -29,7 +29,7 @@ describe('raw email persistence/query contract stays unchanged', () => {
         expect(sql).toMatch(/\bbody_html\b/);
         expect(sql).toMatch(/\bbody_text\b/);
         expect(sql).toMatch(/WHERE\s+company_id\s*=\s*\$1\s+AND\s+contact_id\s*=\s*\$2\s+AND\s+on_timeline\s*=\s*true/);
-        expect(sql).toMatch(/ORDER BY\s+gmail_internal_at\s+ASC,\s*id\s+ASC/);
+        expect(sql).toMatch(/ORDER BY\s+occurred_at\s+ASC,\s*id\s+ASC/);
         expect(params).toEqual([COMPANY_A, CONTACT_C]);
     });
 
@@ -60,6 +60,7 @@ describe('shared Pulse email projector', () => {
         body_html: '<p>Fresh reply</p><div class="gmail_quote">OLD-HTML</div>',
         snippet: 'Fresh reply',
         gmail_internal_at: '2026-07-27T12:00:00.000Z',
+        occurred_at: '2026-07-27T12:00:00.000Z',
         sent_by_user_email: null,
     };
 

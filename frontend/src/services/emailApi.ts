@@ -51,6 +51,7 @@ export interface EmailMessage {
     body_html: string | null;
     has_attachments: boolean;
     gmail_internal_at: string | null;
+    occurred_at: string;
     sent_by_user_id: string | null;
     sent_by_user_email: string | null;
     attachments: EmailAttachment[];

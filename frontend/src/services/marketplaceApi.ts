@@ -419,6 +419,7 @@ export interface AppModerationReview {
     reviewer_first_name: string | null;
     company_id: string;
     company_name: string;
+    company_timezone: string | null;
     moderated_by: string | null;
     moderator_first_name: string | null;
     created_at: string;

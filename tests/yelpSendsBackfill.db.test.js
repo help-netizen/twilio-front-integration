@@ -128,10 +128,10 @@ async function seedMessage({
             (company_id, mailbox_id, thread_id, provider_message_id,
              provider_thread_id, message_id_header, direction, contact_id,
              timeline_id, on_timeline, from_email, from_name, subject, snippet,
-             body_text, body_html, gmail_internal_at)
+             body_text, body_html, gmail_internal_at, occurred_at)
          VALUES
             ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12,
-             $13, $14, $15, $16)
+             $13, $14, $15, $16, COALESCE($16, now()))
          RETURNING id`,
         [
             companyId, mailboxId, threadId, pmid, providerThreadId,
@@ -425,6 +425,7 @@ describe('history SQL · real PostgreSQL', () => {
             from_email: 'reply+fixture@messaging.yelp.com',
             from_name: 'Kim L.',
             gmail_internal_at: new Date(TIMES.I1),
+            occurred_at: new Date(TIMES.I1),
             timeline_id: timelineAId,
         });
         await expect(emailQueries.getThreadingByProviderMessageId(`${TAG}-unknown`, DEFAULT_COMPANY_ID))

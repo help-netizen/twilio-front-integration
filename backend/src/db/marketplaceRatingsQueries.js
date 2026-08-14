@@ -171,6 +171,7 @@ const MODERATION_SELECT = `
         ) AS reviewer_first_name,
         company.id AS company_id,
         company.name AS company_name,
+        company.timezone AS company_timezone,
         rating.moderated_by,
         NULLIF(split_part(BTRIM(COALESCE(moderator.full_name, '')), ' ', 1), '')
             AS moderator_first_name,

@@ -7,6 +7,7 @@ import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete'
 import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import type { ContactAddress } from '../../types/contact';
+import { useCompanyTime } from '../../lib/companyTime';
 
 export function getLeadStatusColor(status: string): string {
     switch (status) {
@@ -32,6 +33,7 @@ export function getJobStatusStyle(status: string): { bg: string; color: string }
 }
 
 export function JobsList({ contactId }: { contactId: number }) {
+    const { format } = useCompanyTime();
     const [jobs, setJobs] = useState<jobsApi.LocalJob[]>([]);
     const [loading, setLoading] = useState(false);
     const [loaded, setLoaded] = useState(false);
@@ -47,7 +49,7 @@ export function JobsList({ contactId }: { contactId: number }) {
             {jobs.length > 0 && (
                 <div className="space-y-2">
                     {jobs.map(job => {
-                        const st = getJobStatusStyle(job.blanc_status); const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null; return (
+                        const st = getJobStatusStyle(job.blanc_status); const date = job.start_date ? format(job.start_date, { month: 'short', day: 'numeric', year: 'numeric' }) : null; return (
                             <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)} className="flex items-center justify-between p-3 rounded-xl cursor-pointer hover:shadow-sm transition-all" style={{ border: '1px solid var(--blanc-line)', background: 'transparent' }}>
                                 <div className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className="text-sm font-medium">{job.service_name || 'Job'}</span>{job.job_number && <span className="text-xs text-muted-foreground font-mono">#{job.job_number}</span>}<span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>{job.blanc_status}</span></div><div className="flex gap-3 mt-1 text-xs text-muted-foreground">{job.assigned_techs && job.assigned_techs.length > 0 && <span>👤 {job.assigned_techs.map((p: any) => p.name).join(', ')}</span>}{date && <span>📅 {date}</span>}{job.invoice_total && <span>💰 ${job.invoice_total}</span>}</div></div>
                             </div>

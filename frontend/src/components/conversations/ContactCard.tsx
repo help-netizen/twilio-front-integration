@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, Phone, Mail, Building2, Calendar, FileText, PhoneForwarded } from 'lucide-react';
 import type { Contact } from '../../types/contact';
 import '../conversations/LeadCard.css';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface ContactCardProps {
     contact: Contact;
@@ -19,15 +20,15 @@ function formatPhoneDisplay(phone: string): string {
     return phone;
 }
 
-function formatDate(iso: string | null | undefined): string {
+function formatDate(iso: string | null | undefined, timeZone: string): string {
     if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(iso, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 /* ────────────────────────────────────── */
 
 export function ContactCard({ contact, phone, hasActiveCall }: ContactCardProps) {
+    const { timeZone } = useCompanyTime();
     const [confirmCall, setConfirmCall] = useState(false);
 
     const displayName = contact.full_name || [contact.first_name, contact.last_name].filter(Boolean).join(' ') || 'Unknown';
@@ -137,7 +138,7 @@ export function ContactCard({ contact, phone, hasActiveCall }: ContactCardProps)
 
                     {/* Created */}
                     <InfoItem icon={<Calendar />} label="Contact Since">
-                        {formatDate(contact.created_at)}
+                        {formatDate(contact.created_at, timeZone)}
                     </InfoItem>
                 </div>
             </div>

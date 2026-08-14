@@ -72,8 +72,8 @@ async function seedMessage(companyId, threadId, suffix, {
     await db.query(
         `INSERT INTO email_messages
             (company_id, mailbox_id, thread_id, provider_message_id, direction,
-             from_email, contact_id, on_timeline)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             from_email, contact_id, on_timeline, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
         [companyId, mailboxId, threadId, providerMessageId, direction,
             fromEmail || null, contactId, onTimeline]
     );

@@ -138,6 +138,7 @@ function mapModerationReview(row) {
         reviewer_first_name: row.reviewer_first_name,
         company_id: row.company_id,
         company_name: row.company_name,
+        company_timezone: row.company_timezone,
         moderated_by: row.moderated_by,
         moderator_first_name: row.moderator_first_name,
         created_at: row.created_at,

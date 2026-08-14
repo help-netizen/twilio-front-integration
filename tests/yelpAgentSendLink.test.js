@@ -81,6 +81,7 @@ function sentRow(overrides = {}) {
         body_html: '<p>Hi Kim — new text</p>',
         snippet: null,
         gmail_internal_at: '2026-06-23T13:00:00.000Z',
+        occurred_at: '2026-06-23T13:00:00.000Z',
         sent_by_user_email: 'agent@co.com',
         ...overrides,
     };

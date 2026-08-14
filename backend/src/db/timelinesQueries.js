@@ -575,13 +575,13 @@ async function getUnifiedTimelinePage({
              -- YELP-TIMELINE-DEDUP-001: a CONTACTLESS timeline (Yelp conv-id) has no
              -- contact, so email_by_contact (keyed contact_id) never surfaces its
              -- email. This leg keys on timeline_id instead — one pre-aggregation over
-             -- email_messages, served by idx_email_messages_timeline (mig 165), no
+             -- email_messages, served by idx_email_messages_timeline_occurred (mig 261), no
              -- per-row correlation (PULSE-PERF-001 discipline). Company-scoped ($1).
              SELECT em.timeline_id,
-                    MAX(em.gmail_internal_at) AS last_message_at,
-                    (ARRAY_AGG(em.thread_id ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC))[1] AS email_thread_id,
-                    (ARRAY_AGG(em.subject   ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC))[1] AS email_subject,
-                    (ARRAY_AGG(em.direction ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC))[1] AS last_message_direction
+                    MAX(em.occurred_at) AS last_message_at,
+                    (ARRAY_AGG(em.thread_id ORDER BY em.occurred_at DESC, em.id DESC))[1] AS email_thread_id,
+                    (ARRAY_AGG(em.subject   ORDER BY em.occurred_at DESC, em.id DESC))[1] AS email_subject,
+                    (ARRAY_AGG(em.direction ORDER BY em.occurred_at DESC, em.id DESC))[1] AS last_message_direction
              FROM email_messages em
              WHERE em.company_id = $1
                AND em.timeline_id IS NOT NULL

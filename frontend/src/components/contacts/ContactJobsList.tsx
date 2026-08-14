@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Loader2 } from 'lucide-react';
 import * as jobsApi from '../../services/jobsApi';
+import { useCompanyTime } from '../../lib/companyTime';
 
 const JOB_STATUS_COLORS: Record<string, string> = {
     'Submitted': '#3B82F6', 'Waiting for parts': '#F59E0B',
@@ -17,6 +18,7 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 export function JobsList({ contactId }: { contactId: number }) {
+    const { format } = useCompanyTime();
     const [jobs, setJobs] = useState<jobsApi.LocalJob[]>([]);
     const [loading, setLoading] = useState(false);
     const [loaded, setLoaded] = useState(false);
@@ -39,7 +41,7 @@ export function JobsList({ contactId }: { contactId: number }) {
         <div className="space-y-2">
             {jobs.map(job => {
                 const color = JOB_STATUS_COLORS[job.blanc_status] || '#6B7280';
-                const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                const date = job.start_date ? format(job.start_date, { month: 'short', day: 'numeric', year: 'numeric' }) : null;
                 const techs = job.assigned_techs?.map((p: any) => p.name).join(', ');
 
                 return (

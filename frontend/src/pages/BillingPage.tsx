@@ -11,6 +11,7 @@ import { Button } from '../components/ui/button';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { SettingsSection } from '../components/settings/SettingsSection';
 import { billingApi, type BillingOverview, type Plan, type WalletInfo } from '../services/billingApi';
+import { formatCompanyTime, useCompanyTime } from '../lib/companyTime';
 
 const METRIC_LABELS: Record<string, string> = {
     sms: 'Text messages',
@@ -38,9 +39,9 @@ function toneStyle(tone: Tone): React.CSSProperties {
     }
 }
 
-function fmtDate(iso: string | null): string {
+function fmtDate(iso: string | null, timeZone: string): string {
     if (!iso) return '';
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(iso, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 function daysLeft(iso: string | null): number | null {
     if (!iso) return null;
@@ -68,6 +69,7 @@ function overageFor(plan: Plan | undefined, metric: string, used: number): numbe
 const KPI = 'rounded-2xl bg-[rgba(25,25,25,0.04)] px-4 py-3.5';
 
 export default function BillingPage() {
+    const { timeZone } = useCompanyTime();
     const [data, setData] = useState<BillingOverview | null>(null);
     const [wallet, setWallet] = useState<WalletInfo | null>(null);
     const [loading, setLoading] = useState(true);
@@ -151,7 +153,7 @@ export default function BillingPage() {
 
     /* Usage — during an active trial, Plans take priority so this drops below them */
     const usageSection = (
-        <SettingsSection flat title="This month's usage" description={`Resets ${fmtDate(periodResets.toISOString())}`}>
+        <SettingsSection flat title="This month's usage" description={`Resets ${fmtDate(periodResets.toISOString(), timeZone)}`}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
                 {METRIC_ORDER.map(metric => {
                     const used = Number(usage[metric] || 0);
@@ -323,13 +325,13 @@ export default function BillingPage() {
                                     {`${trialDays} day${trialDays === 1 ? '' : 's'}`}
                                 </div>
                             )}
-                            {renews && <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>free until {fmtDate(renews)}</div>}
+                            {renews && <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>free until {fmtDate(renews, timeZone)}</div>}
                         </>
                     ) : (
                         <>
                             <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>{usd(nextBill)}</div>
                             <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>
-                                {renews ? fmtDate(renews) : 'next cycle'}{overageTotal > 0 ? ` · incl. ${usd(overageTotal)} overage` : ''}
+                                {renews ? fmtDate(renews, timeZone) : 'next cycle'}{overageTotal > 0 ? ` · incl. ${usd(overageTotal)} overage` : ''}
                             </div>
                         </>
                     )}
@@ -365,7 +367,7 @@ export default function BillingPage() {
                             const paid = inv.status === 'paid';
                             return (
                                 <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto 72px', alignItems: 'center', gap: 12, padding: '11px 2px' }}>
-                                    <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>{fmtDate(inv.date)}</span>
+                                    <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>{fmtDate(inv.date, timeZone)}</span>
                                     <span style={{ fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 999, textTransform: 'capitalize', ...toneStyle(paid ? 'ok' : 'muted') }}>{inv.status || 'pending'}</span>
                                     <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{usd(inv.amount, true)}</span>
                                     {inv.hosted_url ? (

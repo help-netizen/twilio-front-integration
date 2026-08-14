@@ -17,6 +17,7 @@ import { FloatingSelect } from '../components/ui/floating-select';
 import { FloatingField } from '../components/ui/floating-field';
 import { SelectItem } from '../components/ui/select';
 import { authedFetch } from '../services/apiClient';
+import { useCompanyTime } from '../lib/companyTime';
 import { fetchMarketplaceApps, installMarketplaceApp, type MarketplaceApp } from '../services/marketplaceApi';
 import {
     getMailAgentOverview, saveMailAgentSettings, testMailAgentRules, runMailAgentDryRun, listMailAgentReviews,
@@ -58,6 +59,7 @@ function StatChip({ label, value }: { label: string; value: number | string }) {
 interface CompanyUser { id: string; name: string }
 
 export default function MailSecretarySettingsPage() {
+    const { format } = useCompanyTime();
     const [overview, setOverview] = useState<MailAgentOverview | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -401,7 +403,7 @@ export default function MailSecretarySettingsPage() {
                                         <div className="text-xs mt-0.5 truncate" style={{ color: 'var(--blanc-ink-3)' }}>
                                             {r.from_name ? `${r.from_name} · ` : ''}{r.from_email}
                                             {typeof r.confidence === 'number' && r.confidence !== null && ` · ${(Number(r.confidence) * 100).toFixed(0)}%`}
-                                            {' · '}{new Date(r.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                            {' · '}{format(r.created_at, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                                             {r.rule_line != null && ` · rule line ${r.rule_line}`}
                                         </div>
                                         {r.reason && <div className="text-sm mt-1" style={{ color: 'var(--blanc-ink-2)' }}>{r.reason}</div>}

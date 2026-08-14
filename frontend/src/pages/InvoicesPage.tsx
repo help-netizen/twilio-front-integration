@@ -15,6 +15,7 @@ import type { HydratedInvoice, Invoice, InvoiceCreateData } from '../services/in
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { getInvoiceCapabilities } from '../hooks/useInvoice';
 import { useAuthz } from '../hooks/useAuthz';
+import { formatCompanyTime, useCompanyTime } from '../lib/companyTime';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
@@ -46,14 +47,15 @@ function formatMoney(value: string | number): string {
     return Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, timeZone: string): string {
     if (!value) return '-';
-    return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(value, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function InvoicesPage() {
+    const { timeZone } = useCompanyTime();
     const page = useInvoices();
     const { permissions = [] } = useAuthz();
     const [editorOpen, setEditorOpen] = useState(false);
@@ -292,7 +294,7 @@ export function InvoicesPage() {
                                             </td>
                                             <td className="px-4 py-2 text-right font-mono">${formatMoney(inv.total)}</td>
                                             <td className="px-4 py-2 text-right font-mono">${formatMoney(inv.balance_due)}</td>
-                                            <td className="px-4 py-2 text-muted-foreground">{formatDate(inv.due_date)}</td>
+                                            <td className="px-4 py-2 text-muted-foreground">{formatDate(inv.due_date, timeZone)}</td>
                                             <td className="px-4 py-2 text-right">
                                                 {hasActions ? <DropdownMenu>
                                                     <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>

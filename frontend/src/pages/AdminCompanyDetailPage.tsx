@@ -11,6 +11,7 @@ import { ResetPasswordDialog } from '../components/super-admin/ResetPasswordDial
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { UsersTable } from '../components/users/UsersTable';
 import { UserFilters } from '../components/users/UserFilters';
+import { formatCompanyTime } from '../lib/companyTime';
 
 interface CompanyInfo {
     id: string;
@@ -30,7 +31,7 @@ export default function AdminCompanyDetailPage() {
     // '…' пока company === null); setter оставлен, чтобы не трогать логику загрузки.
     const [, setCompanyLoading] = useState(true);
 
-    const h = useAdminCompanyUsers(companyId!);
+    const h = useAdminCompanyUsers(companyId!, company?.timezone);
 
     useEffect(() => {
         if (!companyId) return;
@@ -64,7 +65,7 @@ export default function AdminCompanyDetailPage() {
 
     // Meta line: only render facts that exist (no timezone fallback filler).
     const meta = company
-        ? [company.slug, company.timezone, `Created ${new Date(company.created_at).toLocaleDateString()}`].filter(Boolean).join(' · ')
+        ? [company.slug, company.timezone, `Created ${formatCompanyTime(company.created_at, { year: 'numeric', month: 'numeric', day: 'numeric' }, company.timezone)}`].filter(Boolean).join(' · ')
         : '';
 
     return (

@@ -12,6 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatPhoneDisplay } from '@/utils/phoneUtils';
 import { usePulsePlayer, buildTrackLabel, type PlayerTrack } from './pulsePlayer';
 import type { CallData, Entity, GeminiEntity } from '../call-list-item';
+import { useCompanyTime } from '@/lib/companyTime';
 
 const fmtAudio = (s: number) => {
     if (!isFinite(s) || isNaN(s)) return '0:00';
@@ -29,13 +30,14 @@ const getSentiment = (score: number | null) => {
 
 export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     const player = usePulsePlayer();
+    const { timeZone } = useCompanyTime();
 
     // PULSE-PLAYER-001: playback moved to the shared floating bar. The card only
     // starts/stops ITS recording and forwards seeks; all transport UI lives there.
     const track: PlayerTrack = {
         callSid: call.callSid || '',
         audioUrl: call.audioUrl || '',
-        label: buildTrackLabel(formatPhoneDisplay(call.direction === 'incoming' ? call.from : call.to), call.startTime),
+        label: buildTrackLabel(formatPhoneDisplay(call.direction === 'incoming' ? call.from : call.to), call.startTime, timeZone),
         durationHint: call.recordingDuration || call.totalDuration || call.duration || 0,
     };
     const isActiveTrack = !!call.callSid && player.track?.callSid === call.callSid;

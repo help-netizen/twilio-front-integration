@@ -58,7 +58,7 @@ beforeEach(() => {
         body_html: null,
         from_email: 'reply+8160b36a1c2d3e4f@messaging.yelp.com',
         from_name: 'Yelp Inbox',
-        gmail_internal_at: '2026-07-11T21:39:23.000Z',
+        occurred_at: '2026-07-11T21:39:23.000Z',
         timeline_id: 3208,
     });
     mockLinkYelpAgentSend.mockResolvedValue({ linked: true, outcome: 'linked', timelineId: 3208 });
@@ -200,7 +200,7 @@ describe('TC-B6-02 · missing greeter timeline → resolve_miss without linking'
             body_html: null,
             from_email: 'reply+8160b36a1c2d3e4f@messaging.yelp.com',
             from_name: 'Yelp Inbox',
-            gmail_internal_at: '2026-07-11T21:39:23.000Z',
+            occurred_at: '2026-07-11T21:39:23.000Z',
             timeline_id: null,
         });
         const withoutTimeline = await agentHandlers.run(yelpTask());

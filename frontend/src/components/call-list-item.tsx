@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneDisplay as formatPhoneNumber } from '@/utils/phoneUtils';
 import { cn } from '@/lib/utils';
+import { useCompanyTime } from '@/lib/companyTime';
 import { CallAudioPlayer } from './CallAudioPlayer';
 import { STATUS_CONFIG, formatDuration, formatCallTime } from './callTypes';
 import type { CallData } from './callTypes';
@@ -19,6 +20,7 @@ interface CallListItemProps {
 }
 
 export function CallListItem({ call }: CallListItemProps) {
+    const { timeZone } = useCompanyTime();
     const [showSystemInfo, setShowSystemInfo] = useState(false);
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
     const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
@@ -53,7 +55,7 @@ export function CallListItem({ call }: CallListItemProps) {
                                 ) : null}
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground">{formatCallTime(call.startTime)}</span>
+                                <span className="text-xs text-muted-foreground">{formatCallTime(call.startTime, timeZone)}</span>
                                 <TooltipProvider>
                                     <Tooltip>
                                         <TooltipTrigger asChild>

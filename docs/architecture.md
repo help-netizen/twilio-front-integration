@@ -8271,3 +8271,27 @@ company totals); treating invoice-less payments as attributed profit (tax basis
 and lead attribution are unknown); and hard-wiring Google Ads OAuth/sync logic
 into the cohort aggregate (blocks additional sources). Full draft:
 `docs/specs/LEAD-CHANNEL-ANALYTICS-001.md`.
+
+## EMAIL-OCCURRED-AT-001 — one stored event-time convention (2026-08-14)
+
+Email time reconciliation belongs at ingestion, not independently in each read
+projection. `email_messages.occurred_at` is the canonical absolute instant;
+provider `gmail_internal_at` is immutable evidence. Live polling may repair a
+large outbound provider discrepancy from its observation time, while initial and
+history-gap backfills preserve provider history. All sorting, cursor tuples,
+aggregates, cached thread time, and public/shared email projections read the stored
+canonical column. The former outbound-`created_at` CASE is removed.
+The column permanently retains `DEFAULT now()` so the old live poller remains
+write-compatible during the migration-before-container deployment window; explicit
+initial-backfill writes still preserve provider time. Thread-cache rebuilds in both
+forward and rollback migrations skip draft-only threads instead of replacing their
+last known cache time with `NULL`.
+
+Frontend timezone projection is orthogonal to storage. `companyTime.ts` reads the
+existing authenticated company timezone and injects it into `Intl.DateTimeFormat`;
+it never changes the stored instant. Empty company timezone falls back to
+`America/New_York`, and date-only values are anchored to their company calendar
+date. A source ratchet prevents browser-local date formatting from reappearing.
+No new route, permission, timestamp convention, or ChatGPT MCP email projection is
+introduced. Full decision and verification record:
+`docs/specs/EMAIL-OCCURRED-AT-001.md`.

@@ -107,6 +107,7 @@ function wireMatchAndLink() {
         body_text: 'hi there', snippet: 'hi there',
         body_html: '<p>hi there</p><div class="gmail_quote">OLD-HTML</div>',
         gmail_internal_at: '2026-06-23T12:00:00.000Z', sent_by_user_email: null,
+        occurred_at: '2026-06-23T12:00:00.000Z',
     });
     queries.markContactUnread.mockResolvedValue(undefined);
     timelinesQueries.markTimelineUnread.mockResolvedValue(undefined);

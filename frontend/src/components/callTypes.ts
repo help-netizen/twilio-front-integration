@@ -1,3 +1,5 @@
+import { formatCompanyTime } from '../lib/companyTime';
+
 export interface Entity {
     entity_type: string;
     text: string;
@@ -64,8 +66,8 @@ export function formatAudioTime(seconds: number): string {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-export function formatCallTime(date: Date): string {
-    return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+export function formatCallTime(date: Date, timeZone?: string): string {
+    return formatCompanyTime(date, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }, timeZone);
 }
 
 export function getSentimentDisplay(score: number | null) {

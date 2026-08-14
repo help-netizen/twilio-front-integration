@@ -330,7 +330,7 @@ async function getMessagesByThread(threadId, companyId) {
         FROM email_messages m
         WHERE m.thread_id = $1 AND m.company_id = $2
           AND m.is_draft_artifact = false
-        ORDER BY m.gmail_internal_at ASC, m.id ASC
+        ORDER BY m.occurred_at ASC, m.id ASC
     `, [threadId, companyId]);
     return result.rows;
 }
@@ -341,7 +341,7 @@ async function upsertMessage(data) {
         message_id_header, in_reply_to_header, references_header,
         direction, from_name, from_email, to_recipients_json, cc_recipients_json,
         subject, snippet, body_text, body_html, has_attachments,
-        gmail_internal_at, sent_by_user_id, sent_by_user_email,
+        gmail_internal_at, occurred_at, sent_by_user_id, sent_by_user_email,
     } = data;
 
     const result = await db.query(`
@@ -350,8 +350,8 @@ async function upsertMessage(data) {
              message_id_header, in_reply_to_header, references_header,
              direction, from_name, from_email, to_recipients_json, cc_recipients_json,
              subject, snippet, body_text, body_html, has_attachments,
-             gmail_internal_at, sent_by_user_id, sent_by_user_email)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+             gmail_internal_at, occurred_at, sent_by_user_id, sent_by_user_email)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
         ON CONFLICT (company_id, provider_message_id) DO UPDATE SET
             body_text = COALESCE(EXCLUDED.body_text, email_messages.body_text),
             body_html = COALESCE(EXCLUDED.body_html, email_messages.body_html),
@@ -364,8 +364,37 @@ async function upsertMessage(data) {
         direction, from_name, from_email,
         JSON.stringify(to_recipients_json || []), JSON.stringify(cc_recipients_json || []),
         subject, snippet, body_text, body_html, has_attachments || false,
-        gmail_internal_at, sent_by_user_id, sent_by_user_email]);
+        gmail_internal_at, occurred_at, sent_by_user_id, sent_by_user_email]);
     return result.rows[0];
+}
+
+async function refreshThreadLastMessage(threadId, companyId, mailboxId, client = db) {
+    const result = await client.query(
+        `UPDATE email_threads thread
+         SET last_message_at = latest.occurred_at,
+             last_message_direction = latest.direction,
+             last_message_preview = latest.last_message_preview,
+             last_message_from = latest.last_message_from,
+             updated_at = now()
+         FROM (
+             SELECT occurred_at, direction,
+                    COALESCE(snippet, '') AS last_message_preview,
+                    COALESCE(NULLIF(from_name, ''), from_email) AS last_message_from
+             FROM email_messages
+             WHERE thread_id = $1
+               AND company_id = $2
+               AND mailbox_id = $3
+               AND is_draft_artifact = false
+             ORDER BY occurred_at DESC, id DESC
+             LIMIT 1
+         ) latest
+         WHERE thread.id = $1
+           AND thread.company_id = $2
+           AND thread.mailbox_id = $3
+         RETURNING thread.*`,
+        [threadId, companyId, mailboxId]
+    );
+    return result.rows[0] || null;
 }
 
 /**
@@ -454,7 +483,7 @@ async function setDraftArtifactStatus(companyId, mailboxId, providerMessageId, i
         }
 
         const latestResult = await client.query(
-            `SELECT gmail_internal_at, direction,
+            `SELECT occurred_at, direction,
                     COALESCE(snippet, '') AS last_message_preview,
                     COALESCE(NULLIF(from_name, ''), from_email) AS last_message_from
              FROM email_messages
@@ -462,7 +491,7 @@ async function setDraftArtifactStatus(companyId, mailboxId, providerMessageId, i
                AND company_id = $2
                AND mailbox_id = $3
                AND is_draft_artifact = false
-             ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+             ORDER BY occurred_at DESC, id DESC
              LIMIT 1`,
             [changed.thread_id, companyId, mailboxId]
         );
@@ -482,7 +511,7 @@ async function setDraftArtifactStatus(companyId, mailboxId, providerMessageId, i
                     changed.thread_id,
                     companyId,
                     mailboxId,
-                    latest.gmail_internal_at,
+                    latest.occurred_at,
                     latest.direction,
                     latest.last_message_preview,
                     latest.last_message_from,
@@ -728,7 +757,7 @@ async function getThreadingByProviderMessageId(providerMessageId, companyId) {
     if (!providerMessageId) return null;
     const result = await db.query(
         `SELECT message_id_header, provider_thread_id, subject,
-                body_text, body_html, from_email, from_name, gmail_internal_at, timeline_id
+                body_text, body_html, from_email, from_name, gmail_internal_at, occurred_at, timeline_id
          FROM email_messages
          WHERE company_id = $1 AND provider_message_id = $2
            AND is_draft_artifact = false
@@ -753,7 +782,7 @@ async function listYelpConversationHistory(companyId, timelineId, { excludeProvi
                AND em.is_draft_artifact = false
          )
          SELECT em.id, em.provider_message_id, em.direction, em.body_text, em.snippet,
-                em.gmail_internal_at
+                em.gmail_internal_at, em.occurred_at
          FROM email_messages em
          WHERE em.company_id = $1
            AND em.is_draft_artifact = false
@@ -764,7 +793,7 @@ async function listYelpConversationHistory(companyId, timelineId, { excludeProvi
                   AND em.thread_id IN (SELECT thread_id FROM conv_threads))
                )
            AND ($3::text IS NULL OR em.provider_message_id <> $3)
-         ORDER BY em.gmail_internal_at DESC NULLS LAST, em.id DESC
+         ORDER BY em.occurred_at DESC, em.id DESC
          LIMIT $4`,
         [companyId, timelineId, excludeProviderMessageId, limit]
     );
@@ -780,14 +809,14 @@ async function listYelpConversationHistory(companyId, timelineId, { excludeProvi
 async function listUnlinkedInboundForTimeline(companyId, { limit = 100 } = {}) {
     const result = await db.query(
         `SELECT id, provider_message_id, from_email, from_name, subject,
-                body_text, snippet, gmail_internal_at
+                body_text, snippet, gmail_internal_at, occurred_at
          FROM email_messages
          WHERE company_id = $1
            AND direction = 'inbound'
            AND is_draft_artifact = false
            AND contact_id IS NULL
            AND on_timeline = false
-         ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+         ORDER BY occurred_at DESC, id DESC
          LIMIT $2`,
         [companyId, limit]
     );
@@ -809,7 +838,7 @@ async function listUnlinkedInboundForTimeline(companyId, { limit = 100 } = {}) {
 async function listUnlinkedOutboundForTimeline(companyId, { limit = 100 } = {}) {
     const result = await db.query(
         `SELECT id, provider_message_id, to_recipients_json, subject,
-                body_text, snippet, gmail_internal_at
+                body_text, snippet, gmail_internal_at, occurred_at
          FROM email_messages
          WHERE company_id = $1
            AND direction = 'outbound'
@@ -821,7 +850,7 @@ async function listUnlinkedOutboundForTimeline(companyId, { limit = 100 } = {}) 
            -- whose Gmail provider_message_id returned 404.
            AND message_id_header IS NOT NULL
            AND message_id_header <> ''
-         ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+         ORDER BY occurred_at DESC, id DESC
          LIMIT $2`,
         [companyId, limit]
     );
@@ -856,13 +885,13 @@ async function getTimelineEmailByContact(companyId, contactId, { limit } = {}) {
     }
     const result = await db.query(
         `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
-                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at, occurred_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound
          FROM email_messages
          WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
            AND is_draft_artifact = false
-         ORDER BY gmail_internal_at ASC, id ASC${limitClause}`,
+         ORDER BY occurred_at ASC, id ASC${limitClause}`,
         params
     );
     return result.rows;
@@ -884,13 +913,13 @@ async function getTimelineEmailByTimeline(companyId, timelineId, { limit } = {})
     }
     const result = await db.query(
         `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
-                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at, occurred_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound
          FROM email_messages
          WHERE company_id = $1 AND timeline_id = $2 AND on_timeline = true
            AND is_draft_artifact = false
-         ORDER BY gmail_internal_at ASC, id ASC${limitClause}`,
+         ORDER BY occurred_at ASC, id ASC${limitClause}`,
         params
     );
     return result.rows;
@@ -906,27 +935,27 @@ async function getTimelineEmailPageByContact(companyId, contactId, { limit, curs
     let cursorClause = '';
     if (cursorPred?.mode === 'tuple') {
         params.push(cursorPred.ts, cursorPred.id);
-        cursorClause = `AND (CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END, id) < ($3::timestamptz, $4::bigint)`;
+        cursorClause = `AND (occurred_at, id) < ($3::timestamptz, $4::bigint)`;
     } else if (cursorPred) {
         params.push(cursorPred.ts);
         const operator = cursorPred.mode === 'lte' ? '<=' : '<';
-        cursorClause = `AND CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END ${operator} $3::timestamptz`;
+        cursorClause = `AND occurred_at ${operator} $3::timestamptz`;
     }
     params.push(limit);
 
     const result = await db.query(
         `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
-                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at, occurred_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound,
                 created_at,
-                to_char((CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END) AT TIME ZONE 'UTC',
+                to_char(occurred_at AT TIME ZONE 'UTC',
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
          FROM email_messages
          WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
            AND is_draft_artifact = false
            ${cursorClause}
-         ORDER BY CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END DESC, id DESC
+         ORDER BY occurred_at DESC, id DESC
          LIMIT $${params.length}`,
         params
     );
@@ -943,27 +972,27 @@ async function getTimelineEmailPageByTimeline(companyId, timelineId, { limit, cu
     let cursorClause = '';
     if (cursorPred?.mode === 'tuple') {
         params.push(cursorPred.ts, cursorPred.id);
-        cursorClause = `AND (CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END, id) < ($3::timestamptz, $4::bigint)`;
+        cursorClause = `AND (occurred_at, id) < ($3::timestamptz, $4::bigint)`;
     } else if (cursorPred) {
         params.push(cursorPred.ts);
         const operator = cursorPred.mode === 'lte' ? '<=' : '<';
-        cursorClause = `AND CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END ${operator} $3::timestamptz`;
+        cursorClause = `AND occurred_at ${operator} $3::timestamptz`;
     }
     params.push(limit);
 
     const result = await db.query(
         `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
-                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at, occurred_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound,
                 created_at,
-                to_char((CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END) AT TIME ZONE 'UTC',
+                to_char(occurred_at AT TIME ZONE 'UTC',
                         'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS ts
          FROM email_messages
          WHERE company_id = $1 AND timeline_id = $2 AND on_timeline = true
            AND is_draft_artifact = false
            ${cursorClause}
-         ORDER BY CASE WHEN direction = 'outbound' THEN created_at ELSE COALESCE(gmail_internal_at, created_at) END DESC, id DESC
+         ORDER BY occurred_at DESC, id DESC
          LIMIT $${params.length}`,
         params
     );
@@ -982,7 +1011,7 @@ async function getNewestThreadIdForContact(companyId, contactId) {
          FROM email_messages
          WHERE company_id = $1 AND contact_id = $2
            AND is_draft_artifact = false
-         ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+         ORDER BY occurred_at DESC, id DESC
          LIMIT 1`,
         [companyId, contactId]
     );
@@ -1086,6 +1115,7 @@ module.exports = {
     // messages
     getMessagesByThread,
     upsertMessage,
+    refreshThreadLastMessage,
     listOutboundDraftArtifactCandidates,
     markDraftArtifact,
     unmarkDraftArtifact,

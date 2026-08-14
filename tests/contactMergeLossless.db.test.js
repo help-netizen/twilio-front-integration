@@ -176,8 +176,8 @@ describe('ZB-DECOUPLE-001 B3 lossless contact merge against albusto_test', () =>
         await client.query(
             `INSERT INTO email_messages
                 (company_id, mailbox_id, thread_id, provider_message_id, direction,
-                 contact_id, timeline_id, on_timeline)
-             VALUES ($1, $2, $3, $4, 'inbound', $5, $6, true)`,
+                 contact_id, timeline_id, on_timeline, occurred_at)
+             VALUES ($1, $2, $3, $4, 'inbound', $5, $6, true, now())`,
             [companyA, mailbox.rows[0].id, thread.rows[0].id,
                 `message-${suffix}`, donor.id, donorTimeline.rows[0].id]
         );

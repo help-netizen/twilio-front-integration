@@ -14,6 +14,7 @@ import {
     useRestoreVersion,
     type FsmVersionListItem,
 } from '../../hooks/useFsmEditor';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface VersionHistoryProps {
     machineKey: string;
@@ -40,14 +41,14 @@ const statusConfig: Record<
     },
 };
 
-function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString('en-US', {
+function formatDate(iso: string, timeZone: string): string {
+    return formatCompanyTime(iso, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-    });
+    }, timeZone);
 }
 
 function VersionRow({
@@ -59,6 +60,7 @@ function VersionRow({
     onRestore: (versionId: number) => void;
     isRestoring: boolean;
 }) {
+    const { timeZone } = useCompanyTime();
     const [expanded, setExpanded] = useState(false);
     const config = statusConfig[version.status];
     const author = version.published_by || version.created_by;
@@ -103,7 +105,7 @@ function VersionRow({
             <div className="mt-1.5 flex items-center gap-2 text-xs text-[var(--blanc-ink-3)]">
                 <span>{author}</span>
                 <span>&middot;</span>
-                <span>{formatDate(date)}</span>
+                <span>{formatDate(date, timeZone)}</span>
             </div>
 
             {hasNote && (

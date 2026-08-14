@@ -9,6 +9,7 @@ import { type AddressFields, EMPTY_ADDRESS } from '../AddressAutocomplete';
 import { useZipCheck } from '../../hooks/useZipCheck';
 import { useAuth } from '../../auth/AuthProvider';
 import { todayInTZ, dateInTZ } from '../../utils/companyTime';
+import { formatCompanyTime } from '../../lib/companyTime';
 
 export type Step = 1 | 2 | 3 | 4;
 
@@ -42,7 +43,7 @@ function recTimeToISO(date: string, hhmm: string, tz: string): string {
 export function slotRecommendationToSchedule(rec: SlotRecommendation, tz: string): SelectedSchedule {
     const start = recTimeToISO(rec.date, rec.time_frame.start, tz);
     const end = recTimeToISO(rec.date, rec.time_frame.end, tz);
-    const day = new Date(`${rec.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const day = formatCompanyTime(`${rec.date}T12:00:00`, { weekday: 'short', month: 'short', day: 'numeric' }, tz);
     const tech = rec.technicians?.[0] || null;
     return {
         start,

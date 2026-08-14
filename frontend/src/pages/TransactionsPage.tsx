@@ -12,6 +12,7 @@ import { paymentMethodLabel } from '../lib/paymentMethodLabels';
 import { isVoidablePayment } from '../components/payments/paymentStatus';
 import { VoidPaymentDialog } from '../components/payments/VoidPaymentDialog';
 import type { PaymentTransaction } from '../services/paymentsCanonicalApi';
+import { formatCompanyTime, useCompanyTime } from '../lib/companyTime';
 
 // -- Constants ----------------------------------------------------------------
 
@@ -58,9 +59,9 @@ function formatMoney(value: string | number): string {
     return Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, timeZone: string): string {
     if (!value) return '-';
-    return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatCompanyTime(value, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 // -- Summary Card -------------------------------------------------------------
@@ -80,6 +81,7 @@ function SummaryCard({ label, value, icon: Icon, className }: { label: string; v
 // -- Component ----------------------------------------------------------------
 
 export function TransactionsPage() {
+    const { timeZone } = useCompanyTime();
     const page = useTransactions();
     // TXN-STATUS-VOID-001: the ledger row targeted by the Void reason dialog.
     const [voidTarget, setVoidTarget] = useState<PaymentTransaction | null>(null);
@@ -211,7 +213,7 @@ export function TransactionsPage() {
                                         <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
                                             {txn.invoice_id ? `#${txn.invoice_id}` : '-'}
                                         </td>
-                                        <td className="px-4 py-2 text-muted-foreground">{formatDate(txn.created_at)}</td>
+                                        <td className="px-4 py-2 text-muted-foreground">{formatDate(txn.created_at, timeZone)}</td>
                                         <td className="px-4 py-2 text-right">
                                             <DropdownMenu>
                                                 <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>

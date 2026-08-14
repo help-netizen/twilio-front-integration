@@ -20,6 +20,7 @@ import SafeEmailHtml from '../email/SafeEmailHtml';
 import { linkifyToHtml } from '../../lib/linkifyText';
 import { sanitizeEmailHtml } from '../../lib/sanitizeEmailHtml';
 import { stripEmailQuote } from '../../lib/stripEmailQuote';
+import { formatCompanyTime } from '../../lib/companyTime';
 
 // Cheap inline probe (EMAIL-QUOTE-STRIP-001 OQ-QS-4): does the KEPT (stripped)
 // reply carry a *blockable* remote image? We run this against the SAME display
@@ -32,12 +33,10 @@ import { stripEmailQuote } from '../../lib/stripEmailQuote';
 const BLOCKED_IMG_RE = /\bdata-blanc-src\s*=/i;
 
 const formatTime = (dateStr: string, tz: string): string => {
-    const d = new Date(dateStr);
-    return d.toLocaleString('en-US', {
+    return formatCompanyTime(dateStr, {
         month: 'short', day: 'numeric',
         hour: 'numeric', minute: '2-digit', hour12: true,
-        timeZone: tz,
-    });
+    }, tz);
 };
 
 interface EmailListItemProps {

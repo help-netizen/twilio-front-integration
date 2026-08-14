@@ -29,6 +29,7 @@ import { TaskStack } from '../tasks/TaskStack';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogTitle, DialogDescription } from '../ui/dialog';
 import { CreateLeadJobWizard } from '../conversations/CreateLeadJobWizard';
 import { ContactSavedCardsSection } from './ContactSavedCardsSection';
+import { useCompanyTime } from '../../lib/companyTime';
 
 interface PulseContactPanelProps {
     contact: Contact; leads: ContactLead[]; loading: boolean; timelineId?: number | null;
@@ -43,6 +44,7 @@ interface PulseContactPanelProps {
 /* No background cards — clean flat layout, content breathes */
 
 export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: jobsProp, focusSection, onAddressesChanged, onContactChanged, onTasksChanged }: PulseContactPanelProps) {
+    const { format: formatCompanyDate } = useCompanyTime();
     const navigate = useNavigate();
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
@@ -264,7 +266,7 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: j
 
                             {filteredJobs.map(job => {
                                 const st = getJobStatusStyle(job.blanc_status);
-                                const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                                const date = job.start_date ? formatCompanyDate(job.start_date, { month: 'short', day: 'numeric', year: 'numeric' }) : null;
                                 return (
                                     <div key={`job-${job.id}`} onClick={() => navigate(`/jobs/${job.id}`)} className="p-3 rounded-xl cursor-pointer transition-all" style={{ border: '1px solid var(--blanc-line)' }} onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(104,95,80,0.3)')} onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}>
                                         <div className="flex items-center justify-between gap-2">

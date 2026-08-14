@@ -10,7 +10,8 @@ import { ScheduleItemCard } from './ScheduleItemCard';
 import { RouteConnector } from './RouteConnector';
 import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
-import { todayInTZ, dateKeyInTZ } from '../../utils/companyTime';
+import { todayInTZ, dateKeyInTZ, dateInTZ } from '../../utils/companyTime';
+import { formatCompanyTime } from '../../lib/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
 import { colorForTechnician } from '../../utils/scheduleProviderColors';
 import { useScheduleProviderColorRegistry } from './ScheduleProviderColorContext';
@@ -34,7 +35,7 @@ interface ProviderGroup {
 }
 
 /** Format date for day heading — compact: "Mon, Apr 15" or "Today" / "Yesterday" */
-function formatDayHeading(day: Date, todayStr: string, _tz: string): string {
+function formatDayHeading(day: Date, todayStr: string, tz: string): string {
     const dayKey = format(day, 'yyyy-MM-dd');
     if (dayKey === todayStr) return 'Today';
 
@@ -44,7 +45,8 @@ function formatDayHeading(day: Date, todayStr: string, _tz: string): string {
     const yesterdayKey = format(yesterday, 'yyyy-MM-dd');
     if (dayKey === yesterdayKey) return 'Yesterday';
 
-    return day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const companyNoon = dateInTZ(day.getFullYear(), day.getMonth() + 1, day.getDate(), 12, 0, tz);
+    return formatCompanyTime(companyNoon, { weekday: 'short', month: 'short', day: 'numeric' }, tz);
 }
 
 export const ListView: React.FC<ListViewProps> = ({

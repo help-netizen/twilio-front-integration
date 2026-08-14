@@ -19,6 +19,7 @@ import { formatSignedCurrency } from '../jobs/jobFinanceMath';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { PaymentStatusChip, isVoidablePayment, isVoidedPayment, VOIDED_AMOUNT_CLASS } from './paymentStatus';
 import { VoidPaymentDialog } from './VoidPaymentDialog';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface Props {
     /** Transaction id; the enriched detail is fetched on mount. */
@@ -39,11 +40,11 @@ function money(v: string | number | null | undefined): string {
     return formatSignedCurrency(v);
 }
 
-function fmtDateTime(value: string | null | undefined): string {
+function fmtDateTime(value: string | null | undefined, timeZone: string): string {
     if (!value) return '';
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value);
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return formatCompanyTime(d, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }, timeZone);
 }
 
 function methodDisplay(tx: PaymentTransaction): string {
@@ -65,6 +66,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export function TransactionReview({ transactionId, initial, contactEmail, canVoid = false, extraActions, onChanged }: Props) {
+    const { timeZone } = useCompanyTime();
     const [tx, setTx] = useState<PaymentTransaction | null>(initial ?? null);
     const [voidOpen, setVoidOpen] = useState(false);
 
@@ -148,7 +150,7 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
                     {tx.transaction_type === 'refund' ? 'Refund' : 'Payment'}
                     {jobLabel && <> for <span className="text-[var(--blanc-ink-1)]">{jobLabel}</span></>}
                 </p>
-                <p className="mt-0.5 text-sm text-[var(--blanc-ink-3)]">{fmtDateTime(tx.processed_at || tx.created_at)}</p>
+                <p className="mt-0.5 text-sm text-[var(--blanc-ink-3)]">{fmtDateTime(tx.processed_at || tx.created_at, timeZone)}</p>
                 <div className="mt-2">
                     <PaymentStatusChip status={tx.status} transactionType={tx.transaction_type} />
                 </div>
@@ -190,7 +192,7 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
                         )}
                         {receiptHistory.map((r, i) => (
                             <p key={i} className="text-sm text-[var(--blanc-ink-2)]">
-                                Receipt sent to {r.to || 'customer'} on {fmtDateTime(r.sent_at)}
+                                Receipt sent to {r.to || 'customer'} on {fmtDateTime(r.sent_at, timeZone)}
                             </p>
                         ))}
                     </div>

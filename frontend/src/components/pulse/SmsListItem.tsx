@@ -8,16 +8,15 @@
 import { Check, CheckCheck, X, Download, FileText, FileIcon } from 'lucide-react';
 import type { SmsMessage, SmsMediaItem } from '../../types/pulse';
 import { useAuth } from '../../auth/AuthProvider';
+import { formatCompanyTime } from '../../lib/companyTime';
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
 const formatTime = (dateStr: string, tz: string): string => {
-    const d = new Date(dateStr);
-    return d.toLocaleString('en-US', {
+    return formatCompanyTime(dateStr, {
         month: 'short', day: 'numeric',
         hour: 'numeric', minute: '2-digit', hour12: true,
-        timeZone: tz,
-    });
+    }, tz);
 };
 
 const formatFileSize = (bytes: number): string => {

@@ -36,7 +36,7 @@ const histRow = (overrides = {}) => ({
   direction: 'inbound',
   body_text: 'hello',
   snippet: null,
-  gmail_internal_at: '2026-07-11T21:39:12.000Z',
+  occurred_at: '2026-07-11T21:39:12.000Z',
   ...overrides,
 });
 
@@ -61,13 +61,13 @@ describe('yelpConvoHistory — pure transcript composer', () => {
       histRow({
         direction: 'outbound',
         body_text: 'Hi Kim — happy to help.',
-        gmail_internal_at: '2026-07-11T21:41:05.000Z',
+        occurred_at: '2026-07-11T21:41:05.000Z',
       }),
       histRow({
         id: 2,
         provider_message_id: 'ymsg-H2',
         body_text: 'My Maytag dishwasher is stuck.',
-        gmail_internal_at: '2026-07-11T21:39:12.000Z',
+        occurred_at: '2026-07-11T21:39:12.000Z',
       }),
     ]);
     const expected = '[2026-07-11 21:39Z] CUSTOMER: My Maytag dishwasher is stuck.\n'
@@ -94,12 +94,12 @@ describe('yelpConvoHistory — pure transcript composer', () => {
       'utf8'
     );
     const result = composeTranscript([
-      histRow({ body_text: reply, gmail_internal_at: '2026-07-11T21:41:05.000Z' }),
+      histRow({ body_text: reply, occurred_at: '2026-07-11T21:41:05.000Z' }),
       histRow({
         id: 2,
         provider_message_id: 'ymsg-H2',
         body_text: firstMessage,
-        gmail_internal_at: '2026-07-11T21:39:12.000Z',
+        occurred_at: '2026-07-11T21:39:12.000Z',
       }),
     ]);
 
@@ -129,7 +129,7 @@ describe('yelpConvoHistory — pure transcript composer', () => {
       body_text: 'Kim requested a quote from ABC Homes for a dishwasher repair.',
       from_name: 'Yelp Inbox',
       from_email: 'reply+aa11bb22cc33dd44@messaging.yelp.com',
-      gmail_internal_at: '2026-07-11T21:39:23.000Z',
+      occurred_at: '2026-07-11T21:39:23.000Z',
     };
     const reply = 'Hi Kim — happy to help. What is the best phone?';
     const { text } = buildReplyBodies(reply, quoteRow);
@@ -180,12 +180,12 @@ describe('yelpConvoHistory — pure transcript composer', () => {
     expect(sanitizeEntry(body601, {})).toBe(`${body601.slice(0, 600)}…`);
 
     const result = composeTranscript([
-      histRow({ body_text: 'short', gmail_internal_at: null }),
+      histRow({ body_text: 'short', occurred_at: null }),
       histRow({
         id: 2,
         provider_message_id: 'ymsg-H2',
         body_text: longBody,
-        gmail_internal_at: null,
+        occurred_at: null,
       }),
     ]);
     expect(result.text).toBe(`CUSTOMER: ${longBody.slice(0, 600)}…\nCUSTOMER: short`);
@@ -239,12 +239,12 @@ describe('yelpConvoHistory — pure transcript composer', () => {
     ])).toEqual(emptyResult);
 
     const mixed = composeTranscript([
-      histRow({ body_text: 'real', gmail_internal_at: null }),
+      histRow({ body_text: 'real', occurred_at: null }),
       histRow({
         id: 2,
         provider_message_id: 'ymsg-H2',
         body_text: '\u200B',
-        gmail_internal_at: null,
+        occurred_at: null,
       }),
     ]);
     expect(mixed).toEqual({
@@ -262,7 +262,7 @@ describe('yelpConvoHistory — pure transcript composer', () => {
         id: 2,
         provider_message_id: 'ymsg-H2',
         body_text: 'no ts',
-        gmail_internal_at: null,
+        occurred_at: null,
       }),
     ]);
 
@@ -274,7 +274,7 @@ describe('yelpConvoHistory — pure transcript composer', () => {
   test('TC-EDGE-02: misconfigured caps head-truncate only the newest entry to fit alone', () => {
     const newestLineBody = 'N'.repeat(190);
     const result = composeTranscript([
-      histRow({ body_text: newestLineBody, gmail_internal_at: null }),
+      histRow({ body_text: newestLineBody, occurred_at: null }),
       histRow({ id: 2, provider_message_id: 'ymsg-H2', body_text: 'older 1' }),
       histRow({ id: 3, provider_message_id: 'ymsg-H3', body_text: 'older 2' }),
     ], { maxEntryChars: 600, maxTotalChars: 100 });

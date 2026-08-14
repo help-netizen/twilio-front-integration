@@ -19,6 +19,7 @@ import {
     disconnectGoogleAds,
     type GoogleAdsConnection,
 } from '../../services/googleAdsApi';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface GoogleAdsPanelProps {
     open: boolean;
@@ -32,11 +33,11 @@ const OK = 'var(--blanc-success)';
 const WARN = 'var(--blanc-warning)';
 const DANGER = 'var(--blanc-danger)';
 
-function fmtDateTime(iso: string | null): string {
+function fmtDateTime(iso: string | null, timeZone: string): string {
     if (!iso) return '—';
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '—';
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return formatCompanyTime(d, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }, timeZone);
 }
 
 const SYNC_TONE: Record<string, { label: string; color: string; bg: string }> = {
@@ -56,6 +57,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function ConnectedView({ conn }: { conn: GoogleAdsConnection }) {
+    const { timeZone } = useCompanyTime();
     const tone = SYNC_TONE[conn.last_sync_status ?? ''] ?? { label: conn.last_sync_status ?? '—', color: INK3, bg: 'var(--blanc-field)' };
     const range = conn.synced_from_date && conn.synced_through_date
         ? `${conn.synced_from_date} → ${conn.synced_through_date}`
@@ -80,7 +82,7 @@ function ConnectedView({ conn }: { conn: GoogleAdsConnection }) {
                     <span style={{ fontSize: 13, color: INK3 }}>Status</span>
                     <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, background: tone.bg, color: tone.color }}>{tone.label}</span>
                 </div>
-                <Row label="Last synced" value={fmtDateTime(conn.last_synced_at)} />
+                <Row label="Last synced" value={fmtDateTime(conn.last_synced_at, timeZone)} />
                 <Row label="Coverage" value={range} />
                 {conn.last_error_code && <Row label="Last error" value={conn.last_error_code} />}
             </section>

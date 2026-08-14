@@ -23,6 +23,7 @@ const QUOTE = {
     from_email: 'reply+9ef1b6fe57c446409174a9f93c54a3f5@messaging.yelp.com',
     from_name: 'Yelp Inbox',
     gmail_internal_at: '2026-07-13T02:27:05.000Z',
+    occurred_at: '2026-07-13T02:27:05.000Z',
 };
 
 describe('YRF-01 · quoted reply mirrors Gmail (text/plain leg)', () => {

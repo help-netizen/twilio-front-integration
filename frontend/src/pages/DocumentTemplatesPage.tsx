@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { listTemplates } from '../services/documentTemplatesApi';
 import type { DocumentTemplate } from '../types/documentTemplates';
 import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { useCompanyTime } from '../lib/companyTime';
 
 const DOCUMENT_TYPE_LABELS: Record<string, string> = {
     estimate: 'Estimate',
@@ -11,6 +12,7 @@ const DOCUMENT_TYPE_LABELS: Record<string, string> = {
 };
 
 export default function DocumentTemplatesPage() {
+    const { format } = useCompanyTime();
     const navigate = useNavigate();
     const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
     const [loading, setLoading] = useState(true);
@@ -64,7 +66,7 @@ export default function DocumentTemplatesPage() {
                                     )}
                                 </div>
                                 <span className="text-xs text-[color:var(--blanc-ink-3)]">
-                                    Updated {new Date(t.updated_at).toLocaleDateString()}
+                                    Updated {format(t.updated_at, { year: 'numeric', month: 'numeric', day: 'numeric' })}
                                 </span>
                             </div>
                         </button>

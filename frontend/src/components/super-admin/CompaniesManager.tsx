@@ -11,6 +11,7 @@ import { Plus, MoreHorizontal, Copy, Play, Pause, Archive, Users, ShieldAlert, B
 import { toast } from 'sonner';
 import { CreateCompanyDialog } from './CreateCompanyDialog';
 import { BootstrapAdminDialog } from './BootstrapAdminDialog';
+import { formatCompanyTime } from '../../lib/companyTime';
 
 interface Company {
     id: string;
@@ -164,7 +165,7 @@ export function CompaniesManager() {
                                         </div>
                                     </TableCell>
                                     <TableCell className="px-4 py-2.5 text-sm">
-                                        {new Date(c.created_at).toLocaleDateString()}
+                                        {formatCompanyTime(c.created_at, { year: 'numeric', month: 'numeric', day: 'numeric' }, c.timezone)}
                                     </TableCell>
                                     <TableCell className="px-4 py-2.5 text-right" onClick={e => e.stopPropagation()}>
                                         <DropdownMenu>

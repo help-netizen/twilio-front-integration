@@ -12,6 +12,7 @@ import { formatPhoneDisplay as formatPhoneNumber } from '@/utils/phoneUtils';
 import type { CallData } from '../call-list-item';
 import { PulseCallAudioPlayer } from './PulseCallAudioPlayer';
 import { getPulseCallIconKind, getPulseCallStatusLabel } from './pulseHelpers';
+import { useCompanyTime } from '../../lib/companyTime';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -40,12 +41,10 @@ const formatDuration = (seconds: number | null | undefined): string => {
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 };
 
-const formatTime = (date: Date): string =>
-    date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function PulseCallListItem({ call }: { call: CallData }) {
+    const { format } = useCompanyTime();
     const [showSystemInfo, setShowSystemInfo] = useState(false);
     const status = (call.status || '').toLowerCase();
     const st = getStatusStyle(status);
@@ -106,7 +105,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                     )}
                     <div className="flex-1" />
                     <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
-                        {formatTime(call.startTime)}
+                        {format(call.startTime, { hour: 'numeric', minute: '2-digit', hour12: true })}
                     </span>
                     {!call.detailsRedacted && <button
                         onClick={() => setShowSystemInfo(!showSystemInfo)}

@@ -12,6 +12,7 @@ const SYNC_INTERVAL_MS = parseInt(process.env.EMAIL_SYNC_INTERVAL_MS || '300000'
 const SYNC_LOOKBACK_DAYS = parseInt(process.env.EMAIL_SYNC_LOOKBACK_DAYS || '30', 10);
 const MAX_THREADS_PER_SYNC = 100;
 const GMAIL_DRAFT_LABEL = 'DRAFT';
+const LIVE_TIMESTAMP_TOLERANCE_MS = 10 * 60 * 1000;
 
 let schedulerTimer = null;
 
@@ -102,7 +103,25 @@ function extractAttachments(payload, messageId) {
 
 // ─── Thread sync logic ───────────────────────────────────────────────────
 
-async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxEmail) {
+function computeOccurredAt({ direction, gmailInternalAt, observedAt, ingestionMode = 'live' }) {
+    const providerAt = gmailInternalAt == null ? null : new Date(gmailInternalAt);
+    const observation = observedAt instanceof Date ? observedAt : new Date(observedAt);
+
+    if (ingestionMode === 'backfill') return providerAt;
+    if (direction === 'inbound' || providerAt === null) return providerAt || observation;
+    return Math.abs(observation.getTime() - providerAt.getTime()) <= LIVE_TIMESTAMP_TOLERANCE_MS
+        ? providerAt
+        : observation;
+}
+
+async function importGmailThread(
+    gmail,
+    threadId,
+    companyId,
+    mailboxId,
+    mailboxEmail,
+    { ingestionMode = 'live', observedAt = new Date() } = {}
+) {
     const threadRes = await gmail.users.threads.get({
         userId: 'me',
         id: threadId,
@@ -116,6 +135,11 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
     const messages = (gmailThread.messages || []).filter(msg =>
         !(msg.labelIds || []).includes(GMAIL_DRAFT_LABEL));
     if (messages.length === 0) return null;
+
+    // Determine direction based on mailbox email
+    function getDirection(fromEmail) {
+        return fromEmail?.toLowerCase() === mailboxEmail?.toLowerCase() ? 'outbound' : 'inbound';
+    }
 
     // Collect all participants
     const participantSet = new Map();
@@ -139,12 +163,17 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
         const msgAttachments = extractAttachments(msg.payload, msg.id);
         if (msgAttachments.length > 0) hasAttachments = true;
 
-        lastMsg = { msg, headers, from, toList, ccList, msgAttachments };
-    }
-
-    // Determine direction based on mailbox email
-    function getDirection(fromEmail) {
-        return fromEmail?.toLowerCase() === mailboxEmail?.toLowerCase() ? 'outbound' : 'inbound';
+        const direction = getDirection(from.email);
+        const gmailInternalAt = msg.internalDate ? new Date(parseInt(msg.internalDate)) : null;
+        const occurredAt = computeOccurredAt({
+            direction,
+            gmailInternalAt,
+            observedAt,
+            ingestionMode,
+        });
+        if (!lastMsg || occurredAt?.getTime() >= (lastMsg.occurredAt?.getTime() ?? -Infinity)) {
+            lastMsg = { msg, headers, from, toList, ccList, msgAttachments, occurredAt };
+        }
     }
 
     const lastHeaders = lastMsg.headers;
@@ -158,8 +187,8 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
         provider_thread_id: threadId,
         subject: lastHeaders.subject,
         participants_json: Array.from(participantSet.values()),
-        last_message_at: lastMsg.msg.internalDate ? new Date(parseInt(lastMsg.msg.internalDate)) : new Date(),
-        last_message_preview: messages[messages.length - 1].snippet || '',
+        last_message_at: lastMsg.occurredAt,
+        last_message_preview: lastMsg.msg.snippet || '',
         last_message_direction: lastDirection,
         last_message_from: lastFrom.name || lastFrom.email,
         unread_count: unreadCount,
@@ -176,6 +205,8 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
         const { text, html } = extractBody(msg.payload);
         const msgAttachments = extractAttachments(msg.payload, msg.id);
 
+        const direction = getDirection(from.email);
+        const gmailInternalAt = msg.internalDate ? new Date(parseInt(msg.internalDate)) : null;
         const dbMsg = await emailQueries.upsertMessage({
             company_id: companyId,
             mailbox_id: mailboxId,
@@ -185,7 +216,7 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
             message_id_header: headers.message_id,
             in_reply_to_header: headers.in_reply_to,
             references_header: headers.references,
-            direction: getDirection(from.email),
+            direction,
             from_name: from.name,
             from_email: from.email,
             to_recipients_json: toList,
@@ -195,7 +226,13 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
             body_text: text,
             body_html: html,
             has_attachments: msgAttachments.length > 0,
-            gmail_internal_at: msg.internalDate ? new Date(parseInt(msg.internalDate)) : null,
+            gmail_internal_at: gmailInternalAt,
+            occurred_at: computeOccurredAt({
+                direction,
+                gmailInternalAt,
+                observedAt,
+                ingestionMode,
+            }),
         });
 
         // Upsert attachments
@@ -203,6 +240,8 @@ async function importGmailThread(gmail, threadId, companyId, mailboxId, mailboxE
             await emailQueries.upsertAttachments(dbMsg.id, companyId, msgAttachments);
         }
     }
+
+    await emailQueries.refreshThreadLastMessage(thread.id, companyId, mailboxId);
 
     return thread;
 }
@@ -235,7 +274,14 @@ async function runInitialBackfill(companyId) {
 
         for (const tid of threadIds) {
             try {
-                await importGmailThread(gmail, tid, companyId, mailboxData.id, mailboxData.email_address);
+                await importGmailThread(
+                    gmail,
+                    tid,
+                    companyId,
+                    mailboxData.id,
+                    mailboxData.email_address,
+                    { ingestionMode: 'backfill' }
+                );
                 imported++;
             } catch (err) {
                 console.error(`[EmailSync] Failed to import thread ${tid}:`, err.message);
@@ -626,4 +672,5 @@ module.exports = {
     parseRecipientList,
     extractBody,
     extractAttachments,
+    computeOccurredAt,
 };

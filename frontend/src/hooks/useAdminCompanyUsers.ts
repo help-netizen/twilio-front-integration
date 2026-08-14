@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { authedFetch } from '../services/apiClient';
 import { toast } from 'sonner';
 import type { CompanyUser, EditUserForm } from './useCompanyUsers';
+import { formatCompanyTime } from '../lib/companyTime';
 
 export type { CompanyUser, EditUserForm };
 
 interface PaginatedResponse { ok: boolean; users: CompanyUser[]; total: number; page: number; limit: number; }
 
-export function useAdminCompanyUsers(companyId: string) {
+export function useAdminCompanyUsers(companyId: string, companyTimeZone?: string | null) {
     const apiBase = `/api/admin/companies/${companyId}/users`;
 
     const [data, setData] = useState<PaginatedResponse | null>(null);
@@ -161,7 +162,7 @@ export function useAdminCompanyUsers(companyId: string) {
         setResetPasswordOpen(true);
     };
 
-    const fmtDate = (d: string | null) => { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
+    const fmtDate = (d: string | null) => { if (!d) return '—'; return formatCompanyTime(d, { month: 'short', day: 'numeric', year: 'numeric' }, companyTimeZone); };
     const totalPages = data ? Math.ceil(data.total / limit) : 0;
     const users = data?.users || [];
 

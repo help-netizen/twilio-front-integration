@@ -60,8 +60,8 @@ async function seedEmail(companyId, timelineId, { pmid, direction = 'inbound', a
         `INSERT INTO email_messages
             (company_id, mailbox_id, thread_id, provider_message_id, direction,
              contact_id, timeline_id, on_timeline, from_email, from_name, subject,
-             body_text, gmail_internal_at)
-         VALUES ($1,$2,$3,$4,$5, NULL, $6, true, 'reply+x@messaging.yelp.com', 'Kim L.', $7, $8, $9)`,
+             body_text, gmail_internal_at, occurred_at)
+         VALUES ($1,$2,$3,$4,$5, NULL, $6, true, 'reply+x@messaging.yelp.com', 'Kim L.', $7, $8, $9, $9)`,
         [companyId, mailboxId, threadId, pmid, direction, timelineId, subject || 'Yelp', body || 'hi', at || new Date().toISOString()]
     );
 }

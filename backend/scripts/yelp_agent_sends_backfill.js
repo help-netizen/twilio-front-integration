@@ -94,7 +94,7 @@ async function runBackfill(opts = {}) {
                AND em.on_timeline = false
                AND em.message_id_header IS NOT NULL
                AND em.message_id_header <> ''
-             ORDER BY em.thread_id, em.gmail_internal_at NULLS LAST, em.id`,
+             ORDER BY em.thread_id, em.occurred_at, em.id`,
             [companyId, threadIds]
         );
         candidates = result.rows;

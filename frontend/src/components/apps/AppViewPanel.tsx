@@ -3,6 +3,7 @@ import { CalendarClock, History, Loader2, RefreshCw, SlidersHorizontal } from 'l
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { AppViewDocument, type ViewDocument } from './AppViewBlocks';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 /**
  * The screen of an installed app (APP-VIEW-001 §6). It belongs to the app, not
@@ -41,7 +42,7 @@ export interface AppViewPanelProps {
     setup?: React.ReactNode;
 }
 
-function relativeTime(iso: string | null): string | null {
+function relativeTime(iso: string | null, timeZone: string): string | null {
     if (!iso) return null;
     const elapsed = Date.now() - Date.parse(iso);
     if (!Number.isFinite(elapsed)) return null;
@@ -50,7 +51,7 @@ function relativeTime(iso: string | null): string | null {
     if (minutes < 60) return `Updated ${minutes} minute${minutes === 1 ? '' : 's'} ago`;
     const hours = Math.round(minutes / 60);
     if (hours < 24) return `Updated ${hours} hour${hours === 1 ? '' : 's'} ago`;
-    return `Updated ${new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    return `Updated ${formatCompanyTime(iso, { month: 'short', day: 'numeric' }, timeZone)}`;
 }
 
 function seconds(ms: number | null): string | null {
@@ -58,6 +59,7 @@ function seconds(ms: number | null): string | null {
 }
 
 function RunHistory({ history, onSelectRun }: { history: AppRunSummary[]; onSelectRun: (runId: string) => void }) {
+    const { format } = useCompanyTime();
     if (!history.length) {
         return <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>This app has not run yet.</p>;
     }
@@ -73,7 +75,7 @@ function RunHistory({ history, onSelectRun }: { history: AppRunSummary[]; onSele
                 >
                     <div className="min-w-0">
                         <div className="text-sm">
-                            {new Date(run.started_at).toLocaleString('en-US', {
+                            {format(run.started_at, {
                                 month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
                             })}
                         </div>
@@ -102,9 +104,10 @@ export function AppViewPanel({
     open, onOpenChange, appName, tools, document, lastRunAt, lastWallMs,
     running, error, history, onRun, onSelectRun, onAction, schedule, updateBanner, setup,
 }: AppViewPanelProps) {
+    const { timeZone } = useCompanyTime();
     const [view, setView] = useState<PanelView>('result');
     const showHistory = view === 'history';
-    const meta = [relativeTime(lastRunAt), seconds(lastWallMs)].filter(Boolean).join(' · ');
+    const meta = [relativeTime(lastRunAt, timeZone), seconds(lastWallMs)].filter(Boolean).join(' · ');
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>

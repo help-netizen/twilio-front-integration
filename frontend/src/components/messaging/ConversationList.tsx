@@ -1,4 +1,5 @@
 import type { Conversation } from '../../types/messaging';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 interface ConversationListProps {
     conversations: Conversation[];
@@ -6,7 +7,7 @@ interface ConversationListProps {
     onSelect: (conv: Conversation) => void;
 }
 
-function formatTime(dateStr: string | null): string {
+function formatTime(dateStr: string | null, timeZone: string): string {
     if (!dateStr) return '';
     const date = new Date(dateStr);
     const now = new Date();
@@ -14,13 +15,13 @@ function formatTime(dateStr: string | null): string {
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
     if (diffDays === 0) {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return formatCompanyTime(date, { hour: '2-digit', minute: '2-digit' }, timeZone);
     } else if (diffDays === 1) {
         return 'Yesterday';
     } else if (diffDays < 7) {
-        return date.toLocaleDateString([], { weekday: 'short' });
+        return formatCompanyTime(date, { weekday: 'short' }, timeZone);
     } else {
-        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return formatCompanyTime(date, { month: 'short', day: 'numeric' }, timeZone);
     }
 }
 
@@ -40,6 +41,7 @@ function formatPhoneDisplay(e164: string | null): string {
 }
 
 export function ConversationList({ conversations, selectedId, onSelect }: ConversationListProps) {
+    const { timeZone } = useCompanyTime();
     return (
         <div className="conv-list">
             {conversations.map(conv => {
@@ -67,7 +69,7 @@ export function ConversationList({ conversations, selectedId, onSelect }: Conver
                                     {isUnread && <span className="conv-item__dot" />}
                                     {conv.friendly_name || formatPhoneDisplay(conv.customer_e164)}
                                 </span>
-                                <span className="conv-item__time">{formatTime(conv.last_message_at)}</span>
+                                <span className="conv-item__time">{formatTime(conv.last_message_at, timeZone)}</span>
                             </div>
                             <div className="conv-item__preview">
                                 {conv.last_message_direction === 'outbound' && (

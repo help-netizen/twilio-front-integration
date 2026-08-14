@@ -319,13 +319,13 @@ describe('Inspector real-PostgreSQL tenancy and claim gate', () => {
             await client.query(
                 `INSERT INTO email_messages
                     (company_id, mailbox_id, thread_id, provider_message_id, direction,
-                     from_email, subject, body_text, gmail_internal_at, contact_id)
+                     from_email, subject, body_text, gmail_internal_at, occurred_at, contact_id)
                  VALUES ($1, $2, $3, 'SHARED-INSP-MESSAGE', 'inbound',
                          'shared-customer@example.com', $4, $5,
-                         '2026-07-19T14:00:00Z', $6),
+                         '2026-07-19T14:00:00Z', '2026-07-19T14:00:00Z', $6),
                         ($7, $8, $9, 'SHARED-INSP-MESSAGE', 'inbound',
                          'shared-customer@example.com', $10, $11,
-                         '2026-07-19T15:00:00Z', $12)`,
+                         '2026-07-19T15:00:00Z', '2026-07-19T15:00:00Z', $12)`,
                 [
                     COMPANY_A, mailboxA, emailThreadA, `${TAG_A} EMAIL`, `${TAG_A} EMAIL BODY`, contactA,
                     COMPANY_B, mailboxB, emailThreadB, `${TAG_B} SECRET EMAIL`, `${TAG_B} SECRET EMAIL BODY`, contactB,

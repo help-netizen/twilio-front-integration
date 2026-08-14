@@ -44,6 +44,7 @@ import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
 import { InvoiceCollectPaymentDialog } from './InvoiceCollectPaymentDialog';
 import { InvoiceItemSheet, type InvoiceItemDraft } from './InvoiceItemSheet';
+import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     draft: 'secondary',
@@ -63,24 +64,24 @@ function money(value: string | number | null | undefined): string {
     });
 }
 
-function fmtDate(value: string | null | undefined): string {
+function fmtDate(value: string | null | undefined, timeZone: string): string {
     if (!value) return '';
-    return new Date(value).toLocaleDateString('en-US', {
+    return formatCompanyTime(value, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
-    });
+    }, timeZone);
 }
 
-function fmtDateTime(value: string | null | undefined): string {
+function fmtDateTime(value: string | null | undefined, timeZone: string): string {
     if (!value) return '';
-    return new Date(value).toLocaleString('en-US', {
+    return formatCompanyTime(value, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
         hour: 'numeric',
         minute: '2-digit',
-    });
+    }, timeZone);
 }
 
 function toDateInput(value: string | null | undefined): string {
@@ -123,6 +124,7 @@ export function InvoiceDetailPanel({
     onDelete,
     onChanged,
 }: Props) {
+    const { timeZone } = useCompanyTime();
     const invoiceData = useInvoice(initialInvoice.id);
     const [invoice, setInvoice] = useState<Invoice>(initialInvoice);
     const [editing, setEditing] = useState(false);
@@ -538,7 +540,7 @@ export function InvoiceDetailPanel({
                                 </div>
                             ) : (
                                 <div className="mt-2 space-y-1 text-[14px]">
-                                    {dueDate ? <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Due date</span><span className="font-medium">{fmtDate(dueDate)}</span></div> : null}
+                                    {dueDate ? <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Due date</span><span className="font-medium">{fmtDate(dueDate, timeZone)}</span></div> : null}
                                     {paymentTerms ? <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Payment terms</span><span className="font-medium">{paymentTerms}</span></div> : null}
                                 </div>
                             )}
@@ -560,7 +562,7 @@ export function InvoiceDetailPanel({
                                     .map(payment => (
                                         <div key={payment.id} className="flex min-h-10 items-center justify-between gap-3 border-b border-[var(--blanc-line)] py-2 text-[12px] last:border-b-0">
                                             <span className="min-w-0">
-                                                <span className="text-[var(--blanc-ink-2)]">{fmtDate(payment.processed_at || payment.created_at)} · {paymentMethodLabel(payment.payment_method)}</span>
+                                                <span className="text-[var(--blanc-ink-2)]">{fmtDate(payment.processed_at || payment.created_at, timeZone)} · {paymentMethodLabel(payment.payment_method)}</span>
                                                 <PaymentStatusChip status={payment.status} transactionType={payment.transaction_type} className="ml-2" />
                                             </span>
                                             <span className="flex shrink-0 items-center gap-2">
@@ -586,7 +588,7 @@ export function InvoiceDetailPanel({
                                 {events.map(event => (
                                     <div key={event.id} className="text-[12px]">
                                         <span className="font-medium capitalize text-[var(--blanc-ink-1)]">{event.event_type.replace(/_/g, ' ')}</span>
-                                        <p className="mt-0.5 text-[var(--blanc-ink-3)]">{fmtDateTime(event.created_at)}</p>
+                                        <p className="mt-0.5 text-[var(--blanc-ink-3)]">{fmtDateTime(event.created_at, timeZone)}</p>
                                     </div>
                                 ))}
                             </div>

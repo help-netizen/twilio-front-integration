@@ -220,8 +220,10 @@ async function mkMsg(companyId, {
         `INSERT INTO email_messages (company_id, mailbox_id, thread_id, provider_message_id,
                                      message_id_header, direction, from_email,
                                      to_recipients_json, subject,
-                                     gmail_internal_at, contact_id, timeline_id, on_timeline)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13)
+                                     gmail_internal_at, occurred_at,
+                                     contact_id, timeline_id, on_timeline)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10,
+                 COALESCE($10, now()), $11, $12, $13)
          RETURNING provider_message_id`,
         [companyId, mailboxId, threadId, pmid, `<${pmid}@mm1.test>`, direction, fromEmail,
             JSON.stringify(to), subject, at, contactId, timelineId, onTimeline]

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './EventNotification.css';
+import { useCompanyTime } from '../lib/companyTime';
 
 interface EventData {
     call_sid: string;
@@ -15,6 +16,7 @@ interface Notification {
 }
 
 export const EventNotification: React.FC = () => {
+    const { format } = useCompanyTime();
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [nextId, setNextId] = useState(1);
 
@@ -69,7 +71,7 @@ export const EventNotification: React.FC = () => {
                         )}
                         <div className="notification-field">
                             <span className="field-label">Time:</span>
-                            <span className="field-value">{new Date(notification.data.timestamp).toLocaleTimeString()}</span>
+                            <span className="field-value">{format(notification.data.timestamp, { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</span>
                         </div>
                     </div>
                 </div>
