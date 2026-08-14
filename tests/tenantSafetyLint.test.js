@@ -27,12 +27,40 @@ const SCAN_DIRS = [
     'backend/src/webhooks',
 ];
 
+// TENANT-ISO-002 caller surfaces that live outside backend/src. They join the
+// line-rule scan only; the historical SQL sanitizer baseline remains unchanged.
+const LINE_SCAN_EXTRA_FILES = [
+    'backend/benchmark.js',
+    'backend/scripts/yelp_timeline_dedup_cleanup.js',
+    'scripts/migrate-timelines.js',
+];
+
+const LEGACY_DEFAULT_TENANT_FILES = new Set([
+    'backend/src/db/timelinesQueries.js',
+    'backend/src/db/contactsQueries.js',
+    'backend/src/routes/quick-messages.js',
+    'backend/src/routes/zip-check.js',
+    'backend/src/services/yelpConvoAgentService.js',
+    'backend/src/services/reconcileService.js',
+    'backend/src/services/twilioSync.js',
+    'backend/src/cli/reconcileCold.js',
+    ...LINE_SCAN_EXTRA_FILES,
+]);
+
 // Auth plumbing is the only legitimate source-level req.user company reference.
 const FILE_ALLOWLIST = new Set([
     'backend/src/middleware/keycloakAuth.js',
 ]);
 
 const LINE_RULES = [
+    {
+        id: 'legacy-default-tenant',
+        re: /\bDEFAULT_COMPANY_ID\b|00000000-0000-0000-0000-000000000001/,
+        what: 'tenant-sensitive code references the legacy default company',
+        why: 'missing tenant context can silently select ABC Homes instead of failing closed',
+        fix: 'require explicit companyId and throw TENANT_CONTEXT_REQUIRED before I/O',
+        appliesTo: (file) => LEGACY_DEFAULT_TENANT_FILES.has(file),
+    },
     {
         id: 'req-user-company-id',
         re: /req\.user\??\.company_id/,
@@ -472,11 +500,13 @@ const defineSuite = typeof describe === 'function' ? describe : () => {};
 defineSuite('ALB-105 / TENANCY-RBAC-GUARD-001: tenant-safety sanitizer', () => {
     const files = SCAN_DIRS.flatMap(listJsFiles)
         .filter(file => !FILE_ALLOWLIST.has(file));
+    const lineFiles = [...new Set([...files, ...LINE_SCAN_EXTRA_FILES])];
 
     it('scans routes, db, services, CLI/scripts, and webhook code', () => {
         expect(files.length).toBeGreaterThan(100);
         expect(files.some(file => file.startsWith('backend/src/db/'))).toBe(true);
         expect(files.some(file => file.startsWith('backend/src/webhooks/'))).toBe(true);
+        expect(lineFiles).toEqual(expect.arrayContaining(LINE_SCAN_EXTRA_FILES));
     });
 
     it('requires a one-line reason for every central exception', () => {
@@ -500,7 +530,7 @@ defineSuite('ALB-105 / TENANCY-RBAC-GUARD-001: tenant-safety sanitizer', () => {
 
     it.each(LINE_RULES.map(rule => [rule.id, rule]))('%s has no violations', (ruleId, rule) => {
         const violations = [];
-        for (const file of files) {
+        for (const file of lineFiles) {
             if (!rule.appliesTo(file)) continue;
             const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
             source.split('\n').forEach((line, index) => {

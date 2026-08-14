@@ -6,6 +6,7 @@
  */
 
 const db = require('../db/connection');
+const { requireCompanyId } = require('../utils/tenantContext');
 
 const HANDLERS = {
     // Echo input — used by templates/tests.
@@ -244,7 +245,7 @@ const HANDLERS = {
     //     marker (a throw after the email is out is swallowed — the email is the truth).
     async yelp_convo(task) {
         const input = task.agent_input || {};
-        const companyId = task.company_id;
+        const companyId = requireCompanyId(task.company_id);
         const convId = input.conversation_id;
         const pmid = input.inbound_provider_message_id;
         const yelpLeadQueries = require('../db/yelpLeadQueries');

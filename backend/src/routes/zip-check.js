@@ -7,20 +7,14 @@
 const express = require('express');
 const router = express.Router();
 const territoryService = require('../services/territoryService');
-
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-
-function getCompanyId(req) {
-    return req.companyFilter?.company_id
-        || DEFAULT_COMPANY_ID;
-}
+const { requireRequestCompanyId, sendTenantContextRequired } = require('../utils/tenantContext');
 
 router.get('/', async (req, res) => {
     try {
         const query = req.query.q || req.query.zip;
         if (!query) return res.status(400).json({ ok: false, error: 'q or zip parameter is required' });
 
-        const result = await territoryService.isZipInTerritory(getCompanyId(req), query);
+        const result = await territoryService.isZipInTerritory(requireRequestCompanyId(req), query);
         res.json({
             ok: true,
             data: {
@@ -34,6 +28,7 @@ router.get('/', async (req, res) => {
         });
     } catch (err) {
         console.error('[ZipCheck] error:', err.message);
+        if (sendTenantContextRequired(res, err)) return;
         res.status(500).json({ ok: false, error: err.message });
     }
 });

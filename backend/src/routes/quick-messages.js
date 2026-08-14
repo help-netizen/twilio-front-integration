@@ -7,23 +7,21 @@ const express = require('express');
 const router = express.Router();
 const qmQueries = require('../db/quickMessagesQueries');
 const { requirePermission } = require('../middleware/authorization');
+const { requireRequestCompanyId, sendTenantContextRequired } = require('../utils/tenantContext');
 
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-
-/** Resolve company_id: from user profile, companyFilter, or default */
-function getCompanyId(req) {
-    return req.companyFilter?.company_id
-        || DEFAULT_COMPANY_ID;
+function handleError(res, err, fallback) {
+    if (sendTenantContextRequired(res, err)) return;
+    res.status(500).json({ error: fallback });
 }
 
 // GET /api/quick-messages — list all quick messages (ordered)
 router.get('/', requirePermission('messages.send'), async (req, res) => {
     try {
-        const messages = await qmQueries.getQuickMessages(getCompanyId(req));
+        const messages = await qmQueries.getQuickMessages(requireRequestCompanyId(req));
         res.json({ messages });
     } catch (err) {
         console.error('[QuickMessages] GET / error:', err);
-        res.status(500).json({ error: 'Failed to load quick messages' });
+        handleError(res, err, 'Failed to load quick messages');
     }
 });
 
@@ -34,11 +32,11 @@ router.post('/', requirePermission('messages.send'), async (req, res) => {
         if (!title || !content) {
             return res.status(400).json({ error: 'title and content are required' });
         }
-        const message = await qmQueries.createQuickMessage(getCompanyId(req), title, content);
+        const message = await qmQueries.createQuickMessage(requireRequestCompanyId(req), title, content);
         res.status(201).json({ message });
     } catch (err) {
         console.error('[QuickMessages] POST / error:', err);
-        res.status(500).json({ error: 'Failed to create quick message' });
+        handleError(res, err, 'Failed to create quick message');
     }
 });
 
@@ -50,11 +48,11 @@ router.put('/reorder', requirePermission('messages.send'), async (req, res) => {
         if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
             return res.status(400).json({ error: 'orderedIds array is required' });
         }
-        const messages = await qmQueries.reorderQuickMessages(getCompanyId(req), orderedIds);
+        const messages = await qmQueries.reorderQuickMessages(requireRequestCompanyId(req), orderedIds);
         res.json({ messages });
     } catch (err) {
         console.error('[QuickMessages] PUT /reorder error:', err);
-        res.status(500).json({ error: 'Failed to reorder quick messages' });
+        handleError(res, err, 'Failed to reorder quick messages');
     }
 });
 
@@ -62,24 +60,24 @@ router.put('/reorder', requirePermission('messages.send'), async (req, res) => {
 router.put('/:id', requirePermission('messages.send'), async (req, res) => {
     try {
         const { title, content } = req.body;
-        const message = await qmQueries.updateQuickMessage(req.params.id, getCompanyId(req), { title, content });
+        const message = await qmQueries.updateQuickMessage(req.params.id, requireRequestCompanyId(req), { title, content });
         if (!message) return res.status(404).json({ error: 'Quick message not found' });
         res.json({ message });
     } catch (err) {
         console.error('[QuickMessages] PUT /:id error:', err);
-        res.status(500).json({ error: 'Failed to update quick message' });
+        handleError(res, err, 'Failed to update quick message');
     }
 });
 
 // DELETE /api/quick-messages/:id — delete a quick message
 router.delete('/:id', requirePermission('messages.send'), async (req, res) => {
     try {
-        const deleted = await qmQueries.deleteQuickMessage(req.params.id, getCompanyId(req));
+        const deleted = await qmQueries.deleteQuickMessage(req.params.id, requireRequestCompanyId(req));
         if (!deleted) return res.status(404).json({ error: 'Quick message not found' });
         res.json({ success: true });
     } catch (err) {
         console.error('[QuickMessages] DELETE /:id error:', err);
-        res.status(500).json({ error: 'Failed to delete quick message' });
+        handleError(res, err, 'Failed to delete quick message');
     }
 });
 

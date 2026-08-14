@@ -2,6 +2,30 @@
 
 Static, read-only audit found **17 issues** plus **4 deployment/data-state suspects**.
 
+This document is now a living status ledger. The severity table and evidence
+below describe the original audit; this table records the verified current
+disposition as of TENANT-ISO-002 (2026-08-14).
+
+| # | Current status | Resolution / owner boundary |
+|---:|---|---|
+| 1 | **CLOSED** | Vapi management storage is company-scoped by migration 219 and request company. |
+| 2 | **REMOVED** | Zenbooker surface was decommissioned. |
+| 3 | **REMOVED** | Zenbooker sync/write surface was decommissioned. |
+| 4 | **CLOSED** | Migration 218 and the SMS service/query contracts bind conversation, proxy and messages to company. |
+| 5 | **CLOSED** | TENANT-ISO-002 T5 passes the task/conversation company through every Yelp model tool turn and fails closed when absent. |
+| 6 | **OPEN** | Per-company Vapi public credential resolution is the next TENANT-ISO-002 party (T6). |
+| 7 | **OPEN** | Per-company Sales MCP credential plus live actor membership/authz is the next party (T7). |
+| 8 | **CLOSED** | Push verification now rejects verification errors before ingest; accepted development fallback is not a production tenant binding. |
+| 9 | **CLOSED** | OAuth state hardening and mailbox global ownership protection close the audited transferable-link path. |
+| 10 | **REMOVED** | Legacy Zenbooker webhook was removed with Zenbooker. |
+| 11 | **OPEN** | Authenticated, company-scoped media route is the separately approved protected-file party (T8/E). |
+| 12 | **CLOSED** | Unknown SMS conversations resolve company from persisted conversation/proxy ownership and fail closed when unbound. |
+| 13 | **OPEN (P2)** | Live provisioning creates credentials inside the installation tenant transaction, but DB/query relationships still lack a same-company composite FK/join. Explicitly outside owner-approved A–E scope. |
+| 14 | **CLOSED** | Integration helper mutations now take company and scope their ownership lookup/write. |
+| 15 | **CLOSED / RECLASSIFIED** | Lead UUID is server-random and globally unique (`idx_leads_uuid`); the allocator must probe globally to honor that schema invariant, and accepts no caller UUID. |
+| 16 | **CLOSED** | Vapi call timeline already required company; TENANT-ISO-002 also removes the underlying timeline/contact default fallbacks. |
+| 17 | **CLOSED** | Twilio webhook/worker attribution requires mapped `AccountSid`; missing/error paths throw `TWILIO_TENANT_UNRESOLVED`. |
+
 | Severity | Count | Meaning |
 |---|---:|---|
 | P0 | 4 | Active cross-tenant read/write paths |
@@ -11,9 +35,9 @@ Static, read-only audit found **17 issues** plus **4 deployment/data-state suspe
 
 Known-history verdict:
 
-- **SMS list pagination leak:** closed on the audited list/message paths, but `/messaging/start` introduces a separate active IDOR.
-- **Zenbooker default-company binding:** **not closed**. Tenant-aware support exists, but many live routes/services still call the global client.
-- **Email/Yelp wrong-company ingestion:** core mailbox uniqueness and Yelp conversation scoping are fixed. Public push/OAuth entry points and Yelp scheduling tools still have cross-tenant weaknesses.
+- **SMS list/start isolation:** closed by company-scoped contracts and migration 218; media UUID access remains open as finding 11.
+- **Zenbooker default-company binding:** removed with the Zenbooker integration.
+- **Email/Yelp wrong-company ingestion:** mailbox/push/OAuth paths are closed; TENANT-ISO-002 closes the remaining Yelp scheduling-tool company switch.
 
 # LEAKS
 
@@ -162,9 +186,31 @@ Known-history verdict:
 - **Lead-channel analytics:** Company is mandatory and every cohort/cost/source query filters it at [`leadChannelAnalyticsService.js:73`](/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/hungry-heyrovsky-84a367/backend/src/services/leadChannelAnalyticsService.js:73), lines 159–308 and 373–455.
 - **Slot-engine local data assembly:** Jobs, technicians, settings, and coordinates are selected by company before egress. The engine implementation itself is stateless.
 
+## Tenancy & Roles — TENANT-ISO-002 T1–T5
+
+| surface (route/worker/webhook/SSE/aggregate) | scoped by | key used | permission | roles ✓/✗ | blast-radius risk |
+|---|---|---|---|---|---|
+| timeline/contact DB helpers | mandatory function `companyId` | phone, `ANONYMOUS`, contact id, Yelp conversation id | caller-owned | authenticated caller/worker context ✓; missing context ✗ | shared phone/sentinel/conversation keys; composite indexes and `TENANT_CONTEXT_REQUIRED` bound the blast |
+| `GET/POST/PUT/DELETE /api/quick-messages` | `req.companyFilter.company_id` | quick-message UUID / ordered UUIDs | `messages.send` | seeded tenant_admin/manager/dispatcher/provider ✓; custom role without permission ✗ | foreign UUID returns 404; reorder/update/delete keep company in write predicate |
+| `GET /api/zip-check` | `req.companyFilter.company_id` | ZIP/city natural key | authenticated role-neutral | active tenant roles ✓; platform/no membership ✗ | same ZIP is expected across tenants; lookup company is mandatory |
+| `yelp_convo` worker + model tools | persisted `tasks.company_id` | Yelp conversation id / scheduling tool args | worker task capability | queued tenant task ✓; ownerless task ✗ | model turn cannot select or replace company; missing task company fails before claim |
+| cold reconcile / Twilio sync CLI | explicit `companyId` argument / `--company-id` | Twilio call SID | owner-operated worker/CLI | explicit operator-selected tenant ✓; omitted tenant ✗ | tenant client and tenant-qualified sync-state key prevent master-account drift |
+| Yelp dedup cleanup / benchmark CLI | explicit `--company` / `--company-id` | relay conversation / phone | owner-operated CLI | explicit operator-selected tenant ✓; omitted tenant ✗ | retired global migration cannot run; cleanup and benchmark reject implicit scope |
+
+Canonical tests: T-own/T-foreign/T-blast cover phone, `ANONYMOUS`, contact id and
+Yelp conversation id; route permission denial covers the Quick Messages deny
+cell. ZIP is deliberately role-neutral after authenticated tenant selection.
+Migration 262 adds/backfills ownership plus the composite index while retaining
+the global index. Migration 263 is an explicit operator-gated stage 2b, so the
+repository-wide migration runner cannot remove the global index in the same
+automatic pass before stage-2a verification.
+
+MCP parity: T1–T5 do not change the ChatGPT connector surface,
+`chatgptMcpPermissions.js`, or `agentSkillsMcpRegistry.js`.
+
 # SUSPECT
 
-1. **Twilio master-account number ownership:** [`twilioWebhooks.js:21`](/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/hungry-heyrovsky-84a367/backend/src/webhooks/twilioWebhooks.js:21) resolves `AccountSid` before `To`; [`telephonyTenantService.js:211`](/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/hungry-heyrovsky-84a367/backend/src/services/telephonyTenantService.js:211) maps the master account to default. If any non-default tenant number remains on the master account, its inbound calls are attributed to default. **Check:** compare active `phone_number_settings.company_id` against the provider account owning each number.
+1. **Twilio master-account number ownership:** [`twilioWebhooks.js:21`](/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/hungry-heyrovsky-84a367/backend/src/webhooks/twilioWebhooks.js:21) resolves `AccountSid` before `To`; [`telephonyTenantService.js:211`](/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/hungry-heyrovsky-84a367/backend/src/services/telephonyTenantService.js:211) maps the master account to ABC. **Code verdict (2026-08-14):** supported provisioning cannot route a new tenant through master: non-ABC companies receive a unique `company_telephony.twilio_subaccount_sid`, purchase through that tenant client, missing/inactive bindings fail closed, and master number sync writes only ABC; `phone_number_settings.company_id` is `NOT NULL`. Residual operations check: an out-of-band/manual Twilio number move could violate the provider-side assumption, so deployment inventory should still compare number ownership before onboarding tenant two.
 
 2. **Duplicate provider-account bindings:** Zenbooker keys can be assigned per company at [`integrations-zenbooker.js:425`](/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/hungry-heyrovsky-84a367/backend/src/routes/integrations-zenbooker.js:425) without a uniqueness/provider-owner check. Google Ads similarly prevents customer changes within one company but not the same `customer_id` across companies at [`googleAdsConnectionService.js:49`](/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/hungry-heyrovsky-84a367/backend/src/services/googleAdsConnectionService.js:49). **Check:** compare provider account IDs or irreversible key fingerprints across companies.
 
@@ -179,4 +225,6 @@ Known-history verdict:
 3. Add the canonical `T-own`, `T-foreign`, `T-blast`, and RBAC deny-cell suites to each corrected route plus worker/webhook attribution tests.
 4. Resolve the four SUSPECT items using production configuration and database inventory before declaring isolation guaranteed.
 
-This was a static source audit only. No files were changed, no patches were applied, and no tests or external systems were run.
+The original findings were produced by a static source audit. Status changes are
+recorded from subsequent code/migration verification; no production data was
+queried for TENANT-ISO-002.

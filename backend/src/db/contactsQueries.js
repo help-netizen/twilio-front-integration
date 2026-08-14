@@ -6,49 +6,50 @@
  */
 const db = require('./connection');
 const { toE164 } = require('../utils/phoneUtils');
-
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+const { requireCompanyId } = require('../utils/tenantContext');
 
 // =============================================================================
 // Contact operations
 // =============================================================================
 
 // Phone lookups are tenant-scoped (PF007-HARDENING-001): a phone match must
-// never resolve to another company's contact. Callers without explicit tenant
-// context fall back to the legacy default company.
-async function findContactByPhone(phoneE164, companyId = DEFAULT_COMPANY_ID) {
+// never resolve to another company's contact.
+async function findContactByPhone(phoneE164, companyId) {
+    const cid = requireCompanyId(companyId);
     const digits = phoneE164.replace(/\D/g, '');
     const result = await db.query(
         `SELECT * FROM contacts
          WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 AND company_id = $2
          LIMIT 1`,
-        [digits, companyId || DEFAULT_COMPANY_ID]
+        [digits, cid]
     );
     return result.rows[0];
 }
 
-async function createContact(phoneE164, fullName = null, companyId = null) {
+async function createContact(phoneE164, fullName, companyId) {
+    const cid = requireCompanyId(companyId);
     const normalized = toE164(phoneE164) || phoneE164;
     const result = await db.query(
         `INSERT INTO contacts (phone_e164, full_name, company_id)
          VALUES ($1, $2, $3)
          RETURNING *`,
-        [normalized, fullName || normalized, companyId || DEFAULT_COMPANY_ID]
+        [normalized, fullName || normalized, cid]
     );
     return result.rows[0];
 }
 
-async function findOrCreateContact(phoneE164, fullName = null, companyId = DEFAULT_COMPANY_ID) {
-    let contact = await findContactByPhone(phoneE164, companyId);
+async function findOrCreateContact(phoneE164, fullName, companyId) {
+    const cid = requireCompanyId(companyId);
+    let contact = await findContactByPhone(phoneE164, cid);
     if (!contact) {
-        contact = await createContact(phoneE164, fullName, companyId);
+        contact = await createContact(phoneE164, fullName, cid);
     }
     return contact;
 }
 
-async function findContactByPhoneOrSecondary(phoneE164, companyId = DEFAULT_COMPANY_ID) {
+async function findContactByPhoneOrSecondary(phoneE164, companyId) {
+    const cid = requireCompanyId(companyId);
     const digits = phoneE164.replace(/\D/g, '');
-    const cid = companyId || DEFAULT_COMPANY_ID;
     let result = await db.query(
         `SELECT * FROM contacts
          WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 AND company_id = $2

@@ -1,18 +1,9 @@
-const { getTwilioClient } = require('./twilioClient');
 const queries = require('../db/queries');
 const { normalizeVoiceEvent } = require('./inboxWorker');
 const CallProcessor = require('./callProcessor');
 const { extractPhoneFromSIP } = require('./callProcessor');
 const telephonyTenantService = require('./telephonyTenantService');
-
-const DEFAULT_COMPANY_ID = telephonyTenantService.DEFAULT_COMPANY_ID;
-
-function requireCompanyId(companyId) {
-    if (companyId) return companyId;
-    const err = new Error('companyId is required for Twilio reconciliation');
-    err.code = 'TWILIO_TENANT_UNRESOLVED';
-    throw err;
-}
+const { requireCompanyId } = require('../utils/tenantContext');
 
 /**
  * Reconciliation Service (v3)
@@ -22,13 +13,6 @@ function requireCompanyId(companyId) {
  * - Warm: Recent final calls (last 6h) — poll every 15min
  * - Cold: Historical backfill — on demand
  */
-
-// Lazy proxy resolves the shared singleton on each property access.
-const twilioClient = new Proxy({}, {
-    get(_t, prop) {
-        return getTwilioClient()[prop];
-    },
-});
 
 const RECONCILE_CONFIG = {
     HOT: {
@@ -225,7 +209,10 @@ async function hotReconcile() {
 // Cold Reconcile — historical backfill
 // =============================================================================
 
-async function coldReconcile(startDate, endDate, pageSize = RECONCILE_CONFIG.COLD.BATCH_SIZE) {
+async function coldReconcile(companyId, startDate, endDate, pageSize = RECONCILE_CONFIG.COLD.BATCH_SIZE) {
+    const scopedCompanyId = requireCompanyId(companyId);
+    const { client } = await telephonyTenantService.getClientForCompany(scopedCompanyId);
+    const syncStateKey = `reconcile_cold:${scopedCompanyId}`;
     console.log(`❄️  Cold reconcile: ${startDate.toISOString()} → ${endDate.toISOString()}`);
     let processed = 0, created = 0, updated = 0, errors = 0;
 
@@ -235,7 +222,7 @@ async function coldReconcile(startDate, endDate, pageSize = RECONCILE_CONFIG.COL
 
         while (hasMore) {
             console.log(`   Page ${page + 1}...`);
-            const calls = await twilioClient.calls.list({
+            const calls = await client.calls.list({
                 startTimeAfter: startDate,
                 startTimeBefore: endDate,
                 pageSize,
@@ -247,8 +234,8 @@ async function coldReconcile(startDate, endDate, pageSize = RECONCILE_CONFIG.COL
             for (const call of calls) {
                 try {
                     const twilioPayload = twilioCallToPayload(call);
-                    const existing = await queries.getCallByCallSid(call.sid, DEFAULT_COMPANY_ID);
-                    await reconcileCall(twilioPayload, 'reconcile_cold', DEFAULT_COMPANY_ID);
+                    const existing = await queries.getCallByCallSid(call.sid, scopedCompanyId);
+                    await reconcileCall(twilioPayload, 'reconcile_cold', scopedCompanyId);
 
                     if (existing) { updated++; } else { created++; }
                     processed++;
@@ -271,11 +258,11 @@ async function coldReconcile(startDate, endDate, pageSize = RECONCILE_CONFIG.COL
         }
 
         console.log(`✅ Cold: ${processed} (${created} new, ${updated} updated, ${errors} errors)`);
-        await queries.upsertSyncState('reconcile_cold', { last_date: endDate });
+        await queries.upsertSyncState(syncStateKey, { last_date: endDate });
         return { processed, created, updated, errors };
     } catch (error) {
         console.error('❌ Cold reconcile failed:', error);
-        await queries.upsertSyncState('reconcile_cold', {}, error.message);
+        await queries.upsertSyncState(syncStateKey, {}, error.message);
         throw error;
     }
 }

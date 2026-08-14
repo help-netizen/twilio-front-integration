@@ -1,20 +1,30 @@
 const db = require('./src/db/connection');
 const queries = require('./src/db/queries');
+const { requireCompanyId } = require('./src/utils/tenantContext');
+
+const args = process.argv.slice(2);
+const companyIndex = args.indexOf('--company-id');
+const companyId = requireCompanyId(companyIndex >= 0 ? args[companyIndex + 1] : null);
 
 (async () => {
     try {
         const t0 = Date.now();
-        const calls = await queries.getCallsByTimeline({ limit: 50, offset: 0 });
+        const calls = await queries.getUnifiedTimelinePage({ companyId, limit: 50, offset: 0 });
         const t1 = Date.now();
-        console.log('1. getCallsByTimeline:', t1 - t0, 'ms, rows:', calls.length);
+        console.log('1. getUnifiedTimelinePage:', t1 - t0, 'ms, rows:', calls.length);
 
-        const total = await queries.getTimelinesWithCallsCount();
+        const total = Number(calls[0]?.total_count || 0);
         const t2 = Date.now();
-        console.log('2. getTimelinesWithCallsCount:', t2 - t1, 'ms, total:', total);
+        console.log('2. timeline total:', t2 - t1, 'ms, total:', total);
 
         // SMS-only query
         const smsOnly = await db.query(
-            'SELECT sc.*, sc.customer_digits FROM sms_conversations sc ORDER BY sc.last_message_at DESC NULLS LAST LIMIT 200'
+            `SELECT sc.*, sc.customer_digits
+             FROM sms_conversations sc
+             WHERE sc.company_id = $1
+             ORDER BY sc.last_message_at DESC NULLS LAST
+             LIMIT 200`,
+            [companyId]
         );
         const t3 = Date.now();
         console.log('3. SMS-only query:', t3 - t2, 'ms, rows:', smsOnly.rows.length);
@@ -46,8 +56,8 @@ const queries = require('./src/db/queries');
         for (const s of smsOnly.rows) {
             if (!s.customer_digits || existingDigits2.has(s.customer_digits)) continue;
             existingDigits2.add(s.customer_digits);
-            await queries.findContactByPhoneOrSecondary(s.customer_e164);
-            await queries.findOrCreateTimeline(s.customer_e164, s.company_id);
+            await queries.findContactByPhoneOrSecondary(s.customer_e164, companyId);
+            await queries.findOrCreateTimeline(s.customer_e164, companyId);
             resolved++;
         }
         const t5 = Date.now();
@@ -56,7 +66,10 @@ const queries = require('./src/db/queries');
         // Unread enrichment
         const cids = calls.map(c => c.contact_id).filter(Boolean);
         if (cids.length > 0) {
-            await db.query('SELECT id, has_unread FROM contacts WHERE id = ANY($1)', [cids]);
+            await db.query(
+                'SELECT id, has_unread FROM contacts WHERE id = ANY($1) AND company_id = $2',
+                [cids, companyId]
+            );
         }
         const t6 = Date.now();
         console.log('6. Unread enrichment:', t6 - t5, 'ms');

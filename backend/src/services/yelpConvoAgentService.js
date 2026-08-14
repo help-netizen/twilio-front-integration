@@ -10,9 +10,9 @@
  *
  * CONTRACT of runTurn(companyId, conv, inbound[, deps]):
  *   - Sends EXACTLY ONE email per turn (reply | booking-confirm | call-fallback).
- *   - NEVER throws out of the turn EXCEPT a genuine sendEmail fault (that single
- *     throw is what drives the worker's opt-in retry; every LLM/tool/parse error is
- *     absorbed into a safe reply or a call-fallback).
+ *   - Requires companyId before any I/O. After that guard, the only propagated
+ *     runtime fault is a genuine sendEmail failure (which drives worker retry);
+ *     every LLM/tool/parse error becomes a safe reply or call-fallback.
  *   - The customer's inbound text is UNTRUSTED DATA — it is delimited in the prompt
  *     and never treated as instructions. `book` is a SERVER action: it only holds a
  *     slotKey that is ∈ the PERSISTED offered_slots; the model never supplies
@@ -40,8 +40,7 @@ const yelpConvoHistory = require('./yelpConvoHistory');
 const tasksQueries = require('../db/tasksQueries');
 const yelpConversationQueries = require('../db/yelpConversationQueries');
 const { aiActor } = require('./leadContactActivityService');
-
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+const { requireCompanyId } = require('../utils/tenantContext');
 
 // L0 tool whitelist — the ONLY skills the loop may dispatch (registry.js L0 set).
 // A `tool` action naming anything else is ignored (the body cannot expand the tools).
@@ -775,7 +774,7 @@ async function runTurnInner(companyId, conv, inbound, deps) {
 
             let result;
             try {
-                result = await agentSkills.runSkill(tool, DEFAULT_COMPANY_ID, { source: 'yelp_convo' }, args);
+                result = await agentSkills.runSkill(tool, companyId, { source: 'yelp_convo' }, args);
             } catch (err) {
                 // runSkill's guard never rejects in prod; a mocked reject is still absorbed.
                 console.error('[YelpConvo] runSkill threw (absorbed):', err && err.message);
@@ -844,9 +843,9 @@ async function runTurnInner(companyId, conv, inbound, deps) {
 }
 
 /**
- * Drive ONE conversation turn. NEVER throws except a genuine sendEmail fault (which
- * drives the worker's opt-in retry); every other error degrades to a warm reply /
- * call-fallback.
+ * Drive ONE conversation turn. Missing tenant context throws before I/O. During a
+ * tenant-bound turn, only a genuine sendEmail fault propagates (to drive worker
+ * retry); every other error degrades to a warm reply / call-fallback.
  * @param {string} companyId
  * @param {object} conv     a yelp_conversations row (collected/offered_slots/… as the handler loaded it)
  * @param {object} inbound  { provider_message_id, body_text }
@@ -854,16 +853,17 @@ async function runTurnInner(companyId, conv, inbound, deps) {
  * @returns {Promise<{outcome:'reply'|'book'|'handoff', ...}>}
  */
 async function runTurn(companyId, conv, inbound, deps = {}) {
+    const cid = requireCompanyId(companyId);
     // Resolve the MIME threading headers ONCE for this turn and stash them on conv so
     // EVERY sendOnce (happy path AND the catch-block call-fallback below) threads the
     // reply — otherwise Yelp bounces it as an unsupported email client.
     if (conv) {
-        conv.__threading = await resolveThreading(companyId, conv, inbound);
-        conv.__timelineId = await resolveTurnTimelineId(companyId, conv);
-        conv.__history = await resolveHistory(companyId, conv, inbound);
+        conv.__threading = await resolveThreading(cid, conv, inbound);
+        conv.__timelineId = await resolveTurnTimelineId(cid, conv);
+        conv.__history = await resolveHistory(cid, conv, inbound);
     }
     try {
-        return await runTurnInner(companyId, conv, inbound, deps);
+        return await runTurnInner(cid, conv, inbound, deps);
     } catch (err) {
         // Only a genuine send fault propagates (drives retry). Any other unexpected
         // error → a last-resort warm call-fallback (whose OWN send fault may propagate).
@@ -871,9 +871,9 @@ async function runTurn(companyId, conv, inbound, deps = {}) {
         console.error('[YelpConvo] runTurn unexpected error → last-resort call-fallback:', err && err.message);
         const collected = { ...((conv && conv.collected) || {}) };
         const patch = { turn_count: (conv.turn_count || 0) + 1, phase: 'handoff_call' };
-        const result = await doCallFallback(companyId, conv, inbound, 'engine_down', collected, patch);
+        const result = await doCallFallback(cid, conv, inbound, 'engine_down', collected, patch);
         try {
-            await yelpConversationQueries.updateState(companyId, conv.conversation_id, patch);
+            await yelpConversationQueries.updateState(cid, conv.conversation_id, patch);
         } catch (e) {
             console.error('[YelpConvo] last-resort persist failed (non-fatal):', e && e.message);
         }
@@ -883,7 +883,6 @@ async function runTurn(companyId, conv, inbound, deps = {}) {
 
 module.exports = {
     runTurn,
-    DEFAULT_COMPANY_ID,
     // exported for targeted unit tests
     tolerantParseAction,
     sanitizeToolArgs,

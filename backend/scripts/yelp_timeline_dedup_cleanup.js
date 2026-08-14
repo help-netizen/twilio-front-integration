@@ -11,7 +11,7 @@
  *     mandatory (the run ABORTS if it cannot write its snapshot).
  * ────────────────────────────────────────────────────────────────────────────
  *
- * WHAT IT DOES (per company, DEFAULT_COMPANY by default):
+ * WHAT IT DOES (for one explicitly selected company):
  *   1. SNAPSHOT — writes the affected `contacts` / `timelines` / `email_messages`
  *      rows to a JSON artifact BEFORE any write. (Owner should ALSO `pg_dump`
  *      those tables out-of-band; this JSON is the in-script belt.)
@@ -31,10 +31,10 @@
  * WRONG primitives here (documented in arch §F).
  *
  * Usage (dry-run prints the plan, writes NOTHING except the snapshot):
- *   DATABASE_URL=... node backend/scripts/yelp_timeline_dedup_cleanup.js --dry-run
+ *   DATABASE_URL=... node backend/scripts/yelp_timeline_dedup_cleanup.js --company <uuid> --dry-run
  * Apply (owner-confirmed):
- *   DATABASE_URL=... node backend/scripts/yelp_timeline_dedup_cleanup.js --apply --yes
- *   [--company <uuid>] [--snapshot-dir <path>]
+ *   DATABASE_URL=... node backend/scripts/yelp_timeline_dedup_cleanup.js \
+ *     --company <uuid> --apply --yes [--snapshot-dir <path>]
  */
 
 const fs = require('fs');
@@ -42,8 +42,8 @@ const path = require('path');
 const db = require('../src/db/connection');
 const timelinesQueries = require('../src/db/timelinesQueries');
 const { parseConversationId } = require('../src/services/yelpConversationId');
+const { requireCompanyId } = require('../src/utils/tenantContext');
 
-const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const JUNK_NAMES = ['Yelp', 'Yelp Inbox'];
 
 /**
@@ -73,7 +73,7 @@ function writeSnapshot(snapshotDir, payload) {
 
 /**
  * @param {object} opts
- * @param {string} [opts.companyId]     default: DEFAULT_COMPANY_ID
+ * @param {string} opts.companyId       explicit tenant scope
  * @param {boolean} [opts.dryRun]        default: true (writes NOTHING but the snapshot)
  * @param {string} [opts.snapshotDir]   where the JSON snapshot lands
  * @param {object} [opts.logger]        default: console
@@ -81,7 +81,7 @@ function writeSnapshot(snapshotDir, payload) {
  *   groups:[{convId, timelineId, messageIds}], residueMessageIds, deletedContacts, deletedTimelines }
  */
 async function runCleanup(opts = {}) {
-    const companyId = opts.companyId || DEFAULT_COMPANY_ID;
+    const companyId = requireCompanyId(opts.companyId);
     const dryRun = opts.dryRun !== false; // default dry-run
     const logger = opts.logger || console;
     const snapshotDir = opts.snapshotDir
@@ -224,7 +224,7 @@ if (require.main === module) {
     }
 
     runCleanup({
-        companyId: val('--company', DEFAULT_COMPANY_ID),
+        companyId: val('--company'),
         dryRun,
         snapshotDir: val('--snapshot-dir'),
     })
@@ -239,4 +239,4 @@ if (require.main === module) {
         });
 }
 
-module.exports = { runCleanup, DEFAULT_COMPANY_ID, JUNK_NAMES };
+module.exports = { runCleanup, JUNK_NAMES };

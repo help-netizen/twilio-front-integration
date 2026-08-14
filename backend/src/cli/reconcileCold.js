@@ -8,17 +8,18 @@
  * 
  * Usage:
  *   # Last 7 days
- *   node backend/src/cli/reconcileCold.js --days 7
+ *   node backend/src/cli/reconcileCold.js --company-id <uuid> --days 7
  * 
  *   # Specific date range
- *   node backend/src/cli/reconcileCold.js --start 2026-01-01 --end 2026-01-31
+ *   node backend/src/cli/reconcileCold.js --company-id <uuid> --start 2026-01-01 --end 2026-01-31
  * 
  *   # Custom page size
- *   node backend/src/cli/reconcileCold.js --days 30 --page-size 100
+ *   node backend/src/cli/reconcileCold.js --company-id <uuid> --days 30 --page-size 100
  */
 
 require('dotenv').config();
 const { coldReconcile } = require('../services/reconcileService');
+const { requireCompanyId } = require('../utils/tenantContext');
 
 // Parse command line args
 const args = process.argv.slice(2);
@@ -31,6 +32,7 @@ const days = parseInt(getArg('days', '7'));
 const startDateArg = getArg('start', null);
 const endDateArg = getArg('end', null);
 const pageSize = parseInt(getArg('page-size', '200'));
+const companyId = requireCompanyId(getArg('company-id', null));
 
 let startDate, endDate;
 
@@ -46,11 +48,12 @@ if (startDateArg && endDateArg) {
 }
 
 console.log('❄️  Cold Reconcile - Starting...\n');
+console.log(`   Company: ${companyId}`);
 console.log(`   Start: ${startDate.toISOString()}`);
 console.log(`   End: ${endDate.toISOString()}`);
 console.log(`   Page size: ${pageSize}\n`);
 
-coldReconcile(startDate, endDate, pageSize)
+coldReconcile(companyId, startDate, endDate, pageSize)
     .then(result => {
         console.log('\n📊 Summary:', result);
         process.exit(0);

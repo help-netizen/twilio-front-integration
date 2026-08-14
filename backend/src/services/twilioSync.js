@@ -1,4 +1,5 @@
 const { reconcileCall } = require('./reconcileService');
+const { requireCompanyId } = require('../utils/tenantContext');
 
 /**
  * Twilio Sync Service (v3)
@@ -8,13 +9,9 @@ const { reconcileCall } = require('./reconcileService');
  */
 
 async function getSyncClient(companyId) {
-    if (!companyId) {
-        const err = new Error('companyId is required for Twilio sync');
-        err.code = 'TWILIO_TENANT_UNRESOLVED';
-        throw err;
-    }
-    const tenant = await require('./telephonyTenantService').getClientForCompany(companyId);
-    return { ...tenant, companyId };
+    const scopedCompanyId = requireCompanyId(companyId);
+    const tenant = await require('./telephonyTenantService').getClientForCompany(scopedCompanyId);
+    return { ...tenant, companyId: scopedCompanyId };
 }
 
 /**
@@ -22,11 +19,6 @@ async function getSyncClient(companyId) {
  */
 async function syncHistoricalCalls(days = 7, companyId) {
     const tenant = await getSyncClient(companyId);
-    if (tenant.mode !== 'master') {
-        const err = new Error('Historical cold reconcile currently supports only the explicit master tenant');
-        err.code = 'TWILIO_SYNC_MODE_UNSUPPORTED';
-        throw err;
-    }
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
@@ -34,7 +26,7 @@ async function syncHistoricalCalls(days = 7, companyId) {
     console.log(`📞 Syncing calls for last ${days} days...`);
 
     const { coldReconcile } = require('./reconcileService');
-    return await coldReconcile(startDate, endDate);
+    return await coldReconcile(tenant.companyId, startDate, endDate);
 }
 
 /**
@@ -81,7 +73,7 @@ async function syncRecentCalls(companyId) {
 
         console.log(`✅ Synced ${synced} recent calls`);
     } catch (error) {
-        if (error.code === 'TWILIO_TENANT_UNRESOLVED') throw error;
+        if (error.code === 'TENANT_CONTEXT_REQUIRED') throw error;
         console.error('❌ syncRecentCalls failed:', error);
     }
 
@@ -139,7 +131,7 @@ async function syncTodayCalls(companyId) {
 
         console.log(`✅ Today sync: ${synced}/${total} (${skipped} skipped)`);
     } catch (error) {
-        if (error.code === 'TWILIO_TENANT_UNRESOLVED') throw error;
+        if (error.code === 'TENANT_CONTEXT_REQUIRED') throw error;
         console.error('❌ syncTodayCalls failed:', error);
     }
 

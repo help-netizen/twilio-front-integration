@@ -79,6 +79,7 @@ jest.mock('../backend/src/services/email/emailTimelineService', () => ({
 const svc = require('../backend/src/services/yelpConvoAgentService');
 const { convRow, CONV_ID, DEFAULT_COMPANY_ID } = require('./yelpFixtures');
 const util = require('util');
+const COMPANY_B = '00000000-0000-0000-0000-0000000000b2';
 
 // A scripted LLM transport: returns queued JSON strings in order, repeating the last.
 function scriptedGenerate(steps) {
@@ -412,6 +413,36 @@ describe('YCB-LOOP-01 · LOOP-tool-dispatch — tool → runSkill(server company
         // terminates on the reply step → exactly one send
         expect(mockSendEmail).toHaveBeenCalledTimes(1);
         expect(out).toMatchObject({ outcome: 'reply' });
+    });
+
+    it('SAB-YELP-COMPANY: model-turn tools preserve a non-default conversation company', async () => {
+        const gen = scriptedGenerate([
+            '{"action":"tool","tool":"checkServiceArea","args":{"zip":"02101"}}',
+            '{"action":"reply","body":"You are in our area.","intent":"collect"}',
+        ]);
+        mockRunSkill.mockResolvedValue({ inServiceArea: true, zip: '02101' });
+
+        await svc.runTurn(COMPANY_B, convRow(), inbound(), { generate: gen });
+
+        expect(mockRunSkill).toHaveBeenCalledWith(
+            'checkServiceArea',
+            COMPANY_B,
+            expect.objectContaining({ source: 'yelp_convo' }),
+            { zip: '02101' }
+        );
+    });
+
+    it('missing company fails before threading, history, timeline, model, or send work', async () => {
+        const generate = jest.fn();
+
+        await expect(svc.runTurn(null, convRow(), inbound(), { generate }))
+            .rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED', httpStatus: 403 });
+        expect(mockGetThreading).not.toHaveBeenCalled();
+        expect(mockListHistory).not.toHaveBeenCalled();
+        expect(mockResolveYelpTimeline).not.toHaveBeenCalled();
+        expect(generate).not.toHaveBeenCalled();
+        expect(mockSendEmail).not.toHaveBeenCalled();
+        expect(mockRunSkill).not.toHaveBeenCalled();
     });
 });
 

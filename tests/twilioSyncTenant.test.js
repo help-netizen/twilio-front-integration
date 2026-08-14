@@ -1,5 +1,6 @@
 const mockListCalls = jest.fn();
 const mockReconcileCall = jest.fn();
+const mockColdReconcile = jest.fn();
 const mockGetClientForCompany = jest.fn();
 
 jest.mock('../backend/src/services/twilioClient', () => ({
@@ -10,6 +11,7 @@ jest.mock('../backend/src/services/telephonyTenantService', () => ({
 }));
 jest.mock('../backend/src/services/reconcileService', () => ({
     reconcileCall: mockReconcileCall,
+    coldReconcile: mockColdReconcile,
     RECONCILE_CONFIG: {},
 }));
 
@@ -42,6 +44,7 @@ beforeEach(() => {
     });
     mockListCalls.mockResolvedValue([remoteCall()]);
     mockReconcileCall.mockResolvedValue(undefined);
+    mockColdReconcile.mockResolvedValue({ processed: 0 });
     jest.spyOn(global, 'setTimeout').mockImplementation(callback => {
         callback();
         return 0;
@@ -53,6 +56,17 @@ afterEach(() => {
 });
 
 describe('manual Twilio sync tenant isolation', () => {
+    test('historical sync threads a non-default company into cold reconcile', async () => {
+        await twilioSync.syncHistoricalCalls(7, COMPANY_A);
+
+        expect(mockGetClientForCompany).toHaveBeenCalledWith(COMPANY_A);
+        expect(mockColdReconcile).toHaveBeenCalledWith(
+            COMPANY_A,
+            expect.any(Date),
+            expect.any(Date)
+        );
+    });
+
     test.each([
         ['today', 'syncTodayCalls', 'sync_today'],
         ['recent', 'syncRecentCalls', 'sync_recent'],
@@ -74,11 +88,18 @@ describe('manual Twilio sync tenant isolation', () => {
         'SAB-TW-SYNC-CONTEXT: %s fails closed when company context is absent',
         async method => {
             await expect(twilioSync[method]()).rejects.toMatchObject({
-                code: 'TWILIO_TENANT_UNRESOLVED',
+                code: 'TENANT_CONTEXT_REQUIRED',
             });
             expect(mockGetClientForCompany).not.toHaveBeenCalled();
             expect(mockListCalls).not.toHaveBeenCalled();
             expect(mockReconcileCall).not.toHaveBeenCalled();
         }
     );
+
+    test('historical sync fails closed before client selection without company context', async () => {
+        await expect(twilioSync.syncHistoricalCalls(7))
+            .rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED', httpStatus: 403 });
+        expect(mockGetClientForCompany).not.toHaveBeenCalled();
+        expect(mockColdReconcile).not.toHaveBeenCalled();
+    });
 });

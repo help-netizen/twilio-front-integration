@@ -112,6 +112,16 @@ describe('yelp_convo · missing conversation row → soft no-op', () => {
     });
 });
 
+describe('yelp_convo · task tenant contract', () => {
+    it('missing task.company_id throws before conversation lookup or claim', async () => {
+        await expect(agentHandlers.run(convTask({ company_id: null })))
+            .rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED', httpStatus: 403 });
+        expect(mockGetByConvId).not.toHaveBeenCalled();
+        expect(mockClaimYelpLead).not.toHaveBeenCalled();
+        expect(mockRunTurn).not.toHaveBeenCalled();
+    });
+});
+
 describe('yelp_convo · claim store error is non-fatal', () => {
     it('claimYelpLead throws → {skipped:claim_error}, does not reject', async () => {
         mockClaimYelpLead.mockRejectedValue(new Error('ledger down'));
