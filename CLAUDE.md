@@ -24,6 +24,17 @@
 - **Technical IDs (contact_id, serial_id, zenbooker_id) — don't show.** Users don't need them. If a link to an external system is needed — use a small icon next to the name (e.g. "ZB") that opens in a new tab.
 - **Only show data that exists.** No "Secondary Phone: —". No data — no row.
 
+### Type scale — TYPE-CANON-001 (the level-two rule)
+
+**Three sizes on a screen, not eleven.** `32px` the one number or name the screen exists for · `20px` a section heading (`.blanc-section-heading`) · `15px` **everything below one**. Full spec: `docs/specs/TYPE-CANON-001.md`.
+
+- **Below a section heading nothing changes size.** Hierarchy there comes from exactly two signals:
+  - **Weight** — `500` is the voice; `600` marks a group heading (Contact, Schedule, Location) and figures meant to be compared.
+  - **Colour** — `--blanc-ink-3` names a thing, `--blanc-ink-1` answers it. `--blanc-warning` / `--blanc-success` appear only where they mean money owed or a credit; `--blanc-danger` only for failure.
+- **Use the classes, don't retype the values:** `.blanc-l2` / `.blanc-l2-quiet` / `.blanc-l2-heading` (design-system.css), or `LEVEL_TWO` / `LEVEL_TWO_QUIET` / `LEVEL_TWO_HEADING` from `styles/levelTwo.ts` where the style is a React prop. A fresh `text-[13px]` or `fontSize: '12.5px'` at a call site is the exact bug this canon exists to prevent — `styles/typeScale.test.ts` is a ratchet that fails when the count grows.
+- **No new uppercase eyebrows.** `.blanc-eyebrow` (11px tracked caps) is legacy; a group heading is `.blanc-l2-heading` — black and bold at body size.
+- Reference implementation: the payment card (`components/payments/`, `JobInfoSections variant="flat"`).
+
 ### Section Separation
 
 - **No horizontal lines (`<hr>`, `border-top`, `<Separator>`).** They look like noise and don't fit the clean neutral design system.
