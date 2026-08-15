@@ -27,6 +27,10 @@ const {
 const PUBLIC_DECLINE_REASONS = new Set(['price', 'chose_other', 'not_now', 'other']);
 const MAX_PUBLIC_DECLINE_COMMENT_LENGTH = 1000;
 const DECLINE_TASK_DUE_HOUR = 17;
+// Conversion Undo is an immediate "oops" recovery, not an invoice reversal.
+// Five minutes covers a missed toast/retry without reopening settled workflows.
+const CONVERSION_UNDO_WINDOW_SECONDS = 5 * 60;
+const CONVERTIBLE_STATUSES = new Set(['draft', 'sent', 'viewed', 'approved']);
 
 class EstimatesServiceError extends Error {
     constructor(code, message, httpStatus = 500) {
@@ -146,6 +150,16 @@ function invalidTransition() {
 
 function assertStatusIn(estimate, allowedStatuses) {
     if (!allowedStatuses.includes(estimate.status)) throw invalidTransition();
+}
+
+function timestampValue(value) {
+    if (!value) return null;
+    const milliseconds = new Date(value).getTime();
+    return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : null;
+}
+
+function conversionUndoConflict(code, message) {
+    return new EstimatesServiceError(code, message, 409);
 }
 
 function normalizeEvidence(evidence = {}) {
@@ -1111,15 +1125,93 @@ async function convertToInvoiceInTransaction(
     }
 
     assertNotArchived(estimate);
-    if (estimate.status !== 'approved') {
+    if (!CONVERTIBLE_STATUSES.has(estimate.status)) {
         throw new EstimatesServiceError(
             'INVALID_STATUS',
-            `Estimate must be approved before converting (current status: '${estimate.status}')`,
-            400
+            `Estimate cannot be converted from status '${estimate.status}'. Revive a declined estimate first.`,
+            409
         );
     }
 
     const invoicesQueries = require('../db/invoicesQueries');
+    const items = await estimatesQueries.getEstimateItems(companyId, id, client);
+    const previousApproval = {
+        status: estimate.status,
+        accepted_at: estimate.accepted_at || null,
+        approved_snapshot: estimate.approved_snapshot || null,
+        signature_name: estimate.signature_name || null,
+        signature_consented_at: estimate.signature_consented_at || null,
+    };
+    const markedApproved = estimate.status !== 'approved';
+    let conversionEstimate = estimate;
+
+    // For a live, non-approved estimate, conversion records the on-site verbal
+    // approval before creating the invoice. Both writes share this transaction.
+    if (markedApproved) {
+        const approvedAt = new Date().toISOString();
+        const approvedSnapshot = {
+            ...estimate,
+            status: 'approved',
+            accepted_at: approvedAt,
+            signature_name: null,
+            signature_consented_at: null,
+            items,
+        };
+        await estimatesQueries.createRevision(
+            companyId,
+            id,
+            approvedSnapshot,
+            userId,
+            client
+        );
+        conversionEstimate = await estimatesQueries.updateEstimate(id, companyId, {
+            status: 'approved',
+            accepted_at: approvedAt,
+            approved_snapshot: approvedSnapshot,
+            signature_name: null,
+            signature_consented_at: null,
+            updated_by: userId,
+        }, client);
+        await estimatesQueries.createEvent(
+            companyId,
+            id,
+            'approved',
+            'user',
+            userId,
+            {
+                signature_required: !!estimate.signature_required,
+                source: 'internal_conversion',
+                recorded_internally: true,
+            },
+            client
+        );
+        if (activityActor) {
+            await logFinancialActivity({
+                companyId,
+                entityType: 'estimate',
+                action: 'estimate.approved',
+                entity: conversionEstimate,
+                actor: activityActor,
+                summary: { status: 'approved', source: 'crm' },
+            }, { client });
+        }
+        await eventBus.emit(companyId, 'estimate.approved', {
+            estimate_id: conversionEstimate.id,
+            estimate_number: conversionEstimate.estimate_number || null,
+            job_id: conversionEstimate.job_id || null,
+            contact_id: conversionEstimate.contact_id || null,
+            order_list_count: Array.isArray(conversionEstimate.order_list)
+                ? conversionEstimate.order_list.length
+                : 0,
+            record_refs: [{ type: 'estimate', id: conversionEstimate.id }],
+        }, {
+            actorType: activityActor?.type || 'user',
+            actorId: activityActor?.type === 'user' ? activityActor.id || null : null,
+            aggregateType: 'estimate',
+            aggregateId: conversionEstimate.id,
+            client,
+        });
+    }
 
     // Auto-populate due_date from the invoice template's default_due_days (Net X policy).
     // The enrichment is OPTIONAL, but it may execute queries on the caller's
@@ -1193,7 +1285,6 @@ async function convertToInvoiceInTransaction(
         created_by: userId,
     }, client);
 
-    const items = await estimatesQueries.getEstimateItems(companyId, id, client);
     for (const item of items) {
         await invoicesQueries.addInvoiceItem(companyId, invoice.id, {
             name: item.name,
@@ -1217,13 +1308,26 @@ async function convertToInvoiceInTransaction(
         { estimate_id: estimate.id },
         client
     );
-    await estimatesQueries.createEvent(
+    const created = await invoicesService.getInvoice(companyId, invoice.id, client);
+    const conversionEvent = await estimatesQueries.createEvent(
         companyId,
         id,
         'converted_to_invoice',
         'user',
         userId,
-        { invoice_id: invoice.id },
+        {
+            invoice_id: invoice.id,
+            previous_status: previousApproval.status,
+            previous_accepted_at: previousApproval.accepted_at,
+            previous_approved_snapshot: previousApproval.approved_snapshot,
+            previous_signature_name: previousApproval.signature_name,
+            previous_signature_consented_at: previousApproval.signature_consented_at,
+            approval_recorded: markedApproved,
+            approval_source: markedApproved ? 'internal_conversion' : null,
+            estimate_updated_at: timestampValue(conversionEstimate.updated_at),
+            invoice_updated_at: timestampValue(created.updated_at),
+            undo_window_seconds: CONVERSION_UNDO_WINDOW_SECONDS,
+        },
         client
     );
     if (activityActor) {
@@ -1231,7 +1335,7 @@ async function convertToInvoiceInTransaction(
             companyId,
             entityType: 'estimate',
             action: 'estimate.converted',
-            entity: estimate,
+            entity: conversionEstimate,
             actor: activityActor,
             summary: { invoice_id: invoice.id },
         }, { client });
@@ -1245,8 +1349,15 @@ async function convertToInvoiceInTransaction(
         }, { client });
     }
 
-    const created = await invoicesService.getInvoice(companyId, invoice.id, client);
-    return { ...created, already_converted: false };
+    const conversionCreatedAt = timestampValue(conversionEvent?.created_at) || new Date().toISOString();
+    return {
+        ...created,
+        already_converted: false,
+        marked_approved: markedApproved,
+        undo_expires_at: new Date(
+            new Date(conversionCreatedAt).getTime() + CONVERSION_UNDO_WINDOW_SECONDS * 1000
+        ).toISOString(),
+    };
 }
 
 async function convertToInvoice(companyId, userId, id, client = null, activityActor = null) {
@@ -1267,6 +1378,237 @@ async function convertToInvoice(companyId, userId, id, client = null, activityAc
             companyId,
             userId,
             id,
+            ownedClient,
+            activityActor
+        );
+        await ownedClient.query('COMMIT');
+        return result;
+    } catch (err) {
+        await ownedClient.query('ROLLBACK');
+        throw err;
+    } finally {
+        ownedClient.release();
+    }
+}
+
+async function undoInvoiceConversionInTransaction(
+    companyId,
+    userId,
+    id,
+    invoiceId,
+    client,
+    activityActor = null
+) {
+    const lockedEstimate = await estimatesQueries.lockEstimateForConversion(
+        companyId,
+        id,
+        client
+    );
+    if (!lockedEstimate) {
+        throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
+    }
+
+    const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
+    if (!estimate) {
+        throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
+    }
+    if (!invoiceId || String(estimate.invoice_id) !== String(invoiceId)) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_MISMATCH',
+            'This invoice is not the current invoice created from this estimate.'
+        );
+    }
+
+    const invoicesQueries = require('../db/invoicesQueries');
+    const invoicesService = require('./invoicesService');
+    const lockedInvoice = await invoicesQueries.lockInvoiceById(companyId, invoiceId, client);
+    if (!lockedInvoice) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_MISMATCH',
+            'The invoice created by this conversion no longer exists.'
+        );
+    }
+
+    const conversion = await estimatesQueries.getConversionEventForUndo(
+        companyId,
+        id,
+        invoiceId,
+        CONVERSION_UNDO_WINDOW_SECONDS,
+        client
+    );
+    if (!conversion) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_MISMATCH',
+            'This invoice is not tied to an undoable conversion of this estimate.'
+        );
+    }
+    if (conversion.undo_expired) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_EXPIRED',
+            'Undo is available for 5 minutes after creating the invoice.'
+        );
+    }
+
+    const metadata = conversion.metadata || {};
+    if (!CONVERTIBLE_STATUSES.has(metadata.previous_status)) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_UNAVAILABLE',
+            'The conversion audit record cannot safely restore the estimate.'
+        );
+    }
+
+    const invoice = await invoicesService.getInvoice(companyId, invoiceId, client);
+    if (!invoice || String(invoice.estimate_id) !== String(id)) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_MISMATCH',
+            'This invoice is not the one created from this estimate.'
+        );
+    }
+
+    if (
+        ['void', 'voided', 'refunded'].includes(lockedInvoice.status)
+        || invoice.voided_at
+    ) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_INVOICE_VOIDED',
+            'This conversion cannot be undone because the invoice was voided or refunded.'
+        );
+    }
+    if (lockedInvoice.status !== 'draft' || invoice.sent_at) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_INVOICE_SENT',
+            'This conversion cannot be undone because the invoice was sent or moved beyond draft.'
+        );
+    }
+
+    const blockers = await invoicesQueries.getConversionUndoBlockers(
+        companyId,
+        invoiceId,
+        id,
+        client
+    );
+    if (!blockers) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_MISMATCH',
+            'This invoice is not the one created from this estimate.'
+        );
+    }
+    if (
+        Number(invoice.amount_paid || 0) !== 0
+        || Number(invoice.job_payment_allocated || 0) !== 0
+        || blockers.has_payment_activity
+    ) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_PAYMENT_ALLOCATED',
+            'This conversion cannot be undone because payment activity is allocated to the invoice.'
+        );
+    }
+
+    const invoiceChanged = timestampValue(invoice.updated_at) !== metadata.invoice_updated_at;
+    const estimateChanged = timestampValue(estimate.updated_at) !== metadata.estimate_updated_at;
+    if (
+        invoiceChanged
+        || estimateChanged
+        || Number(blockers.linked_invoice_count) !== 1
+        || blockers.has_payment_session
+        || blockers.has_revision
+        || blockers.has_task
+        || blockers.has_generation_link
+        || blockers.has_unexpected_event
+    ) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_INVOICE_CHANGED',
+            'This conversion cannot be undone because the estimate or invoice was edited or otherwise used.'
+        );
+    }
+
+    const deleted = await invoicesQueries.deleteConvertedInvoice(
+        companyId,
+        invoiceId,
+        id,
+        client
+    );
+    if (!deleted) {
+        throw conversionUndoConflict(
+            'CONVERSION_UNDO_INVOICE_CHANGED',
+            'The invoice changed before the conversion could be undone.'
+        );
+    }
+
+    const restored = await estimatesQueries.updateEstimate(id, companyId, {
+        status: metadata.previous_status,
+        accepted_at: metadata.previous_accepted_at ?? null,
+        approved_snapshot: metadata.previous_approved_snapshot ?? null,
+        signature_name: metadata.previous_signature_name ?? null,
+        signature_consented_at: metadata.previous_signature_consented_at ?? null,
+        updated_by: userId,
+    }, client);
+    if (!restored) {
+        throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
+    }
+
+    await estimatesQueries.createEvent(
+        companyId,
+        id,
+        'conversion_undone',
+        'user',
+        userId,
+        {
+            invoice_id: invoiceId,
+            restored_status: metadata.previous_status,
+            source: 'internal_undo',
+            conversion_event_id: conversion.id,
+        },
+        client
+    );
+    if (activityActor) {
+        await logFinancialActivity({
+            companyId,
+            entityType: 'estimate',
+            action: 'estimate.conversion_undone',
+            entity: restored,
+            actor: activityActor,
+            summary: {
+                invoice_id: invoiceId,
+                status: metadata.previous_status,
+            },
+        }, { client });
+    }
+
+    return {
+        estimate: await getEstimate(companyId, id, client),
+        invoice_id: invoiceId,
+        undone: true,
+    };
+}
+
+async function undoInvoiceConversion(
+    companyId,
+    userId,
+    id,
+    invoiceId,
+    client = null,
+    activityActor = null
+) {
+    if (client?.query) {
+        return undoInvoiceConversionInTransaction(
+            companyId,
+            userId,
+            id,
+            invoiceId,
+            client,
+            activityActor
+        );
+    }
+
+    const ownedClient = await db.pool.connect();
+    try {
+        await ownedClient.query('BEGIN');
+        const result = await undoInvoiceConversionInTransaction(
+            companyId,
+            userId,
+            id,
+            invoiceId,
             ownedClient,
             activityActor
         );
@@ -1491,6 +1833,7 @@ module.exports = {
     declineEstimate,
     linkJob,
     convertToInvoice,
+    undoInvoiceConversion,
     copyToInvoice,
     getRevisions,
     getEvents,

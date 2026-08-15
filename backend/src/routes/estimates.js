@@ -430,7 +430,7 @@ router.post('/:id/decline', requirePermission('estimates.send'), async (req, res
     }
 });
 
-// POST /api/estimates/:id/convert — Convert approved estimate to invoice
+// POST /api/estimates/:id/convert — Convert any live estimate to invoice
 router.post('/:id/convert', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
@@ -449,6 +449,43 @@ router.post('/:id/convert', requirePermission('invoices.create'), async (req, re
         console.error('[Estimates] POST /:id/convert error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/estimates/:id/convert/undo — Undo a fresh, untouched conversion.
+router.post('/:id/convert/undo', requirePermission('invoices.create'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
+        const { id } = req.params;
+        const invoiceId = Number(req.body?.invoice_id);
+
+        if (!Number.isInteger(invoiceId) || invoiceId <= 0) {
+            return res.status(400).json({
+                ok: false,
+                error: {
+                    code: 'MISSING_FIELD',
+                    message: 'invoice_id is required to undo a conversion.',
+                },
+            });
+        }
+
+        const result = await withTransaction(client => estimatesService.undoInvoiceConversion(
+            companyId,
+            userId,
+            id,
+            invoiceId,
+            client,
+            userActor(userId)
+        ));
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Estimates] POST /:id/convert/undo error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({
+            ok: false,
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
     }
 });
 

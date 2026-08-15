@@ -378,6 +378,74 @@ async function lockInvoiceById(companyId, id, client = null) {
     return rows[0] || null;
 }
 
+/**
+ * Refuse conversion Undo after any downstream invoice use. The dependent-row
+ * checks intentionally key on the globally unique invoice id after the owning
+ * invoice is company-scoped: deleting the invoice would otherwise cascade or
+ * null even an anomalous cross-tenant FK row.
+ */
+async function getConversionUndoBlockers(companyId, invoiceId, estimateId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT
+            (SELECT COUNT(*)::INTEGER
+             FROM invoices linked
+             WHERE linked.company_id = $1
+               AND linked.estimate_id = $3) AS linked_invoice_count,
+            EXISTS (
+                SELECT 1 FROM payment_transactions pt
+                WHERE pt.invoice_id = i.id
+            ) AS has_payment_activity,
+            EXISTS (
+                SELECT 1 FROM stripe_payment_sessions s
+                WHERE s.invoice_id = i.id
+            ) AS has_payment_session,
+            EXISTS (
+                SELECT 1 FROM invoice_revisions ir
+                WHERE ir.invoice_id = i.id
+            ) AS has_revision,
+            EXISTS (
+                SELECT 1 FROM tasks t
+                WHERE t.invoice_id = i.id
+            ) AS has_task,
+            EXISTS (
+                SELECT 1 FROM ai_generation_log agl
+                WHERE agl.company_id = $1
+                  AND agl.invoice_id = i.id
+            ) AS has_generation_link,
+            (
+                SELECT COUNT(*) <> 1
+                    OR COUNT(*) FILTER (
+                        WHERE ie.event_type = 'created_from_estimate'
+                          AND ie.metadata->>'estimate_id' = $3::TEXT
+                    ) <> 1
+                FROM invoice_events ie
+                WHERE ie.invoice_id = i.id
+            ) AS has_unexpected_event
+         FROM invoices i
+         WHERE i.id = $2
+           AND i.company_id = $1
+           AND i.estimate_id = $3`,
+        [companyId, invoiceId, estimateId]
+    );
+    return rows[0] || null;
+}
+
+/** Delete only the still-draft invoice created from this tenant-owned estimate. */
+async function deleteConvertedInvoice(companyId, invoiceId, estimateId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `DELETE FROM invoices
+         WHERE id = $2
+           AND company_id = $1
+           AND estimate_id = $3
+           AND status = 'draft'
+         RETURNING id`,
+        [companyId, invoiceId, estimateId]
+    );
+    return rows[0] || null;
+}
+
 /** Void an issued tenant-owned invoice only; draft/terminal rows never mutate. */
 async function voidIssuedInvoice(id, companyId, client = null) {
     const query = queryFor(client);
@@ -828,6 +896,8 @@ module.exports = {
     updateInvoice,
     deleteInvoice,
     lockInvoiceById,
+    getConversionUndoBlockers,
+    deleteConvertedInvoice,
     voidIssuedInvoice,
     updateInvoiceStatus,
     getInvoiceItems,

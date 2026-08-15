@@ -1196,19 +1196,32 @@ describe('CHATGPT-CRM-MCP S2c-b Estimate-to-Invoice conversion contract', () => 
             'Draft',
             false
         );
-        await expect(invoke(resolved, TOOL_NAME, {
+        const draftConverted = await invoke(resolved, TOOL_NAME, {
             estimate_id: Number(draft.id),
-        })).rejects.toMatchObject({
-            code: 'INVALID_STATUS',
-            httpStatus: 400,
         });
-        const draftInvoices = await db.query(
-            `SELECT COUNT(*)::int AS count
-             FROM invoices
-             WHERE company_id=$1 AND estimate_id=$2`,
+        expect(draftConverted).toMatchObject({
+            already_converted: false,
+            status: 'draft',
+        });
+        const draftState = await db.query(
+            `SELECT e.status,
+                    (SELECT COUNT(*)::int
+                     FROM invoices i
+                     WHERE i.company_id=e.company_id AND i.estimate_id=e.id) AS invoices,
+                    (SELECT COUNT(*)::int
+                     FROM estimate_events ee
+                     WHERE ee.estimate_id=e.id
+                       AND ee.event_type='approved'
+                       AND ee.metadata->>'source'='internal_conversion') AS internal_approvals
+             FROM estimates e
+             WHERE e.company_id=$1 AND e.id=$2`,
             [state.companyA, draft.id]
         );
-        expect(draftInvoices.rows[0].count).toBe(0);
+        expect(draftState.rows[0]).toEqual({
+            status: 'approved',
+            invoices: 1,
+            internal_approvals: 1,
+        });
     });
 
     databaseTest('parallel MCP replay and direct canonical-service replay each create one Invoice', async () => {

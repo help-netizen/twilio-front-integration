@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Check, ChevronDown, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, Pencil, Plus, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -9,7 +9,6 @@ import { Label } from '../ui/label';
 import { Checkbox } from '../ui/checkbox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Textarea } from '../ui/textarea';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { EstimatePreviewDialog } from './EstimatePreviewDialog';
 import { EstimateSendDialog } from './EstimateSendDialog';
 import { EstimateItemDialog, type ItemDraft } from './EstimateItemDialog';
@@ -36,21 +35,86 @@ import { openAuthedPdf } from '../../lib/openAuthedPdf';
 import { toast } from 'sonner';
 import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-    draft: 'secondary',
-    sent: 'outline',
-    viewed: 'outline',
-    approved: 'default',
-    declined: 'destructive',
-};
-
 function money(value: string | number | null | undefined): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * How long a proposal has been waiting is the reason to act on it, so the status
+ * carries it: "Sent yesterday" and "Opened 2 days ago" are decisions, where a
+ * bare "sent" chip is trivia. Older than a week it stops helping and goes quiet.
+ */
+function ago(value: string | null | undefined): string {
+    if (!value) return '';
+    const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
+    if (!Number.isFinite(days) || days < 0) return '';
+    if (days === 0) return ' today';
+    if (days === 1) return ' yesterday';
+    if (days <= 7) return ` ${days} days ago`;
+    return '';
+}
+
+const STATUS_TONE: Record<string, { background: string; color: string }> = {
+    draft: { background: 'rgba(25,25,25,.06)', color: 'var(--blanc-ink-2)' },
+    sent: { background: 'rgba(47,99,216,.10)', color: 'var(--blanc-job)' },
+    viewed: { background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' },
+    approved: { background: 'rgba(27,139,99,.10)', color: 'var(--blanc-success)' },
+    declined: { background: 'rgba(240,80,63,.10)', color: 'var(--blanc-danger)' },
+};
+
+function StatusPill({ estimate }: { estimate: Estimate }) {
+    const tone = STATUS_TONE[estimate.status] || STATUS_TONE.draft;
+    const label = estimate.status === 'draft' ? 'Draft · not sent'
+        : estimate.status === 'sent' ? `Sent${ago(estimate.sent_at)}`
+            : estimate.status === 'viewed' ? `Opened${ago(estimate.updated_at)}`
+                : estimate.status === 'approved' ? 'Approved'
+                    : estimate.status === 'declined' ? 'Declined'
+                        : estimate.status;
+    return (
+        <span
+            className="blanc-l2 inline-flex items-center px-2.5"
+            style={{ ...tone, minHeight: 26, borderRadius: 8 }}
+            data-testid="estimate-status"
+        >
+            {label}
+        </span>
+    );
 }
 
 function fmtDateTime(value: string | null | undefined, timeZone: string): string {
     if (!value) return '-';
     return formatCompanyTime(value, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }, timeZone);
+}
+
+/**
+ * History reads as events, not as a log. "Sent" with a timestamp under it is a
+ * row in a table; "The customer opened it" is the sentence you would actually
+ * say out loud, and it names who did the thing — which is the part that settles
+ * an argument later. Anything unmapped degrades to its own words rather than
+ * disappearing.
+ */
+const EVENT_SENTENCE: Record<string, string> = {
+    created: 'Estimate created',
+    updated: 'Estimate edited',
+    sent: 'Sent to the customer',
+    resent: 'Sent to the customer again',
+    viewed: 'The customer opened it',
+    approved: 'Approved',
+    approved_by_client: 'The customer approved it',
+    declined: 'Declined',
+    declined_by_client: 'The customer declined it',
+    converted: 'Turned into an invoice',
+    invoice_created: 'Turned into an invoice',
+    archived: 'Archived',
+    restored: 'Restored to draft',
+    job_linked: 'Linked to a job',
+};
+
+function describeEvent(evt: EstimateEvent): string {
+    const mapped = EVENT_SENTENCE[evt.event_type];
+    if (mapped) return mapped;
+    const words = evt.event_type.replace(/_/g, ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 interface Props {
@@ -132,6 +196,19 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     useEffect(() => setEditing(false), [initialEstimate.id]);
     const canEdit = !archived;
     const readOnly = !editing || !canEdit;
+
+    /**
+     * Editing a non-draft estimate resets it to draft and clears the customer's
+     * answer — that is existing backend behaviour (spec §2.12) and it is not
+     * changing here. What changes is that it stops being silent: the warning
+     * belongs to the tap, not to a caption sitting on the card forever, since
+     * editing an answered estimate is rare and reading one is not.
+     */
+    const [confirmEditOpen, setConfirmEditOpen] = useState(false);
+    const startEditing = () => {
+        if (estimate.status === 'draft') { setEditing(true); return; }
+        setConfirmEditOpen(true);
+    };
 
     const refreshAfterItemChange = async () => {
         try {
@@ -282,18 +359,56 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     };
     const hasItems = !!estimate.items?.length;
 
+    /**
+     * Creating the invoice IS the record that the customer agreed, so from a
+     * draft or a sent estimate it approves at the same time (ESTIMATE-REDESIGN-001
+     * §2.2). There is deliberately no confirmation dialog in front of it: this is
+     * the frequent, constructive action — the technician is standing in the
+     * kitchen and the customer just said yes — and the answer to those is Undo,
+     * not a question. The toast says what changed, because a silent status jump
+     * is how a funnel starts lying.
+     */
     const handleConvertToInvoice = async () => {
+        const wasApproved = estimate.status === 'approved';
         setConverting(true);
         try {
             const invoice = await convertEstimateToInvoice(estimate.id);
-            toast.success('Invoice created from estimate');
+            const number = invoice.invoice_number || `#${invoice.id}`;
+            toast.success(
+                wasApproved ? `Invoice ${number} created` : `Invoice ${number} created · marked approved`,
+                {
+                    duration: 10_000,
+                    action: {
+                        label: <span data-testid="estimate-convert-undo">Undo</span>,
+                        onClick: () => undoConversion(invoice.id),
+                    },
+                }
+            );
             onInvoiceCreated?.();
-            // Navigate to invoices and open the new invoice automatically.
-            navigate(`/invoices?openId=${invoice.id}`);
+            if (hasPermission('invoices.view')) navigate(`/invoices?openId=${invoice.id}`);
         } catch (err: any) {
             toast.error(err.message || 'Failed to create invoice');
         } finally {
             setConverting(false);
+        }
+    };
+
+    /**
+     * Undo is only offered because it is real: the backend refuses the moment the
+     * invoice has been paid, sent, voided or edited, and expires after five
+     * minutes. A refusal is shown as-is rather than swallowed — an Undo that
+     * quietly does nothing is worse than no Undo at all.
+     */
+    const undoConversion = async (invoiceId: number) => {
+        try {
+            const { undoEstimateConversion } = await import('../../services/estimatesApi');
+            const fresh = await undoEstimateConversion(estimate.id, invoiceId);
+            setEstimate(fresh);
+            onChanged?.(fresh);
+            onInvoiceCreated?.();
+            toast.success('Invoice removed · estimate restored');
+        } catch (err: any) {
+            toast.error(err?.message || 'That invoice can no longer be undone');
         }
     };
 
@@ -340,20 +455,49 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     const doApprove = () => { if (requireItems()) onApprove(); };
     const openLinkedInvoice = () => navigate(`/invoices?openId=${estimate.invoice_id}`);
 
-    const primaryKey: 'restore' | 'open-invoice' | 'create-invoice' | 'approve' | 'send' | null =
-        archived ? 'restore'
-        : estimate.status === 'approved' && estimate.invoice_id ? 'open-invoice'
-        : estimate.status === 'approved' ? 'create-invoice'
-        : (estimate.status === 'sent' || estimate.status === 'viewed') ? 'approve'
-        : canSend ? 'send'
-        : 'approve';
-    const primaryAction =
-        primaryKey === 'restore' ? { label: 'Restore to draft', icon: <RotateCcw className="mr-1.5 size-4" />, onClick: onRestore, disabled: false }
-        : primaryKey === 'open-invoice' ? { label: 'Open invoice', icon: <FileText className="mr-1.5 size-4" />, onClick: openLinkedInvoice, disabled: false }
-        : primaryKey === 'create-invoice' ? { label: converting ? 'Creating…' : 'Create Invoice', icon: <FileText className="mr-1.5 size-4" />, onClick: handleConvertToInvoice, disabled: converting }
-        : primaryKey === 'approve' ? { label: 'Approve', icon: <Check className="mr-1.5 size-4" />, onClick: doApprove, disabled: false }
-        : primaryKey === 'send' ? { label: 'Send', icon: <Send className="mr-1.5 size-4" />, onClick: doSend, disabled: false }
-        : null;
+    /**
+     * The action matrix (ESTIMATE-REDESIGN-001 §2.2). One primary — the next real
+     * move toward an answer — and "Create invoice" beside it at EVERY live status,
+     * because the customer usually says yes on the spot and recording that should
+     * not cost three taps. Everything else is visible and quiet; there is no kebab,
+     * because hiding an action does not make a screen simpler, only slower.
+     *
+     * Declined is the one place the shortcut is withheld: they said no, and if they
+     * changed their mind the estimate gets revived deliberately.
+     */
+    type Action = { label: string; icon?: React.ReactNode; onClick: () => void; disabled?: boolean; testid?: string };
+
+    const invoiceAction: Action = estimate.invoice_id
+        ? { label: `Open invoice${estimate.invoice_number ? ` #${estimate.invoice_number}` : ''}`, icon: <FileText className="size-4" />, onClick: openLinkedInvoice, testid: 'estimate-open-invoice' }
+        : { label: converting ? 'Creating…' : 'Create invoice', icon: <FileText className="size-4" />, onClick: handleConvertToInvoice, disabled: converting, testid: 'estimate-create-invoice' };
+
+    const live = !archived;
+    const waiting = estimate.status === 'sent' || estimate.status === 'viewed';
+    const approved = estimate.status === 'approved';
+    const declined = estimate.status === 'declined';
+
+    const primaryAction: Action | null =
+        archived ? { label: 'Restore to draft', icon: <RotateCcw className="size-4" />, onClick: onRestore }
+        : approved ? invoiceAction
+        : waiting ? { label: 'Mark approved', icon: <Check className="size-4" />, onClick: doApprove, testid: 'estimate-approve' }
+        : declined ? { label: 'Revise & resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-revise' }
+        : canSend ? { label: 'Send estimate', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-send' }
+        : { label: 'Mark approved', icon: <Check className="size-4" />, onClick: doApprove, testid: 'estimate-approve' };
+
+    const secondaryAction: Action | null =
+        !live || declined ? null
+        : approved ? { label: 'Resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-resend' }
+        : invoiceAction;
+
+    const quietActions: Action[] = live
+        ? [
+            ...(waiting ? [{ label: 'Resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-resend' }] : []),
+            { label: 'Preview PDF', icon: <Eye className="size-4" />, onClick: previewPdf },
+            ...(readOnly ? [{ label: 'Edit', icon: <Pencil className="size-4" />, onClick: startEditing, testid: 'estimate-edit' }] : []),
+            ...(declined ? [invoiceAction] : []),
+            ...(estimate.job_id ? [] : [{ label: 'Link a job', icon: <Link2 className="size-4" />, onClick: openLinkJobPrompt }]),
+        ]
+        : [];
 
     return (
         <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${archived ? 'grayscale opacity-60' : ''}`}>
@@ -366,34 +510,109 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 not pinned); overflow-x-hidden blocks the mobile horizontal rubber-band. */}
             <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
                 <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14">
-                <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                        {estimate.job_id ? (
+                {/* IDENTITY (ESTIMATE-REDESIGN-001): the amount is the title, one grey
+                    line names who it is for and what it belongs to, then the status.
+                    Contact and job were a section with an icon in the first draft —
+                    which fairly invited the question of why the job did not get one
+                    too. A line answers both and claims to be neither. */}
+                <p className="blanc-l2 blanc-l2-quiet">{estimate.estimate_number}</p>
+                <h2
+                    className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
+                    style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.025em' }}
+                    data-testid="estimate-total"
+                >
+                    {money(estimate.total)}
+                </h2>
+                <p className="blanc-l2 blanc-l2-quiet mt-1.5">
+                    {estimate.contact_name || 'No customer linked'}
+                    {estimate.job_id && (
+                        <>
+                            {' · '}
                             <a
                                 href={`/jobs/${estimate.job_id}`}
                                 onClick={e => { e.preventDefault(); window.open(`/jobs/${estimate.job_id}`, '_blank', 'noopener,noreferrer'); }}
-                                className="font-mono text-sm font-semibold text-blue-600 hover:underline"
-                                title={`Open Job #${estimate.job_number || estimate.job_id}`}
+                                style={{ color: 'var(--blanc-job)' }}
+                                className="hover:underline"
                             >
-                                {estimate.estimate_number}
+                                Job #{estimate.job_number || estimate.job_id}
                             </a>
-                        ) : (
-                            <span className="font-mono text-sm font-semibold">{estimate.estimate_number}</span>
+                        </>
+                    )}
+                </p>
+                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <StatusPill estimate={estimate} />
+                    {archived && <Badge variant="outline">Archived</Badge>}
+                </div>
+
+                {/* ACTIONS — visible, never in a kebab, ordered by how often each is
+                    the right one. Hidden while editing: then the only move is Save. */}
+                {!editing && (primaryAction || secondaryAction || quietActions.length > 0) && (
+                    <div className="mt-4 space-y-2">
+                        {primaryAction && (
+                            <Button
+                                className="h-[50px] w-full text-[15px]"
+                                onClick={primaryAction.onClick}
+                                disabled={primaryAction.disabled}
+                                data-testid={primaryAction.testid}
+                            >
+                                {primaryAction.icon}
+                                <span className="ml-1.5">{primaryAction.label}</span>
+                            </Button>
                         )}
-                        <Badge variant={STATUS_VARIANT[estimate.status] || 'secondary'} className="capitalize">{estimate.status}</Badge>
-                        {archived && <Badge variant="outline">Archived</Badge>}
-                        {estimate.invoice_number && <Badge variant="outline">Invoice #{estimate.invoice_number}</Badge>}
+                        {secondaryAction && (
+                            <Button
+                                variant="secondary"
+                                className="h-[50px] w-full text-[15px]"
+                                onClick={secondaryAction.onClick}
+                                disabled={secondaryAction.disabled}
+                                data-testid={secondaryAction.testid}
+                            >
+                                {secondaryAction.icon}
+                                <span className="ml-1.5">{secondaryAction.label}</span>
+                            </Button>
+                        )}
+                        {quietActions.map(action => (
+                            <Button
+                                key={action.label}
+                                variant="ghost"
+                                className="h-11 w-full justify-center text-[15px] font-medium"
+                                style={{ color: 'var(--blanc-ink-2)' }}
+                                onClick={action.onClick}
+                                disabled={action.disabled}
+                                data-testid={action.testid}
+                            >
+                                {action.icon}
+                                <span className="ml-1.5">{action.label}</span>
+                            </Button>
+                        ))}
+                        {/* Refusing on the customer's behalf, and archiving, sit last and
+                            muted: rare, and one of them is how you lose a proposal. */}
+                        {live && !declined && (
+                            <Button
+                                variant="ghost"
+                                className="h-11 w-full justify-center text-[15px] font-medium"
+                                style={{ color: 'var(--blanc-danger)' }}
+                                onClick={() => setDeclineOpen(true)}
+                                data-testid="estimate-decline"
+                            >
+                                <XCircle className="size-4" />
+                                <span className="ml-1.5">Decline on customer’s behalf</span>
+                            </Button>
+                        )}
+                        {live && (
+                            <Button
+                                variant="ghost"
+                                className="h-11 w-full justify-center text-[15px] font-medium"
+                                style={{ color: 'var(--blanc-danger)' }}
+                                onClick={onArchive}
+                                data-testid="estimate-archive"
+                            >
+                                <Archive className="size-4" />
+                                <span className="ml-1.5">Archive estimate</span>
+                            </Button>
+                        )}
                     </div>
-                    <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{estimate.contact_name || 'No customer linked'}</p>
-                </div>
-                <div className="flex items-start gap-3">
-                    <div className="text-right">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">Total</p>
-                        <p className="font-mono text-xl font-semibold">{money(estimate.total)}</p>
-                    </div>
-                </div>
-                </div>
+                )}
             </div>
                 <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
                 <main className="min-w-0 space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
@@ -495,7 +714,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                         {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
                                         <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blanc-ink-2)]">
                                             <span>{Number(item.quantity)} × {money(item.unit_price)}</span>
-                                            {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
+                                            {item.taxable && <span className="blanc-l2 blanc-l2-quiet">· taxable</span>}
                                             <span className="ml-auto flex items-center gap-1">
                                                 <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
                                                     <Pencil className="size-4" />
@@ -698,74 +917,42 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     )}
 
                     {events.length > 0 && (
-                        <section className="space-y-3 text-sm">
-                            <p className="blanc-eyebrow">History</p>
-                            <div className="space-y-2.5">
-                                {events.map(evt => (
-                                    <div key={evt.id} className="text-xs">
-                                        <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
-                                        <p className="text-[var(--blanc-ink-3)]">{fmtDateTime(evt.created_at, timeZone)}</p>
-                                    </div>
-                                ))}
-                            </div>
+                        <section data-testid="estimate-history">
+                            <p
+                                className="blanc-l2 blanc-l2-quiet flex items-center gap-1.5"
+                                style={{ fontWeight: 600, marginBottom: 4 }}
+                            >
+                                <Clock className="size-3.5" /> History
+                            </p>
+                            {events.map(evt => (
+                                <div
+                                    key={evt.id}
+                                    className="py-1.5"
+                                    data-testid="estimate-history-event"
+                                    data-event-type={evt.event_type}
+                                >
+                                    <span className="blanc-l2 block">{describeEvent(evt)}</span>
+                                    <span className="blanc-l2 blanc-l2-quiet block">{fmtDateTime(evt.created_at, timeZone)}</span>
+                                </div>
+                            ))}
                         </section>
                     )}
                 </aside>
                 </div>
             </div>
 
-            <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-3">
-                <div className="flex items-center justify-end gap-2">
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="outline" size="sm" aria-label="More actions">
-                                <MoreHorizontal className="size-4" />
-                                <span className="ml-1 hidden sm:inline">More</span>
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-52">
-                            <DropdownMenuItem onSelect={previewPdf}><Eye className="size-4" />Preview PDF</DropdownMenuItem>
-                            {!archived && (
-                                <>
-                                    {canSend && primaryKey !== 'send' && (
-                                        <DropdownMenuItem onSelect={doSend}><Send className="size-4" />{estimate.status === 'draft' ? 'Send' : 'Resend'}</DropdownMenuItem>
-                                    )}
-                                    {estimate.status !== 'approved' && primaryKey !== 'approve' && (
-                                        <DropdownMenuItem onSelect={doApprove}><Check className="size-4" />Approve</DropdownMenuItem>
-                                    )}
-                                    {estimate.invoice_id && primaryKey !== 'open-invoice' && (
-                                        <DropdownMenuItem onSelect={openLinkedInvoice}><FileText className="size-4" />Open invoice</DropdownMenuItem>
-                                    )}
-                                    {estimate.status !== 'declined' && (
-                                        <DropdownMenuItem onSelect={() => setDeclineOpen(true)}><XCircle className="size-4" />Decline</DropdownMenuItem>
-                                    )}
-                                    {!estimate.job_id && (
-                                        <DropdownMenuItem onSelect={openLinkJobPrompt}><Link2 className="size-4" />Link Job</DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={onArchive}><Archive className="size-4" />Archive</DropdownMenuItem>
-                                </>
-                            )}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                    {/* VIEW-FIRST: Edit enters the editing state; Save flushes pending on-blur
-                        saves and returns to the preview. */}
-                    {canEdit && (editing ? (
-                        <Button variant="secondary" onClick={handleExplicitSave}>
+            {/* While editing, Save is the only thing that matters — the document is in
+                flight and every other action would act on a half-written state. Once
+                saved the panel returns to view-first and the action stack takes over. */}
+            {editing && canEdit && (
+                <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-3">
+                    <div className="flex items-center justify-end gap-2">
+                        <Button variant="secondary" onClick={handleExplicitSave} data-testid="estimate-save">
                             <Check className="mr-1.5 size-4" />Save
                         </Button>
-                    ) : (
-                        <Button variant="secondary" onClick={() => setEditing(true)}>
-                            <Pencil className="mr-1.5 size-4" />Edit
-                        </Button>
-                    ))}
-                    {primaryAction && (
-                        <Button onClick={primaryAction.onClick} disabled={primaryAction.disabled}>
-                            {primaryAction.icon}{primaryAction.label}
-                        </Button>
-                    )}
+                    </div>
                 </div>
-            </div>
+            )}
 
             <EstimateSummaryDialog
                 open={summaryDialogOpen}
@@ -802,6 +989,28 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <DialogFooter>
                         <Button variant="ghost" onClick={() => setDeclineOpen(false)}>Cancel</Button>
                         <Button onClick={submitDecline} disabled={!declineReason.trim()}>Decline</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Editing an answered estimate throws the answer away (spec §2.12). The
+                backend has always done this; saying so at the tap is the whole fix. */}
+            <Dialog open={confirmEditOpen} onOpenChange={setConfirmEditOpen}>
+                <DialogContent variant="dialog" size="sm">
+                    <DialogHeader><DialogTitle>Edit this estimate?</DialogTitle></DialogHeader>
+                    <p className="blanc-l2" style={{ color: 'var(--blanc-ink-2)' }}>
+                        {estimate.estimate_number} will go back to <b style={{ color: 'var(--blanc-ink-1)' }}>Draft</b>
+                        {estimate.status === 'approved' ? ' and the approval will be cleared' : ''}
+                        {estimate.invoice_id ? '. The invoice already created stays.' : '.'}
+                    </p>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setConfirmEditOpen(false)}>Keep as is</Button>
+                        <Button
+                            onClick={() => { setConfirmEditOpen(false); setEditing(true); }}
+                            data-testid="estimate-edit-confirm"
+                        >
+                            Edit anyway
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

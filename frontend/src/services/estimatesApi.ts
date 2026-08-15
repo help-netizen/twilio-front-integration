@@ -410,3 +410,16 @@ export async function fetchEstimateRevisions(id: number): Promise<EstimateRevisi
 export async function convertEstimateToInvoice(id: number): Promise<import('./invoicesApi').Invoice> {
     return estimatesRequest<import('./invoicesApi').Invoice>(`${ESTIMATES_BASE}/${id}/convert`, { method: 'POST' });
 }
+
+/**
+ * Take back a conversion made moments ago: the invoice is deleted and the
+ * estimate returns to the status it had. The server refuses the instant the
+ * invoice has been paid, sent, voided or edited, and after five minutes — which
+ * is what makes it safe to offer as an Undo instead of a confirmation dialog.
+ */
+export async function undoEstimateConversion(id: number, invoiceId: number): Promise<Estimate> {
+    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/convert/undo`, {
+        method: 'POST',
+        body: JSON.stringify({ invoice_id: invoiceId }),
+    });
+}

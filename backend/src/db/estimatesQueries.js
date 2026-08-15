@@ -201,6 +201,41 @@ async function lockEstimateForConversion(companyId, id, client) {
     return rows[0] || null;
 }
 
+/**
+ * Load the exact conversion audit record authorized for Undo. The database
+ * clock owns expiry so application/server clock skew cannot extend the window.
+ */
+async function getConversionEventForUndo(
+    companyId,
+    estimateId,
+    invoiceId,
+    undoWindowSeconds,
+    client = null
+) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT ee.id,
+                ee.created_at,
+                ee.metadata,
+                ee.created_at <= NOW() - ($4::INTEGER * INTERVAL '1 second') AS undo_expired
+         FROM estimate_events ee
+         JOIN estimates e
+           ON e.id = ee.estimate_id
+          AND e.company_id = $1
+         JOIN invoices i
+           ON i.id = $3
+          AND i.company_id = e.company_id
+          AND i.estimate_id = e.id
+         WHERE ee.estimate_id = $2
+           AND ee.event_type = 'converted_to_invoice'
+           AND ee.metadata->>'invoice_id' = $3::TEXT
+         ORDER BY ee.created_at DESC, ee.id DESC
+         LIMIT 1`,
+        [companyId, estimateId, invoiceId, undoWindowSeconds]
+    );
+    return rows[0] || null;
+}
+
 async function getJobContext(companyId, jobId, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
@@ -711,6 +746,7 @@ async function lockEstimateByPublicToken(publicToken, action, client) {
     if (allowedStatuses.length === 0) return null;
 
     const { rows } = await client.query(
+        // tenant-safety-allow R-natural-key: The opaque public token is the credential and resolves its owning company before any action.
         `SELECT e.*
          FROM estimates e
          WHERE e.public_token = $1
@@ -782,6 +818,7 @@ module.exports = {
     listEstimates,
     getEstimateById,
     lockEstimateForConversion,
+    getConversionEventForUndo,
     getJobContext,
     getLeadContext,
     getContactContext,
