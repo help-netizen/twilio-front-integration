@@ -3,7 +3,7 @@
  * Fetches estimates and invoices linked to a specific job.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { fetchEstimates, createEstimate, type Estimate, type EstimateCreateData } from '../services/estimatesApi';
 import { fetchInvoices, createInvoice, type Invoice, type InvoiceCreateData } from '../services/invoicesApi';
 import { fetchTransactions, type PaymentTransaction } from '../services/paymentsCanonicalApi';
@@ -100,8 +100,29 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [jobPayments, setJobPayments] = useState<PaymentTransaction[]>([]);
     const [loading, setLoading] = useState(false);
-    const [selectedEstimate, setSelectedEstimate] = useState<Estimate | null>(null);
-    const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+    // Same reasoning as selectedInvoice below — estimates are sent to customers too.
+    const [selectedEstimateId, setSelectedEstimateId] = useState<number | null>(null);
+    const selectedEstimate = useMemo(
+        () => (selectedEstimateId === null ? null : estimates.find(e => e.id === selectedEstimateId) ?? null),
+        [estimates, selectedEstimateId],
+    );
+    const setSelectedEstimate = useCallback(
+        (e: Estimate | null) => setSelectedEstimateId(e ? e.id : null),
+        [],
+    );
+    // Hold only the id, and read the invoice back out of the live list. Keeping a
+    // copy here goes stale the moment the invoice is edited: refresh() reloads
+    // `invoices` but cannot reach into a snapshot, so the send dialog would compose
+    // the customer's email — amount and all — from the pre-edit numbers.
+    const [selectedInvoiceId, setSelectedInvoiceId] = useState<number | null>(null);
+    const selectedInvoice = useMemo(
+        () => (selectedInvoiceId === null ? null : invoices.find(i => i.id === selectedInvoiceId) ?? null),
+        [invoices, selectedInvoiceId],
+    );
+    const setSelectedInvoice = useCallback(
+        (i: Invoice | null) => setSelectedInvoiceId(i ? i.id : null),
+        [],
+    );
     const [rev, setRev] = useState(0);
     const jobPaymentsRef = useRef<PaymentTransaction[]>([]);
     const pollGenerationRef = useRef(0);
