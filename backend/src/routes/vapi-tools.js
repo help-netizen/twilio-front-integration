@@ -33,10 +33,7 @@ const router = express.Router();
 const agentSkills = require('../services/agentSkills');
 const resultShapes = require('../services/agentSkills/resultShapes');
 const vapiCallContextService = require('../services/vapiCallContextService');
-
-// Owner-confirmed single Vapi tenant. A valid VAPI_TOOLS_SECRET authenticates
-// this exact transport binding; company scope is never read from the body.
-const VAPI_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+const machineCredentials = require('../services/machineCredentialService');
 
 // The 5 relocated legacy L0 tools keep byte-identical behavior (AC-11): they read
 // their OWN `phone` from `args` and must NOT be perturbed by the silent caller-ID
@@ -52,19 +49,27 @@ const LEGACY_TOOLS = new Set([
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
-function vapiSecretAuth(req, res, next) {
-    const secret = process.env.VAPI_TOOLS_SECRET;
-    if (!secret) {
-        // Fail closed: a public endpoint must never run unauthenticated.
-        console.error('[vapi-tools] VAPI_TOOLS_SECRET not set — refusing requests (fail-closed)');
-        return res.status(503).json({ error: 'vapi tools not configured' });
+async function vapiSecretAuth(req, res, next) {
+    try {
+        const credential = await machineCredentials.resolveCredential(
+            req.headers['x-vapi-secret'],
+            {
+                surface: machineCredentials.SURFACES.VAPI_TOOLS,
+                requiredScope: machineCredentials.ACCESS_SCOPES.VAPI_TOOLS,
+            }
+        );
+        req.machineCredential = credential;
+        req.vapiCompanyId = credential.companyId;
+        next();
+    } catch (error) {
+        const status = error instanceof machineCredentials.MachineCredentialError
+            ? error.status
+            : 503;
+        return res.status(status).json({
+            error: status === 403 ? 'Forbidden' : (status === 503 ? 'Authentication unavailable' : 'Unauthorized'),
+            code: error.code || 'MACHINE_CREDENTIAL_UNAVAILABLE',
+        });
     }
-    const header = req.headers['x-vapi-secret'];
-    if (header !== secret) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-    req.vapiCompanyId = VAPI_COMPANY_ID;
-    next();
 }
 
 /**

@@ -314,10 +314,8 @@ async function insertMedia(data) {
     return result.rows[0] || null;
 }
 
-async function getMediaById(id) {
-    // Public <img> requests have no JWT company context. Preserve the crypto-random
-    // UUID contract, but return only media whose message and conversation agree on
-    // the owning company so an orphaned/cross-linked row cannot escape its tenant.
+async function getMediaById(id, companyId) {
+    requireCompanyId(companyId);
     const result = await db.query(
         `SELECT media.*, message.company_id, message.conversation_sid, message.twilio_message_sid
          FROM sms_media media
@@ -325,8 +323,10 @@ async function getMediaById(id) {
          JOIN sms_conversations conversation
            ON conversation.id = message.conversation_id
           AND conversation.company_id = message.company_id
-         WHERE media.id = $1`,
-        [id]
+         WHERE media.id = $1
+           AND message.company_id = $2
+           AND conversation.company_id = $2`,
+        [id, companyId]
     );
     return result.rows[0] || null;
 }

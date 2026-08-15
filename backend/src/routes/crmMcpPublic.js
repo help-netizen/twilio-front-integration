@@ -10,7 +10,7 @@ const router = express.Router();
 const sseSessions = new Map();
 
 function sendPublicError(res, err, id = null) {
-    const code = err.code === 'MCP_PUBLIC_UNAUTHORIZED' ? 401 : 403;
+    const code = err.status || (err.code === 'MCP_PUBLIC_UNAUTHORIZED' ? 401 : 403);
     res.status(code).json({
         jsonrpc: '2.0',
         id,
@@ -22,9 +22,9 @@ function sendPublicError(res, err, id = null) {
     });
 }
 
-function publicContextMiddleware(req, res, next) {
+async function publicContextMiddleware(req, res, next) {
     try {
-        publicAuth.applyContext(req, publicAuth.requirePublicRequest(req));
+        publicAuth.applyContext(req, await publicAuth.requirePublicRequest(req));
         next();
     } catch (err) {
         sendPublicError(res, err, req.body?.id ?? null);
@@ -48,12 +48,8 @@ router.get('/sse', publicContextMiddleware, (req, res) => {
     res.write(`data: ${JSON.stringify({ endpoint: `/mcp/crm/messages?session_id=${sessionId}` })}\n\n`);
     sseSessions.set(sessionId, {
         res,
-        context: {
-            companyFilter: req.companyFilter,
-            user: req.user,
-            authz: req.authz,
-            ip: req.ip,
-        },
+        credentialId: req.machineCredential.id,
+        companyId: req.companyFilter.company_id,
     });
     req.on('close', () => {
         sseSessions.delete(sessionId);
@@ -74,14 +70,23 @@ router.post('/messages', publicContextMiddleware, async (req, res) => {
             },
         });
     }
-    const mcpReq = {
-        ...req,
-        companyFilter: session.context.companyFilter,
-        user: session.context.user,
-        authz: session.context.authz,
-        ip: session.context.ip,
-    };
-    const response = await protocol.handleJsonRpc(mcpReq, req.body);
+    if (
+        session.credentialId !== req.machineCredential.id
+        || session.companyId !== req.companyFilter.company_id
+    ) {
+        return res.status(403).json({
+            jsonrpc: '2.0',
+            id: req.body?.id ?? null,
+            error: {
+                code: -32001,
+                message: 'SSE session credential does not match this request',
+                data: { code: 'MCP_SSE_CREDENTIAL_MISMATCH' },
+            },
+        });
+    }
+    // Use the freshly authenticated request context so membership revocation and
+    // RBAC changes take effect on every message, never the stale SSE-open context.
+    const response = await protocol.handleJsonRpc(req, req.body);
     if (response !== null) {
         session.res.write(`event: message\n`);
         session.res.write(`data: ${JSON.stringify(response)}\n\n`);

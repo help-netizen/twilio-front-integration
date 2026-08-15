@@ -62,7 +62,7 @@ export const messagingApi = {
     },
 
     getMediaUrl: async (mediaId: string): Promise<MediaUrlResponse> => {
-        const response = await apiClient.get<MediaUrlResponse>(`/messaging/media/${mediaId}/temporary-url`);
+        const response = await apiClient.post<MediaUrlResponse>(`/messaging/media/${mediaId}/access-url`);
         return response.data;
     },
 

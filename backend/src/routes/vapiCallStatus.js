@@ -99,7 +99,7 @@ const vapiCallTimelineService = require('../services/vapiCallTimelineService');
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 function webhookSecretAuth(req, res, next) {
-    const secret = process.env.VAPI_WEBHOOK_SECRET || process.env.VAPI_TOOLS_SECRET;
+    const secret = process.env.VAPI_WEBHOOK_SECRET;
     if (!secret) {
         // Fail closed: a machine webhook must never run unauthenticated.
         console.error('[vapiCallStatus] no webhook secret configured — refusing (fail-closed)');

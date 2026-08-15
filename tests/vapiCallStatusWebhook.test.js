@@ -160,6 +160,22 @@ describe('secret auth (U18, S10)', () => {
         expect(mockQuery).not.toHaveBeenCalled();
     });
 
+    test('VAPI_TOOLS_SECRET is never accepted as a call-status fallback', async () => {
+        const savedWebhook = process.env.VAPI_WEBHOOK_SECRET;
+        const savedTools = process.env.VAPI_TOOLS_SECRET;
+        delete process.env.VAPI_WEBHOOK_SECRET;
+        process.env.VAPI_TOOLS_SECRET = 'tools-only-secret';
+        try {
+            const res = await post(endReport('vc1', 'voicemail'), { secret: 'tools-only-secret' });
+            expect(res.status).toBe(503);
+            expect(mockQuery).not.toHaveBeenCalled();
+        } finally {
+            process.env.VAPI_WEBHOOK_SECRET = savedWebhook;
+            if (savedTools === undefined) delete process.env.VAPI_TOOLS_SECRET;
+            else process.env.VAPI_TOOLS_SECRET = savedTools;
+        }
+    });
+
     test('valid secret → 200', async () => {
         withAttempt(attemptRow());
         mockQuery.mockResolvedValue({ rows: [] }); // UPDATE/INSERT

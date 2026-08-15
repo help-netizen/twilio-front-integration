@@ -31,6 +31,28 @@ const msgRead = requirePermission('messages.view_client', 'messages.view_interna
 const multer = require('multer');
 const convQueries = require('../db/conversationsQueries');
 const conversationsService = require('../services/conversationsService');
+const smsMediaAccessService = require('../services/smsMediaAccessService');
+
+// POST /api/messaging/media/:mediaId/access-url — mint a short-lived,
+// file-specific browser capability after authenticated tenant/RBAC checks.
+router.post('/media/:mediaId/access-url', msgRead, async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json({ code: 'TENANT_CONTEXT_REQUIRED' });
+        }
+        const access = await smsMediaAccessService.issueMediaAccess(req.params.mediaId, companyId);
+        if (!access) return res.status(404).json({ error: 'Media not found' });
+        res.set('Cache-Control', 'no-store');
+        return res.json(access);
+    } catch (error) {
+        console.error('[Messaging] media access mint error:', error?.message || 'unknown error');
+        if (error?.code === 'TWILIO_MEDIA_TOKEN_SECRET_MISSING') {
+            return res.status(503).json({ error: 'Media access is unavailable' });
+        }
+        return res.status(500).json({ error: 'Failed to create media access link' });
+    }
+});
 
 async function resolveMaskedStartTarget(req, contactId, targetRef) {
     if (!(await getMaskViewer(req))) return null;

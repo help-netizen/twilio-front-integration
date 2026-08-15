@@ -8,6 +8,10 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-026 (2026-08-14)** — Before adding authentication middleware to an existing route, find every
+  frontend consumer and prove that its request mechanism can send the required credential. Browser
+  subresources such as `<img src>` and ordinary download links cannot attach an Authorization header;
+  use a narrow, short-lived capability instead of putting a full access token in the URL.
 - **L-025 (2026-08-14)** — Verify raw SQL migrations with the deployment transport itself
   (`psql -v ON_ERROR_STOP=1 -f` in autocommit), not only as one `db.query()` inside a test transaction.
   Driver-green does not validate statement-level transaction rules such as bare `LOCK TABLE`.

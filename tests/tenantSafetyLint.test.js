@@ -165,7 +165,7 @@ const PUBLIC_ROUTE_FILES = new Map([
     ['backend/src/routes/authDevice.js', 'Authenticated role-neutral 2FA/trusted-device flow for the current caller.'],
     ['backend/src/routes/backchannelLogout.js', 'Public OIDC callback validates the signed RS256 logout token before writing realm-scoped revocation state.'],
     ['backend/src/routes/billingWebhook.js', 'Stripe HMAC signature is verified before webhook processing.'],
-    ['backend/src/routes/crmMcpPublic.js', 'Disabled by default; timing-safe bearer token, env-bound tenant/user, and writes off by default.'],
+    ['backend/src/routes/crmMcpPublic.js', 'Disabled by default; company-bound machine credential plus live actor membership/RBAC and credential-scope intersection.'],
     ['backend/src/routes/devices.js', 'Authenticated role-neutral device self-service scoped to caller, company, and token.'],
     ['backend/src/routes/email-oauth.js', 'Public OAuth callback validates signed, expiring state before binding a mailbox.'],
     ['backend/src/routes/emailPush.js', 'Google push verifies a shared token or OIDC JWT before processing.'],
@@ -179,7 +179,7 @@ const PUBLIC_ROUTE_FILES = new Map([
     ['backend/src/routes/push-subscriptions.js', 'Authenticated role-neutral subscription self-service is scoped to the current user.'],
     ['backend/src/routes/stripePaymentsWebhook.js', 'Stripe HMAC signature is verified before webhook processing.'],
     ['backend/src/routes/time.js', 'Public clock endpoint returns no tenant or user data.'],
-    ['backend/src/routes/vapi-tools.js', 'Fail-closed x-vapi-secret middleware protects the machine endpoint.'],
+    ['backend/src/routes/vapi-tools.js', 'Fail-closed company-bound x-vapi-secret credential protects the machine endpoint.'],
     ['backend/src/routes/vapiCallStatus.js', 'Fail-closed x-vapi-secret middleware protects the machine webhook.'],
     ['backend/src/routes/webhooks.js', 'Twilio callback/health surface is public by design; every mutating handler now validates the Twilio signature and fails closed in production (TWILIO-SIG-ENFORCE-001).'],
     ['backend/src/routes/zip-check.js', 'Authenticated role-neutral service-area lookup is scoped by the selected company.'],
@@ -220,7 +220,7 @@ const ROUTE_PERMISSION_EXCEPTIONS = new Map([
     ['backend/src/routes/userGroups.js:router:GET:/my', 'Authenticated role-neutral self lookup returns only the current user groups.'],
     ['backend/src/routes/voice.js:twimlRouter:POST:/twiml/outbound', 'Twilio-called TwiML endpoint validates the Twilio signature, failing closed in production (TWILIO-SIG-ENFORCE-001).'],
     ['backend/src/routes/voice.js:twimlRouter:POST:/twiml/inbound', 'Twilio-called TwiML endpoint validates the Twilio signature, failing closed in production (TWILIO-SIG-ENFORCE-001).'],
-    ['src/server.js:app:GET:/api/messaging/media/:mediaId/temporary-url', 'Media proxy is reached by <img src> (cannot send a JWT); the sole control is a crypto-random UUID (gen_random_uuid) handed out only inside an already company-scoped message DTO, so it leaks to no one who cannot already see the message.'],
+    ['src/server.js:app:GET:/api/messaging/media/:mediaId/temporary-url', 'Protected-file handoff only: TENANT-ISO-002-PART2 replaces this UUID-only handler with the tested short-lived signed media capability handler; token company + media id scope the service lookup before Twilio.'],
 ]);
 
 // Exact known gaps from TENANCY-RBAC-AUDIT-001. This is a regression baseline,

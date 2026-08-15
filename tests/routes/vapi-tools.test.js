@@ -40,6 +40,21 @@ jest.mock('../../backend/src/services/slotEngineService', () => ({
     resolveTimezone: jest.fn(),
     tzCombine: jest.fn(),
 }));
+jest.mock('../../backend/src/services/machineCredentialService', () => {
+    class MachineCredentialError extends Error {
+        constructor(code, status) {
+            super(code);
+            this.code = code;
+            this.status = status;
+        }
+    }
+    return {
+        SURFACES: { VAPI_TOOLS: 'vapi_tools' },
+        ACCESS_SCOPES: { VAPI_TOOLS: 'vapi_tools:invoke' },
+        MachineCredentialError,
+        resolveCredential: jest.fn(),
+    };
+});
 jest.mock('https', () => ({ get: jest.fn() }));
 
 const https = require('https');
@@ -51,6 +66,7 @@ const leadsService = require('../../backend/src/services/leadsService');
 const scheduleService = require('../../backend/src/services/scheduleService');
 const marketplaceService = require('../../backend/src/services/marketplaceService');
 const slotEngineService = require('../../backend/src/services/slotEngineService');
+const machineCredentials = require('../../backend/src/services/machineCredentialService');
 const vapiToolsRouter = require('../../backend/src/routes/vapi-tools');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -111,7 +127,18 @@ function mockGeocodeError(message) {
 let app;
 beforeEach(() => {
     jest.clearAllMocks();
-    process.env.VAPI_TOOLS_SECRET = SECRET;
+    machineCredentials.resolveCredential.mockImplementation(async (secret) => {
+        if (secret !== SECRET) {
+            throw new machineCredentials.MachineCredentialError('MACHINE_CREDENTIAL_INVALID', 401);
+        }
+        return {
+            id: 'credential-a',
+            companyId: '00000000-0000-0000-0000-000000000001',
+            actorUserId: null,
+            scopes: ['vapi_tools:invoke'],
+            surface: 'vapi_tools',
+        };
+    });
     process.env.GOOGLE_GEOCODING_KEY = 'test-geocoding-key';
     delete process.env.VITE_GOOGLE_MAPS_API_KEY; // ensure dedicated key is used
     app = makeApp();
@@ -139,7 +166,7 @@ describe('Group 1 — middleware/auth', () => {
             .set('x-vapi-secret', 'wrong')
             .send({ message: { type: 'status-update' } });
         expect(res.status).toBe(401);
-        expect(res.body).toEqual({ error: 'Unauthorized' });
+        expect(res.body).toEqual({ error: 'Unauthorized', code: 'MACHINE_CREDENTIAL_INVALID' });
     });
 
     // TC-LQV2-003
@@ -150,17 +177,20 @@ describe('Group 1 — middleware/auth', () => {
         expect(res.status).toBe(401);
     });
 
-    // TC-LQV2-004 (RBAC-AUDIT-001 R2 hardening): missing secret must fail closed.
-    test('no VAPI_TOOLS_SECRET in env → 503, request refused', async () => {
-        delete process.env.VAPI_TOOLS_SECRET;
-        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    // TC-LQV2-004: resolver/database failure must fail closed.
+    test('credential resolver unavailable → 503, request refused', async () => {
+        machineCredentials.resolveCredential.mockRejectedValueOnce(
+            new machineCredentials.MachineCredentialError('MACHINE_CREDENTIAL_UNAVAILABLE', 503)
+        );
         const res = await request(app)
             .post('/api/vapi-tools')
+            .set('x-vapi-secret', SECRET)
             .send({ message: { type: 'status-update' } });
         expect(res.status).toBe(503);
-        expect(res.body).toEqual({ error: 'vapi tools not configured' });
-        expect(errSpy).toHaveBeenCalled();
-        errSpy.mockRestore();
+        expect(res.body).toEqual({
+            error: 'Authentication unavailable',
+            code: 'MACHINE_CREDENTIAL_UNAVAILABLE',
+        });
     });
 });
 

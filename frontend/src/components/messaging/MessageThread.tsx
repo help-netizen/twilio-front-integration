@@ -3,6 +3,7 @@ import { Send, FileText, Download, Paperclip, X } from 'lucide-react';
 import type { Message, MessageMedia } from '../../types/messaging';
 import { useAuth } from '../../auth/AuthProvider';
 import { formatCompanyTime } from '../../lib/companyTime';
+import { useSmsMediaAccessUrl } from '../../hooks/useSmsMediaAccessUrl';
 
 interface MessageThreadProps {
     messages: Message[];
@@ -55,15 +56,18 @@ function formatFileSize(bytes: number | null): string {
 }
 
 function MediaPreviewInline({ media }: { media: MessageMedia }) {
-    const mediaUrl = `/api/messaging/media/${media.id}/temporary-url`;
+    const signedUrl = useSmsMediaAccessUrl(media.id);
+    const waitForSignedUrl = (event: React.MouseEvent<HTMLAnchorElement>) => {
+        if (!signedUrl) event.preventDefault();
+    };
 
     if (media.preview_kind === 'image') {
         return (
             <div className="msg-media msg-media--image">
-                <a href={mediaUrl} target="_blank" rel="noopener noreferrer" title={media.filename || 'Open image'}>
-                    <img src={mediaUrl} alt={media.filename || 'Image'} className="msg-media__image" loading="lazy" />
+                <a href={signedUrl} onClick={waitForSignedUrl} target="_blank" rel="noopener noreferrer" title={media.filename || 'Open image'}>
+                    <img src={signedUrl} alt={media.filename || 'Image'} className="msg-media__image" loading="lazy" />
                 </a>
-                <a href={mediaUrl} download={media.filename || 'image'} target="_blank" rel="noopener noreferrer" className="msg-media__download-overlay" title="Download">
+                <a href={signedUrl} onClick={waitForSignedUrl} download={media.filename || 'image'} target="_blank" rel="noopener noreferrer" className="msg-media__download-overlay" title="Download">
                     <Download size={20} />
                 </a>
             </div>
@@ -71,7 +75,7 @@ function MediaPreviewInline({ media }: { media: MessageMedia }) {
     }
     return (
         <div className="msg-media msg-media--file">
-            <a href={mediaUrl} download={media.filename || 'attachment'} target="_blank" rel="noopener noreferrer" className="msg-media__file">
+            <a href={signedUrl} onClick={waitForSignedUrl} download={media.filename || 'attachment'} target="_blank" rel="noopener noreferrer" className="msg-media__file">
                 <span className="msg-media__file-icon">{media.preview_kind === 'pdf' ? <FileText size={20} /> : <Download size={20} />}</span>
                 <div className="msg-media__file-info">
                     <span className="msg-media__file-name">{media.filename || 'Attachment'}</span>

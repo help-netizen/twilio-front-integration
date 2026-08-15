@@ -71,7 +71,9 @@ const mockDbQuery = jest.fn(async (sql, params = []) => {
         const media = mediaRows.find(item => item.id === params[0]);
         const message = media && messages.find(item => item.id === media.message_id);
         const conversation = message && conversations.find(item => item.id === message.conversation_id);
-        if (!media || !message || !conversation || message.company_id !== conversation.company_id) {
+        if (!media || !message || !conversation
+            || message.company_id !== conversation.company_id
+            || message.company_id !== params[1]) {
             return { rows: [] };
         }
         return {
@@ -171,8 +173,10 @@ test('media UUID lookup returns only a same-company message/conversation chain',
     });
     mediaRows.push({ id: 'media-mismatch', message_id: 'msg-mismatch', twilio_media_sid: 'ME-mismatch' });
 
-    await expect(queries.getMediaById('media-own')).resolves.toMatchObject({ company_id: COMPANY_A });
-    await expect(queries.getMediaById('media-mismatch')).resolves.toBeNull();
+    await expect(queries.getMediaById('media-own', COMPANY_A))
+        .resolves.toMatchObject({ company_id: COMPANY_A });
+    await expect(queries.getMediaById('media-own', COMPANY_B)).resolves.toBeNull();
+    await expect(queries.getMediaById('media-mismatch', COMPANY_A)).resolves.toBeNull();
 });
 
 test('company-scoped helpers reject a missing company before querying', async () => {
@@ -185,6 +189,8 @@ test('company-scoped helpers reject a missing company before querying', async ()
     await expect(queries.upsertMessage({ twilio_message_sid: 'IM-new' }))
         .rejects.toThrow('companyId is required');
     await expect(queries.insertMedia({ message_id: 'msg-a', twilio_media_sid: 'ME-new' }))
+        .rejects.toThrow('companyId is required');
+    await expect(queries.getMediaById('media-own'))
         .rejects.toThrow('companyId is required');
     expect(mockDbQuery).not.toHaveBeenCalled();
 });

@@ -1,27 +1,14 @@
 const crypto = require('crypto');
 const db = require('../db/connection');
+const { encodeSignedClaims, decodeSignedClaims } = require('./twilioMediaTokenCodec');
 
 const DEFAULT_TTL_SECONDS = 60;
 const MAX_TTL_SECONDS = 300;
-
-function getSecret() {
-    const secret = process.env.TWILIO_MEDIA_STREAM_TOKEN_SECRET;
-    if (!secret || Buffer.byteLength(secret, 'utf8') < 32) {
-        const err = new Error('Media stream token secret is not configured');
-        err.code = 'MEDIA_STREAM_TOKEN_SECRET_MISSING';
-        throw err;
-    }
-    return secret;
-}
 
 function tokenTtlSeconds() {
     const configured = Number(process.env.TWILIO_MEDIA_STREAM_TOKEN_TTL_SECONDS);
     if (!Number.isFinite(configured) || configured <= 0) return DEFAULT_TTL_SECONDS;
     return Math.min(Math.floor(configured), MAX_TTL_SECONDS);
-}
-
-function sign(encodedPayload, secret) {
-    return crypto.createHmac('sha256', secret).update(encodedPayload).digest('base64url');
 }
 
 function mintStreamToken({ companyId, callSid, accountSid, direction = 'unknown' }) {
@@ -42,27 +29,15 @@ function mintStreamToken({ companyId, callSid, accountSid, direction = 'unknown'
         exp: now + tokenTtlSeconds(),
         jti: crypto.randomBytes(12).toString('base64url'),
     };
-    const encodedPayload = Buffer.from(JSON.stringify(claims)).toString('base64url');
-    return `${encodedPayload}.${sign(encodedPayload, getSecret())}`;
+    return encodeSignedClaims(claims);
 }
 
 function verifyStreamToken(token) {
-    if (typeof token !== 'string') return null;
-    const parts = token.split('.');
-    if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
-
-    const [encodedPayload, suppliedSignature] = parts;
-    const expectedSignature = sign(encodedPayload, getSecret());
-    const supplied = Buffer.from(suppliedSignature);
-    const expected = Buffer.from(expectedSignature);
-    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
-        return null;
-    }
-
     try {
-        const claims = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+        const claims = decodeSignedClaims(token);
         const now = Math.floor(Date.now() / 1000);
-        if (claims.v !== 1
+        if (!claims
+            || claims.v !== 1
             || !claims.company_id
             || !claims.call_sid
             || !claims.account_sid
@@ -75,7 +50,11 @@ function verifyStreamToken(token) {
             return null;
         }
         return claims;
-    } catch {
+    } catch (error) {
+        if (error?.code === 'TWILIO_MEDIA_TOKEN_SECRET_MISSING') {
+            error.code = 'MEDIA_STREAM_TOKEN_SECRET_MISSING';
+            throw error;
+        }
         return null;
     }
 }
