@@ -63,9 +63,27 @@ export function EstimatesPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams]);
 
-    const handleEdit = (estimate: Estimate) => {
+    /**
+     * Hydrate before opening. A list row carries no line items, and the editor
+     * used to read that as "this estimate has none" and save a full replacement
+     * over the real ones — so editing from a row could delete every line, with
+     * nothing on screen to suggest it had happened. The backend now treats an
+     * absent `items` key as "leave them alone" (ESTIMATE-REDESIGN-001 P3), which
+     * makes the deletion impossible; loading the real estimate first is what
+     * makes the EDITOR honest, since it can only offer to change what it has.
+     */
+    const handleEdit = async (estimate: Estimate) => {
         setEditingEstimate(estimate);
         setEditorOpen(true);
+        if (estimate.items) return;
+        try {
+            const { fetchEstimate } = await import('../services/estimatesApi');
+            const full = await fetchEstimate(estimate.id);
+            setEditingEstimate(current => (current?.id === full.id ? full : current));
+        } catch {
+            // Leave the row in place: the editor shows what it knows, and an
+            // omitted `items` key no longer destroys anything on save.
+        }
     };
 
     const handleEditorSave = async (data: EstimateCreateData) => {

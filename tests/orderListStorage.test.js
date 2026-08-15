@@ -166,6 +166,43 @@ describe('ORDER-LIST-001 authenticated storage round trips', () => {
             .resolves.toMatchObject({ order_list: updated.order_list });
     });
 
+    test('estimate update preserves an omitted order_list and explicit [] clears it', async () => {
+        const existingOrderList = [{
+            part_number: 'P-41',
+            part_name: 'Existing part',
+            quantity: 1,
+        }];
+        storedEstimate = {
+            id: ESTIMATE_ID,
+            company_id: COMPANY_A,
+            status: 'draft',
+            archived_at: null,
+            approved_snapshot: null,
+            summary: 'Existing summary',
+            order_list: existingOrderList,
+        };
+
+        const summaryOnly = await estimatesService.updateEstimate(
+            COMPANY_A,
+            USER_ID,
+            ESTIMATE_ID,
+            { summary: 'Updated summary' }
+        );
+        expect(summaryOnly.order_list).toEqual(existingOrderList);
+        expect(mockEstimateQueries.updateEstimate.mock.calls[0][2])
+            .not.toHaveProperty('order_list');
+
+        const cleared = await estimatesService.updateEstimate(
+            COMPANY_A,
+            USER_ID,
+            ESTIMATE_ID,
+            { order_list: [] }
+        );
+        expect(cleared.order_list).toEqual([]);
+        expect(mockEstimateQueries.updateEstimate.mock.calls[1][2])
+            .toEqual(expect.objectContaining({ order_list: [] }));
+    });
+
     test('invoice create/update normalize order_list and internal GET returns it', async () => {
         const created = await invoicesService.createInvoice(COMPANY_A, USER_ID, {
             contact_id: 32,

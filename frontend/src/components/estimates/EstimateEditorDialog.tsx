@@ -12,13 +12,14 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
-import { FloatingField } from '../ui/floating-field';
 import { Checkbox } from '../ui/checkbox';
 import { Badge } from '../ui/badge';
 import { MoneyInput } from '../ui/MoneyInput';
 import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { EstimatePreviewDialog } from './EstimatePreviewDialog';
+import { EstimateItemDialog, type ItemDraft } from './EstimateItemDialog';
+import { EstimateSummaryDialog } from './EstimateSummaryDialog';
 import { ItemPresetSearchCombobox } from './ItemPresetSearchCombobox';
 import { OrderListSection, makeOrderRow, serializeOrderList, type OrderRow } from './OrderListSection';
 import {
@@ -70,7 +71,6 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     const [summary, setSummary] = useState('');
     const [summaryOpen, setSummaryOpen] = useState(false);
     const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
-    const [summaryDraft, setSummaryDraft] = useState('');
     const [items, setItems] = useState<LineItem[]>([]);
     const [itemDialogOpen, setItemDialogOpen] = useState(false);
     const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
@@ -175,10 +175,9 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         })),
     };
 
-    const openSummaryDialog = () => {
-        setSummaryDraft(summary);
-        setSummaryDialogOpen(true);
-    };
+    // The shared dialog seeds its own draft from `initial`, so there is nothing
+    // to stage here any more — one less copy of the same string to keep in sync.
+    const openSummaryDialog = () => setSummaryDialogOpen(true);
 
     const [reportToEstimateOff, setReportToEstimateOff] = useState(false);
     const isMobile = useIsMobile();
@@ -228,17 +227,26 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         }
     };
 
-    const saveSummary = () => {
-        setSummary(summaryDraft.trim());
-        setSummaryOpen(false);
-        setSummaryDialogOpen(false);
-    };
-
-    const saveItem = () => {
-        if (!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0) return;
-        const nextItem = { ...itemDraft, name: itemDraft.name.trim() };
+    /**
+     * ESTIMATE-REDESIGN-001 P3 — ONE item sheet. This screen used to carry its own
+     * copy of the line-item form while the detail panel had another, and the
+     * inventory found they had already drifted: different titles, different
+     * validation, the same fields twice. The sheet is now `EstimateItemDialog`
+     * for both, and the difference that actually exists — this editor holds items
+     * in local state until the parent saves, the detail persists each one — stays
+     * here in the orchestration, where it belongs.
+     *
+     * `taxable` is passed through as a real boolean on purpose: the backend
+     * normalizer only accepts `true`, and the string "true" silently becomes
+     * false.
+     */
+    const saveItem = (draft: ItemDraft) => {
+        if (!draft.name.trim() || Number(draft.quantity) <= 0 || Number(draft.unit_price) < 0) return;
+        const nextItem = { ...draft, name: draft.name.trim(), taxable: !!draft.taxable };
         setItems(prev => editingItemKey
-            ? prev.map(item => item.key === editingItemKey ? nextItem : item)
+            // Keep the row's identity when editing — the key is what React and
+            // the reorder logic track it by, and the sheet does not carry one.
+            ? prev.map(item => item.key === editingItemKey ? { ...nextItem, key: item.key } : item)
             : [...prev, { ...nextItem, key: newKey() }]
         );
         // Combobox "Create new" path — also persist to the company catalog
@@ -624,104 +632,22 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                 </DialogContent>
             </Dialog>
 
-            {/* Mobile: edit the summary in the full-screen editor (type B). */}
-            <FullScreenTextEditor
-                open={summaryDialogOpen && isMobile}
-                initialValue={summary}
-                onDone={text => { setSummary(text); setSummaryDialogOpen(false); }}
-                onCancel={() => setSummaryDialogOpen(false)}
-                title="Summary"
-                placeholder="Make, model, serial, failure issue, findings, needs, cause…"
+            {/* ONE summary editor, shared with the detail panel. This screen used to
+                carry its own mobile/desktop pair — the same two branches, written
+                twice. EstimateSummaryDialog already owns that choice internally. */}
+            <EstimateSummaryDialog
+                open={summaryDialogOpen}
+                onOpenChange={setSummaryDialogOpen}
+                initial={summary}
+                onSave={text => { setSummary(text); setSummaryOpen(true); }}
             />
-            <Dialog open={summaryDialogOpen && !isMobile} onOpenChange={setSummaryDialogOpen}>
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            Summary
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">Edit the estimate summary</DialogDescription>
-                    </DialogPanelHeader>
-                    <DialogBody className="md:px-8 md:py-7">
-                        <div className="mx-auto w-full max-w-[740px]">
-                            <FloatingField
-                                textarea
-                                rows={10}
-                                id="estimate-summary"
-                                label="Make, model, serial, failure issue, findings, needs, cause…"
-                                value={summaryDraft}
-                                onChange={event => setSummaryDraft(event.target.value)}
-                            />
-                        </div>
-                    </DialogBody>
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
-                        <Button type="button" onClick={saveSummary}>Save summary</Button>
-                    </DialogPanelFooter>
-                </DialogContent>
-            </Dialog>
-
-            <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-                <DialogContent variant="panel">
-                    <DialogPanelHeader>
-                        <DialogTitle
-                            className="text-[22px] font-semibold leading-tight"
-                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
-                        >
-                            {editingItemKey ? 'Edit custom item' : 'Add custom item'}
-                        </DialogTitle>
-                        <DialogDescription className="sr-only">Define a custom line item</DialogDescription>
-                    </DialogPanelHeader>
-                    <DialogBody className="md:px-8 md:py-7">
-                        <div className="mx-auto w-full max-w-[740px] grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                            <FloatingField
-                                containerClassName="sm:col-span-2"
-                                id="item-title"
-                                label="Title"
-                                value={itemDraft.name}
-                                onChange={event => setItemDraft(prev => ({ ...prev, name: event.target.value }))}
-                            />
-                            <FloatingField
-                                containerClassName="sm:col-span-2"
-                                textarea
-                                rows={4}
-                                id="item-description"
-                                label="Description"
-                                value={itemDraft.description}
-                                onChange={event => setItemDraft(prev => ({ ...prev, description: event.target.value }))}
-                            />
-                            <FloatingField
-                                id="item-qty"
-                                label="Qty"
-                                type="number"
-                                inputMode="decimal"
-                                value={itemDraft.quantity}
-                                onChange={event => setItemDraft(prev => ({ ...prev, quantity: event.target.value }))}
-                            />
-                            <FloatingField
-                                id="item-unit-price"
-                                label="Unit price"
-                                type="number"
-                                inputMode="decimal"
-                                value={itemDraft.unit_price}
-                                onChange={event => setItemDraft(prev => ({ ...prev, unit_price: event.target.value }))}
-                            />
-                            <label className="sm:col-span-2 flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
-                                <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
-                                Service is taxable
-                            </label>
-                        </div>
-                    </DialogBody>
-                    <DialogPanelFooter>
-                        <Button type="button" variant="ghost" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
-                        <Button type="button" onClick={saveItem} disabled={!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0}>
-                            Save item
-                        </Button>
-                    </DialogPanelFooter>
-                </DialogContent>
-            </Dialog>
+            <EstimateItemDialog
+                open={itemDialogOpen}
+                onOpenChange={setItemDialogOpen}
+                isEdit={!!editingItemKey}
+                initial={itemDraft}
+                onSave={saveItem}
+            />
 
             <EstimatePreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} estimate={previewEstimate} />
         </>

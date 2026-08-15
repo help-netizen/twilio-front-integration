@@ -260,6 +260,93 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         }), null);
     });
 
+    it('ESTIMATE-REDESIGN-001 regression: edit-from-list save without items does not eat line items', async () => {
+        const persistedItems = [item({ name: 'Customer-approved scope' })];
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ summary: 'Existing scope' }));
+        mockQueries.getEstimateItems.mockResolvedValue(persistedItems);
+        mockQueries.updateEstimate.mockResolvedValue(estimate({
+            summary: 'Existing scope',
+            tax_rate: '8.25',
+        }));
+
+        const updated = await service.updateEstimate(COMPANY_ID, USER_ID, EST_ID, {
+            tax_rate: '8.25',
+        });
+
+        expect(updated.items).toEqual(persistedItems);
+        expect(mockQueries.replaceEstimateItems).not.toHaveBeenCalled();
+    });
+
+    it('an explicit empty items array clears every line item', async () => {
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ summary: 'Summary-only scope' }));
+        mockQueries.getEstimateItems.mockResolvedValue([]);
+        mockQueries.updateEstimate.mockResolvedValue(estimate({ summary: 'Summary-only scope' }));
+
+        await service.updateEstimate(COMPANY_ID, USER_ID, EST_ID, { items: [] });
+
+        expect(mockQueries.replaceEstimateItems).toHaveBeenCalledWith(
+            COMPANY_ID,
+            EST_ID,
+            [],
+            null
+        );
+    });
+
+    it('rejects a present non-array items value instead of treating it as omission', async () => {
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ summary: 'Existing scope' }));
+
+        await expect(service.updateEstimate(COMPANY_ID, USER_ID, EST_ID, {
+            items: null,
+        })).rejects.toMatchObject({
+            code: 'VALIDATION',
+            httpStatus: 400,
+            message: 'items must be an array',
+        });
+        expect(mockQueries.updateEstimate).not.toHaveBeenCalled();
+        expect(mockQueries.replaceEstimateItems).not.toHaveBeenCalled();
+    });
+
+    it('a summary-only partial update never replaces line items', async () => {
+        const persistedItems = [item()];
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ summary: 'Old summary' }));
+        mockQueries.getEstimateItems.mockResolvedValue(persistedItems);
+        mockQueries.updateEstimate.mockResolvedValue(estimate({ summary: 'New summary' }));
+
+        await service.updateEstimate(COMPANY_ID, USER_ID, EST_ID, {
+            summary: 'New summary',
+        });
+
+        expect(mockQueries.updateEstimate).toHaveBeenCalledWith(
+            EST_ID,
+            COMPANY_ID,
+            expect.not.objectContaining({ items: expect.anything() }),
+            null
+        );
+        expect(mockQueries.replaceEstimateItems).not.toHaveBeenCalled();
+    });
+
+    it('normalizes numeric item strings and treats only boolean true as taxable', async () => {
+        mockQueries.getEstimateById.mockResolvedValue(estimate());
+
+        await service.addItem(COMPANY_ID, EST_ID, USER_ID, {
+            name: 'Capacitor',
+            quantity: '2.5',
+            unit_price: '19.95',
+            taxable: 'true',
+        });
+
+        expect(mockQueries.addEstimateItem).toHaveBeenCalledWith(
+            COMPANY_ID,
+            EST_ID,
+            expect.objectContaining({
+                quantity: 2.5,
+                unit_price: 19.95,
+                taxable: false,
+            }),
+            null
+        );
+    });
+
     it('emits one coarse updated event for the whole-document Save and none for item sub-endpoints', async () => {
         mockQueries.getEstimateById.mockResolvedValue(estimate({ job_id: 519, contact_id: 9 }));
         mockQueries.getEstimateItems.mockResolvedValue([item()]);

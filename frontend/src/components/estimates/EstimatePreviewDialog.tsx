@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogTitle, DialogDescription } from '../ui/dialog';
 import type { Estimate, EstimateItem } from '../../services/estimatesApi';
-import { useDocumentTemplate } from '../../hooks/useDocumentTemplate';
+import { useDocumentTemplateState } from '../../hooks/useDocumentTemplate';
 import { TemplateLivePreview, type PreviewEstimate } from '../documents/TemplateLivePreview';
 
 /**
@@ -49,7 +49,7 @@ interface Props {
 }
 
 export function EstimatePreviewDialog({ open, onOpenChange, estimate }: Props) {
-    const descriptor = useDocumentTemplate('estimate', open);
+    const { descriptor, loading, failed } = useDocumentTemplateState('estimate', open);
     const data = mapEstimateForPreview(estimate);
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,8 +66,17 @@ export function EstimatePreviewDialog({ open, onOpenChange, estimate }: Props) {
                 <DialogBody>
                     {descriptor ? (
                         <TemplateLivePreview descriptor={descriptor} estimate={data} />
+                    ) : loading ? (
+                        <div className="blanc-l2 blanc-l2-quiet py-12 text-center">Loading template…</div>
                     ) : (
-                        <div className="py-12 text-center text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Loading template…</div>
+                        /* Never a spinner that cannot stop: if the template did not
+                           load, say so and offer the way out that always works. */
+                        <div className="py-12 text-center" data-testid="estimate-preview-error">
+                            <p className="blanc-l2">
+                                {failed ? 'The preview template could not be loaded.' : 'No preview template is set up yet.'}
+                            </p>
+                            <p className="blanc-l2 blanc-l2-quiet mt-1">Download the PDF instead — it does not use this template.</p>
+                        </div>
                     )}
                 </DialogBody>
             </DialogContent>

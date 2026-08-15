@@ -97,8 +97,8 @@ function normalizeItem(item = {}, index = 0) {
     };
 }
 
-function normalizeItems(items) {
-    if (items == null) return null;
+function normalizeItems(items, { optional = false } = {}) {
+    if (items === undefined && optional) return null;
     if (!Array.isArray(items)) {
         throw new EstimatesServiceError('VALIDATION', 'items must be an array', 400);
     }
@@ -360,7 +360,7 @@ async function snapshotEstimate(companyId, id, client = null) {
 }
 
 async function createEstimate(companyId, userId, data = {}, client = null, activityActor = null) {
-    const items = normalizeItems(data.items) || [];
+    const items = normalizeItems(data.items, { optional: true }) || [];
     const orderList = normalizeOrderList(data.order_list ?? []);
     validateSavePayload(data, items);
     validateDiscount(data, itemSubtotal(items));
@@ -410,15 +410,21 @@ async function updateEstimate(companyId, userId, id, data = {}, client = null, a
     assertNotArchived(existing);
     await validateLinkedEntities(companyId, data, client);
 
-    const incomingItems = normalizeItems(data.items);
-    if (incomingItems) await validatePriceBookItems(companyId, incomingItems, client);
-    const currentItems = incomingItems
-        || await estimatesQueries.getEstimateItems(companyId, id, client);
+    // ESTIMATE-REDESIGN-001: collection replacement is opt-in by key presence.
+    // Omitting `items` preserves the persisted rows; an explicit [] clears them.
+    const replacesItems = Object.prototype.hasOwnProperty.call(data, 'items');
+    const incomingItems = replacesItems ? normalizeItems(data.items) : null;
+    if (replacesItems) await validatePriceBookItems(companyId, incomingItems, client);
+    const currentItems = replacesItems
+        ? incomingItems
+        : await estimatesQueries.getEstimateItems(companyId, id, client);
     validateSavePayload({ ...existing, ...data }, currentItems);
     validateDiscount(data.discount_type !== undefined || data.discount_value !== undefined ? data : existing, itemSubtotal(currentItems));
-    const orderList = data.order_list !== undefined
+    // `order_list` follows the same replacement contract as `items`.
+    const replacesOrderList = Object.prototype.hasOwnProperty.call(data, 'order_list');
+    const orderList = replacesOrderList
         ? normalizeOrderList(data.order_list)
-        : undefined;
+        : null;
 
     if (existing.status === 'approved') {
         const approvedSnapshot = existing.approved_snapshot
@@ -438,10 +444,10 @@ async function updateEstimate(companyId, userId, id, data = {}, client = null, a
         discount_type: data.discount_type !== undefined ? data.discount_type || null : undefined,
         discount_value: data.discount_value !== undefined ? asNumber(data.discount_value, 0) : undefined,
         signature_required: data.signature_required !== undefined ? data.signature_required === true : undefined,
-        order_list: orderList,
         updated_by: userId,
     };
     delete updateData.items;
+    if (replacesOrderList) updateData.order_list = orderList;
 
     if (existing.status !== 'draft') {
         updateData.status = 'draft';
@@ -453,7 +459,7 @@ async function updateEstimate(companyId, userId, id, data = {}, client = null, a
     const updated = await estimatesQueries.updateEstimate(id, companyId, updateData, client);
     if (!updated) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
-    if (incomingItems) {
+    if (replacesItems) {
         await estimatesQueries.replaceEstimateItems(companyId, id, incomingItems, client);
     }
     await estimatesQueries.recalculateEstimateTotals(companyId, id, client);

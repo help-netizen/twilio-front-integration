@@ -6,40 +6,53 @@ import type { DocumentType, TemplateDescriptorV1 } from '../types/documentTempla
  * Resolves the company's default document template descriptor for a document_type.
  * Caches the result process-wide to avoid refetching across dialogs.
  *
- * Returns `null` while loading or if the fetch fails (callers should fall back
- * to a sensible default).
+ * `null` used to mean BOTH "still loading" and "the fetch failed", so a template
+ * error left the preview showing "Loading template…" forever — a spinner that
+ * can never stop is worse than an error, because it invites you to keep waiting.
+ * A failure is also no longer cached: one flaky response should not disable the
+ * preview for the rest of the session.
  */
 
 const cache = new Map<DocumentType, Promise<TemplateDescriptorV1 | null>>();
 
 async function fetchDefault(documentType: DocumentType): Promise<TemplateDescriptorV1 | null> {
-    try {
-        const items = await listTemplates(documentType);
-        const def = items.find(t => t.is_default) ?? items[0];
-        return def ? await previewTemplate(def.id) : null;
-    } catch {
-        return null;
-    }
+    const items = await listTemplates(documentType);
+    const def = items.find(t => t.is_default) ?? items[0];
+    return def ? await previewTemplate(def.id) : null;
 }
 
-export function useDocumentTemplate(documentType: DocumentType, enabled = true) {
-    const [descriptor, setDescriptor] = useState<TemplateDescriptorV1 | null>(null);
+export interface DocumentTemplateState {
+    descriptor: TemplateDescriptorV1 | null;
+    loading: boolean;
+    failed: boolean;
+}
+
+export function useDocumentTemplateState(documentType: DocumentType, enabled = true): DocumentTemplateState {
+    const [state, setState] = useState<DocumentTemplateState>({ descriptor: null, loading: enabled, failed: false });
 
     useEffect(() => {
-        if (!enabled) return;
+        if (!enabled) { setState({ descriptor: null, loading: false, failed: false }); return; }
         let cancelled = false;
+        setState({ descriptor: null, loading: true, failed: false });
         if (!cache.has(documentType)) {
             cache.set(documentType, fetchDefault(documentType));
         }
-        cache.get(documentType)!.then(d => {
-            if (!cancelled) setDescriptor(d);
-        });
-        return () => {
-            cancelled = true;
-        };
+        cache.get(documentType)!
+            .then(descriptor => { if (!cancelled) setState({ descriptor, loading: false, failed: false }); })
+            .catch(() => {
+                // Don't leave the rejection cached — the next open should retry.
+                cache.delete(documentType);
+                if (!cancelled) setState({ descriptor: null, loading: false, failed: true });
+            });
+        return () => { cancelled = true; };
     }, [documentType, enabled]);
 
-    return descriptor;
+    return state;
+}
+
+/** Descriptor-only view, for callers that genuinely have a sensible fallback. */
+export function useDocumentTemplate(documentType: DocumentType, enabled = true) {
+    return useDocumentTemplateState(documentType, enabled).descriptor;
 }
 
 export function invalidateDocumentTemplateCache(documentType?: DocumentType) {
