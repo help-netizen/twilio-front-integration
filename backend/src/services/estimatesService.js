@@ -7,9 +7,15 @@ const crypto = require('crypto');
 const db = require('../db/connection');
 const estimatesQueries = require('../db/estimatesQueries');
 const estimateItemPresetsQueries = require('../db/estimateItemPresetsQueries');
+const tasksQueries = require('../db/tasksQueries');
 const { renderEstimatePdf } = require('./estimatePdfService');
 const { toE164 } = require('../utils/phoneUtils');
 const { shortDocNumber } = require('../utils/docNumber');
+const {
+    dateInTZ,
+    normalizeCompanyTimezone,
+    todayInTZ,
+} = require('../utils/companyTime');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
 const eventBus = require('./eventBus');
@@ -17,6 +23,10 @@ const {
     normalizeOrderList,
     stripInternalOrderList,
 } = require('../utils/orderList');
+
+const PUBLIC_DECLINE_REASONS = new Set(['price', 'chose_other', 'not_now', 'other']);
+const MAX_PUBLIC_DECLINE_COMMENT_LENGTH = 1000;
+const DECLINE_TASK_DUE_HOUR = 17;
 
 class EstimatesServiceError extends Error {
     constructor(code, message, httpStatus = 500) {
@@ -123,6 +133,122 @@ function itemSubtotal(items = []) {
 function assertNotArchived(estimate) {
     if (estimate.archived_at) {
         throw new EstimatesServiceError('ARCHIVED', 'Archived estimate is read-only. Restore it before editing.', 409);
+    }
+}
+
+function invalidTransition() {
+    return new EstimatesServiceError(
+        'INVALID_TRANSITION',
+        'This estimate action is no longer available.',
+        409
+    );
+}
+
+function assertStatusIn(estimate, allowedStatuses) {
+    if (!allowedStatuses.includes(estimate.status)) throw invalidTransition();
+}
+
+function normalizeEvidence(evidence = {}) {
+    const ipAddress = asText(evidence.ip_address).slice(0, 64) || null;
+    const userAgent = asText(evidence.user_agent).slice(0, 512) || null;
+    return {
+        ...(ipAddress ? { ip_address: ipAddress } : {}),
+        ...(userAgent ? { user_agent: userAgent } : {}),
+    };
+}
+
+function normalizePublicDeclineInput(data = {}) {
+    let reason = null;
+    if (data.reason !== undefined && data.reason !== null) {
+        if (typeof data.reason !== 'string') {
+            throw new EstimatesServiceError('VALIDATION', 'Decline reason is invalid.', 400);
+        }
+        reason = data.reason.trim();
+        if (reason && !PUBLIC_DECLINE_REASONS.has(reason)) {
+            throw new EstimatesServiceError('VALIDATION', 'Decline reason is invalid.', 400);
+        }
+        if (!reason) reason = null;
+    }
+
+    if (data.comment !== undefined && data.comment !== null && typeof data.comment !== 'string') {
+        throw new EstimatesServiceError('VALIDATION', 'Decline comment must be text.', 400);
+    }
+    const comment = typeof data.comment === 'string'
+        ? data.comment.trim().slice(0, MAX_PUBLIC_DECLINE_COMMENT_LENGTH)
+        : '';
+
+    return { reason, comment: comment || null };
+}
+
+function declineTaskDescription(reason, comment) {
+    const lines = [];
+    if (reason) lines.push(`Reason: ${reason}`);
+    if (comment) lines.push(`Customer comment:\n${comment}`);
+    return lines.length > 0
+        ? lines.join('\n\n')
+        : 'Customer did not provide a reason or comment.';
+}
+
+async function createDeclineFollowupTask(companyId, estimate, reason, comment, client = null) {
+    let savepointStarted = false;
+    try {
+        if (client?.query) {
+            await client.query('SAVEPOINT estimate_decline_task');
+            savepointStarted = true;
+        }
+
+        const context = await estimatesQueries.getDeclineTaskContext(
+            companyId,
+            estimate.id,
+            client
+        );
+        if (!context) throw new Error('Decline task context was not found');
+
+        const timezone = normalizeCompanyTimezone(context.timezone);
+        const [year, month, day] = todayInTZ(timezone).split('-').map(Number);
+        const dueAt = dateInTZ(
+            year,
+            month,
+            day,
+            DECLINE_TASK_DUE_HOUR,
+            0,
+            timezone
+        ).toISOString();
+        const number = shortDocNumber(estimate.estimate_number) || estimate.id;
+
+        const task = await tasksQueries.createTask(companyId, {
+            parentType: 'estimate',
+            parentId: estimate.id,
+            parentIdIsNumeric: true,
+            title: `Estimate #${number} declined — win it back`,
+            description: declineTaskDescription(reason, comment),
+            owner_user_id: context.owner_user_id || null,
+            author_user_id: null,
+            due_at: dueAt,
+            created_by: 'system',
+        }, client);
+
+        if (savepointStarted) await client.query('RELEASE SAVEPOINT estimate_decline_task');
+        return task;
+    } catch (error) {
+        if (savepointStarted) {
+            try {
+                await client.query('ROLLBACK TO SAVEPOINT estimate_decline_task');
+            } catch (rollbackError) {
+                console.error('[Estimates] DECLINE TASK SAVEPOINT ROLLBACK FAILED', {
+                    company_id: companyId,
+                    estimate_id: estimate.id,
+                    error: rollbackError.message,
+                });
+            }
+        }
+        console.error('[Estimates] DECLINE FOLLOW-UP TASK FAILED; customer answer preserved', {
+            company_id: companyId,
+            estimate_id: estimate.id,
+            code: error.code || null,
+            error: error.message,
+        });
+        return null;
     }
 }
 
@@ -589,6 +715,7 @@ async function sendEstimate(
     const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
+    assertStatusIn(estimate, ['draft', 'sent', 'viewed', 'approved']);
     await assertHasItems(companyId, id, client);
 
     const normalizedChannel = channel === 'text' ? 'sms' : channel;
@@ -695,8 +822,9 @@ async function sendEstimate(
     }
 
     // Dispatch resolved → NOW flip status and record the send (never before).
+    const nextStatus = estimate.status === 'draft' ? 'sent' : estimate.status;
     const statusPatch = {
-        status: 'sent',
+        status: nextStatus,
         sent_at: new Date().toISOString(),
     };
     if (client) {
@@ -720,7 +848,7 @@ async function sendEstimate(
             action: 'estimate.sent',
             entity: current,
             actor: activityActor,
-            summary: { channel: normalizedChannel, status: 'sent' },
+            summary: { channel: normalizedChannel, status: nextStatus },
         }, { client });
     }
 
@@ -749,9 +877,13 @@ async function approveEstimate(
     const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
+    if (estimate.status === 'approved') return estimate;
+    assertStatusIn(estimate, ['sent', 'viewed']);
     const items = await assertHasItems(companyId, id, client);
 
-    if (estimate.signature_required && actorType === 'client') {
+    if (estimate.signature_required
+        && actorType === 'client'
+        && options.enforce_signature !== false) {
         if (!asText(options.signature_name) || options.signature_consent !== true) {
             throw new EstimatesServiceError('VALIDATION', 'Signature name and consent are required', 400);
         }
@@ -784,9 +916,18 @@ async function approveEstimate(
         signature_consented_at: signatureConsentedAt,
     }, client);
 
-    await estimatesQueries.createEvent(companyId, id, 'approved', actorType || 'user', actorId, {
-        signature_required: !!estimate.signature_required,
-    }, client);
+    await estimatesQueries.createEvent(
+        companyId,
+        id,
+        'approved',
+        actorType || 'user',
+        actorId,
+        {
+            signature_required: !!estimate.signature_required,
+            ...normalizeEvidence(options.evidence),
+        },
+        client
+    );
     if (activityActor) {
         await logFinancialActivity({
             companyId,
@@ -831,16 +972,19 @@ async function declineEstimate(
     id,
     actorType,
     actorId,
-    { reason } = {},
+    { reason, comment, evidence } = {},
     client = null,
     activityActor = null
 ) {
     const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
     assertNotArchived(estimate);
+    if (estimate.status === 'declined') return estimate;
+    assertStatusIn(estimate, ['sent', 'viewed']);
 
-    const comment = asText(reason);
-    if (!comment) {
+    const normalizedReason = asText(reason) || null;
+    const normalizedComment = asText(comment) || null;
+    if (actorType !== 'client' && !normalizedReason && !normalizedComment) {
         throw new EstimatesServiceError('VALIDATION', 'Decline reason is required', 400);
     }
 
@@ -857,9 +1001,22 @@ async function declineEstimate(
         'declined',
         actorType || 'user',
         actorId,
-        { reason: comment },
+        {
+            reason: normalizedReason,
+            comment: normalizedComment,
+            ...normalizeEvidence(evidence),
+        },
         client
     );
+    if (actorType === 'client') {
+        await createDeclineFollowupTask(
+            companyId,
+            estimate,
+            normalizedReason,
+            normalizedComment,
+            client
+        );
+    }
     if (activityActor) {
         await logFinancialActivity({
             companyId,
@@ -1196,12 +1353,13 @@ async function ensurePublicLink(companyId, id, client = null, activityActor = nu
  * (route maps to 404). Exposes ONLY doc-safe fields — never internal IDs,
  * contact email/phone, costs/margins, or other tenant data.
  */
-async function getPublicEstimate(publicToken, { recordView = false } = {}) {
-    const estimate = await estimatesQueries.getEstimateByPublicToken(publicToken);
-    if (!estimate) return null;
-    const items = await estimatesQueries.getEstimateItems(estimate.company_id, estimate.id);
-
-    const view = {
+async function publicEstimateView(estimate, client = null) {
+    const items = await estimatesQueries.getEstimateItems(
+        estimate.company_id,
+        estimate.id,
+        client
+    );
+    return {
         estimate_number: estimate.estimate_number,
         status: estimate.status,
         currency: estimate.currency || 'USD',
@@ -1223,7 +1381,62 @@ async function getPublicEstimate(publicToken, { recordView = false } = {}) {
         deposit_paid: Number(estimate.deposit_paid || 0),
         balance_due: Number(estimate.balance_due ?? estimate.total),
     };
+}
+
+async function approvePublicEstimate(publicToken, evidence = {}, client = null) {
+    const estimate = await estimatesQueries.lockEstimateByPublicToken(
+        publicToken,
+        'approve',
+        client
+    );
+    if (!estimate) return null;
+
+    await approveEstimate(
+        estimate.company_id,
+        estimate.id,
+        'client',
+        null,
+        {
+            enforce_signature: false,
+            evidence,
+        },
+        client,
+        { id: null, type: 'client', label: 'Customer', source: 'portal' }
+    );
+    return getPublicEstimate(publicToken, { client });
+}
+
+async function declinePublicEstimate(publicToken, data = {}, evidence = {}, client = null) {
+    const estimate = await estimatesQueries.lockEstimateByPublicToken(
+        publicToken,
+        'decline',
+        client
+    );
+    if (!estimate) return null;
+    const normalized = normalizePublicDeclineInput(data);
+
+    await declineEstimate(
+        estimate.company_id,
+        estimate.id,
+        'client',
+        null,
+        { ...normalized, evidence },
+        client,
+        { id: null, type: 'client', label: 'Customer', source: 'portal' }
+    );
+    return getPublicEstimate(publicToken, { client });
+}
+
+async function getPublicEstimate(publicToken, { recordView = false, client = null } = {}) {
+    let estimate = await estimatesQueries.getEstimateByPublicToken(publicToken, client);
+    if (!estimate) return null;
     if (recordView) {
+        const changed = await estimatesQueries.markEstimateViewed(
+            estimate.company_id,
+            estimate.id,
+            client
+        );
+        if (changed) estimate = { ...estimate, status: 'viewed' };
         const { clientActor } = require('./financialActivityService');
         await logFinancialActivity({
             companyId: estimate.company_id,
@@ -1231,19 +1444,25 @@ async function getPublicEstimate(publicToken, { recordView = false } = {}) {
             action: 'estimate.viewed',
             entity: estimate,
             actor: clientActor('Client', 'portal'),
-        });
+        }, { client });
     }
-    return view;
+    return publicEstimateView(estimate, client);
 }
 
 /**
  * Render the PDF for an estimate resolved by its `public_token`.
  * No auth/scoping — the token is the credential. Reuses generatePdf.
  */
-async function generatePdfByPublicToken(publicToken, { recordView = false } = {}) {
-    const estimate = await estimatesQueries.getEstimateByPublicToken(publicToken);
+async function generatePdfByPublicToken(publicToken, { recordView = false, client = null } = {}) {
+    let estimate = await estimatesQueries.getEstimateByPublicToken(publicToken, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', 'Estimate not found', 404);
     if (recordView) {
+        const changed = await estimatesQueries.markEstimateViewed(
+            estimate.company_id,
+            estimate.id,
+            client
+        );
+        if (changed) estimate = { ...estimate, status: 'viewed' };
         const { clientActor } = require('./financialActivityService');
         await logFinancialActivity({
             companyId: estimate.company_id,
@@ -1251,9 +1470,9 @@ async function generatePdfByPublicToken(publicToken, { recordView = false } = {}
             action: 'estimate.viewed',
             entity: estimate,
             actor: clientActor('Client', 'portal'),
-        });
+        }, { client });
     }
-    return generatePdf(estimate.company_id, estimate.id);
+    return generatePdf(estimate.company_id, estimate.id, client);
 }
 
 module.exports = {
@@ -1277,6 +1496,8 @@ module.exports = {
     getEvents,
     generatePdf,
     ensurePublicLink,
+    approvePublicEstimate,
+    declinePublicEstimate,
     getPublicEstimate,
     generatePdfByPublicToken,
     EstimatesServiceError,

@@ -88,6 +88,7 @@ jest.mock('../backend/src/services/estimatePdfService', () => ({
 // auditService.log fires on the 403 path; stub so no real DB write.
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
 const mockLogFinancialActivity = jest.fn();
+const mockEmit = jest.fn();
 jest.mock('../backend/src/services/transactionService', () => ({
     withTransaction: jest.fn(work => work(null)),
 }));
@@ -96,6 +97,9 @@ jest.mock('../backend/src/services/financialActivityService', () => ({
     userActor: jest.fn(id => ({
         id: id || null, type: 'user', label: null, source: 'crm',
     })),
+}));
+jest.mock('../backend/src/services/eventBus', () => ({
+    emit: (...args) => mockEmit(...args),
 }));
 
 const mockAddNote = jest.fn();
@@ -156,6 +160,7 @@ beforeEach(() => {
     mockUpdateEstimate.mockResolvedValue(estimateRow({ status: 'sent' }));
     mockCreateEvent.mockResolvedValue(undefined);
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    mockEmit.mockResolvedValue({ id: 1 });
     mockGetMailboxStatus.mockResolvedValue(CONNECTED);
     mockSendEmail.mockResolvedValue({ provider_message_id: 'gmail-1', provider_thread_id: 'thr-1' });
     mockResolveProxy.mockResolvedValue('+15550001111');
@@ -312,6 +317,40 @@ describe('sendEstimate — document send note is best-effort', () => {
         expect(warn).toHaveBeenCalledWith('[DocumentSendNote] Job note failed after successful send (non-fatal)');
         expect(JSON.stringify(warn.mock.calls)).not.toContain('one-off@example.com');
         warn.mockRestore();
+    });
+});
+
+describe('sendEstimate — lifecycle guards', () => {
+    it.each(['viewed', 'approved'])(
+        'resends a %s estimate without demoting it back to sent',
+        async status => {
+            mockGetEstimateById.mockResolvedValue(estimateRow({ status }));
+
+            const res = await request(appWith())
+                .post(`/${EST_ID}/send`)
+                .send({ channel: 'email', recipient: 'c@x.com', message: 'Another copy' });
+
+            expect(res.status).toBe(200);
+            expect(mockUpdateEstimate).toHaveBeenCalledWith(
+                EST_ID_S,
+                COMPANY_A,
+                expect.objectContaining({ status, sent_at: expect.any(String) })
+            );
+        }
+    );
+
+    it('rejects sending a declined estimate before dispatch or status writes', async () => {
+        mockGetEstimateById.mockResolvedValue(estimateRow({ status: 'declined' }));
+
+        const res = await request(appWith())
+            .post(`/${EST_ID}/send`)
+            .send({ channel: 'email', recipient: 'c@x.com', message: 'Old copy' });
+
+        expect(res.status).toBe(409);
+        expect(res.body.error.code).toBe('INVALID_TRANSITION');
+        expect(mockSendEmail).not.toHaveBeenCalled();
+        expect(mockSendMessage).not.toHaveBeenCalled();
+        expect(mockUpdateEstimate).not.toHaveBeenCalled();
     });
 });
 

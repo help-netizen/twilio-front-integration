@@ -5,10 +5,69 @@
  * or SMS. Mirrors public-invoices.js.
  */
 const express = require('express');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const router = express.Router();
 const estimatesService = require('../services/estimatesService');
+const { withTransaction } = require('../services/transactionService');
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{6,64}$/;
+const NOT_FOUND = {
+    ok: false,
+    error: { code: 'NOT_FOUND', message: 'Invalid link' },
+};
+const RATE_LIMITED = {
+    ok: false,
+    error: { code: 'RATE_LIMITED', message: 'Too many requests' },
+};
+
+function firstForwardedIp(req) {
+    const raw = req.headers['x-forwarded-for'];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof value !== 'string') return null;
+    return value.split(',')[0].trim() || null;
+}
+
+function rateLimitKey(req) {
+    return ipKeyGenerator(firstForwardedIp(req) || req.ip);
+}
+
+const publicWriteRateLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: rateLimitKey,
+    handler: (_req, res) => res.status(429).json(RATE_LIMITED),
+});
+
+function requireValidToken(req, res, next) {
+    if (!TOKEN_RE.test(req.params.token)) return res.status(404).json(NOT_FOUND);
+    next();
+}
+
+function requestEvidence(req) {
+    const ip = firstForwardedIp(req) || req.ip || req.socket?.remoteAddress || '';
+    const rawUserAgent = req.headers['user-agent'];
+    const userAgent = Array.isArray(rawUserAgent) ? rawUserAgent[0] : rawUserAgent;
+    return {
+        ip_address: String(ip).slice(0, 64),
+        user_agent: typeof userAgent === 'string' ? userAgent.slice(0, 512) : '',
+    };
+}
+
+function handleActionError(res, err, label) {
+    console.error(`[Public/Estimates] ${label} error:`, err.message);
+    if (err.httpStatus === 400 || err.httpStatus === 409) {
+        return res.status(err.httpStatus).json({
+            ok: false,
+            error: { code: err.code, message: err.message },
+        });
+    }
+    return res.status(500).json({
+        ok: false,
+        error: { code: 'INTERNAL', message: 'Something went wrong' },
+    });
+}
 
 // GET /api/public/estimates/:token — safe, view-only estimate JSON.
 router.get('/estimates/:token', async (req, res) => {
@@ -24,6 +83,53 @@ router.get('/estimates/:token', async (req, res) => {
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
 });
+
+// POST /api/public/estimates/:token/approve — customer approval by opaque link.
+router.post(
+    '/estimates/:token/approve',
+    requireValidToken,
+    publicWriteRateLimiter,
+    async (req, res) => {
+        try {
+            const result = await withTransaction(client => (
+                estimatesService.approvePublicEstimate(
+                    req.params.token,
+                    requestEvidence(req),
+                    client
+                )
+            ));
+            if (!result) return res.status(404).json(NOT_FOUND);
+            res.setHeader('Cache-Control', 'no-store');
+            return res.json({ ok: true, data: result });
+        } catch (err) {
+            return handleActionError(res, err, 'POST /:token/approve');
+        }
+    }
+);
+
+// POST /api/public/estimates/:token/decline — optional structured reason + text.
+router.post(
+    '/estimates/:token/decline',
+    requireValidToken,
+    publicWriteRateLimiter,
+    async (req, res) => {
+        try {
+            const result = await withTransaction(client => (
+                estimatesService.declinePublicEstimate(
+                    req.params.token,
+                    req.body || {},
+                    requestEvidence(req),
+                    client
+                )
+            ));
+            if (!result) return res.status(404).json(NOT_FOUND);
+            res.setHeader('Cache-Control', 'no-store');
+            return res.json({ ok: true, data: result });
+        } catch (err) {
+            return handleActionError(res, err, 'POST /:token/decline');
+        }
+    }
+);
 
 // GET /api/public/estimates/:token/pdf — Render the PDF resolved by its public token.
 router.get('/estimates/:token/pdf', async (req, res) => {

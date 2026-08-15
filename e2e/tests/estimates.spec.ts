@@ -70,4 +70,110 @@ test.describe('@suite:estimates', () => {
             await api.dispose();
         }
     });
+
+    test('@p0 EST-P1-01 customer approves from the public estimate link', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const job = await api.createJob({ label: 'EST-P1-01 Job' });
+            const estimate = await api.createEstimate(job.id, 'EST-P1-01 Estimate', 185);
+            cleanup.push(
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+                { type: 'job', id: job.id },
+                { type: 'estimate', id: estimate.id },
+            );
+            await api.prepareEstimateAsSent(estimate.id);
+            const publicUrl = await api.ensureEstimatePublicLink(estimate.id);
+            const publicPath = new URL(publicUrl, 'http://albusto.local').pathname;
+
+            await page.goto(publicPath);
+            await page.getByTestId('public-estimate-approve').click();
+
+            await expect.poll(async () => (await api.getEstimate(estimate.id)).status)
+                .toBe('approved');
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
+
+    test('@p0 EST-P1-02 customer decline creates dispatcher follow-up work', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const job = await api.createJob({ label: 'EST-P1-02 Job' });
+            const estimate = await api.createEstimate(job.id, 'EST-P1-02 Estimate', 245);
+            cleanup.push(
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+                { type: 'job', id: job.id },
+                { type: 'estimate', id: estimate.id },
+            );
+            await api.prepareEstimateAsSent(estimate.id);
+            const detail = await api.getEstimate(estimate.id);
+            const shortNumber = String(detail.estimate_number || estimate.id)
+                .replace(/^ESTIMATE\s+/i, '');
+            const taskTitle = `Estimate #${shortNumber} declined — win it back`;
+            const comment = ApiClient.runName('EST-P1-02 price objection');
+            const publicUrl = await api.ensureEstimatePublicLink(estimate.id);
+            const publicPath = new URL(publicUrl, 'http://albusto.local').pathname;
+
+            await page.goto(publicPath);
+            await page.getByTestId('public-estimate-decline').click();
+            await page.getByTestId('public-estimate-decline-reason-price').click();
+            await page.getByTestId('public-estimate-decline-comment').fill(comment);
+            await page.getByTestId('public-estimate-decline-submit').click();
+
+            await expect.poll(async () => (await api.getEstimate(estimate.id)).status)
+                .toBe('declined');
+            await expect.poll(async () => Boolean(await api.findTask(taskTitle))).toBe(true);
+            const createdTask = await api.findTask(taskTitle);
+            expect(createdTask?.marker).toContain(taskTitle);
+            if (createdTask) cleanup.push({ type: 'task', id: createdTask.id });
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
+
+    test('@p0 EST-P1-03 double approval is idempotent', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const job = await api.createJob({ label: 'EST-P1-03 Job' });
+            const estimate = await api.createEstimate(job.id, 'EST-P1-03 Estimate', 315);
+            cleanup.push(
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+                { type: 'job', id: job.id },
+                { type: 'estimate', id: estimate.id },
+            );
+            await api.prepareEstimateAsSent(estimate.id);
+            const publicUrl = await api.ensureEstimatePublicLink(estimate.id);
+            const token = new URL(publicUrl, 'http://albusto.local').pathname.split('/').pop();
+            if (!token) throw new Error('Estimate public link had no token');
+            const endpoint = `/api/public/estimates/${encodeURIComponent(token)}/approve`;
+
+            const [first, second] = await Promise.all([
+                page.request.post(endpoint),
+                page.request.post(endpoint),
+            ]);
+            expect(first.status()).toBe(200);
+            expect(second.status()).toBe(200);
+            expect((await first.json()).data.status).toBe('approved');
+            expect((await second.json()).data.status).toBe('approved');
+            await expect.poll(async () => (await api.getEstimate(estimate.id)).status)
+                .toBe('approved');
+
+            const events = await api.getEstimateEvents(estimate.id);
+            expect(events.filter(event => event.event_type === 'approved')).toHaveLength(1);
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
 });

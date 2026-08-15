@@ -24,11 +24,13 @@ const request = require('supertest');
 // ─── Mock the query + collaborator seams the service/router touch ────────────
 const mockGetEstimateByPublicToken = jest.fn();
 const mockGetEstimateItems = jest.fn();
+const mockMarkEstimateViewed = jest.fn();
 
 jest.mock('../backend/src/db/estimatesQueries', () => ({
     getEstimateByPublicToken: (...a) => mockGetEstimateByPublicToken(...a),
     getEstimateItems: (...a) => mockGetEstimateItems(...a),
     getEstimateById: jest.fn(),
+    markEstimateViewed: (...a) => mockMarkEstimateViewed(...a),
     setPublicToken: jest.fn(),
 }));
 
@@ -60,6 +62,7 @@ const GOOD_TOKEN = 'abc123XYZ_-'; // 11 chars, base64url — matches TOKEN_RE
 beforeEach(() => {
     jest.clearAllMocks();
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
+    mockMarkEstimateViewed.mockResolvedValue(false);
 });
 
 // ─── A. getPublicEstimate — customer-safe view (TC-SD-004) ───────────────────
@@ -163,6 +166,32 @@ describe('GET /api/public/estimates/:token', () => {
         expect(res.body.ok).toBe(true);
         expect(res.body.data.estimate_number).toBe('E-1');
         expect(JSON.stringify(res.body.data)).not.toContain('x@y.com');
+    });
+
+    it('first open advances sent to viewed exactly once and never downgrades later states', async () => {
+        const row = {
+            id: 1, company_id: 'company-A', estimate_number: 'E-1', status: 'sent', currency: 'USD',
+            company_name: 'Co', subtotal: '10', discount_amount: '0', tax_amount: '0', total: '10',
+        };
+        mockGetEstimateByPublicToken.mockResolvedValue(row);
+        mockGetEstimateItems.mockResolvedValue([]);
+        mockMarkEstimateViewed
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(false);
+
+        const first = await request(publicApp()).get(`/api/public/estimates/${GOOD_TOKEN}`);
+        const second = await request(publicApp()).get(`/api/public/estimates/${GOOD_TOKEN}`);
+
+        expect(first.status).toBe(200);
+        expect(first.body.data.status).toBe('viewed');
+        expect(second.status).toBe(200);
+        expect(mockMarkEstimateViewed).toHaveBeenCalledTimes(2);
+        expect(mockMarkEstimateViewed).toHaveBeenCalledWith('company-A', 1, null);
+
+        mockGetEstimateByPublicToken.mockResolvedValue({ ...row, status: 'approved' });
+        mockMarkEstimateViewed.mockResolvedValue(false);
+        const approved = await request(publicApp()).get(`/api/public/estimates/${GOOD_TOKEN}`);
+        expect(approved.body.data.status).toBe('approved');
     });
 
     it('TC-SD-008: unknown well-formed token → 404, no tenant leak', async () => {

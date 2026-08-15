@@ -658,7 +658,11 @@ async function listEvents(estimateId) {
 // Public token (SEND-DOC-001) — mirrors invoicesQueries 563–599
 // =============================================================================
 
-/** Look up an estimate strictly by its public_token (no company scoping — the token IS the auth). */
+/**
+ * Look up a readable estimate strictly by its public_token (the token IS the
+ * auth). Archived documents fail closed; declined documents remain readable so
+ * the customer retains a copy of the proposal they answered.
+ */
 async function getEstimateByPublicToken(publicToken, client = null) {
     if (!publicToken) return null;
     const query = queryFor(client);
@@ -678,6 +682,7 @@ async function getEstimateByPublicToken(publicToken, client = null) {
          LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
          LEFT JOIN companies co ON co.id = e.company_id
          WHERE e.public_token = $1
+           AND e.archived_at IS NULL
          LIMIT 1`,
         [publicToken]
     );
@@ -688,6 +693,77 @@ async function getEstimateByPublicToken(publicToken, client = null) {
         client
     );
     return estimate;
+}
+
+/**
+ * Resolve and lock the estimate authorized for a public customer action. The
+ * status predicate is action-specific: approve remains resolvable after an
+ * approval for idempotency, while decline stops resolving immediately after the
+ * first successful decline.
+ */
+async function lockEstimateByPublicToken(publicToken, action, client) {
+    if (!publicToken || !client?.query) return null;
+    const allowedStatuses = action === 'approve'
+        ? ['sent', 'viewed', 'approved']
+        : action === 'decline'
+            ? ['sent', 'viewed']
+            : [];
+    if (allowedStatuses.length === 0) return null;
+
+    const { rows } = await client.query(
+        `SELECT e.*
+         FROM estimates e
+         WHERE e.public_token = $1
+           AND e.archived_at IS NULL
+           AND e.status = ANY($2::text[])
+         LIMIT 1
+         FOR UPDATE OF e`,
+        [publicToken, allowedStatuses]
+    );
+    return rows[0] || null;
+}
+
+/** First public open advances sent -> viewed and records exactly one audit event. */
+async function markEstimateViewed(companyId, estimateId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `WITH changed AS (
+            UPDATE estimates
+            SET status = 'viewed', updated_at = NOW()
+            WHERE id = $2
+              AND company_id = $1
+              AND archived_at IS NULL
+              AND status = 'sent'
+            RETURNING id
+         )
+         INSERT INTO estimate_events (
+            estimate_id, event_type, actor_type, actor_id, metadata
+         )
+         SELECT id, 'viewed', 'client', NULL, '{"source":"public_link"}'::jsonb
+         FROM changed
+         RETURNING estimate_id`,
+        [companyId, estimateId]
+    );
+    return rows.length > 0;
+}
+
+/** Resolve the active author assignment and company-local scheduling context. */
+async function getDeclineTaskContext(companyId, estimateId, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT COALESCE(NULLIF(c.timezone, ''), 'America/New_York') AS timezone,
+                author.id AS owner_user_id
+         FROM estimates e
+         JOIN companies c ON c.id = e.company_id
+         LEFT JOIN crm_users author
+           ON author.id = e.created_by
+          AND author.company_id = e.company_id
+          AND author.status = 'active'
+         WHERE e.id = $2
+           AND e.company_id = $1`,
+        [companyId, estimateId]
+    );
+    return rows[0] || null;
 }
 
 /** Persist a public_token on the estimate (idempotent — caller checks if one already exists first). */
@@ -727,5 +803,8 @@ module.exports = {
     createEvent,
     listEvents,
     getEstimateByPublicToken,
+    lockEstimateByPublicToken,
+    markEstimateViewed,
+    getDeclineTaskContext,
     setPublicToken,
 };

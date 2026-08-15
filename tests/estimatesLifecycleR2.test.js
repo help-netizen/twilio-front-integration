@@ -14,6 +14,7 @@ const HUMAN_ACTOR = {
 };
 const mockLogFinancialActivity = jest.fn();
 const mockEmit = jest.fn();
+const mockCreateTask = jest.fn();
 
 const mockQueries = {
     listEstimates: jest.fn(),
@@ -38,9 +39,13 @@ const mockQueries = {
     listRevisions: jest.fn(),
     createEvent: jest.fn(),
     listEvents: jest.fn(),
+    getDeclineTaskContext: jest.fn(),
 };
 
 jest.mock('../backend/src/db/estimatesQueries', () => mockQueries);
+jest.mock('../backend/src/db/tasksQueries', () => ({
+    createTask: (...args) => mockCreateTask(...args),
+}));
 jest.mock('../backend/src/db/connection', () => ({
     getClient: jest.fn(),
     query: jest.fn(),
@@ -93,6 +98,7 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         mockQueries.addEstimateItem.mockResolvedValue(item());
         mockQueries.updateEstimateItem.mockResolvedValue(item());
         mockQueries.deleteEstimateItem.mockResolvedValue(true);
+        mockQueries.updateEstimateStatus.mockResolvedValue(estimate({ status: 'declined' }));
         mockLogFinancialActivity.mockResolvedValue({ ok: true });
         mockEmit.mockResolvedValue({ id: 1 });
     });
@@ -135,6 +141,10 @@ describe('estimatesService PF002-R2 lifecycle', () => {
 
         await expect(service.sendEstimate(COMPANY_ID, USER_ID, EST_ID, { channel: 'email' }))
             .rejects.toMatchObject({ code: 'VALIDATION', message: 'В эстимейте нет items' });
+        mockQueries.getEstimateById.mockResolvedValue(estimate({
+            status: 'sent',
+            summary: 'Findings...',
+        }));
         await expect(service.approveEstimate(COMPANY_ID, EST_ID, 'user', USER_ID))
             .rejects.toMatchObject({ code: 'VALIDATION', message: 'В эстимейте нет items' });
     });
@@ -174,6 +184,56 @@ describe('estimatesService PF002-R2 lifecycle', () => {
                 client: null,
             })
         );
+    });
+
+    it('approve is idempotent and rejects draft/declined transitions before side effects', async () => {
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ status: 'approved' }));
+
+        await expect(service.approveEstimate(COMPANY_ID, EST_ID, 'user', USER_ID))
+            .resolves.toMatchObject({ status: 'approved' });
+        expect(mockQueries.createRevision).not.toHaveBeenCalled();
+        expect(mockQueries.updateEstimate).not.toHaveBeenCalled();
+        expect(mockQueries.createEvent).not.toHaveBeenCalled();
+
+        for (const status of ['draft', 'declined']) {
+            jest.clearAllMocks();
+            mockQueries.getEstimateById.mockResolvedValue(estimate({ status }));
+            await expect(service.approveEstimate(COMPANY_ID, EST_ID, 'user', USER_ID))
+                .rejects.toMatchObject({ code: 'INVALID_TRANSITION', httpStatus: 409 });
+            expect(mockQueries.getEstimateItems).not.toHaveBeenCalled();
+            expect(mockQueries.updateEstimate).not.toHaveBeenCalled();
+        }
+    });
+
+    it('decline allows sent/viewed, is idempotent, and rejects draft/approved transitions', async () => {
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ status: 'sent' }));
+
+        await service.declineEstimate(COMPANY_ID, EST_ID, 'user', USER_ID, {
+            reason: 'Customer called to decline',
+        });
+        expect(mockQueries.updateEstimateStatus).toHaveBeenCalledWith(
+            EST_ID,
+            COMPANY_ID,
+            'declined',
+            'declined_at',
+            null
+        );
+        expect(mockCreateTask).not.toHaveBeenCalled();
+
+        jest.clearAllMocks();
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ status: 'declined' }));
+        await expect(service.declineEstimate(COMPANY_ID, EST_ID, 'user', USER_ID, {}))
+            .resolves.toMatchObject({ status: 'declined' });
+        expect(mockQueries.updateEstimateStatus).not.toHaveBeenCalled();
+
+        for (const status of ['draft', 'approved']) {
+            jest.clearAllMocks();
+            mockQueries.getEstimateById.mockResolvedValue(estimate({ status }));
+            await expect(service.declineEstimate(COMPANY_ID, EST_ID, 'user', USER_ID, {
+                reason: 'No',
+            })).rejects.toMatchObject({ code: 'INVALID_TRANSITION', httpStatus: 409 });
+            expect(mockQueries.updateEstimateStatus).not.toHaveBeenCalled();
+        }
     });
 
     it('editing an approved estimate preserves approved version and resets to draft', async () => {

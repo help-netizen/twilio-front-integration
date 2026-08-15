@@ -261,6 +261,10 @@ export class ApiClient {
         return ApiClient.read<T>(await this.request.patch(path, { data }));
     }
 
+    private async put<T>(path: string, data: unknown): Promise<T> {
+        return ApiClient.read<T>(await this.request.put(path, { data }));
+    }
+
     private async delete<T>(path: string): Promise<T> {
         return ApiClient.read<T>(await this.request.delete(path));
     }
@@ -496,6 +500,24 @@ export class ApiClient {
 
     async getEstimate(id: number): Promise<JsonObject> {
         return this.get<JsonObject>(`/api/estimates/${id}`);
+    }
+
+    /** P1 setup seam: public customer actions intentionally require sent/viewed. */
+    async prepareEstimateAsSent(id: number): Promise<JsonObject> {
+        return this.put<JsonObject>(`/api/estimates/${id}`, { status: 'sent' });
+    }
+
+    async ensureEstimatePublicLink(id: number): Promise<string> {
+        const data = await this.post<JsonObject>(`/api/estimates/${id}/public-link`);
+        if (typeof data.url !== 'string' || !data.url) {
+            throw new Error('Estimate public-link response had no url');
+        }
+        return data.url;
+    }
+
+    async getEstimateEvents(id: number): Promise<JsonObject[]> {
+        const data = await this.get<unknown>(`/api/estimates/${id}/events`);
+        return Array.isArray(data) ? data.filter(isObject) : [];
     }
 
     async findEstimate(jobId: number, marker: string): Promise<JsonObject | undefined> {
