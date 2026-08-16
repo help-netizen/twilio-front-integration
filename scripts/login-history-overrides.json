@@ -883,5 +883,28 @@
   "08ec1801": {
     "tag": "Fix",
     "text": "Analytics stays up when the map fails to load"
+  },
+  "fcd2d9d5": {
+    "tag": "Fix",
+    "text": "Discounts no longer break the layout on a phone, and a negative amount reads as one"
+  },
+  "578046fe": {
+    "tag": "Fix",
+    "text": "Take payment straight from a draft invoice — no need to send it first"
+  },
+  "fcd391ce": {
+    "tag": "Fix",
+    "text": "The receipt email field stays above the keyboard instead of sliding away"
+  },
+  "47469c97": {
+    "tag": "Polish",
+    "text": "Invoice and estimate actions fit one row, with the rest one tap away"
+  },
+  "769a918f": {
+    "tag": "Polish",
+    "text": "Receipt form asks one thing: send it"
+  },
+  "025f8008": {
+    "hide": true
   }
 }
