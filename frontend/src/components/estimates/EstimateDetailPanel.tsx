@@ -506,7 +506,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     inner block for exactly that reason — put the close-button gutter
                     on the outer one and the header centres 18px left of the body. */}
                 <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
-                <div className="mx-auto w-full max-w-[740px] px-5 py-4 pr-14 md:px-6">
+                <div className="w-full px-5 py-4 pr-14 md:px-10">
                 {/* IDENTITY (ESTIMATE-REDESIGN-001): the amount is the title, one grey
                     line names who it is for and what it belongs to, then the status.
                     Contact and job were a section with an icon in the first draft —
@@ -623,7 +623,12 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     History into a second thing competing for the same first screen.
                     The measure is the form canon's 740px — a line of item text stays
                     readable instead of running the whole width of a laptop. */}
-                <div className="mx-auto w-full max-w-[740px] space-y-6 p-5 md:px-6 md:py-6">
+                {/* DESKTOP IS NOT A WIDE PHONE (owner, 2026-08-16): a 740px column
+                    centred in a 1300px layer is a phone screenshot with dead margins.
+                    The card fills the layer; the width goes to the DOCUMENT (items get
+                    the Qty and Rate columns a phone has no room for) while META stays a
+                    compact list — a label 900px from its value is not a pair. */}
+                <div className="w-full space-y-6 p-5 md:px-10 md:py-6">
                 <main className="min-w-0 space-y-6">
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
                         dashed invite block when empty, collapsible card when filled. */}
@@ -685,28 +690,45 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         </div>
                         {hasItems ? (
                             <div className={readOnly ? 'space-y-4' : 'space-y-2'}>
+                                {/* Column headings exist only where there are columns. */}
+                                {readOnly && (
+                                    <div className="hidden border-b border-[var(--blanc-line)] pb-1.5 md:flex md:items-end md:gap-3">
+                                        <span className="blanc-eyebrow flex-1">Description</span>
+                                        <span className="blanc-eyebrow w-20 text-right">Qty</span>
+                                        <span className="blanc-eyebrow w-32 text-right">Rate</span>
+                                        <span className="blanc-eyebrow w-32 text-right">Amount</span>
+                                    </div>
+                                )}
                                 {estimate.items!.map(item => readOnly ? (
                                     /* VIEW MODE: flat row, no tile chrome (owner: flat design).
                                        Qty × price folds into the price line — `2 × $140.00 = $280.00` —
                                        and is omitted for qty 1 (the overwhelmingly common case, so the
                                        row stays one line shorter). Long names truncate. Taxable trails
                                        the description on the same line. */
-                                    <div key={item.id} className="text-sm">
-                                        <div className="flex items-baseline justify-between gap-3">
-                                            <p className="min-w-0 truncate font-medium">{item.name}</p>
-                                            <p className="shrink-0 font-mono whitespace-nowrap">
-                                                {Number(item.quantity) !== 1 && (
-                                                    <span className="text-[var(--blanc-ink-3)]">{Number(item.quantity)} × {money(item.unit_price)} = </span>
-                                                )}
-                                                <span className="font-semibold">{money(item.amount)}</span>
-                                            </p>
+                                    <div key={item.id} className="text-sm md:flex md:items-baseline md:gap-3">
+                                        <div className="min-w-0 md:flex-1">
+                                            <div className="flex items-baseline justify-between gap-3">
+                                                <p className="min-w-0 truncate font-medium">{item.name}</p>
+                                                {/* The phone has no room for columns, so it keeps the
+                                                    arithmetic inline; the desktop puts it where the
+                                                    numbers line up under their headings. */}
+                                                <p className="shrink-0 font-mono whitespace-nowrap md:hidden">
+                                                    {Number(item.quantity) !== 1 && (
+                                                        <span className="text-[var(--blanc-ink-3)]">{Number(item.quantity)} × {money(item.unit_price)} = </span>
+                                                    )}
+                                                    <span className="font-semibold">{money(item.amount)}</span>
+                                                </p>
+                                            </div>
+                                            {(item.description || item.taxable) && (
+                                                <p className="mt-0.5 whitespace-pre-wrap text-[var(--blanc-ink-2)] md:max-w-[68ch]">
+                                                    {item.description}
+                                                    {item.taxable && <span className="text-xs text-[var(--blanc-ink-3)]">{item.description ? ' · ' : ''}Taxable</span>}
+                                                </p>
+                                            )}
                                         </div>
-                                        {(item.description || item.taxable) && (
-                                            <p className="mt-0.5 whitespace-pre-wrap text-[var(--blanc-ink-2)]">
-                                                {item.description}
-                                                {item.taxable && <span className="text-xs text-[var(--blanc-ink-3)]">{item.description ? ' · ' : ''}Taxable</span>}
-                                            </p>
-                                        )}
+                                        <p className="hidden w-20 shrink-0 text-right tabular-nums text-[var(--blanc-ink-2)] md:block">{Number(item.quantity)}</p>
+                                        <p className="hidden w-32 shrink-0 text-right font-mono text-[var(--blanc-ink-2)] md:block">{money(item.unit_price)}</p>
+                                        <p className="hidden w-32 shrink-0 text-right font-mono font-semibold md:block">{money(item.amount)}</p>
                                     </div>
                                 ) : (
                                     /* EDIT MODE tile: name↔amount header, full-width description, meta
@@ -756,8 +778,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         )}
                     </section>
 
-                    {/* Totals (editable Tax rate / Discount) */}
-                    <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4">
+                    {/* Totals (editable Tax rate / Discount) — a narrow stack at the
+                        right, under the Amount column, not full-width rows with the
+                        number stranded a screen away from its label. */}
+                    <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 md:ml-auto md:w-[420px]">
                         <p className="mb-3 blanc-eyebrow">Totals</p>
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
@@ -877,9 +901,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     {/* Tasks are meta, not document content — they live beside the
                         document (desktop) / after it (mobile), so the first screen
                         belongs to the estimate itself (green-path review). */}
-                    <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
+                    <div className="md:max-w-[560px]">
+                        <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
+                    </div>
 
-                    <section className="space-y-3 text-sm">
+                    <section className="space-y-3 text-sm md:max-w-[560px]">
                         <p className="blanc-eyebrow">Document settings</p>
                         {readOnly ? (
                             /* View mode: plain Yes/No — same style as the Deposit row below. */
@@ -926,7 +952,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     )}
 
                     {events.length > 0 && (
-                        <section data-testid="estimate-history">
+                        <section data-testid="estimate-history" className="md:max-w-[560px]">
                             <p
                                 className="blanc-l2 blanc-l2-quiet flex items-center gap-1.5"
                                 style={{ fontWeight: 600, marginBottom: 4 }}

@@ -393,7 +393,15 @@ export function InvoiceDetailPanel({
     return (
         <div className={`h-full min-h-0 bg-[var(--blanc-panel-surface)] text-[var(--blanc-ink-1)] ${isTerminal ? 'opacity-70' : ''}`} data-testid="invoice-detail">
             <div className="h-full overflow-y-auto overflow-x-hidden overscroll-contain px-[18px] pb-8 pt-6 md:px-8 md:py-7">
-                <div className="mx-auto w-full max-w-[820px] space-y-6">
+                {/* DESKTOP IS NOT A WIDE PHONE (owner, 2026-08-16).
+                    This used to be an 820px column centred in a 1300px panel: a
+                    phone screenshot floating between two dead margins. The card now
+                    fills the layer, and the width is spent on two different jobs —
+                    the DOCUMENT (items, totals) becomes a real table with Qty and
+                    Rate columns the phone has no room for, while META (settings,
+                    payments, history) stays a compact list at the left, because a
+                    label 900px from its value is two things, not a pair. */}
+                <div className="w-full space-y-6">
                     {/* IDENTITY — the same skeleton as the estimate card: what this is,
                         the one number that matters, who it is for, where it stands.
                         The old header spent five hand-written type sizes (10 / 11 / 13 /
@@ -518,6 +526,15 @@ export function InvoiceDetailPanel({
                         <p className="blanc-eyebrow">Items</p>
                         {hasItems ? (
                             <div className="mt-2">
+                                {/* Column headers exist only where there are columns.
+                                    On the phone the row folds back to name + amount. */}
+                                <div className="hidden border-b border-[var(--blanc-line)] px-1 pb-1.5 md:flex md:items-end md:gap-3">
+                                    <span className="blanc-eyebrow flex-1">Description</span>
+                                    <span className="blanc-eyebrow w-20 text-right">Qty</span>
+                                    <span className="blanc-eyebrow w-32 text-right">Rate</span>
+                                    <span className="blanc-eyebrow w-32 text-right">Amount</span>
+                                    {editing ? <span className="w-4" /> : null}
+                                </div>
                                 {invoice.items!.map(item => (
                                     <button
                                         key={item.id}
@@ -526,18 +543,28 @@ export function InvoiceDetailPanel({
                                         onClick={() => { if (editing) openEditItem(item); }}
                                         data-testid="invoice-item-row"
                                     >
-                                        <span className="min-w-0">
+                                        <span className="min-w-0 flex-1">
                                             <span className="block truncate text-[15px] font-semibold text-[var(--blanc-ink-1)]">{item.name}</span>
-                                            {item.description ? <span className="mt-0.5 block truncate text-[13px] text-[var(--blanc-ink-2)]">{item.description}</span> : null}
+                                            {item.description ? <span className="mt-0.5 block truncate text-[13px] text-[var(--blanc-ink-2)] md:max-w-[68ch]">{item.description}</span> : null}
+                                            {/* The phone cannot afford columns, so it keeps
+                                                the arithmetic inline; the desktop shows it
+                                                where the numbers actually line up. */}
                                             {(Number(item.quantity) !== 1 || item.taxable) ? (
-                                                <span className="mt-1 block text-[12px] text-[var(--blanc-ink-3)]">
+                                                <span className="mt-1 block text-[12px] text-[var(--blanc-ink-3)] md:hidden">
                                                     {Number(item.quantity) !== 1 ? `${Number(item.quantity)} × ${money(item.unit_price)}` : ''}
                                                     {Number(item.quantity) !== 1 && item.taxable ? ' · ' : ''}
                                                     {item.taxable ? 'Taxable' : ''}
                                                 </span>
                                             ) : null}
+                                            {item.taxable ? <span className="mt-1 hidden text-[12px] text-[var(--blanc-ink-3)] md:block">Taxable</span> : null}
                                         </span>
-                                        <span className="flex shrink-0 items-center gap-2">
+                                        <span className="hidden w-20 shrink-0 text-right text-[15px] tabular-nums text-[var(--blanc-ink-2)] md:block">
+                                            {Number(item.quantity)}
+                                        </span>
+                                        <span className="hidden w-32 shrink-0 text-right font-mono text-[15px] text-[var(--blanc-ink-2)] md:block">
+                                            {money(item.unit_price)}
+                                        </span>
+                                        <span className="flex shrink-0 items-center justify-end gap-2 md:w-32">
                                             <span className="font-mono text-[15px] font-semibold text-[var(--blanc-ink-1)]">{money(item.amount ?? Number(item.quantity) * Number(item.unit_price))}</span>
                                             {editing ? <ChevronRight className="size-4 text-[var(--blanc-ink-3)]" /> : null}
                                         </span>
@@ -560,7 +587,10 @@ export function InvoiceDetailPanel({
                         ) : null}
                     </section>
 
-                    <section>
+                    {/* Totals belong under the Amount column, in the narrow stack every
+                        paper invoice puts them in — not as full-width rows with the
+                        number stranded a screen away from its label. */}
+                    <section className="md:ml-auto md:w-[420px]">
                         <p className="blanc-eyebrow">Totals</p>
                         <div className="mt-2 space-y-1 text-[14px]">
                             <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Subtotal</span><span className="font-mono font-semibold">{money(invoice.subtotal)}</span></div>
@@ -606,7 +636,7 @@ export function InvoiceDetailPanel({
                     </section>
 
                     {(editing || dueDate || paymentTerms) ? (
-                        <section>
+                        <section className="md:max-w-[560px]">
                             <p className="blanc-eyebrow">Document settings</p>
                             {editing ? (
                                 <div className="mt-3 space-y-3.5">
@@ -652,7 +682,7 @@ export function InvoiceDetailPanel({
                     ) : null}
 
                     {payments && payments.length > 0 ? (
-                        <section>
+                        <section className="md:max-w-[560px]">
                             <p className="blanc-eyebrow">Payments</p>
                             <div className="mt-2">
                                 {[...payments]
@@ -677,10 +707,12 @@ export function InvoiceDetailPanel({
                         </section>
                     ) : null}
 
-                    <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
+                    <div className="md:max-w-[560px]">
+                        <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
+                    </div>
 
                     {events.length > 0 ? (
-                        <section>
+                        <section className="md:max-w-[560px]">
                             <p className="blanc-eyebrow">History</p>
                             <div className="mt-2 space-y-3">
                                 {events.map(event => (
