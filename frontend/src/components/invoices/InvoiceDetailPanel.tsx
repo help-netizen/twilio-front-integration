@@ -455,49 +455,55 @@ export function InvoiceDetailPanel({
                             </div>
                         ) : null}
 
-                        {/* ONE cluster, right here. Full-width stack on the phone, where
-                            the sheet is the button's width; sized to their labels on the
-                            desktop, where a thousand-pixel bar reads as a banner. */}
+                        {/* ONE ROW (owner, 2026-08-16). The rule is arithmetic, not taste:
+                            one action fills the width, two split it in half, and anything
+                            past the second lives under a round ⋯ pinned to the right end
+                            of the same row. The stacked bars it replaces cost three rows
+                            of screen before the document even started. */}
                         {!editing && (primaryAction || secondaryAction || menuActions.length > 0) ? (
-                            <div className={`mt-4 grid grid-cols-2 gap-2 md:flex md:flex-row md:flex-wrap md:items-center`}>
+                            <div className="mt-4 flex items-center gap-2">
                                 {primaryAction && (
                                     <Button
                                         type="button"
-                                        className={`h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px] ${secondaryAction ? '' : 'col-span-2'}`}
+                                        className="h-[50px] min-w-0 flex-1 text-[15px] md:h-11 md:flex-none md:px-5"
                                         onClick={primaryAction.onClick}
                                         data-testid={primaryAction.testid}
                                     >
                                         {primaryAction.icon}
-                                        <span className="ml-1.5">{primaryAction.label}</span>
+                                        <span className="ml-1.5 truncate">{primaryAction.label}</span>
                                     </Button>
                                 )}
                                 {secondaryAction && (
                                     <Button
                                         type="button"
                                         variant="secondary"
-                                        className="h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px]"
+                                        className="h-[50px] min-w-0 flex-1 text-[15px] md:h-11 md:flex-none md:px-5"
                                         onClick={secondaryAction.onClick}
                                         data-testid={secondaryAction.testid}
                                     >
                                         {secondaryAction.icon}
-                                        <span className="ml-1.5">{secondaryAction.label}</span>
+                                        <span className="ml-1.5 truncate">{secondaryAction.label}</span>
                                     </Button>
                                 )}
                                 {menuActions.length > 0 && (
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
+                                            {/* A circle, not a word: on a phone the label would
+                                                come out of the two buttons beside it. Desktop has
+                                                the room, so it says what it is. */}
                                             <Button
                                                 type="button"
                                                 variant="ghost"
-                                                className="col-span-2 h-11 w-full justify-center md:w-auto md:px-3 text-[15px]"
-                                                style={{ color: 'var(--blanc-ink-2)' }}
+                                                aria-label="More actions"
+                                                className="size-[50px] shrink-0 justify-center p-0 text-[15px] md:h-11 md:w-auto md:px-3"
+                                                style={{ color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
                                                 data-testid="invoice-more"
                                             >
-                                                <MoreHorizontal className="size-4" />
-                                                <span className="ml-1.5">More</span>
+                                                <MoreHorizontal className="size-5 md:size-4" />
+                                                <span className="ml-1.5 hidden md:inline">More</span>
                                             </Button>
                                         </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="start" className="w-56">
+                                        <DropdownMenuContent align="end" className="w-56">
                                             {menuActions.map((action, index) => (
                                                 <Fragment key={action.key}>
                                                     {action.danger && !menuActions[index - 1]?.danger && <DropdownMenuSeparator />}

@@ -23,11 +23,14 @@ describe('estimate detail — the decisions', () => {
         expect(panelRaw.match(/\{secondaryAction && \(/g) || []).toHaveLength(1);
     });
 
-    it('names the menu instead of leaving a row of dots', () => {
-        // Three dots are a shrug. A menu that holds "Archive estimate" should
-        // say that it holds something.
+    it('keeps the menu reachable and named where there is room for a name', () => {
+        // The trigger sits at the right end of the action row (owner,
+        // 2026-08-16). On a phone it is a circle — a label there would come out
+        // of the two buttons beside it — so the name is carried by aria-label
+        // and shown on desktop, where the row has the width for it.
         expect(panelRaw).toContain('DropdownMenu');
-        expect(panelRaw).toContain('<span className="ml-1.5">More</span>');
+        expect(panelRaw).toContain('aria-label="More actions"');
+        expect(panelRaw).toContain('hidden md:inline">More</span>');
         expect(panelRaw).toContain("data-testid=\"estimate-more\"");
     });
 
