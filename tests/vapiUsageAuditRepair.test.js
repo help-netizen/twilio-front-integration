@@ -119,7 +119,7 @@ describe('VAPI-AGENCY-001 T4 nightly provider audit', () => {
                 nextReconcileAt: new Date('2026-08-17T01:00:00.000Z'),
             },
         });
-        const run = await audit.claimAuditRunWithClient({ now }, client);
+        const run = await audit.claimAuditRunWithClient({ now, catchupDays: 1 }, client);
         const providerResult = {
             pages: 1,
             calls: new Map([
@@ -223,7 +223,7 @@ describe('VAPI-AGENCY-001 T4 nightly provider audit', () => {
                 finalizedAt: new Date('2026-08-10T12:10:00.000Z'),
             },
         });
-        const run = await audit.claimAuditRunWithClient({ now }, client);
+        const run = await audit.claimAuditRunWithClient({ now, catchupDays: 1 }, client);
 
         const completed = await audit.completeAuditWithClient({
             run,
@@ -282,7 +282,7 @@ describe('VAPI-AGENCY-001 T4 nightly provider audit', () => {
 
     test('cursor ambiguity fails the audit and persists an idempotent platform alert', async () => {
         const now = new Date('2026-08-16T06:00:00.000Z');
-        const run = await audit.claimAuditRunWithClient({ now }, client);
+        const run = await audit.claimAuditRunWithClient({ now, catchupDays: 1 }, client);
         const ambiguous = Array.from({ length: audit.PAGE_LIMIT }, (_unused, index) => ({
             id: `provider-${index}`,
             createdAt: index < audit.PAGE_LIMIT - 2
@@ -317,5 +317,35 @@ describe('VAPI-AGENCY-001 T4 nightly provider audit', () => {
             last_error: 'VAPI_AUDIT_CURSOR_AMBIGUOUS',
             alerts: 1,
         }]);
+    });
+
+    test('claims the oldest missing audit day inside a bounded catch-up window', async () => {
+        const now = new Date('2026-08-16T06:00:00.000Z');
+        await client.query(
+            `INSERT INTO vapi_usage_audit_runs (
+                 audit_date, window_start, window_end, status,
+                 started_at, finished_at
+             ) VALUES
+                 ('2026-08-12', '2026-08-12T00:00:00Z', '2026-08-13T00:00:00Z',
+                  'succeeded', $1, $1),
+                 ('2026-08-13', '2026-08-13T00:00:00Z', '2026-08-14T00:00:00Z',
+                  'succeeded', $1, $1)`,
+            [now],
+        );
+
+        const run = await audit.claimAuditRunWithClient({
+            now,
+            catchupDays: 4,
+        }, client);
+
+        expect(run).toMatchObject({
+            audit_date_key: '2026-08-14',
+            status: 'running',
+        });
+        expect(new Date(run.window_start).toISOString()).toBe('2026-08-14T00:00:00.000Z');
+        expect(new Date(run.window_end).toISOString()).toBe('2026-08-15T00:00:00.000Z');
+        expect(audit.auditCatchupDays({
+            VAPI_USAGE_AUDIT_CATCHUP_DAYS: '999',
+        })).toBe(audit.MAX_AUDIT_CATCHUP_DAYS);
     });
 });

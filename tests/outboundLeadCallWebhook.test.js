@@ -156,13 +156,7 @@ beforeEach(() => {
         expect(credentialId).toBe('301');
         const message = JSON.parse(rawJson).message;
         if (!message?.call?.id) return { correlated: false, reason: 'call_id_missing' };
-        const result = await mockQuery(
-            'SELECT * FROM outbound_call_attempts WHERE vapi_call_id = $1',
-            [message.call.id],
-        );
-        return result.rows.length === 1
-            ? { correlated: true, attempt: result.rows[0], parsed: { kind: message.type } }
-            : { correlated: false, reason: 'attempt_not_found', parsed: { kind: message.type } };
+        return { correlated: true, parsed: { kind: message.type } };
     });
     marketplaceService.isAppConnected.mockResolvedValue(true);
     scheduleService.getDispatchSettings.mockResolvedValue({ ...NY_DS });
@@ -181,8 +175,9 @@ afterEach(() => {
 });
 
 function armCorrelate(row) {
-    mockQuery.mockImplementation(async (sql) => {
-        if (/FROM outbound_call_attempts/.test(sql) && /vapi_call_id = \$1/.test(sql)) {
+    mockQuery.mockImplementation(async (sql, params) => {
+        if (/FROM outbound_call_attempts/.test(sql) && /vapi_call_id = \$2/.test(sql)) {
+            expect(params).toEqual([COMPANY, expect.any(String)]);
             return { rows: row ? [row] : [] };
         }
         if (/SELECT 1 FROM tasks/.test(sql)) return { rows: [] };

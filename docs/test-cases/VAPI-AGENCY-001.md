@@ -126,6 +126,11 @@ AI-ног, потому что это единица supplier cost; UI може�
 | INGEST-02 | P0 | Status credential B присылает call id строки A либо unknown id | Ни session, ни observation, ни usage не создаются; A/B/wallet unchanged | `SAB-VAPI-EOC-COMPANY` |
 | INGEST-03 | P0 | EoC несёт transcript/recording/customer/name/phone и документированный cost | Persisted sanitized payload содержит только identity/lifecycle/cost decimal strings | sanitized-evidence ratchet |
 | INGEST-04 | P0 | Cost находится не в подтверждённом `message.call` | Quarantined observation сохраняет безопасную форму placement; provisional supplier cost отсутствует | fail-closed placement fixture |
+| INGEST-05 | P0 | Outbound EoC при пустом assistant registry до T5 | Attempt из credential-scoped local row создаёт session/observation/usage; assistant env drift только structured warning; wallet unchanged | `SAB-VAPI-OUTBOUND-REGISTRY-FALLBACK` |
+| INGEST-06 | P0 | Identity contract отвергает новое `call.type`/`status` | Одна idempotent quarantine row с sanitized payload + alert; никаких usage/wallet rows | provider-enum quarantine matrix |
+| INGEST-07 | P0 | Usage ingest отвергает EoC связанной outbound attempt | Timeline/FSM независимо финализируют attempt и планируют retry; денежный отказ остаётся отдельным alert | `SAB-VAPI-FSM-INDEPENDENCE` |
+| INGEST-08 | P1 | Analysis prompt и cached prompt tokens ненулевые | Cached subset не прибавляется к prompt/total повторно | cached-token fixture |
+| REC-07 | P1 | Планировщик отсутствовал один или несколько UTC-дней | Oldest missing day внутри bounded lookback claim-ится первым; вчера отмечается complete только после catch-up | missed-day audit fixture |
 | OBS-01 | P2 | Создать unbound call, stale usage, drift, lease divergence и settlement retry | Каждому соответствует named metric/alert с company/session refs platform-only |
 | OBS-02 | P0 | Просканировать tenant response/log fixture | Нет secret/token/transcript/provider/supplier fields в tenant-visible output |
 | OBS-03 | P2 | Сверить provider export и local audit | Missing/extra/changed calls перечислены; repair требует exact identity, не auto-charge ambiguity |

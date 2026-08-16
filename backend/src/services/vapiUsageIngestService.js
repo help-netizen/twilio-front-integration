@@ -7,6 +7,7 @@ const {
     parseVapiServerMessageJson,
     parseVapiEndOfCallReportJson,
     sanitizeVapiServerMessageJson,
+    sanitizeVapiServerMessageCandidateJson,
 } = require('./vapiProviderContracts');
 
 const PLATFORM_PROVIDER_ACCOUNT_KEY = 'vapi:platform';
@@ -107,7 +108,9 @@ function normalizeObservation(parsed) {
     const promptTokens = addCounters([
         parsed.cost.tokens.llmPromptTokens,
         ...Object.entries(parsed.cost.analysis.tokens)
-            .filter(([key]) => key.endsWith('PromptTokens'))
+            .filter(([key]) => (
+                key.endsWith('PromptTokens') && !key.endsWith('CachedPromptTokens')
+            ))
             .map(([, value]) => value),
     ]);
     const completionTokens = addCounters([
@@ -160,26 +163,25 @@ function purposeForScenario(scenario) {
     return scenario === 'lead_call' ? 'outbound_lead_call' : 'outbound_parts_call';
 }
 
-async function resolveOutboundProfile(client, companyId, purpose, assistantId) {
-    const profile = await client.query(
-        `SELECT profile.id, profile.provider_connection_id, profile.vapi_assistant_id
-         FROM vapi_assistant_profiles profile
-         JOIN provider_connections connection
-           ON connection.id = profile.provider_connection_id
-          AND connection.company_id = profile.company_id
-          AND connection.provider = 'vapi'
-          AND connection.status = 'active'
-         WHERE profile.company_id = $1
-           AND profile.purpose = $2
-           AND profile.environment = 'prod'
-           AND profile.vapi_assistant_id = $3
-           AND profile.is_active = true
-         ORDER BY profile.id
-         LIMIT 2
-         FOR SHARE OF profile, connection`,
-        [companyId, purpose, assistantId],
+function configuredOutboundAssistantId(purpose) {
+    return purpose === 'outbound_lead_call'
+        ? process.env.VAPI_LEAD_CALL_ASSISTANT_ID
+        : process.env.VAPI_OUTBOUND_ASSISTANT_ID;
+}
+
+function warnOutboundAssistantDrift({ companyId, providerCallId, purpose, assistantId }) {
+    const configured = configuredOutboundAssistantId(purpose);
+    if (configured === assistantId) return;
+    console.warn(
+        '[vapiUsageIngest] transitional outbound assistant mismatch',
+        {
+            companyId,
+            providerCallId,
+            purpose,
+            configured: configured || null,
+            observed: assistantId,
+        },
     );
-    return profile.rows.length === 1 ? profile.rows[0] : null;
 }
 
 async function findAttempt(client, companyId, providerCallId) {
@@ -235,29 +237,30 @@ async function correlateCallWithClient({
             }
         }
 
-        if (session.expected_vapi_assistant_id == null && session.direction === 'outbound') {
-            const profile = await resolveOutboundProfile(
-                client,
+        if (session.direction === 'outbound') {
+            warnOutboundAssistantDrift({
                 companyId,
-                session.purpose,
+                providerCallId,
+                purpose: session.purpose,
                 assistantId,
-            );
-            if (!profile) return { correlated: false, reason: 'assistant_not_owned' };
+            });
+        }
+
+        if (session.expected_vapi_assistant_id == null && session.direction === 'outbound') {
             const enriched = await client.query(
                 `UPDATE vapi_call_sessions
-                 SET provider_connection_id = $3,
-                     assistant_profile_id = $4,
-                     expected_vapi_assistant_id = $5
+                 SET expected_vapi_assistant_id = $3
                  WHERE id = $1
                    AND company_id = $2
                    AND expected_vapi_assistant_id IS NULL
                  RETURNING *`,
-                [session.id, companyId, profile.provider_connection_id, profile.id, assistantId],
+                [session.id, companyId, assistantId],
             );
             session = enriched.rows[0] || session;
         }
 
-        if (session.expected_vapi_assistant_id !== assistantId) {
+        if (session.direction === 'inbound'
+            && session.expected_vapi_assistant_id !== assistantId) {
             return { correlated: false, reason: 'assistant_mismatch' };
         }
         return { correlated: true, session, attempt };
@@ -270,26 +273,27 @@ async function correlateCallWithClient({
     if (!attempt) return { correlated: false, reason: 'attempt_not_found' };
 
     const purpose = purposeForScenario(attempt.scenario);
-    const profile = await resolveOutboundProfile(client, companyId, purpose, assistantId);
-    if (!profile) return { correlated: false, reason: 'assistant_not_owned' };
+    warnOutboundAssistantDrift({
+        companyId,
+        providerCallId,
+        purpose,
+        assistantId,
+    });
 
     const created = await client.query(
         `INSERT INTO vapi_call_sessions (
              company_id, direction, purpose, environment,
-             provider_connection_id, assistant_profile_id,
              provider_account_key, expected_vapi_assistant_id, vapi_call_id,
              outbound_call_attempt_id, bind_source, bound_at, admitted_at, state
          ) VALUES (
-             $1, 'outbound', $2, 'prod', $3, $4,
-             $5, $6, $7, $8, 'post_call_response', $9, $10, 'active'
+             $1, 'outbound', $2, 'prod',
+             $3, $4, $5, $6, 'post_call_response', $7, $8, 'active'
          )
          ON CONFLICT DO NOTHING
          RETURNING *`,
         [
             companyId,
             purpose,
-            profile.provider_connection_id,
-            profile.id,
             PLATFORM_PROVIDER_ACCOUNT_KEY,
             assistantId,
             providerCallId,
@@ -308,10 +312,9 @@ async function correlateCallWithClient({
          WHERE company_id = $1
            AND vapi_call_id = $2
            AND outbound_call_attempt_id = $3
-           AND expected_vapi_assistant_id = $4
          LIMIT 2
          FOR UPDATE`,
-        [companyId, providerCallId, attempt.id, assistantId],
+        [companyId, providerCallId, attempt.id],
     );
     if (raced.rows.length !== 1) {
         return { correlated: false, reason: 'provider_call_collision' };
@@ -349,6 +352,72 @@ function validationError(error) {
         return `${error.code}${error.path ? `:${error.path}` : ''}`.slice(0, 255);
     }
     throw error;
+}
+
+function hashWirePayload(rawJson) {
+    return crypto.createHash('sha256').update(rawJson, 'utf8').digest('hex');
+}
+
+async function quarantineProviderMessage(client, {
+    companyId,
+    credentialId,
+    rawJson,
+    error,
+    alertKind,
+}) {
+    const sanitizedPayload = sanitizeVapiServerMessageCandidateJson(rawJson);
+    const payloadHash = hashWirePayload(rawJson);
+    const providerCallId = sanitizedPayload.message?.call?.id || null;
+    const claimedMessageType = sanitizedPayload.message?.type || null;
+    const validation = typeof error === 'string'
+        ? error.slice(0, 255)
+        : validationError(error);
+    const quarantined = await client.query(
+        `INSERT INTO vapi_provider_message_quarantine (
+             company_id, status_credential_id, payload_hash,
+             provider_call_id, claimed_message_type, validation_error,
+             sanitized_payload
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+         ON CONFLICT (company_id, status_credential_id, payload_hash)
+         DO UPDATE SET delivery_count =
+                           vapi_provider_message_quarantine.delivery_count + 1,
+                       last_seen_at = now(),
+                       validation_error = EXCLUDED.validation_error
+         RETURNING id`,
+        [
+            companyId,
+            credentialId,
+            payloadHash,
+            providerCallId,
+            claimedMessageType,
+            validation,
+            JSON.stringify(sanitizedPayload),
+        ],
+    );
+    const quarantineId = quarantined.rows[0].id;
+    await client.query(
+        `INSERT INTO vapi_usage_alerts (
+             company_id, kind, dedupe_key, details
+         ) VALUES ($1, $2, $3, $4::jsonb)
+         ON CONFLICT (dedupe_key) DO NOTHING`,
+        [
+            companyId,
+            alertKind,
+            `${alertKind}:${companyId}:${credentialId}:${payloadHash}`,
+            JSON.stringify({
+                quarantineId,
+                validationError: validation,
+                providerCallId,
+                claimedMessageType,
+            }),
+        ],
+    );
+    return {
+        quarantineId,
+        providerCallId,
+        claimedMessageType,
+        validationError: validation,
+    };
 }
 
 async function insertObservation(client, {
@@ -501,7 +570,25 @@ async function ingestServerMessageWithClient({
     }
 
     await assertStatusCredential(client, normalizedCompanyId, normalizedCredentialId);
-    const parsed = parseVapiServerMessageJson(rawJson);
+    let parsed;
+    try {
+        parsed = parseVapiServerMessageJson(rawJson);
+    } catch (error) {
+        if (!(error instanceof VapiContractError)) throw error;
+        const quarantine = await quarantineProviderMessage(client, {
+            companyId: normalizedCompanyId,
+            credentialId: normalizedCredentialId,
+            rawJson,
+            error,
+            alertKind: 'provider_message_quarantined',
+        });
+        return {
+            correlated: false,
+            quarantined: true,
+            reason: 'identity_contract_rejected',
+            ...quarantine,
+        };
+    }
     if (!['status-update', 'end-of-call-report'].includes(parsed.kind)) {
         return { correlated: false, reason: 'message_not_ingested', parsed };
     }
@@ -513,6 +600,16 @@ async function ingestServerMessageWithClient({
         callType: parsed.call.type,
     }, client);
     if (!correlation.correlated) {
+        if (parsed.kind === 'end-of-call-report') {
+            const quarantine = await quarantineProviderMessage(client, {
+                companyId: normalizedCompanyId,
+                credentialId: normalizedCredentialId,
+                rawJson,
+                error: `correlation:${correlation.reason}`,
+                alertKind: 'usage_ingest_rejected',
+            });
+            return { ...correlation, parsed, quarantined: true, ...quarantine };
+        }
         return { ...correlation, parsed };
     }
 
@@ -586,6 +683,7 @@ module.exports = {
     normalizeObservation,
     addDecimalStrings,
     correlateCallWithClient,
+    quarantineProviderMessage,
     ingestServerMessage,
     ingestServerMessageWithClient,
 };

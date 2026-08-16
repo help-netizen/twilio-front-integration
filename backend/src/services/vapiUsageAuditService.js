@@ -9,6 +9,8 @@ const AUDIT_LEASE_MS = 30 * 60 * 1000;
 const PAGE_LIMIT = 1000;
 const MAX_PAGES = 100;
 const SAMPLE_LIMIT = 20;
+const DEFAULT_AUDIT_CATCHUP_DAYS = 7;
+const MAX_AUDIT_CATCHUP_DAYS = 31;
 
 class VapiUsageAuditError extends Error {
     constructor(code) {
@@ -31,6 +33,24 @@ function utcDayWindow(now = new Date()) {
     };
 }
 
+function normalizeAuditCatchupDays(value) {
+    const configured = typeof value === 'number'
+        ? value
+        : (
+            typeof value === 'string' && /^\d+$/.test(value)
+                ? Number(value)
+                : Number.NaN
+        );
+    if (!Number.isSafeInteger(configured) || configured < 1) {
+        return DEFAULT_AUDIT_CATCHUP_DAYS;
+    }
+    return Math.min(configured, MAX_AUDIT_CATCHUP_DAYS);
+}
+
+function auditCatchupDays(env = process.env) {
+    return normalizeAuditCatchupDays(env.VAPI_USAGE_AUDIT_CATCHUP_DAYS);
+}
+
 function assertDescendingPage(page, timeField = 'createdAt') {
     for (let index = 1; index < page.length; index += 1) {
         if (Date.parse(page[index][timeField]) > Date.parse(page[index - 1][timeField])) {
@@ -43,15 +63,41 @@ function assertDescendingPage(page, timeField = 'createdAt') {
     }
 }
 
-async function claimAuditRunWithClient({ now = new Date() }, client) {
-    const { auditDate, start, end } = utcDayWindow(now);
+async function claimAuditRunWithClient({
+    now = new Date(),
+    catchupDays = auditCatchupDays(),
+}, client) {
+    const { auditDate } = utcDayWindow(now);
     const claimToken = randomUUID();
     const leaseExpiresAt = new Date(now.getTime() + AUDIT_LEASE_MS);
     const result = await client.query(
-        `INSERT INTO vapi_usage_audit_runs (
+        `WITH candidate AS (
+             SELECT day::date AS audit_date
+             FROM generate_series(
+                 $1::date - (($2::integer - 1) * interval '1 day'),
+                 $1::date,
+                 interval '1 day'
+             ) AS day
+             LEFT JOIN vapi_usage_audit_runs existing
+               ON existing.audit_date = day::date
+             WHERE existing.id IS NULL
+                OR existing.status = 'failed'
+                OR (
+                    existing.status = 'running'
+                    AND existing.lease_expires_at <= $4
+                )
+             ORDER BY day
+             LIMIT 1
+         )
+         INSERT INTO vapi_usage_audit_runs (
              audit_date, window_start, window_end, status,
              claim_token, lease_expires_at, started_at
-         ) VALUES ($1, $2, $3, 'running', $4, $5, $6)
+         )
+         SELECT audit_date,
+                audit_date::timestamp AT TIME ZONE 'UTC',
+                (audit_date + 1)::timestamp AT TIME ZONE 'UTC',
+                'running', $3, $5, $4
+         FROM candidate
          ON CONFLICT (audit_date) DO UPDATE
          SET status = 'running', claim_token = EXCLUDED.claim_token,
              lease_expires_at = EXCLUDED.lease_expires_at,
@@ -60,10 +106,16 @@ async function claimAuditRunWithClient({ now = new Date() }, client) {
          WHERE vapi_usage_audit_runs.status = 'failed'
             OR (
                 vapi_usage_audit_runs.status = 'running'
-                AND vapi_usage_audit_runs.lease_expires_at <= $6
+                AND vapi_usage_audit_runs.lease_expires_at <= $4
             )
-         RETURNING *`,
-        [auditDate, start, end, claimToken, leaseExpiresAt, now],
+         RETURNING *, audit_date::text AS audit_date_key`,
+        [
+            auditDate,
+            normalizeAuditCatchupDays(catchupDays),
+            claimToken,
+            now,
+            leaseExpiresAt,
+        ],
     );
     return result.rows[0] || null;
 }
@@ -183,7 +235,12 @@ async function insertAuditAlert(client, { run, kind, count }) {
              audit_run_id, kind, dedupe_key, details
          ) VALUES ($1, $2, $3, $4::jsonb)
          ON CONFLICT (dedupe_key) DO NOTHING`,
-        [run.id, kind, `${kind}:${run.audit_date}`, JSON.stringify({ count })],
+        [
+            run.id,
+            kind,
+            `${kind}:${run.audit_date_key || String(run.audit_date)}`,
+            JSON.stringify({ count }),
+        ],
     );
 }
 
@@ -287,15 +344,22 @@ async function failAuditWithClient({ run, error, now = new Date() }, client) {
              audit_run_id, kind, dedupe_key, details
          ) VALUES ($1, 'audit_failed', $2, $3::jsonb)
          ON CONFLICT (dedupe_key) DO NOTHING`,
-        [run.id, `audit_failed:${run.audit_date}`, JSON.stringify({ code })],
+        [
+            run.id,
+            `audit_failed:${run.audit_date_key || String(run.audit_date)}`,
+            JSON.stringify({ code }),
+        ],
     );
     return { status: 'failed', code };
 }
 
 async function runNightlyAudit(options = {}) {
     const now = options.now || new Date();
-    const run = await withTransaction((client) => claimAuditRunWithClient({ now }, client));
-    if (!run) return { skipped: true };
+    const run = await withTransaction((client) => claimAuditRunWithClient({
+        now,
+        catchupDays: options.catchupDays || auditCatchupDays(),
+    }, client));
+    if (!run) return { skipped: true, auditDate: null };
     try {
         const listCalls = options.listCalls || providerClient.listCalls;
         const identityResult = await fetchProviderWindow({
@@ -320,9 +384,17 @@ async function runNightlyAudit(options = {}) {
             providerResult,
             now,
         }, client));
-        return { skipped: false, status: result.status, runId: result.id };
+        return {
+            skipped: false,
+            status: result.status,
+            runId: result.id,
+            auditDate: run.audit_date_key,
+        };
     } catch (error) {
-        return withTransaction((client) => failAuditWithClient({ run, error, now }, client));
+        const failed = await withTransaction(
+            (client) => failAuditWithClient({ run, error, now }, client),
+        );
+        return { ...failed, skipped: false, auditDate: run.audit_date_key };
     }
 }
 
@@ -330,7 +402,11 @@ module.exports = {
     PAGE_LIMIT,
     MAX_PAGES,
     VapiUsageAuditError,
+    DEFAULT_AUDIT_CATCHUP_DAYS,
+    MAX_AUDIT_CATCHUP_DAYS,
     utcDayWindow,
+    normalizeAuditCatchupDays,
+    auditCatchupDays,
     assertDescendingPage,
     claimAuditRunWithClient,
     fetchProviderWindow,

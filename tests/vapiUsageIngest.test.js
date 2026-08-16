@@ -10,12 +10,22 @@ const ingestService = require('../backend/src/services/vapiUsageIngestService');
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
 const TAG = `${Date.now()}-${process.pid}`;
+const ORIGINAL_OUTBOUND_ASSISTANT_ID = process.env.VAPI_OUTBOUND_ASSISTANT_ID;
+const ORIGINAL_LEAD_ASSISTANT_ID = process.env.VAPI_LEAD_CALL_ASSISTANT_ID;
 const MIGRATION_266 = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '266_vapi_call_identity_and_usage.sql'),
     'utf8',
 );
 const MIGRATION_267 = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '267_vapi_provisional_usage_ingest.sql'),
+    'utf8',
+);
+const MIGRATION_269 = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '269_vapi_usage_reconcile_and_finalization.sql'),
+    'utf8',
+);
+const MIGRATION_270 = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '270_vapi_provider_message_quarantine.sql'),
     'utf8',
 );
 
@@ -258,6 +268,8 @@ async function seedBaseData() {
 }
 
 async function resetCallFixtures() {
+    await client.query('DELETE FROM vapi_usage_alerts');
+    await client.query('DELETE FROM vapi_provider_message_quarantine');
     await client.query('DELETE FROM vapi_call_usage');
     await client.query('DELETE FROM vapi_call_usage_observations');
     await client.query('DELETE FROM vapi_call_sessions');
@@ -327,6 +339,10 @@ beforeAll(async () => {
     await client.query('BEGIN');
     await client.query(MIGRATION_266);
     await client.query(MIGRATION_267);
+    await client.query(MIGRATION_269);
+    await client.query(MIGRATION_270);
+    process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'assistant-outbound-a';
+    process.env.VAPI_LEAD_CALL_ASSISTANT_ID = 'assistant-lead-a';
     await seedBaseData();
 });
 
@@ -340,6 +356,16 @@ afterAll(async () => {
         client.release();
     }
     if (pool) await pool.end();
+    if (ORIGINAL_OUTBOUND_ASSISTANT_ID === undefined) {
+        delete process.env.VAPI_OUTBOUND_ASSISTANT_ID;
+    } else {
+        process.env.VAPI_OUTBOUND_ASSISTANT_ID = ORIGINAL_OUTBOUND_ASSISTANT_ID;
+    }
+    if (ORIGINAL_LEAD_ASSISTANT_ID === undefined) {
+        delete process.env.VAPI_LEAD_CALL_ASSISTANT_ID;
+    } else {
+        process.env.VAPI_LEAD_CALL_ASSISTANT_ID = ORIGINAL_LEAD_ASSISTANT_ID;
+    }
 });
 
 describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
@@ -469,6 +495,94 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
         expect(outboundRow).toEqual(inbound);
     });
 
+    test('outbound EoC persists usage when that company has an empty assistant registry', async () => {
+        await client.query('SAVEPOINT empty_outbound_registry');
+        try {
+            await client.query(
+                `DELETE FROM vapi_assistant_profiles
+                 WHERE company_id = $1`,
+                [COMPANY_B],
+            );
+            const registry = await client.query(
+                'SELECT count(*)::int AS count FROM vapi_assistant_profiles WHERE company_id = $1',
+                [COMPANY_B],
+            );
+            expect(registry.rows).toEqual([{ count: 0 }]);
+
+            process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'assistant-outbound-b';
+            const result = await ingest({
+                companyId: COMPANY_B,
+                credentialId: statusCredentialB,
+                rawJson: endOfCallRaw({
+                    callId: 'provider-outbound-b',
+                    assistantId: 'assistant-outbound-b',
+                    type: 'outboundPhoneCall',
+                }),
+            });
+
+            expect(result).toMatchObject({
+                correlated: true,
+                observationCreated: true,
+                validationState: 'accepted',
+            });
+            expect(await counts(COMPANY_B)).toEqual({
+                observations: 1,
+                usage: 1,
+                wallet_entries: 0,
+            });
+            const session = await client.query(
+                `SELECT direction, provider_connection_id, assistant_profile_id
+                 FROM vapi_call_sessions
+                 WHERE company_id = $1 AND vapi_call_id = 'provider-outbound-b'`,
+                [COMPANY_B],
+            );
+            expect(session.rows).toEqual([{
+                direction: 'outbound',
+                provider_connection_id: null,
+                assistant_profile_id: null,
+            }]);
+        } finally {
+            await client.query('ROLLBACK TO SAVEPOINT empty_outbound_registry');
+            await client.query('RELEASE SAVEPOINT empty_outbound_registry');
+            process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'assistant-outbound-a';
+        }
+    });
+
+    test('transitional outbound assistant env mismatch alerts but preserves supplier usage', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const result = await ingest({
+                rawJson: endOfCallRaw({
+                    callId: 'provider-outbound-a',
+                    assistantId: 'assistant-provider-drift',
+                    type: 'outboundPhoneCall',
+                }),
+            });
+
+            expect(result).toMatchObject({
+                correlated: true,
+                observationCreated: true,
+                validationState: 'accepted',
+            });
+            expect(warn).toHaveBeenCalledWith(
+                '[vapiUsageIngest] transitional outbound assistant mismatch',
+                expect.objectContaining({
+                    companyId: COMPANY_A,
+                    providerCallId: 'provider-outbound-a',
+                    configured: 'assistant-outbound-a',
+                    observed: 'assistant-provider-drift',
+                }),
+            );
+            expect(await counts(COMPANY_A)).toEqual({
+                observations: 1,
+                usage: 1,
+                wallet_entries: 0,
+            });
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     test('changed EoC amount appends evidence but updates one provisional projection only', async () => {
         const base = {
             callId: 'provider-inbound-a',
@@ -531,6 +645,33 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
         expect(current.rows).toEqual([{ supplier_cost: '0.000000000256' }]);
     });
 
+    test('analysis cached prompt tokens are a subset, not an additive token bucket', async () => {
+        const payload = JSON.parse(endOfCallRaw({
+            callId: 'provider-inbound-a',
+            assistantId: 'assistant-inbound-a',
+            type: 'inboundPhoneCall',
+        }));
+        const breakdown = payload.message.call.costBreakdown;
+        breakdown.llmPromptTokens = 100;
+        breakdown.analysisCostBreakdown.summaryPromptTokens = 50;
+        breakdown.analysisCostBreakdown.summaryCachedPromptTokens = 40;
+        breakdown.analysisCostBreakdown.structuredDataPromptTokens = 25;
+        breakdown.analysisCostBreakdown.structuredDataCachedPromptTokens = 20;
+
+        await ingest({ rawJson: JSON.stringify(payload) });
+
+        const observation = await client.query(
+            `SELECT prompt_tokens::text, total_tokens::text
+             FROM vapi_call_usage_observations
+             WHERE company_id = $1`,
+            [COMPANY_A],
+        );
+        expect(observation.rows).toEqual([{
+            prompt_tokens: '175',
+            total_tokens: '175',
+        }]);
+    });
+
     test('sanitized raw evidence excludes PII and quarantines unproven cost placement', async () => {
         const rawJson = endOfCallRaw({
             callId: 'provider-inbound-a',
@@ -569,6 +710,52 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
         expect(evidence).not.toMatch(/Alice|617|recording\.invalid|transcript|artifact|secret name/i);
         expect(stored.rows[0].sanitized_payload.message).not.toHaveProperty('customer');
         expect(await counts()).toEqual({ observations: 1, usage: 1, wallet_entries: 0 });
+    });
+
+    test.each([
+        ['unknown call type', { type: 'outboundSipCall' }],
+        ['unknown provider status', { status: 'analysis-pending' }],
+    ])('%s is quarantined with sanitized evidence and an alert', async (_label, mutation) => {
+        const payload = JSON.parse(endOfCallRaw({
+            callId: 'provider-inbound-a',
+            assistantId: 'assistant-inbound-a',
+            type: 'inboundPhoneCall',
+            extra: {
+                transcript: 'Alice +1 617 555 0101',
+                recordingUrl: 'https://recording.invalid/private',
+            },
+        }));
+        Object.assign(payload.message.call, mutation);
+        const rawJson = JSON.stringify(payload);
+
+        const first = await ingest({ rawJson });
+        const duplicate = await ingest({ rawJson });
+
+        expect(first).toMatchObject({
+            correlated: false,
+            quarantined: true,
+            reason: 'identity_contract_rejected',
+        });
+        expect(duplicate.quarantineId).toBe(first.quarantineId);
+        expect(await counts()).toEqual({ observations: 0, usage: 0, wallet_entries: 0 });
+        const stored = await client.query(
+            `SELECT quarantine.validation_error, quarantine.sanitized_payload,
+                    quarantine.delivery_count,
+                    (SELECT count(*)::int FROM vapi_usage_alerts alert
+                     WHERE alert.company_id = quarantine.company_id
+                       AND alert.kind = 'provider_message_quarantined') AS alert_count
+             FROM vapi_provider_message_quarantine quarantine
+             WHERE quarantine.company_id = $1`,
+            [COMPANY_A],
+        );
+        expect(stored.rows).toHaveLength(1);
+        expect(stored.rows[0]).toMatchObject({
+            validation_error: expect.stringMatching(/unknown_value/),
+            delivery_count: 2,
+            alert_count: 1,
+        });
+        const evidence = JSON.stringify(stored.rows[0].sanitized_payload);
+        expect(evidence).not.toMatch(/Alice|617|recording\.invalid|transcript|recordingUrl/i);
     });
 
     test('assistant id must match the pinned registry identity before evidence is written', async () => {

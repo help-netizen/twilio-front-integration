@@ -276,6 +276,14 @@ shape и allowlisted sanitized payload; к current usage — ссылку на a
 provisional observation. Не создаёт charge/settlement/wallet таблиц и блокирует
 rollback после появления evidence.
 
+### `vapi_provider_message_quarantine`
+
+Содержит company/credential-scoped allowlisted evidence и delivery counter для
+аутентифицированных provider messages, отвергнутых до появления session-bound
+observation; расширяет platform-only alert kinds. Не хранит transcript,
+recording, customer/name/phone, secret или tenant-visible payload и блокирует
+rollback после появления quarantine evidence.
+
 ### `vapi_assistant_registry`
 
 Содержит `vapi_tenant_voice_configs`; расширяет `vapi_assistant_profiles` и

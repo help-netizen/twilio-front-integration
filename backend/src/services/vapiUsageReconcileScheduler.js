@@ -35,7 +35,14 @@ function createVapiUsageReconcileScheduler(dependencies = {}) {
             let auditResult = { skipped: true };
             if (lastAuditDate !== auditDate) {
                 auditResult = await audit.runNightlyAudit({ now });
-                if (auditResult.status === 'succeeded' || auditResult.skipped) {
+                // Catch-up runs oldest-first. Only mark this UTC day complete
+                // after yesterday itself succeeds, or the claimer proves there
+                // is no missing/failed day inside the bounded lookback window.
+                if (auditResult.skipped
+                    || (
+                        auditResult.status === 'succeeded'
+                        && auditResult.auditDate === auditDate
+                    )) {
                     lastAuditDate = auditDate;
                 }
             }

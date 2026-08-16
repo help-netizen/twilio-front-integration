@@ -426,6 +426,94 @@ function sanitizeCostCandidate(source, numericPrefix) {
     return sanitized;
 }
 
+function safeProviderToken(value, maxLength = 255) {
+    if (typeof value !== 'string'
+        || value.length === 0
+        || value.length > maxLength
+        || !/^[A-Za-z0-9:_.+-]+$/.test(value)) {
+        return null;
+    }
+    return value;
+}
+
+/**
+ * Best-effort evidence for a message that failed the strict identity contract.
+ * This function never accepts the candidate for accounting. It only preserves
+ * allowlisted provider tokens/timestamps/cost lexemes so the rejection is
+ * diagnosable without retaining transcripts, recordings, phone/customer data,
+ * names, assistant snapshots, overrides or tool/server configuration.
+ */
+function sanitizeVapiServerMessageCandidateJson(rawJson) {
+    let exact;
+    try {
+        exact = parseExactJson(rawJson);
+    } catch (error) {
+        if (!(error instanceof VapiContractError)) throw error;
+        return {
+            evidenceSchemaVersion: 1,
+            numberEncoding: 'decimal-string',
+            parseState: 'invalid_json',
+        };
+    }
+
+    const root = exact.value;
+    if (!root || typeof root !== 'object' || Array.isArray(root)) {
+        return {
+            evidenceSchemaVersion: 1,
+            numberEncoding: 'decimal-string',
+            parseState: 'invalid_root',
+        };
+    }
+    const rawMessage = root.message;
+    if (!rawMessage || typeof rawMessage !== 'object' || Array.isArray(rawMessage)) {
+        return {
+            evidenceSchemaVersion: 1,
+            numberEncoding: 'decimal-string',
+            parseState: 'invalid_message',
+        };
+    }
+
+    const message = {};
+    const messageType = safeProviderToken(rawMessage.type, 128);
+    const messageStatus = safeProviderToken(rawMessage.status, 128);
+    const messageReason = safeProviderToken(rawMessage.endedReason, 255);
+    if (messageType) message.type = messageType;
+    if (messageStatus) message.status = messageStatus;
+    if (messageReason) message.endedReason = messageReason;
+
+    const rawCall = rawMessage.call;
+    if (rawCall && typeof rawCall === 'object' && !Array.isArray(rawCall)) {
+        const call = {};
+        for (const [key, maxLength] of [
+            ['id', 255],
+            ['orgId', 255],
+            ['type', 128],
+            ['assistantId', 255],
+            ['status', 128],
+            ['createdAt', 64],
+            ['updatedAt', 64],
+            ['startedAt', 64],
+            ['endedAt', 64],
+            ['endedReason', 255],
+        ]) {
+            const token = safeProviderToken(rawCall[key], maxLength);
+            if (token) call[key] = token;
+        }
+        Object.assign(call, sanitizeCostCandidate(rawCall, exact.numericPrefix));
+        message.call = call;
+    } else if (rawCall !== undefined) {
+        message.call = null;
+    }
+    Object.assign(message, sanitizeCostCandidate(rawMessage, exact.numericPrefix));
+
+    return {
+        evidenceSchemaVersion: 1,
+        numberEncoding: 'decimal-string',
+        parseState: 'contract_rejected',
+        message,
+    };
+}
+
 /**
  * Preserve only provider identity/lifecycle/cost evidence. Numeric lexemes are
  * strings so JSONB persistence cannot pass through IEEE-754. Transcripts,
@@ -525,4 +613,5 @@ module.exports = {
     parseVapiGetCallJson,
     sanitizeVapiGetCallJson,
     sanitizeVapiServerMessageJson,
+    sanitizeVapiServerMessageCandidateJson,
 };

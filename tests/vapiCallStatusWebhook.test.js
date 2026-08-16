@@ -167,19 +167,8 @@ beforeEach(() => {
         if (!message?.call?.id) {
             return { correlated: false, reason: 'call_id_missing', parsed: { kind: message?.type } };
         }
-        const result = await mockQuery(
-            'SELECT correlated outbound attempt WHERE vapi_call_id = $1',
-            [message.call.id],
-        );
-        if (result.rows.length !== 1) {
-            if (result.rows.length > 1) {
-                console.warn(`[vapiCallStatus] ambiguous vapi_call_id correlation; refusing callId=${message.call.id}`);
-            }
-            return { correlated: false, reason: 'attempt_not_found', parsed: { kind: message.type } };
-        }
         return {
             correlated: true,
-            attempt: result.rows[0],
             session: { company_id: companyId },
             parsed: { kind: message.type },
             observationCreated: message.type === 'end-of-call-report',
@@ -212,20 +201,24 @@ function withAttemptRows(rows) {
 
 // ── S9/S10 — secret auth (fail-closed) ────────────────────────────────────────
 describe('secret auth (U18, S10)', () => {
-    test('status/EoC refuses an already parsed body because exact decimal lexemes are unavailable', async () => {
+    test('missing exact money body does not strand the outbound FSM', async () => {
         const app = express();
         app.use(express.json());
         app.use('/api/vapi/call-status', vapiCallStatusRouter);
+        withAttempt(attemptRow());
+        mockQuery.mockResolvedValue({ rows: [] });
 
         const response = await request(app)
             .post('/api/vapi/call-status')
             .set('x-vapi-secret', SECRET)
             .send(endReport('vc1', 'voicemail'));
 
-        expect(response.status).toBe(503);
-        expect(response.body.code).toBe('VAPI_USAGE_RAW_JSON_REQUIRED');
+        expect(response.status).toBe(200);
         expect(mockIngestServerMessage).not.toHaveBeenCalled();
-        expect(mockQuery).not.toHaveBeenCalled();
+        expect(mockFinalize).toHaveBeenCalledTimes(1);
+        expect(mockQuery.mock.calls.some(
+            ([sql]) => /INSERT INTO outbound_call_attempts/i.test(String(sql)),
+        )).toBe(true);
     });
 
     test('missing company-bound status credential → 401', async () => {
@@ -270,8 +263,9 @@ describe('company derived from attempt row, not body (S10)', () => {
 
         const res = await post(body);
         expect(res.status).toBe(200);
-        // The correlation SELECT keys ONLY on the vapi_call_id from the body.
-        expect(mockQuery.mock.calls[0][1]).toEqual(['vc_iso']);
+        // The FSM lookup pairs the call id with the authenticated credential's
+        // company; spoofed company fields never participate.
+        expect(mockQuery.mock.calls[0][1]).toEqual([COMPANY, 'vc_iso']);
         // Retry settings resolved against the ROW company, not the spoofed body.
         expect(mockResolveSettings).toHaveBeenCalledWith(COMPANY);
         // The retry INSERT is scoped to the row company (A), never B.
@@ -302,7 +296,7 @@ describe('company derived from attempt row, not body (S10)', () => {
         expect(mockQuery).toHaveBeenCalledTimes(1);
         expect(mockFinalize).not.toHaveBeenCalled();
         expect(mockResolveSettings).not.toHaveBeenCalled();
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ambiguous vapi_call_id'));
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('ambiguous outbound correlation'));
         warnSpy.mockRestore();
     });
 
@@ -378,6 +372,31 @@ describe('booked detection (S9)', () => {
 
 // ── U18 — endedReason classification → next state ─────────────────────────────
 describe('endedReason classification (U18)', () => {
+    test('usage ingest rejection cannot strand the outbound FSM or Pulse timeline', async () => {
+        mockIngestServerMessage.mockResolvedValueOnce({
+            correlated: false,
+            quarantined: true,
+            reason: 'assistant_mismatch',
+        });
+        withAttempt(attemptRow({ attempt_no: 1 }));
+        mockQuery.mockResolvedValue({ rows: [] });
+
+        const response = await post(endReport('vc_money_rejected', 'voicemail-detected'));
+
+        expect(response.status).toBe(200);
+        expect(mockFinalize).toHaveBeenCalledWith({
+            attempt: expect.objectContaining({ id: 100, company_id: COMPANY }),
+            message: expect.objectContaining({ type: 'end-of-call-report' }),
+        });
+        const terminal = mockQuery.mock.calls.find(
+            ([sql]) => /UPDATE outbound_call_attempts SET status = \$2/.test(String(sql)),
+        );
+        expect(terminal[1][1]).toBe('voicemail');
+        expect(mockQuery.mock.calls.some(
+            ([sql]) => /INSERT INTO outbound_call_attempts/i.test(String(sql)),
+        )).toBe(true);
+    });
+
     // Each maps to a transient status. The FIRST update sets the attempt's terminal
     // transient status; a retry INSERT follows (attempt_no < max).
     const transientCases = [

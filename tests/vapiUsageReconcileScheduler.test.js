@@ -23,7 +23,10 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
         };
         const auditService = {
             utcDayWindow: jest.fn().mockReturnValue({ auditDate: '2026-08-15' }),
-            runNightlyAudit: jest.fn().mockResolvedValue({ status: 'succeeded' }),
+            runNightlyAudit: jest.fn().mockResolvedValue({
+                status: 'succeeded',
+                auditDate: '2026-08-15',
+            }),
         };
         const scheduler = createVapiUsageReconcileScheduler({
             reconcileService,
@@ -60,7 +63,10 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
         };
         const auditService = {
             utcDayWindow: jest.fn().mockReturnValue({ auditDate: '2026-08-15' }),
-            runNightlyAudit: jest.fn().mockResolvedValue({ status: 'succeeded' }),
+            runNightlyAudit: jest.fn().mockResolvedValue({
+                status: 'succeeded',
+                auditDate: '2026-08-15',
+            }),
         };
         const scheduler = createVapiUsageReconcileScheduler({
             reconcileService,
@@ -74,6 +80,37 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
         await expect(scheduler.tick(new Date(now.getTime() + 60000)))
             .resolves.toMatchObject({ skipped: false, audit: { skipped: true } });
         expect(auditService.runNightlyAudit).toHaveBeenCalledTimes(1);
+    });
+
+    test('continues oldest-first audit catch-up until yesterday succeeds', async () => {
+        const reconcileService = {
+            listDueCompanies: jest.fn().mockResolvedValue([]),
+            processDueCompany: jest.fn(),
+        };
+        const auditService = {
+            utcDayWindow: jest.fn().mockReturnValue({ auditDate: '2026-08-15' }),
+            runNightlyAudit: jest.fn()
+                .mockResolvedValueOnce({
+                    status: 'succeeded',
+                    auditDate: '2026-08-14',
+                })
+                .mockResolvedValueOnce({
+                    status: 'succeeded',
+                    auditDate: '2026-08-15',
+                }),
+        };
+        const scheduler = createVapiUsageReconcileScheduler({
+            reconcileService,
+            auditService,
+        });
+        const now = new Date('2026-08-16T06:00:00.000Z');
+
+        await scheduler.tick(now);
+        await scheduler.tick(new Date(now.getTime() + 60000));
+        const caughtUp = await scheduler.tick(new Date(now.getTime() + 120000));
+
+        expect(auditService.runNightlyAudit).toHaveBeenCalledTimes(2);
+        expect(caughtUp.audit).toEqual({ skipped: true });
     });
 
     test('registers one scheduler without a new server mount', () => {

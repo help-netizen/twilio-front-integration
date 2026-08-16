@@ -20,8 +20,9 @@
  * ── ANTI-SPOOF — company comes from credential + ROW, never body (S10)
  *   The only trusted correlation key from the body is `message.call.id`
  *   (`vapi_call_id`). Everything else — companyId, jobId, taskId, attempt_no — is
- *   read from the correlated T2 session/outbound attempt. An unknown call.id → a
- *   200 no-op and no usage row.
+ *   read from the independently correlated outbound attempt. Usage ingestion
+ *   runs beside this state machine: a money-path rejection must never strand a
+ *   dialing attempt or starve the Pulse timeline.
  *
  * ── IDEMPOTENCE (S9 / edge-6) ────────────────────────────────────────────────
  *   A `booked` / `exhausted` (any non-`dialing`) attempt is TERMINAL: a repeat
@@ -191,6 +192,36 @@ async function addAttemptNote(jobId, text, companyId) {
     }
 }
 
+// ─── Outbound FSM correlation (independent from supplier-cost ingest) ─────────
+//
+// Accounting has stricter and evolving provider contracts than the established
+// outbound retry FSM. Keep this lookup deliberately small: the authenticated
+// machine credential supplies company_id and the body supplies only call.id.
+// A usage quarantine/rejection must not become a prerequisite for finalizing the
+// attempt, scheduling its retry, or completing its timeline.
+async function correlateOutboundAttempt(companyId, vapiCallId) {
+    if (typeof vapiCallId !== 'string' || vapiCallId.trim() === '') return null;
+    const { rows } = await db.query(
+        `SELECT id, company_id, job_id, task_id, attempt_no, status, phone,
+                contact_id, slot_json, scenario, lead_uuid
+         FROM outbound_call_attempts
+         WHERE company_id = $1
+           AND vapi_call_id = $2
+         ORDER BY id DESC
+         LIMIT 2`,
+        [companyId, vapiCallId.trim()],
+    );
+    if (rows.length !== 1) {
+        if (rows.length > 1) {
+            console.warn(
+                `[vapiCallStatus] ambiguous outbound correlation; refusing callId=${vapiCallId}`,
+            );
+        }
+        return null;
+    }
+    return rows[0];
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 router.post('/', statusCredentialAuth, async (req, res) => {
@@ -205,45 +236,43 @@ router.post('/', statusCredentialAuth, async (req, res) => {
             console.log(`[vapiCallStatus] rx type=${message.type} callId=${dcid || '?'}`);
         }
 
+        let ingest = null;
         if (typeof req.vapiRawJson !== 'string') {
-            return res.status(503).json({
-                ok: false,
-                error: 'Exact Vapi body unavailable',
-                code: 'VAPI_USAGE_RAW_JSON_REQUIRED',
-            });
-        }
-
-        let ingest;
-        try {
-            ingest = await vapiUsageIngestService.ingestServerMessage({
-                companyId: req.machineCredential.companyId,
-                credentialId: req.machineCredential.id,
-                rawJson: req.vapiRawJson,
-            });
-        } catch (error) {
-            if (error instanceof VapiContractError) {
-                console.warn(`[vapiCallStatus] provider contract rejected code=${error.code}`);
-                return res.json({ ok: true });
-            }
-            if (error instanceof vapiUsageIngestService.VapiUsageIngestError) {
-                return res.status(error.status).json({
-                    ok: false,
-                    error: 'Vapi usage ingest refused',
-                    code: error.code,
+            // Broken exact-body capture is an accounting alert, not permission to
+            // strand the already-placed call's retry/timeline state machine.
+            console.error('[vapiCallStatus] exact usage body unavailable');
+        } else {
+            try {
+                ingest = await vapiUsageIngestService.ingestServerMessage({
+                    companyId: req.machineCredential.companyId,
+                    credentialId: req.machineCredential.id,
+                    rawJson: req.vapiRawJson,
                 });
+            } catch (error) {
+                if (error instanceof VapiContractError) {
+                    console.warn(`[vapiCallStatus] provider contract rejected code=${error.code}`);
+                } else if (error instanceof vapiUsageIngestService.VapiUsageIngestError) {
+                    console.warn(`[vapiCallStatus] usage ingest refused code=${error.code}`);
+                } else {
+                    console.error('[vapiCallStatus] usage ingest unavailable');
+                }
             }
-            console.error('[vapiCallStatus] usage ingest unavailable');
-            return res.status(503).json({
-                ok: false,
-                error: 'Vapi usage ingest unavailable',
-                code: 'VAPI_USAGE_INGEST_UNAVAILABLE',
-            });
         }
 
-        if (!ingest.correlated) {
-            return res.json({ ok: true });
+        if (ingest && !ingest.correlated) {
+            console.warn(
+                `[vapiCallStatus] usage ingest not correlated reason=${ingest.reason || 'unknown'}`,
+            );
         }
-        const attempt = ingest.attempt;
+
+        // The outbound state machine has its own, company-scoped correlation.
+        // Do not source this row from usage ingest: cost validation/quarantine is
+        // intentionally independent from call outcome processing.
+        const providerCallId = message && message.call && message.call.id;
+        const attempt = await correlateOutboundAttempt(
+            req.machineCredential.companyId,
+            providerCallId,
+        );
 
         // ── OUTBOUND-CALL-TIMELINE-001 (CT-05a): mid-call status-update ───────
         // status-update / conversation-update / tool-calls all reach this same

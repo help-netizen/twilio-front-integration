@@ -101,10 +101,15 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   profile. Поэтому runtime cutover не выкатывается раньше operator provisioning
   ABC profile/resource/assistant-request credential и provider readback; иначе
   fail-closed ветка корректно отправит входящие в обычный fallback.
-- T3 требует exact raw body до JSON parsing, коррелированный EoC
-  записывает как append-only observation и обновляет единую
-  provisional projection. До persistence попадает только allowlisted
-  sanitized evidence; живое тело EoC ещё не захвачено, поэтому
+- T3 требует exact raw body до JSON parsing для денег, но денежный ingest не
+  является предусловием outbound FSM/timeline: attempt коррелируется отдельно по
+  company credential + локальной строке. До T5 outbound usage создаётся из
+  `outbound_call_attempts` без обязательного registry profile; assistant env
+  drift даёт operational warning, не потерю supplier cost. Коррелированный EoC
+  записывается как append-only observation и обновляет единую provisional
+  projection. Identity/correlation rejection сохраняется в отдельном
+  company-scoped quarantine с allowlisted sanitized evidence и alert; неизвестные
+  provider enum не исчезают в silent 200. Живое тело EoC ещё не захвачено, поэтому
   fixture остаётся `live:false`, а неподтверждённое placement стоимости
   quarantined fail-closed.
 - T4 опрашивает `GET /call/:id` с exact raw body по расписанию
@@ -114,6 +119,7 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   новую версию и signed `pending_pricing` adjustment, не charge/debit.
 - Ночной platform audit отдельно листает provider calls по `createdAt` для
   identity completeness и по `updatedAt` для corrections старых звонков,
+  oldest-first догоняет пропущенные дни в конфигурируемом bounded lookback,
   сохраняет orphan/missing/stuck counters и ставит repair в company-scoped
   очередь. Через 24 часа без стабильности создаётся idempotent platform alert и
   состояние `stale_pending`; молчаливой финализации нет.
@@ -753,6 +759,7 @@ platform route/permission и всегда требует явного target com
 | Phase 2 gate | `tests/vapiAgencyGate.test.js` | команда определяется в T8 | PENDING |
 | T3 provisional usage ingest | `tests/vapiUsageIngest.test.js`, `tests/vapiUsageIngestMigration.test.js`, provider/route sibling suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 5 suites / 97 tests. T2 identity/assistant-request/machine siblings: 5 suites / 48 tests. Tenant SQL rules PASS; public-route rule PASS after registering the credential-protected assistant-request subrouter. |
 | T4 reconcile/audit | reconcile, audit, provider client, scheduler, migration + затронутые T3/provider/rules siblings | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js tests/vapiProviderClient.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiUsageReconcileMigration.test.js tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js tests/outboundLeadCallSmsCancel.test.js tests/repairAdvisorEvents.test.js tests/rulesEngine.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 13 suites / 160 tests. Включает missing-EoC repair, createdAt+updatedAt audit, exact decimals, leases, T-foreign, no-wallet и scheduler registration. Targeted `tenantSafetyLint` R-natural-key: PASS. |
+| Phase-1 adversarial fixes | независимый FSM, registry-less outbound ingest, identity quarantine, cached tokens, missed-day audit | команда T3/T4 с `tests/vapiProviderMessageQuarantineMigration.test.js` и webhook/provider siblings | PASS; целевой combined run 11 suites / 147 tests; targeted tenant safety 1/1; migration 270 forward×2/rollback/restore через real `psql` PASS |
 | Registry/provisioning/tools/routes | new registry suites + current Vapi regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAgencyProvisioning.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/services/callFlowRuntime.vapi.test.js --runInBand --forceExit` | PENDING |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
@@ -781,6 +788,8 @@ forward/rollback migration filenames добавляются в ledger после
 | `SAB-VAPI-WEBHOOK-CREDENTIAL` | доверять `companyId` body вместо credential | `vapiCallStatusWebhook` wrong-company credential | PENDING |
 | `SAB-VAPI-EOC-COMPANY` | ослабить сверку company status credential перед session lookup | `vapiUsageIngest` credential B + local session A | RED как требуется: ожидаемый semantic 403 исчез, запрос дошёл до same-company FK и упал 23503; после восстановления тест green |
 | `SAB-VAPI-EOC-IDEMPOTENCY` | добавить random nonce в deterministic sanitized-payload hash | concurrent + sequential duplicate EoC test | RED как требуется: обе concurrent delivery вернули `observationCreated:true`; после восстановления тест green |
+| `SAB-VAPI-FSM-INDEPENDENCE` | вернуть ранний 200 при `ingest.correlated=false` | `vapiCallStatusWebhook` usage rejection cannot strand FSM/timeline | RED как требуется: timeline не финализирован и retry не создан; после восстановления targeted тест green |
+| `SAB-VAPI-OUTBOUND-REGISTRY-FALLBACK` | снова потребовать active registry profile перед outbound session | `vapiUsageIngest` empty assistant registry outbound EoC | RED как требуется: `correlated:false`, observation/usage потеряны; после восстановления targeted тест green |
 | `SAB-VAPI-OVERRIDE` | прокинуть `assistantOverrides` из request/body | provider-contract override rejection test | PENDING |
 | `SAB-VAPI-COST-IDEMPOTENCY` | убрать observation/charge unique key | duplicate EoC/poll money test | PENDING |
 | `SAB-VAPI-LATE-COST` | считать немедленный одинаковый повтор вторым разнесённым замером | `vapiUsageReconcile` identical immediate poll | RED как требуется: повтор через 30 секунд дал `final` вместо `stable_once`; после восстановления тест green |
