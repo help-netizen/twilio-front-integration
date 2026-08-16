@@ -226,7 +226,7 @@ export function InvoiceCollectPaymentDialog({
                                 >
                                     Collect payment
                                 </h3>
-                                <p className="mt-1 text-[12.5px] text-[var(--blanc-ink-3)]">
+                                <p className="mt-1 text-[12px] text-[var(--blanc-ink-3)]">
                                     {invoice.invoice_number} · {invoice.contact_name || 'Customer'}
                                 </p>
                             </div>

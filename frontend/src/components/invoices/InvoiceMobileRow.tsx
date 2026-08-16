@@ -81,7 +81,7 @@ export function InvoiceMobileRow({ invoice, onOpen }: Props) {
             <span className="min-w-0">
                 <span className="flex flex-wrap items-center gap-2">
                     <span
-                        className="truncate text-[14.5px] font-semibold text-[var(--blanc-ink-1)]"
+                        className="truncate text-[15px] font-semibold text-[var(--blanc-ink-1)]"
                         style={{ fontFamily: 'var(--blanc-font-heading)' }}
                     >
                         {invoice.invoice_number}
@@ -92,10 +92,10 @@ export function InvoiceMobileRow({ invoice, onOpen }: Props) {
                         {invoiceStatusLabel(invoice.status)}
                     </span>
                 </span>
-                <span className="mt-1 block truncate text-[12.5px] text-[var(--blanc-ink-2)]">
+                <span className="mt-1 block truncate text-[12px] text-[var(--blanc-ink-2)]">
                     {customerJob}
                 </span>
-                <span className={`mt-0.5 block text-[11.5px] ${invoice.status === 'overdue' ? 'text-[var(--blanc-danger)]' : 'text-[var(--blanc-ink-3)]'}`}>
+                <span className={`mt-0.5 block text-[12px] ${invoice.status === 'overdue' ? 'text-[var(--blanc-danger)]' : 'text-[var(--blanc-ink-3)]'}`}>
                     {invoiceTimingLabel(invoice, timeZone)}
                 </span>
             </span>
@@ -104,7 +104,7 @@ export function InvoiceMobileRow({ invoice, onOpen }: Props) {
                     {money(invoice.balance_due)}
                 </span>
                 {showTotal ? (
-                    <span className="mt-0.5 block text-[11.5px] text-[var(--blanc-ink-3)]">
+                    <span className="mt-0.5 block text-[12px] text-[var(--blanc-ink-3)]">
                         of {money(invoice.total)}
                     </span>
                 ) : null}

@@ -207,7 +207,7 @@ export function InvoicesPage() {
                                     <button
                                         key={filter.value || 'all'}
                                         type="button"
-                                        className={`min-h-[32px] rounded-full border px-3 text-[12.5px] font-semibold ${active
+                                        className={`min-h-[32px] rounded-full border px-3 text-[12px] font-semibold ${active
                                             ? 'border-[var(--blanc-ink-1)] bg-[var(--blanc-ink-1)] text-[var(--blanc-panel-surface)]'
                                             : 'border-[var(--blanc-line)] bg-[var(--blanc-panel-surface)] text-[var(--blanc-ink-2)]'}`}
                                         onClick={() => page.setStatus(filter.value)}
@@ -242,7 +242,7 @@ export function InvoicesPage() {
                             <Button
                                 type="button"
                                 variant="outline"
-                                className="mt-4 h-[46px] w-full rounded-[13px] text-[14.5px] font-semibold"
+                                className="mt-4 h-[46px] w-full rounded-[13px] text-[15px] font-semibold"
                                 onClick={page.loadMore}
                                 disabled={page.loadingMore}
                                 data-testid="invoice-load-more"

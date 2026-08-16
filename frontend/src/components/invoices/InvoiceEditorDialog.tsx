@@ -513,7 +513,7 @@ export function InvoiceEditorDialog({
 
                             <section>
                                 <p className="blanc-eyebrow">Items</p>
-                                <p className="mt-1 text-[12.5px] text-[var(--blanc-ink-3)]">Title and unit price required. Qty defaults to 1.</p>
+                                <p className="mt-1 text-[12px] text-[var(--blanc-ink-3)]">Title and unit price required. Qty defaults to 1.</p>
                                 {items.length > 0 ? (
                                     <div className="mt-2">
                                         {items.map(item => (
