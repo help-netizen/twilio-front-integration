@@ -719,13 +719,14 @@ async function listEvents(estimateId) {
 
 /**
  * Look up a readable estimate strictly by its public_token (the token IS the
- * auth). Archived documents fail closed; declined documents remain readable so
- * the customer retains a copy of the proposal they answered.
+ * auth). Archived, expired, and draft documents fail closed; answered documents
+ * remain readable until the bearer link itself expires.
  */
 async function getEstimateByPublicToken(publicToken, client = null) {
     if (!publicToken) return null;
     const query = queryFor(client);
     const { rows } = await query(
+        // tenant-safety-allow R-natural-key: The opaque, expiring public token is the credential and resolves only its owning estimate.
         `SELECT e.*,
                 COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS contact_name,
                 COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
@@ -742,8 +743,10 @@ async function getEstimateByPublicToken(publicToken, client = null) {
          LEFT JOIN companies co ON co.id = e.company_id
          WHERE e.public_token = $1
            AND e.archived_at IS NULL
+           AND e.public_token_expires_at > NOW()
+           AND e.status = ANY($2::text[])
          LIMIT 1`,
-        [publicToken]
+        [publicToken, ['sent', 'viewed', 'approved', 'declined']]
     );
     if (!rows[0]) return null;
     const [estimate] = await applyEstimatePayments(
@@ -775,6 +778,7 @@ async function lockEstimateByPublicToken(publicToken, action, client) {
          FROM estimates e
          WHERE e.public_token = $1
            AND e.archived_at IS NULL
+           AND e.public_token_expires_at > NOW()
            AND e.status = ANY($2::text[])
          LIMIT 1
          FOR UPDATE OF e`,
@@ -826,14 +830,23 @@ async function getDeclineTaskContext(companyId, estimateId, client = null) {
     return rows[0] || null;
 }
 
-/** Persist a public_token on the estimate (idempotent — caller checks if one already exists first). */
-async function setPublicToken(estimateId, companyId, token, client = null) {
+/** Persist a public_token with a database-clock expiry. */
+async function setPublicToken(
+    estimateId,
+    companyId,
+    token,
+    client = null,
+    lifetimeMonths = 18
+) {
     const query = queryFor(client);
     const { rows } = await query(
-        `UPDATE estimates SET public_token = $3, updated_at = NOW()
+        `UPDATE estimates
+         SET public_token = $3,
+             public_token_expires_at = NOW() + ($4::integer * INTERVAL '1 month'),
+             updated_at = NOW()
          WHERE id = $1 AND company_id = $2
          RETURNING *`,
-        [estimateId, companyId, token]
+        [estimateId, companyId, token, lifetimeMonths]
     );
     return rows[0] || null;
 }

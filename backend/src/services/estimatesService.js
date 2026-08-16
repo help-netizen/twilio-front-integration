@@ -731,6 +731,17 @@ function buildSmsBody(message, link) {
     return base;
 }
 
+function replacePriorPublicLink(message, priorToken, currentLink) {
+    const text = String(message || '');
+    if (!priorToken || !currentLink) return text;
+    const escapedToken = String(priorToken).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const priorLink = new RegExp(
+        `(?:https?:\\/\\/[^\\s<>'"]+)?\\/e\\/${escapedToken}(?=$|[\\s<>'"),.!?])`,
+        'g'
+    );
+    return text.replace(priorLink, currentLink);
+}
+
 function recipientKey(channel, value) {
     const text = asText(value);
     if (!text) return '';
@@ -817,8 +828,16 @@ async function sendEstimate(
     let noteRecipient = to;
 
     try {
-        // Public page link is shared by both channels (idempotent — never re-mints).
-        const { url: link } = await ensurePublicLink(companyId, id, client);
+        // Every send gets a fresh bearer URL. Under the route transaction a
+        // failed dispatch rolls this rotation back, preserving the prior link.
+        const { url: link } = await ensurePublicLink(
+            companyId,
+            id,
+            client,
+            activityActor,
+            { rotate: true }
+        );
+        const currentMessage = replacePriorPublicLink(message, estimate.public_token, link);
 
         if (normalizedChannel === 'email') {
         // Pre-check: a mailbox that is missing / disconnected / reconnect_required
@@ -849,7 +868,7 @@ async function sendEstimate(
             await emailService.sendEmail(companyId, {
                 to,
                 subject,
-                body: buildEmailBody(message, link),
+                body: buildEmailBody(currentMessage, link),
                 files: [{
                     mimetype: 'application/pdf',
                     originalname: `Estimate-${safeFile}.pdf`,
@@ -889,7 +908,7 @@ async function sendEstimate(
         const conversationsService = require('./conversationsService');
         const conv = await conversationsService.getOrCreateConversation(customerE164, proxy, companyId);
         // Wallet gate lives INSIDE sendMessage → propagates as { httpStatus:402, code:'WALLET_BLOCKED' }.
-            await conversationsService.sendMessage(conv.id, { companyId, body: buildSmsBody(message, link) });
+            await conversationsService.sendMessage(conv.id, { companyId, body: buildSmsBody(currentMessage, link) });
         }
     } catch (err) {
         if (activityActor) {
@@ -1728,22 +1747,47 @@ async function generatePdf(companyId, id, client = null) {
 // getPublicInvoice / generatePdfByPublicToken.
 // =============================================================================
 
+const PUBLIC_LINK_LIFETIME_MONTHS = 18;
+
 /**
- * Return (creating if necessary) a public link for the estimate. Idempotent —
- * subsequent calls return the same token + URL. Re-send never re-mints.
+ * Return (creating if necessary) a public link for the estimate. A plain lookup
+ * reuses a live token; a resend rotates it so previously forwarded URLs stop
+ * resolving. Expired and legacy tokens are always replaced.
  */
-async function ensurePublicLink(companyId, id, client = null, activityActor = null) {
+async function ensurePublicLink(
+    companyId,
+    id,
+    client = null,
+    activityActor = null,
+    { rotate = false } = {}
+) {
     const estimate = await estimatesQueries.getEstimateById(companyId, id, client);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
 
     let token = estimate.public_token;
-    if (!token) {
+    const expiresAt = estimate.public_token_expires_at
+        ? new Date(estimate.public_token_expires_at).getTime()
+        : NaN;
+    const hasLiveToken = !!token && Number.isFinite(expiresAt) && expiresAt > Date.now();
+    if (rotate || !hasLiveToken) {
         // 8 bytes of entropy → 11 url-safe chars. 2^64 keyspace is plenty for unguessability.
         token = crypto.randomBytes(8).toString('base64url');
         if (client) {
-            await estimatesQueries.setPublicToken(estimate.id, companyId, token, client);
+            await estimatesQueries.setPublicToken(
+                estimate.id,
+                companyId,
+                token,
+                client,
+                PUBLIC_LINK_LIFETIME_MONTHS
+            );
         } else {
-            await estimatesQueries.setPublicToken(estimate.id, companyId, token);
+            await estimatesQueries.setPublicToken(
+                estimate.id,
+                companyId,
+                token,
+                null,
+                PUBLIC_LINK_LIFETIME_MONTHS
+            );
         }
         if (activityActor) {
             await logFinancialActivity({

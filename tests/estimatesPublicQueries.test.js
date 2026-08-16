@@ -19,14 +19,15 @@ beforeEach(() => {
     mockDbQuery.mockResolvedValue({ rows: [] });
 });
 
-test('read tokens exclude archived estimates while leaving status unrestricted', async () => {
+test('read tokens require an unexpired link and a customer-visible status', async () => {
     await queries.getEstimateByPublicToken(TOKEN);
 
     const [sql, params] = mockDbQuery.mock.calls[0];
     expect(sql).toContain('e.public_token = $1');
     expect(sql).toContain('e.archived_at IS NULL');
-    expect(sql).not.toContain("e.status = 'declined'");
-    expect(params).toEqual([TOKEN]);
+    expect(sql).toContain('e.public_token_expires_at > NOW()');
+    expect(sql).toContain('e.status = ANY($2::text[])');
+    expect(params).toEqual([TOKEN, ['sent', 'viewed', 'approved', 'declined']]);
 });
 
 test('public action lookup row-locks only the statuses authorized for that action', async () => {
@@ -40,11 +41,22 @@ test('public action lookup row-locks only the statuses authorized for that actio
     for (const sql of [approveSql, declineSql]) {
         expect(sql).toContain('e.public_token = $1');
         expect(sql).toContain('e.archived_at IS NULL');
+        expect(sql).toContain('e.public_token_expires_at > NOW()');
         expect(sql).toContain('e.status = ANY($2::text[])');
         expect(sql).toContain('FOR UPDATE OF e');
     }
     expect(approveParams).toEqual([TOKEN, ['sent', 'viewed', 'approved']]);
     expect(declineParams).toEqual([TOKEN, ['sent', 'viewed']]);
+});
+
+test('token rotation is company-scoped and sets expiry from the database clock', async () => {
+    await queries.setPublicToken(ESTIMATE_ID, COMPANY_ID, TOKEN, null, 18);
+
+    const [sql, params] = mockDbQuery.mock.calls[0];
+    expect(sql).toContain('public_token = $3');
+    expect(sql).toContain("public_token_expires_at = NOW() + ($4::integer * INTERVAL '1 month')");
+    expect(sql).toContain('id = $1 AND company_id = $2');
+    expect(params).toEqual([ESTIMATE_ID, COMPANY_ID, TOKEN, 18]);
 });
 
 test('view transition is atomic, company-scoped, and can only advance sent to viewed once', async () => {

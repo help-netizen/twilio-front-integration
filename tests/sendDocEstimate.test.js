@@ -141,7 +141,8 @@ function estimateRow(overrides = {}) {
         contact_email: 'c@x.com',
         contact_phone: '+15551234567',
         job_id: JOB_ID,
-        public_token: 'tok_estABCDE', // pre-seeded → ensurePublicLink never re-mints
+        public_token: 'tok_estABCDE',
+        public_token_expires_at: '2099-01-01T00:00:00.000Z',
         order_list: [{
             part_number: 'EMAIL-ESTIMATE-SECRET',
             part_name: 'Internal pump',
@@ -159,6 +160,7 @@ beforeEach(() => {
     // Default happy collaborators; individual tests override.
     mockGetEstimateById.mockResolvedValue(estimateRow());
     mockGetEstimateItems.mockResolvedValue([{ id: 1, name: 'Labor', quantity: 1, unit_price: 100, amount: 100 }]);
+    mockSetPublicToken.mockResolvedValue(estimateRow());
     mockUpdateEstimate.mockResolvedValue(estimateRow({ status: 'sent' }));
     mockCreateEvent.mockResolvedValue(undefined);
     mockLogFinancialActivity.mockResolvedValue({ ok: true });
@@ -201,7 +203,9 @@ describe('sendEstimate — email happy path', () => {
         expect(coId).toBe(COMPANY_A);
         expect(payload.to).toBe('c@x.com');
         expect(payload.subject).toBe('Estimate 519-1 from Boston Masters');
-        expect(payload.body).toContain('https://app.albusto.com/e/tok_estABCDE');
+        const rotatedToken = mockSetPublicToken.mock.calls[0][2];
+        expect(payload.body).toContain(`https://app.albusto.com/e/${rotatedToken}`);
+        expect(payload.body).not.toContain('tok_estABCDE');
         expect(payload.body).toContain('Hi there');
         expect(payload.files).toHaveLength(1);
         expect(payload.files[0].mimetype).toBe('application/pdf');
@@ -339,7 +343,9 @@ describe('sendEstimate — sms happy path', () => {
         expect(mockSendMessage).toHaveBeenCalledTimes(1);
         const [convId, msg] = mockSendMessage.mock.calls[0];
         expect(convId).toBe(7);
-        expect(msg.body).toContain('https://app.albusto.com/e/tok_estABCDE');
+        const rotatedToken = mockSetPublicToken.mock.calls[0][2];
+        expect(msg.body).toContain(`https://app.albusto.com/e/${rotatedToken}`);
+        expect(msg.body).not.toContain('tok_estABCDE');
         expect(msg.body.startsWith("Here's your estimate")).toBe(true);
 
         // no email/PDF on the SMS path
@@ -366,13 +372,13 @@ describe('sendEstimate — sms happy path', () => {
         );
     });
 
-    it('TC-SD-018: link NOT double-appended when message already contains it', async () => {
+    it('TC-SD-018: a prefilled old link is replaced by the rotated link, not double-appended', async () => {
         const withLink = 'See https://app.albusto.com/e/tok_estABCDE now';
         await request(appWith()).post(`/${EST_ID}/send`).send({ channel: 'sms', recipient: '+15551234567', message: withLink });
         const body = mockSendMessage.mock.calls[0][1].body;
-        // link appears exactly once
-        expect(body.match(/tok_estABCDE/g)).toHaveLength(1);
-        expect(body).toBe(withLink);
+        const rotatedToken = mockSetPublicToken.mock.calls[0][2];
+        expect(body).toBe(`See https://app.albusto.com/e/${rotatedToken} now`);
+        expect(body).not.toContain('tok_estABCDE');
     });
 
     it('TC-SD-020: SMS path does NOT mint a separate timeline stamp (projection lives in sendMessage)', async () => {
@@ -544,8 +550,11 @@ describe('sendEstimate — error matrix (status NEVER flips on failure)', () => 
 
 // ─── D. ensurePublicLink idempotency / mint (TC-SD-001/002/003) ──────────────
 describe('ensurePublicLink', () => {
-    it('TC-SD-002: reuses an existing token (never re-mints / no setPublicToken)', async () => {
-        mockGetEstimateById.mockResolvedValue(estimateRow({ public_token: 'tok_estABCDE' }));
+    it('TC-SD-002: reuses an existing unexpired token when rotation is not requested', async () => {
+        mockGetEstimateById.mockResolvedValue(estimateRow({
+            public_token: 'tok_estABCDE',
+            public_token_expires_at: '2099-01-01T00:00:00.000Z',
+        }));
         const out = await estimatesService.ensurePublicLink(COMPANY_A, EST_ID);
         expect(out).toEqual({ token: 'tok_estABCDE', url: 'https://app.albusto.com/e/tok_estABCDE' });
         expect(mockSetPublicToken).not.toHaveBeenCalled();
@@ -567,7 +576,7 @@ describe('ensurePublicLink', () => {
         );
         expect(out.token).toMatch(/^[A-Za-z0-9_-]{11}$/); // 8 bytes → 11 url-safe chars
         expect(out.url).toBe(`https://app.albusto.com/e/${out.token}`);
-        expect(mockSetPublicToken).toHaveBeenCalledWith(EST_ID, COMPANY_A, out.token);
+        expect(mockSetPublicToken).toHaveBeenCalledWith(EST_ID, COMPANY_A, out.token, null, 18);
         expect(mockLogFinancialActivity).toHaveBeenCalledWith({
             companyId: COMPANY_A,
             entityType: 'estimate',
@@ -575,6 +584,31 @@ describe('ensurePublicLink', () => {
             entity: expect.objectContaining({ id: EST_ID }),
             actor: activityActor,
         }, { client: null });
+    });
+
+    it('rotates on resend and replaces expired or legacy no-expiry tokens', async () => {
+        for (const row of [
+            estimateRow({ public_token_expires_at: '2020-01-01T00:00:00.000Z' }),
+            estimateRow({ public_token_expires_at: null }),
+        ]) {
+            jest.clearAllMocks();
+            mockGetEstimateById.mockResolvedValue(row);
+            const out = await estimatesService.ensurePublicLink(COMPANY_A, EST_ID);
+            expect(out.token).not.toBe('tok_estABCDE');
+            expect(mockSetPublicToken).toHaveBeenCalledWith(EST_ID, COMPANY_A, out.token, null, 18);
+        }
+
+        jest.clearAllMocks();
+        mockGetEstimateById.mockResolvedValue(estimateRow());
+        const rotated = await estimatesService.ensurePublicLink(
+            COMPANY_A,
+            EST_ID,
+            null,
+            null,
+            { rotate: true }
+        );
+        expect(rotated.token).not.toBe('tok_estABCDE');
+        expect(mockSetPublicToken).toHaveBeenCalledWith(EST_ID, COMPANY_A, rotated.token, null, 18);
     });
 
     it('TC-SD-003: missing/cross-tenant estimate → NOT_FOUND 404', async () => {

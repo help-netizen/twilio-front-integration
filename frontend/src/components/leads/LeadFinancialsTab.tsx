@@ -113,11 +113,20 @@ export function LeadFinancialsTab({ leadId }: Props) {
             <div>
                 <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Estimates</p>
-                    {estimates.length === 0 && (
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
-                            <Plus className="size-3 mr-1" />New
-                        </Button>
-                    )}
+                    {/* Always offered. This used to appear only while the lead had
+                        ZERO estimates, so the moment you priced one option you
+                        could no longer price an alternative here — and quoting a
+                        cheaper variant is exactly what you do when someone
+                        hesitates. Several estimates per lead are legitimate. */}
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}
+                        data-testid="lead-new-estimate"
+                    >
+                        <Plus className="size-3 mr-1" />New
+                    </Button>
                 </div>
                 {estimates.length === 0 && !loading && (
                     <p className="text-xs text-muted-foreground">No estimates</p>

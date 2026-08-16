@@ -162,12 +162,13 @@ describe('jobsService.listJobs signed payment rollup', () => {
         updated_at: null,
     };
 
-    function primeList(paymentRows) {
+    function primeList({ allocations = [], pools = [] } = {}) {
         db.query
             .mockResolvedValueOnce({ rows: [{ total: '1' }] })
             .mockResolvedValueOnce({ rows: [jobRow] })
             .mockResolvedValueOnce({ rows: [] })
-            .mockResolvedValueOnce({ rows: paymentRows });
+            .mockResolvedValueOnce({ rows: allocations })
+            .mockResolvedValueOnce({ rows: pools });
     }
 
     beforeEach(() => {
@@ -175,47 +176,46 @@ describe('jobsService.listJobs signed payment rollup', () => {
     });
 
     it('CTRL-DUE-SIGNED: native completed standalone $95 returns paid 95 and due -95', async () => {
-        primeList([{ job_id: 7, total_paid: '95.00', total_due: '-95.00' }]);
+        primeList({ pools: [{ job_id: 7, native_pool: '95.00', total_pool: '95.00' }] });
 
         const result = await jobsService.listJobs({ companyId: CO });
 
         expect(result.results).toHaveLength(1);
         expect(result.results[0]).toMatchObject({
             id: 7,
-            amount_paid: '95.00',
-            balance_due: '-95.00',
+            amount_paid: 95,
+            balance_due: -95,
         });
 
-        const [sql, params] = db.query.mock.calls[3];
-        expect(params).toEqual([[7], CO]);
-        expect(sql).toContain('i.company_id = $2');
-        expect(sql).toContain('pt.company_id = $2');
-        expect(sql).toContain('pt.invoice_id IS NULL');
-        expect(sql).toContain("pt.transaction_type = 'payment'");
-        expect(sql).toContain("pt.status = 'completed'");
-        expect(sql).toContain('COALESCE(ir.invoice_paid, 0) + COALESCE(sr.standalone_paid, 0)');
-        expect(sql).toContain("pt.external_source IS DISTINCT FROM 'zenbooker'");
-        expect(sql).toContain('COALESCE(ir.invoice_due, 0) - COALESCE(sr.standalone_due_offset, 0)');
+        const [allocationSql, allocationParams] = db.query.mock.calls[3];
+        const [poolSql, poolParams] = db.query.mock.calls[4];
+        expect(allocationParams).toEqual([CO, [7]]);
+        expect(poolParams).toEqual([CO, [7]]);
+        expect(allocationSql).toContain('i.company_id = $1');
+        expect(allocationSql).toContain("i.status NOT IN ('void', 'voided', 'refunded')");
+        expect(poolSql).toContain("effective_source IS DISTINCT FROM 'zenbooker'");
+        expect(poolSql).toContain('SUM(paid_effect)');
+        expect(poolSql).toContain('SUM(document_effect)');
     });
 
     it('CTRL-ZBPAY-DUE-GUARD: completed standalone ZB $95 is Paid but cannot create Due credit', async () => {
-        primeList([{ job_id: 7, total_paid: '95.00', total_due: '0.00' }]);
+        primeList({ pools: [{ job_id: 7, native_pool: '0.00', total_pool: '95.00' }] });
 
         const result = await jobsService.listJobs({ companyId: CO });
 
         expect(result.results[0]).toMatchObject({
             id: 7,
-            amount_paid: '95.00',
-            balance_due: '0.00',
+            amount_paid: 95,
+            balance_due: 0,
         });
 
-        const sql = db.query.mock.calls[3][0];
-        expect(sql).toContain('SUM(pt.amount) AS standalone_paid');
-        expect(sql).toMatch(/SUM\(pt\.amount\) FILTER \(\s*WHERE pt\.external_source IS DISTINCT FROM 'zenbooker'\s*\) AS standalone_due_offset/);
+        const sql = db.query.mock.calls[4][0];
+        expect(sql).toMatch(/SUM\(document_effect\) FILTER \(\s*WHERE effective_source IS DISTINCT FROM 'zenbooker'/);
+        expect(sql).toMatch(/SUM\(paid_effect\) FILTER \(\s*WHERE effective_source IS DISTINCT FROM 'zenbooker'\s*OR invoice_id IS NULL/);
     });
 
     it('keeps amount_paid and balance_due null when no local invoice or standalone payment exists', async () => {
-        primeList([]);
+        primeList();
 
         const result = await jobsService.listJobs({ companyId: CO });
 
@@ -223,11 +223,14 @@ describe('jobsService.listJobs signed payment rollup', () => {
     });
 
     it('maps the combined invoice + standalone rollup without a second calculation', async () => {
-        primeList([{ job_id: 7, total_paid: '70.00', total_due: '30.00' }]);
+        primeList({
+            allocations: [{ job_id: 7, legacy_paid: '20.00', capacity: '80.00' }],
+            pools: [{ job_id: 7, native_pool: '50.00', total_pool: '50.00' }],
+        });
 
         const result = await jobsService.listJobs({ companyId: CO });
 
-        expect(result.results[0]).toMatchObject({ amount_paid: '70.00', balance_due: '30.00' });
-        expect(db.query).toHaveBeenCalledTimes(4);
+        expect(result.results[0]).toMatchObject({ amount_paid: 70, balance_due: 30 });
+        expect(db.query).toHaveBeenCalledTimes(5);
     });
 });

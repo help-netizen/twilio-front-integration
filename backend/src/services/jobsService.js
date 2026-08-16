@@ -731,6 +731,91 @@ function splitList(value) {
     return [...new Set(items.map(item => String(item).trim()).filter(Boolean))].sort();
 }
 
+/**
+ * Bounded, projection-only search for relationship pickers. Unlike listJobs it
+ * does not calculate totals/facets or hydrate tags and finance data.
+ */
+async function searchJobsForPicker({ companyId, search, limit = 20, providerScope } = {}) {
+    if (!companyId) throw jobsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+    if (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 50) {
+        throw jobsListError('INVALID_QUERY', 'limit must be an integer from 1 to 50', 400);
+    }
+
+    const normalizedSearch = typeof search === 'string' ? search.trim() : '';
+    if (normalizedSearch.length > 200) {
+        throw jobsListError('INVALID_QUERY', 'search must be at most 200 characters', 400);
+    }
+
+    const conditions = ['j.company_id = $1'];
+    const params = [companyId];
+    let idx = 1;
+
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) {
+            conditions.push('FALSE');
+        } else {
+            idx++;
+            conditions.push(`j.assigned_provider_user_ids @> $${idx}::jsonb`);
+            params.push(JSON.stringify([providerScope.userId]));
+        }
+    }
+
+    let relevanceOrder = '';
+    if (normalizedSearch) {
+        idx++;
+        const searchParam = `$${idx}`;
+        params.push(`%${normalizedSearch}%`);
+        conditions.push(`(
+            j.job_number ILIKE ${searchParam}
+            OR COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) ILIKE ${searchParam}
+            OR COALESCE(j.address, '') ILIKE ${searchParam}
+            OR COALESCE(j.service_name, '') ILIKE ${searchParam}
+        )`);
+        relevanceOrder = `CASE
+            WHEN LOWER(COALESCE(j.job_number, '')) = LOWER($${idx + 1}) THEN 0
+            WHEN LOWER(COALESCE(j.job_number, '')) LIKE LOWER($${idx + 1}) || '%' THEN 1
+            WHEN LOWER(COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, ''))) LIKE LOWER($${idx + 1}) || '%' THEN 2
+            ELSE 3
+        END, `;
+        idx++;
+        params.push(normalizedSearch);
+    }
+
+    idx++;
+    params.push(Number(limit));
+    const { rows } = await db.query(
+        `SELECT j.id,
+                j.job_number,
+                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS customer_name,
+                j.address,
+                j.service_name,
+                j.start_date,
+                j.blanc_status
+         FROM jobs j
+         LEFT JOIN contacts c
+           ON c.id = j.contact_id
+          AND c.company_id = j.company_id
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY ${relevanceOrder}j.start_date DESC NULLS LAST, j.id DESC
+         LIMIT $${idx}`,
+        params
+    );
+
+    return {
+        results: rows.map(row => ({
+            id: row.id,
+            job_number: row.job_number || null,
+            customer_name: row.customer_name || null,
+            address: row.address || null,
+            service_name: row.service_name || null,
+            start_date: row.start_date instanceof Date
+                ? row.start_date.toISOString()
+                : row.start_date || null,
+            status: row.blanc_status || null,
+        })),
+    };
+}
+
 async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, cursor, companyId, companyTimezone, contactId, sortBy = 'start_date', sortOrder = 'desc', onlyOpen, paymentStatus, startDate, endDate, serviceName, jobSource, provider, tagIds, tagMatch, providerScope } = {}) {
     if (!companyId) throw jobsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
     if (!Number.isInteger(Number(limit)) || Number(limit) < 1 || Number(limit) > 500) {
@@ -1672,6 +1757,7 @@ module.exports = {
     getJobById,
     getJobByZbId,
     listJobs,
+    searchJobsForPicker,
     getJobBalanceDue,
     updateBlancStatus,
     mergeNotes,

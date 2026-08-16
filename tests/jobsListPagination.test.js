@@ -73,7 +73,7 @@ function useListDispatch({
         }
         if (/SELECT j\.\*,[\s\S]*FROM jobs j/i.test(sql)) return { rows };
         if (/FROM job_tag_assignments jta[\s\S]*scoped_job/i.test(sql)) return { rows: tags };
-        if (/WITH invoice_rollup AS/i.test(sql)) return { rows: payments };
+        if (/WITH\s+(?:invoice_rollup|original_payments)\s+AS/i.test(sql)) return { rows: payments };
         throw new Error(`Unexpected Jobs list SQL: ${sql}`);
     });
 }
@@ -114,6 +114,18 @@ describe('Jobs fail-closed tenant and route contract', () => {
         listSpy.mockRestore();
     });
 
+    test('picker route also requires company context before service or SQL', async () => {
+        const pickerSpy = jest.spyOn(jobsService, 'searchJobsForPicker');
+
+        const response = await request(appFor(null)).get('/picker?search=repair');
+
+        expect(response.status).toBe(403);
+        expect(response.body.code).toBe('TENANT_CONTEXT_REQUIRED');
+        expect(pickerSpy).not.toHaveBeenCalled();
+        expect(db.query).not.toHaveBeenCalled();
+        pickerSpy.mockRestore();
+    });
+
     test('service requires company context before SQL', async () => {
         await expect(jobsService.listJobs()).rejects.toMatchObject({
             code: 'TENANT_CONTEXT_REQUIRED',
@@ -150,6 +162,83 @@ describe('Jobs fail-closed tenant and route contract', () => {
         expect(mixed.status).toBe(400);
         expect(mixed.body.code).toBe('INVALID_CURSOR_REQUEST');
         expect(db.query).not.toHaveBeenCalled();
+    });
+});
+
+describe('Job picker projection', () => {
+    test('service requires company context and rejects unbounded input before SQL', async () => {
+        await expect(jobsService.searchJobsForPicker({ search: 'repair' }))
+            .rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED', statusCode: 403 });
+        await expect(jobsService.searchJobsForPicker({
+            companyId: COMPANY,
+            search: 'x'.repeat(201),
+        })).rejects.toMatchObject({ code: 'INVALID_QUERY', statusCode: 400 });
+        await expect(jobsService.searchJobsForPicker({
+            companyId: COMPANY,
+            limit: 51,
+        })).rejects.toMatchObject({ code: 'INVALID_QUERY', statusCode: 400 });
+        expect(db.query).not.toHaveBeenCalled();
+    });
+
+    test('one company-scoped query searches number, customer, address, and service with a narrow shape', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{
+            id: 71,
+            job_number: 'J-71',
+            customer_name: 'Jane Customer',
+            address: '71 Main St',
+            service_name: 'Repair',
+            start_date: new Date('2026-07-18T15:00:00.000Z'),
+            blanc_status: 'Submitted',
+            company_id: 'must-not-leak',
+            metadata: { must_not: 'leak' },
+        }] });
+
+        const result = await jobsService.searchJobsForPicker({
+            companyId: COMPANY,
+            search: 'Jane',
+            limit: 12,
+            providerScope: { assignedOnly: true, userId: PROVIDER_USER },
+        });
+
+        expect(db.query).toHaveBeenCalledTimes(1);
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain('j.company_id = $1');
+        expect(sql).toContain('j.assigned_provider_user_ids @> $2::jsonb');
+        expect(sql).toContain('j.job_number ILIKE $3');
+        expect(sql).toContain("COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) ILIKE $3");
+        expect(sql).toContain("COALESCE(j.address, '') ILIKE $3");
+        expect(sql).toContain("COALESCE(j.service_name, '') ILIKE $3");
+        expect(sql).toContain('c.company_id = j.company_id');
+        expect(sql).not.toContain('SELECT j.*');
+        expect(sql).not.toMatch(/COUNT\(|job_tag_assignments|invoice_rollup/);
+        expect(params).toEqual([
+            COMPANY,
+            JSON.stringify([PROVIDER_USER]),
+            '%Jane%',
+            'Jane',
+            12,
+        ]);
+        expect(result).toEqual({ results: [{
+            id: 71,
+            job_number: 'J-71',
+            customer_name: 'Jane Customer',
+            address: '71 Main St',
+            service_name: 'Repair',
+            start_date: '2026-07-18T15:00:00.000Z',
+            status: 'Submitted',
+        }] });
+    });
+
+    test('assigned-only without a resolved crm user fails closed to zero rows', async () => {
+        db.query.mockResolvedValueOnce({ rows: [] });
+
+        await jobsService.searchJobsForPicker({
+            companyId: COMPANY,
+            providerScope: { assignedOnly: true, userId: null },
+        });
+
+        expect(db.query.mock.calls[0][0]).toContain('WHERE j.company_id = $1 AND FALSE');
+        expect(db.query.mock.calls[0][1]).toEqual([COMPANY, 20]);
     });
 });
 
@@ -225,7 +314,7 @@ describe('Jobs complete predicates, security, and facets', () => {
         const [tagSql, tagParams] = db.query.mock.calls[2];
         expect(tagSql).toMatch(/JOIN jobs scoped_job ON scoped_job\.id = jta\.job_id AND scoped_job\.company_id = \$2/);
         expect(tagParams).toEqual([[10, 9], COMPANY]);
-        expect(db.query.mock.calls[3][1]).toEqual([[10, 9], COMPANY]);
+        expect(db.query.mock.calls[3][1]).toEqual([COMPANY, [10, 9]]);
     });
 });
 

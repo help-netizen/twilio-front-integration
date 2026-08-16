@@ -170,6 +170,40 @@ router.get('/', requirePermission('jobs.view'), async (req, res) => {
     }
 });
 
+// GET /api/jobs/picker — bounded relationship-picker search.
+router.get('/picker', requirePermission('jobs.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: 'Company context is required',
+                code: 'TENANT_CONTEXT_REQUIRED',
+            });
+        }
+
+        const { search, limit } = req.query;
+        if (search !== undefined && (typeof search !== 'string' || search.length > 200)) {
+            return res.status(400).json({ ok: false, error: 'search must be at most 200 characters', code: 'INVALID_QUERY' });
+        }
+        if (limit !== undefined && (!/^\d+$/.test(String(limit)) || Number(limit) < 1 || Number(limit) > 50)) {
+            return res.status(400).json({ ok: false, error: 'limit must be 1-50', code: 'INVALID_QUERY' });
+        }
+
+        const result = await jobsService.searchJobsForPicker({
+            companyId,
+            search: search || undefined,
+            limit: limit === undefined ? 20 : Number(limit),
+            providerScope: getProviderScope(req),
+        });
+        return res.json({ ok: true, data: result });
+    } catch (err) {
+        const status = err.statusCode || err.httpStatus || 500;
+        if (status >= 500) console.error('[Jobs API] Picker error:', err.message);
+        return res.status(status).json({ ok: false, error: err.message, code: err.code || 'INTERNAL_ERROR' });
+    }
+});
+
 // ─── Get Job by ID ───────────────────────────────────────────────────────────
 
 router.get('/:id', requirePermission('jobs.view'), async (req, res) => {

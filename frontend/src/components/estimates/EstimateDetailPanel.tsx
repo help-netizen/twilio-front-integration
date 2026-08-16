@@ -9,7 +9,6 @@ import { Label } from '../ui/label';
 import { Checkbox } from '../ui/checkbox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Textarea } from '../ui/textarea';
-import { EstimatePreviewDialog } from './EstimatePreviewDialog';
 import { EstimateSendDialog } from './EstimateSendDialog';
 import { EstimateItemDialog, type ItemDraft } from './EstimateItemDialog';
 import { EstimateSummaryDialog } from './EstimateSummaryDialog';
@@ -23,6 +22,7 @@ import {
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
 import { StatusPill } from './EstimateStatusPill';
+import { LinkJobPicker } from './LinkJobPicker';
 import type { Estimate, EstimateEvent, EstimateItem, EstimateSendData, EstimateDiscountType } from '../../services/estimatesApi';
 import {
     convertEstimateToInvoice,
@@ -124,9 +124,9 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     // Open by default when there IS a summary — the common path is "open to read".
     const [summaryOpen, setSummaryOpen] = useState(!!initialEstimate.summary);
     useEffect(() => { setSummaryOpen(!!initialEstimate.summary); }, [initialEstimate.id, initialEstimate.summary]);
-    const [previewOpen, setPreviewOpen] = useState(false);
     const [sendOpen, setSendOpen] = useState(false);
     const [declineOpen, setDeclineOpen] = useState(false);
+    const [linkJobOpen, setLinkJobOpen] = useState(false);
     const [declineReason, setDeclineReason] = useState('');
 
     // Inline-edit modals (Summary, Items)
@@ -393,8 +393,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     };
 
     const openLinkJobPrompt = () => {
-        const jobId = prompt('Enter Job ID to link:');
-        if (jobId && !Number.isNaN(Number(jobId))) onLinkJob(Number(jobId));
+        setLinkJobOpen(true);
     };
 
     // ESTIMATE-FOOTER-001: exactly ONE primary CTA per state; everything else → "More".
@@ -927,7 +926,6 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 onSave={saveItemDraft}
             />
 
-            <EstimatePreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} estimate={estimate} />
             <EstimateSendDialog
                 open={sendOpen}
                 onOpenChange={setSendOpen}
@@ -939,6 +937,12 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 onSend={async data => {
                     await onSend(data);
                 }}
+            />
+
+            <LinkJobPicker
+                open={linkJobOpen}
+                onOpenChange={setLinkJobOpen}
+                onPick={jobId => onLinkJob(jobId)}
             />
 
             <Dialog open={declineOpen} onOpenChange={setDeclineOpen}>

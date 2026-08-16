@@ -72,3 +72,21 @@ describe('estimate detail — the decisions', () => {
         expect(panelRaw).toContain('blanc-l2');
     });
 });
+
+/**
+ * P5 — the last two places the card asked the user for things it should know.
+ */
+describe('linking a job, and the dialog that was never reachable', () => {
+    it('searches for the job instead of demanding its database id', () => {
+        // `window.prompt('Enter Job ID to link:')` asked for a number nobody
+        // knows. People know "the Feldman one on Florida Street".
+        expect(panelRaw).not.toContain("prompt('Enter Job ID");
+        expect(panelRaw).toContain('<LinkJobPicker');
+    });
+
+    it('no longer mounts a preview dialog nothing can open', () => {
+        // The instance existed, with its own state, and no code path set it true.
+        expect(panelRaw).not.toContain('EstimatePreviewDialog');
+        expect(panelRaw).not.toContain('previewOpen');
+    });
+});

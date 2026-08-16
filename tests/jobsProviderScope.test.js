@@ -19,6 +19,7 @@ jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({
     logEvent: jest.fn(), actorName: jest.fn(() => 'Test'), getEntityHistory: jest.fn(async () => []),
 }));
+jest.mock('../backend/src/services/eventBus', () => ({ emit: jest.fn(async () => null) }));
 jest.mock('../backend/src/services/jobActivityService', () => ({
     logJobActivity: jest.fn(async () => ({})),
     userActor: id => ({ id, type: 'user', label: null, source: 'crm' }),
@@ -27,6 +28,8 @@ jest.mock('../backend/src/services/noteAttachmentsService', () => ({
     MAX_FILE_SIZE: 1024, MAX_FILES_PER_NOTE: 5, getAttachmentsForEntity: jest.fn(async () => []),
 }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+jest.mock('../backend/src/services/conversationsService', () => ({}));
+jest.mock('../backend/src/services/emailService', () => ({}));
 
 const http = require('http');
 const express = require('express');
@@ -210,6 +213,64 @@ describe('GET /api/jobs list contact passthrough', () => {
             }));
         } finally {
             listSpy.mockRestore();
+        }
+    });
+});
+
+describe('GET /api/jobs/picker route contract', () => {
+    it('forwards tenant and provider visibility into the bounded picker service', async () => {
+        const pickerSpy = jest.spyOn(jobsService, 'searchJobsForPicker').mockResolvedValue({
+            results: [{ id: 7, job_number: 'J-7' }],
+        });
+
+        try {
+            const res = await request(
+                appWithAuthz({ permissions: ['jobs.view'], scopes: { job_visibility: 'assigned_only' } }),
+                'GET',
+                '/picker?search=Jane%20Doe&limit=15'
+            );
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.results).toEqual([{ id: 7, job_number: 'J-7' }]);
+            expect(pickerSpy).toHaveBeenCalledWith({
+                companyId: COMPANY_A,
+                search: 'Jane Doe',
+                limit: 15,
+                providerScope: { assignedOnly: true, userId: PROVIDER_USER },
+            });
+        } finally {
+            pickerSpy.mockRestore();
+        }
+    });
+
+    it('R-matrix deny: jobs.view is required before the picker service runs', async () => {
+        const pickerSpy = jest.spyOn(jobsService, 'searchJobsForPicker');
+        try {
+            const res = await request(appWithAuthz({ permissions: [] }), 'GET', '/picker?search=Jane');
+            expect(res.status).toBe(403);
+            expect(pickerSpy).not.toHaveBeenCalled();
+        } finally {
+            pickerSpy.mockRestore();
+        }
+    });
+
+    it('rejects oversized search and limits before the picker service runs', async () => {
+        const pickerSpy = jest.spyOn(jobsService, 'searchJobsForPicker');
+        try {
+            const longSearch = encodeURIComponent('x'.repeat(201));
+            expect((await request(
+                appWithAuthz({ permissions: ['jobs.view'] }),
+                'GET',
+                `/picker?search=${longSearch}`
+            )).status).toBe(400);
+            expect((await request(
+                appWithAuthz({ permissions: ['jobs.view'] }),
+                'GET',
+                '/picker?limit=51'
+            )).status).toBe(400);
+            expect(pickerSpy).not.toHaveBeenCalled();
+        } finally {
+            pickerSpy.mockRestore();
         }
     });
 });

@@ -73,13 +73,14 @@ function handleActionError(res, err, label) {
 router.get('/estimates/:token', async (req, res) => {
     try {
         const { token } = req.params;
-        if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
+        if (!TOKEN_RE.test(token)) return res.status(404).json(NOT_FOUND);
         const view = await estimatesService.getPublicEstimate(token, { recordView: true });
-        if (!view) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
+        if (!view) return res.status(404).json(NOT_FOUND);
         res.json({ ok: true, data: view });
     } catch (err) {
         console.error('[Public/Estimates] GET /:token error:', err.message);
         const status = err.httpStatus || 500;
+        if (status === 404) return res.status(404).json(NOT_FOUND);
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
 });
@@ -135,7 +136,7 @@ router.post(
 router.get('/estimates/:token/pdf', async (req, res) => {
     try {
         const { token } = req.params;
-        if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
+        if (!TOKEN_RE.test(token)) return res.status(404).json(NOT_FOUND);
         const { estimate, buffer } = await estimatesService.generatePdfByPublicToken(
             token,
             { recordView: true }
@@ -151,6 +152,7 @@ router.get('/estimates/:token/pdf', async (req, res) => {
     } catch (err) {
         console.error('[Public/Estimates] GET /:token/pdf error:', err.message);
         const status = err.httpStatus || 500;
+        if (status === 404) return res.status(404).json(NOT_FOUND);
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
 });
@@ -163,7 +165,7 @@ const shortRouter = express.Router();
 shortRouter.get('/ep/:token', (req, res) => {
     const { token } = req.params;
     if (!TOKEN_RE.test(token)) {
-        return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
+        return res.status(404).json(NOT_FOUND);
     }
     res.redirect(302, `/api/public/estimates/${token}/pdf`);
 });
