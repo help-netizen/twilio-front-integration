@@ -188,8 +188,8 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     const isMobile = useIsMobile();
     const [reportEditorOpen, setReportEditorOpen] = useState(false);
 
-    const handleAiGenerate = async () => {
-        const text = aiReport.trim();
+    const handleAiGenerate = async (reportText?: string) => {
+        const text = (reportText ?? aiReport).trim();
         if (!text || aiGenerating) return;
         setAiGenerating(true);
         setReportToEstimateOff(false);
@@ -404,13 +404,15 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     <FullScreenTextEditor
                                         open={isMobile && reportEditorOpen}
                                         initialValue={aiReport}
-                                        onDone={text => { setAiReport(text); setReportEditorOpen(false); }}
+                                        onDone={text => { setAiReport(text); setReportEditorOpen(false); handleAiGenerate(text); }}
                                         onCancel={() => setReportEditorOpen(false)}
                                         title="Report"
                                         placeholder="Paste or type the service report…"
+                                        doneLabel="Generate estimate"
+                                        requireText
                                     />
                                     <div className="mt-3 flex justify-end">
-                                        <Button type="button" onClick={handleAiGenerate} disabled={aiGenerating || !aiReport.trim()}>
+                                        <Button type="button" onClick={() => handleAiGenerate()} disabled={aiGenerating || !aiReport.trim()}>
                                             {aiGenerating
                                                 ? <><Loader2 className="mr-1.5 size-4 animate-spin" /> Generating…</>
                                                 : <><Sparkles className="mr-1.5 size-4" /> Generate</>}

@@ -25,6 +25,9 @@ interface FullScreenTextEditorProps {
     leftActions?: ReactNode;
     /** Blocks the primary action (e.g. nothing typed and nothing attached). */
     doneDisabled?: boolean;
+    /** Also disable the primary action while the editor is empty (e.g. a "Generate" CTA
+     *  that needs a report to act on). Evaluated against the editor's own live text. */
+    requireText?: boolean;
     /** Spinner on the primary action while the note is being submitted. */
     donePending?: boolean;
 }
@@ -39,7 +42,7 @@ interface FullScreenTextEditorProps {
 export function FullScreenTextEditor({
     open, initialValue, onDone, onCancel, title, placeholder, doneLabel = 'Done',
     onRepolish, repolishLabel = 'Re-polish', busy = false,
-    leftActions, doneDisabled = false, donePending = false,
+    leftActions, doneDisabled = false, donePending = false, requireText = false,
 }: FullScreenTextEditorProps) {
     const [text, setText] = useState(initialValue);
     const keyboardInset = useKeyboardInset(open);
@@ -163,7 +166,7 @@ export function FullScreenTextEditor({
                     <button
                         type="button"
                         onClick={() => onDone(text)}
-                        disabled={busy || doneDisabled || donePending}
+                        disabled={busy || doneDisabled || donePending || (requireText && !text.trim())}
                         className="flex h-11 flex-1 items-center justify-center rounded-full text-sm font-semibold transition-opacity hover:opacity-85 disabled:opacity-40"
                         style={{ background: 'var(--blanc-accent)', color: '#fff' }}
                     >

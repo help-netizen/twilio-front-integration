@@ -224,8 +224,8 @@ export function InvoiceEditorDialog({
         setSummaryDialogOpen(true);
     };
 
-    const handleAiGenerate = async () => {
-        const report = aiReport.trim();
+    const handleAiGenerate = async (reportText?: string) => {
+        const report = (reportText ?? aiReport).trim();
         if (!report || aiGenerating) return;
         setAiGenerating(true);
         setReportToEstimateOff(false);
@@ -401,7 +401,11 @@ export function InvoiceEditorDialog({
 
     return (
         <>
-            <Dialog open={open} onOpenChange={requestOpenChange}>
+            {/* modal={!isMobile}: on mobile the full-screen report/summary editors portal to
+                document.body (outside this dialog); a modal Dialog's focus-trap would yank focus
+                back and iOS would never raise the keyboard. Non-modal on mobile lets them keep
+                focus — parity with EstimateEditorDialog. */}
+            <Dialog open={open} onOpenChange={requestOpenChange} modal={!isMobile}>
                 <DialogContent
                     variant="panel"
                     size="full"
@@ -481,7 +485,7 @@ export function InvoiceEditorDialog({
                                     type="button"
                                     variant="outline"
                                     className="mt-3 h-11 w-full rounded-xl font-semibold text-[var(--blanc-accent)]"
-                                    onClick={handleAiGenerate}
+                                    onClick={() => handleAiGenerate()}
                                     disabled={aiGenerating || !aiReport.trim()}
                                 >
                                     {aiGenerating
@@ -645,10 +649,12 @@ export function InvoiceEditorDialog({
             <FullScreenTextEditor
                 open={reportEditorOpen && isMobile}
                 initialValue={aiReport}
-                onDone={text => { setAiReport(text); setReportEditorOpen(false); }}
+                onDone={text => { setAiReport(text); setReportEditorOpen(false); handleAiGenerate(text); }}
                 onCancel={() => setReportEditorOpen(false)}
                 title="Report"
                 placeholder="Paste or type the service report…"
+                doneLabel="Generate invoice"
+                requireText
             />
             <FullScreenTextEditor
                 open={summaryDialogOpen && isMobile}
