@@ -41,6 +41,9 @@ export function GeoPostalCodeMap({
     const boundsKeyRef = useRef<string | null>(null);
     const [loadState, setLoadState] = useState<LoadState>('idle');
     const [capabilityRevision, setCapabilityRevision] = useState(0);
+    // Lazy-load: don't touch Google (script, tiles, billed map load) until the map
+    // scrolls near the viewport. A visit that never reaches the geo section costs 0.
+    const [inView, setInView] = useState(false);
     const configuredMapId = getGoogleMapsMapId();
     const hasMapPoints = rows.some(row => (
         Boolean(row.geometry.google_place_id?.trim()) || hasFiniteCoordinates(row)
@@ -63,7 +66,24 @@ export function GeoPostalCodeMap({
     }, []);
 
     useEffect(() => {
-        if (!hasMapPoints || loadState !== 'idle') return;
+        const element = mapElementRef.current;
+        if (!element || inView) return;
+        if (typeof IntersectionObserver === 'undefined') {
+            setInView(true);
+            return;
+        }
+        const observer = new IntersectionObserver(entries => {
+            if (entries.some(entry => entry.isIntersecting)) {
+                setInView(true);
+                observer.disconnect();
+            }
+        }, { rootMargin: '200px' });
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, [inView]);
+
+    useEffect(() => {
+        if (!hasMapPoints || !inView || loadState !== 'idle') return;
         let cancelled = false;
         loadGoogleMaps()
             .then(() => {
@@ -76,7 +96,7 @@ export function GeoPostalCodeMap({
         return () => {
             cancelled = true;
         };
-    }, [hasMapPoints, loadState]);
+    }, [hasMapPoints, inView, loadState]);
 
     useEffect(() => {
         if (loadState !== 'ready' || !mapElementRef.current || mapRef.current) return;
