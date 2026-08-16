@@ -9,6 +9,7 @@
  *   - 136_extend_tasks_for_crm_entities.sql (tasks.view/create/manage)
  *   - 138_provider_finance_and_source_perm.sql (lead_source.view)
  *   - 225_notification_security_core.sql (notifications.financial.receive)
+ *   - 268_notes_polish_report_permission.sql (notes.polish_report)
  *
  * Grouped per the RBAC audit categories. Keep this in sync with the seed
  * migrations so the matrix rows always match the keys the resolver understands.
@@ -101,6 +102,12 @@ const PERMISSION_CATALOG = [
         items: [
             { key: 'price_book.view', label: 'View & use the price book (items/groups)' },
             { key: 'price_book.manage', label: 'Manage the price book (items, groups, categories)' },
+        ],
+    },
+    {
+        category: 'Notes',
+        items: [
+            { key: 'notes.polish_report', label: 'Report generator', description: 'Show the AI report generator on notes — turns a rough technician note into a full professional report (reviewed before it replaces the note). Requires Report → Estimate to be enabled in Settings → Integrations.' },
         ],
     },
     {

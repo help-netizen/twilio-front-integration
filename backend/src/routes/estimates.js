@@ -157,12 +157,15 @@ router.post('/polish-report', async (req, res) => {
                 error: { code: 'FORBIDDEN', message: 'Company context is required' },
             });
         }
-        if (req.authz?.membership?.role_key !== 'provider') {
+        // NOTES-REPORT-PERM-001: gated by the notes.polish_report permission
+        // (Settings → Roles & Access), not a hardcoded role. Seeded to Provider +
+        // Tenant Admin by default (migration 268); any role can be granted it.
+        if (!req.authz?.permissions?.includes('notes.polish_report')) {
             return res.status(403).json({
                 ok: false,
                 error: {
-                    code: 'provider_only',
-                    message: 'Only providers can polish reports.',
+                    code: 'permission_denied',
+                    message: 'You do not have permission to use the report generator.',
                 },
             });
         }

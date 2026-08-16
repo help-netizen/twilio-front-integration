@@ -28,18 +28,18 @@ const router = require('../backend/src/routes/estimates');
 const COMPANY_A = '00000000-0000-0000-0000-0000000000a1';
 const ACTOR_A = '10000000-0000-0000-0000-0000000000a1';
 
-function app({ roleKey = 'provider', companyId = COMPANY_A, membership } = {}) {
+// NOTES-REPORT-PERM-001: the report generator is gated by the `notes.polish_report`
+// permission (Settings → Roles & Access), NOT a hardcoded role. A caller holding the
+// permission succeeds; a caller without it is denied — whatever their role.
+function app({ permissions = ['notes.polish_report'], companyId = COMPANY_A } = {}) {
     const server = express();
     server.use(express.json());
     server.use((req, _res, next) => {
         req.companyFilter = companyId ? { company_id: companyId } : undefined;
         req.user = { crmUser: { id: ACTOR_A } };
         req.authz = {
-            permissions: [],
+            permissions,
             company: companyId ? { id: companyId } : null,
-            // `undefined` keeps the default provider membership; pass `null` to
-            // model an authenticated caller with no resolved tenant membership.
-            membership: membership === undefined ? { role_key: roleKey } : membership,
         };
         next();
     });
@@ -56,7 +56,7 @@ beforeEach(() => {
 });
 
 describe('POST /api/estimates/polish-report', () => {
-    test('provider succeeds without estimates.create and receives the report envelope', async () => {
+    test('a caller with notes.polish_report succeeds without estimates.create and receives the report envelope', async () => {
         const response = await request(app())
             .post('/api/estimates/polish-report')
             .send({ text: 'Washer no fill. Valve bad.' });
@@ -97,53 +97,33 @@ describe('POST /api/estimates/polish-report', () => {
         });
     });
 
-    test.each(['tenant_admin', 'manager', 'dispatcher'])(
-        '%s is denied with provider_only before app or LLM access',
-        async (roleKey) => {
-            const response = await request(app({ roleKey }))
-                .post('/api/estimates/polish-report')
-                .send({ text: 'Dryer does not heat.' });
-
-            expect(response.status).toBe(403);
-            expect(response.body).toEqual({
-                ok: false,
-                error: {
-                    code: 'provider_only',
-                    message: 'Only providers can polish reports.',
-                },
-            });
-            expect(marketplaceService.isAppConnected).not.toHaveBeenCalled();
-            expect(reportPolishService.polishReport).not.toHaveBeenCalled();
-        }
-    );
-
-    test('an authenticated caller with no resolved tenant membership is rejected before app or LLM access', async () => {
-        // The runtime mount only guarantees authenticate + requireCompanyAccess,
-        // so a plain authenticated user (no provider role) must not reach the
-        // feature: the route owns a fail-closed provider gate, not open access.
-        const response = await request(app({ membership: null }))
+    test('a caller WITHOUT notes.polish_report is denied before app or LLM access', async () => {
+        const response = await request(app({ permissions: ['jobs.view', 'estimates.create'] }))
             .post('/api/estimates/polish-report')
-            .send({ text: 'Garbage disposal jammed.' });
+            .send({ text: 'Dryer does not heat.' });
 
         expect(response.status).toBe(403);
         expect(response.body).toEqual({
             ok: false,
             error: {
-                code: 'provider_only',
-                message: 'Only providers can polish reports.',
+                code: 'permission_denied',
+                message: 'You do not have permission to use the report generator.',
             },
         });
         expect(marketplaceService.isAppConnected).not.toHaveBeenCalled();
         expect(reportPolishService.polishReport).not.toHaveBeenCalled();
     });
 
-    test('an unrecognized custom role is denied like any other non-provider role', async () => {
-        const response = await request(app({ roleKey: 'estimator' }))
+    test('a caller with no permissions at all is rejected before app or LLM access', async () => {
+        // The runtime mount only guarantees authenticate + requireCompanyAccess, so a
+        // caller lacking the grant must not reach the feature: the route owns a
+        // fail-closed permission gate, not open access.
+        const response = await request(app({ permissions: [] }))
             .post('/api/estimates/polish-report')
-            .send({ text: 'Ice maker leaking.' });
+            .send({ text: 'Garbage disposal jammed.' });
 
         expect(response.status).toBe(403);
-        expect(response.body.error.code).toBe('provider_only');
+        expect(response.body.error.code).toBe('permission_denied');
         expect(marketplaceService.isAppConnected).not.toHaveBeenCalled();
         expect(reportPolishService.polishReport).not.toHaveBeenCalled();
     });
@@ -166,7 +146,7 @@ describe('POST /api/estimates/polish-report', () => {
         expect(reportPolishService.polishReport).not.toHaveBeenCalled();
     });
 
-    test('missing company context is rejected before provider/app access', async () => {
+    test('missing company context is rejected before permission/app access', async () => {
         const response = await request(app({ companyId: null }))
             .post('/api/estimates/polish-report')
             .send({ text: 'Dishwasher does not drain.' });

@@ -43,7 +43,8 @@ CROSS JOIN (VALUES
     ('provider.enabled'), ('phone_calls.use'), ('call_masking.use'),
     ('gps_tracking.view'), ('gps_tracking.collect'),
     ('tasks.view'), ('tasks.create'), ('tasks.manage'),
-    ('price_book.view'), ('price_book.manage')
+    ('price_book.view'), ('price_book.manage'),
+    ('notes.polish_report')
 ) AS p(key)
 WHERE rc.role_key = 'tenant_admin'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
@@ -125,7 +126,8 @@ CROSS JOIN (VALUES
     ('phone_calls.use'),
     ('call_masking.use'),
     ('tasks.view'), ('tasks.create'),
-    ('price_book.view')
+    ('price_book.view'),
+    ('notes.polish_report')
 ) AS p(key)
 WHERE rc.role_key = 'provider'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;

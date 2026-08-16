@@ -80,11 +80,13 @@ function apiPath(entityType: string, entityId: string | number): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSectionProps) {
-    const { user, isTenantAdmin, hasAnyPermission, membership } = useAuthz();
+    const { user, isTenantAdmin, hasAnyPermission } = useAuthz();
     const myId = user?.sub;
     const isAdmin = isTenantAdmin();
-    // REPORT-POLISH-001: the "Polish report" composer action is Provider-only.
-    const isProvider = membership?.role_key === 'provider';
+    // REPORT-POLISH-001 / NOTES-REPORT-PERM-001: the "Report generator" note action is
+    // governed by the notes.polish_report permission (Settings → Roles & Access), not a
+    // hardcoded role. Seeded to Provider + Tenant Admin by default (migration 268).
+    const canPolishReport = hasAnyPermission('notes.polish_report');
     const canCreateTask = hasAnyPermission('tasks.create', 'tasks.manage');
     const [taskCreateOpen, setTaskCreateOpen] = useState(false);
 
@@ -107,19 +109,22 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const [polishOpen, setPolishOpen] = useState(false);
     const [polishBusy, setPolishBusy] = useState(false);
     const [polishText, setPolishText] = useState('');
+    // Which composer the accepted report flows back into — the add box or an open edit.
+    const [polishTarget, setPolishTarget] = useState<'compose' | 'edit'>('compose');
 
     const reportPolishError = (e: any) => {
         const msg = e?.code === 'app_disabled'
             ? 'Report → Estimate is turned off — enable it in Settings → Integrations.'
-            : e?.code === 'provider_only'
-                ? 'Report polishing is available to Providers only.'
+            : e?.code === 'permission_denied'
+                ? "You don't have permission to use the report generator."
                 : (e?.message || 'Could not polish the report');
         toast.error(msg);
     };
 
-    const startPolish = async () => {
-        const src = text.trim();
+    const startPolish = async (source: string, target: 'compose' | 'edit') => {
+        const src = source.trim();
         if (!src || polishBusy) return;
+        setPolishTarget(target);
         setPolishText('');
         setPolishOpen(true);
         setPolishBusy(true);
@@ -146,14 +151,14 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         }
     };
 
-    const renderPolishButton = (size: number) => isProvider ? (
+    const renderPolishButton = (size: number, source: string, target: 'compose' | 'edit') => canPolishReport ? (
         <button
             type="button"
             onMouseDown={e => e.preventDefault()}
-            onClick={startPolish}
-            disabled={!text.trim() || polishBusy}
-            aria-label="Polish report"
-            title="Turn your note into a full technician report · Provider only"
+            onClick={() => startPolish(source, target)}
+            disabled={!source.trim() || polishBusy}
+            aria-label="Generate report"
+            title="Turn your note into a full technician report"
             className="flex shrink-0 items-center justify-center rounded-full transition-opacity hover:opacity-80 disabled:opacity-40"
             style={{ width: size, height: size, background: 'var(--blanc-surface-strong)', color: 'var(--blanc-accent)' }}
         >
@@ -390,7 +395,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     />
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2" style={{ marginTop: 8 }}>
                         <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
-                        {renderPolishButton(44)}
+                        {renderPolishButton(44, text, 'compose')}
                         <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>⌘ + Enter</p>
                         <button
                             type="button"
@@ -481,7 +486,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     />
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-2" style={{ marginTop: 6 }}>
                         <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
-                        {renderPolishButton(40)}
+                        {renderPolishButton(40, text, 'compose')}
                         <button
                             type="button"
                             onClick={handleSubmit}
@@ -528,6 +533,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                         {editError && <p className="text-xs" style={{ color: '#b42318', marginTop: 8 }}>{editError}</p>}
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2" style={{ marginTop: 6 }}>
                             <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                            {renderPolishButton(40, editText, 'edit')}
                             <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="ml-auto text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
                                 Cancel
                             </button>
@@ -628,6 +634,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                 {/* Composer-canon action row: round attach + Cancel + round violet Save. */}
                                 <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
                                     <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} variant="round" roundBg="var(--blanc-surface-strong)" />
+                                    {renderPolishButton(44, editText, 'edit')}
                                     <div className="ml-auto flex items-center gap-4">
                                         <button type="button" onMouseDown={e => e.preventDefault()} onClick={cancelEdit} disabled={editSubmitting} className="text-sm font-medium disabled:opacity-40" style={{ color: 'var(--blanc-ink-2)' }}>
                                             Cancel
@@ -724,7 +731,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                 doneLabel="Accept"
                 repolishLabel="Re-polish"
                 onRepolish={repolish}
-                onDone={(t) => { setText(t); setPolishOpen(false); }}
+                onDone={(t) => { if (polishTarget === 'edit') setEditText(t); else setText(t); setPolishOpen(false); }}
                 onCancel={() => setPolishOpen(false)}
             />
 
