@@ -545,7 +545,7 @@ export function InvoiceDetailPanel({
                                     >
                                         <span className="min-w-0 flex-1">
                                             <span className="block truncate blanc-l2 blanc-l2-heading">{item.name}</span>
-                                            {item.description ? <span className="mt-0.5 block truncate blanc-l2 blanc-l2-quiet md:max-w-[68ch]">{item.description}</span> : null}
+                                            {item.description ? <span className="mt-0.5 block truncate blanc-l2 blanc-l2-quiet md:max-w-[68ch] md:overflow-visible md:whitespace-normal">{item.description}</span> : null}
                                             {/* The phone cannot afford columns, so it keeps
                                                 the arithmetic inline; the desktop shows it
                                                 where the numbers actually line up. */}

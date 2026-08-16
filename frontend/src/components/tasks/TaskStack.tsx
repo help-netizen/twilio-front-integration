@@ -53,7 +53,7 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
         <div className="space-y-2">
             {showAddButton && (
                 <div className="flex items-center justify-between">
-                    {title ? <span className="blanc-eyebrow">{title}</span> : <span />}
+                    {title ? <span className="blanc-l2 blanc-l2-heading">{title}</span> : <span />}
                     {canCreate && (
                         <button
                             type="button"

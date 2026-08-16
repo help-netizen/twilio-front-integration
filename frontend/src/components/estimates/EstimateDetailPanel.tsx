@@ -781,7 +781,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     {/* Totals (editable Tax rate / Discount) — a narrow stack at the
                         right, under the Amount column, not full-width rows with the
                         number stranded a screen away from its label. */}
-                    <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 md:ml-auto md:w-[420px]">
+                    <section className="md:ml-auto md:w-[420px]">
                         <p className="mb-3 blanc-l2 blanc-l2-heading">Totals</p>
                         <div className="space-y-2 blanc-l2">
                             <div className="flex justify-between">
