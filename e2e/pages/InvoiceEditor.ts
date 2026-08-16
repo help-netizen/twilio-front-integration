@@ -117,7 +117,9 @@ export class InvoiceEditor {
     async expectDraftTotals(amount: string): Promise<void> {
         await expect(this.detailPanel.getByText('draft', { exact: true })).toBeVisible();
         await expect(this.detailPanel.getByText('Amount paid', { exact: true })).toBeVisible();
-        await expect(this.detailPanel.getByText('Balance due', { exact: true })).toBeVisible();
+        // "Balance due" appears twice on purpose since the redesign — once as the
+        // hero figure's label, once in the totals block. Assert the totals row.
+        await expect(this.detailPanel.getByText('Balance due', { exact: true }).last()).toBeVisible();
         await expect(this.detailPanel.getByText(amount, { exact: true }).last()).toBeVisible();
     }
 }

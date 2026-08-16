@@ -30,8 +30,16 @@ export class InvoicesPage {
         return this.detail;
     }
 
+    /**
+     * Bounded, not merely contained: invoice numbers share prefixes (`J-1968-1`
+     * sits inside `J-1968-10`), so a plain `hasText` matched eleven rows the
+     * moment one job had more than nine invoices. Requiring a non-digit after
+     * the number keeps this working for both variants — the desktop `<tr>` has
+     * no aria-label to match on.
+     */
     row(invoiceNumber: string): Locator {
-        return this.rows.filter({ hasText: invoiceNumber });
+        const escaped = invoiceNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return this.rows.filter({ hasText: new RegExp(`${escaped}(?!\\d)`) });
     }
 
     async searchFor(invoiceNumber: string): Promise<Locator> {

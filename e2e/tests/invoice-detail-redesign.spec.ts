@@ -1,6 +1,9 @@
 import { expect, test } from '../fixtures/test';
 import { ApiClient, type CleanupEntity } from '../fixtures/api';
-import { hasAdmin, JOBS_BLOCKED_REASON, JOBS_NATIVE } from '../fixtures/env';
+import {
+    CAN_DISPATCH_DOCUMENTS, DISPATCH_BLOCKED_REASON,
+    hasAdmin, JOBS_BLOCKED_REASON, JOBS_NATIVE,
+} from '../fixtures/env';
 import { InvoicesPage } from '../pages/InvoicesPage';
 
 const COLLECTION_PERMISSIONS = [
@@ -12,6 +15,8 @@ const COLLECTION_PERMISSIONS = [
 test.describe('@suite:invoice-redesign detail', () => {
     test.skip(!hasAdmin(), 'requires E2E_ADMIN_USER / E2E_ADMIN_PASS');
     test.skip(!JOBS_NATIVE, JOBS_BLOCKED_REASON);
+    // Both cases need an ISSUED invoice, and only a real send issues one.
+    test.skip(!CAN_DISPATCH_DOCUMENTS, DISPATCH_BLOCKED_REASON);
 
     test('@p0 detail-actions exposes issued actions and status-safe destruction', async ({ page }) => {
         const api = await ApiClient.forPage(page);

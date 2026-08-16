@@ -38,16 +38,22 @@ test.describe('@suite:invoice-redesign mobile list', () => {
             await invoices.mobileSearch.fill(batchMarker);
             await expect(invoices.rows).toHaveCount(50);
 
-            const first = invoices.row(seeded[0].invoiceNumber);
-            await expect(first).toHaveAttribute('aria-label', `Open ${seeded[0].invoiceNumber}`);
+            // Newest first: the last invoice seeded heads the list, and the one
+            // seeded first is the single row that page two brings in.
+            const newest = seeded[seeded.length - 1];
+            const oldest = seeded[0];
+
+            const first = invoices.row(newest.invoiceNumber);
+            await expect(first).toHaveAttribute('aria-label', `Open ${newest.invoiceNumber}`);
             await expect(first.getByText('Draft', { exact: true })).toBeVisible();
             await expect(first.getByText('$10.00', { exact: true })).toBeVisible();
+            await expect(invoices.row(oldest.invoiceNumber)).toHaveCount(0);
             await expect(invoices.loadMore).toBeVisible();
 
             await invoices.loadMore.click();
             await expect(invoices.rows).toHaveCount(51);
-            await expect(invoices.row(seeded[50].invoiceNumber)).toBeVisible();
-            await invoices.openMobileRow(seeded[0].invoiceNumber);
+            await expect(invoices.row(oldest.invoiceNumber)).toBeVisible();
+            await invoices.openMobileRow(oldest.invoiceNumber);
         } finally {
             await api.cleanup(cleanup);
             await api.dispose();

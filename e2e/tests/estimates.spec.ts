@@ -58,6 +58,12 @@ test.describe('@suite:estimates', () => {
                 { type: 'estimate', id: estimate.id },
             );
 
+            // A draft's primary action is Send — approving is what you do to an
+            // estimate the customer has actually seen (ESTIMATE-REDESIGN-001
+            // §2.2). Recording a yes on a draft is done by invoicing it, which
+            // EST-P2-01 covers; this case is the ordinary path.
+            await api.prepareEstimateAsSent(estimate.id);
+
             await new JobsPage(page).openJob(job.id, job.marker);
             const panel = new JobPanel(page);
             await panel.openEstimate(estimate.marker);

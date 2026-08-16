@@ -107,10 +107,19 @@ test.describe('@suite:estimates', () => {
     });
 
     /**
-     * P5 — a repriced proposal must not leave a second live URL behind it, and a
-     * dead link must be indistinguishable from a wrong one.
+     * P5 — a live link must stop being live the moment the document behind it
+     * stops being the one that was sent.
+     *
+     * Editing a non-draft estimate returns it to draft (existing behaviour, kept
+     * deliberately — spec §2.12). From that moment the customer's link must go
+     * dark: the page they hold no longer matches what we would stand behind, and
+     * a stale price left readable is worse than a dead link.
+     *
+     * Rotation-on-send is asserted at the unit level (`sendDocEstimate.test.js`),
+     * because dispatching a real estimate needs a connected mailbox that a test
+     * run must not depend on.
      */
-    test('@p0 EST-P5-01 resending rotates the link and the old one stops resolving', async ({ page }) => {
+    test('@p0 EST-P5-01 a link stops reading once the estimate is edited back to draft', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];
         try {
@@ -123,16 +132,16 @@ test.describe('@suite:estimates', () => {
             const estimate = await api.createEstimate(job.id, 'EST-P5-01 Estimate');
             await api.prepareEstimateAsSent(estimate.id);
 
-            const firstToken = (await api.ensureEstimatePublicLink(estimate.id)).split('/').pop() as string;
-            expect((await api.readPublicEstimate(firstToken)).status).toBe(200);
+            const token = (await api.ensureEstimatePublicLink(estimate.id)).split('/').pop() as string;
+            expect((await api.readPublicEstimate(token)).status).toBe(200);
 
-            await api.prepareEstimateAsSent(estimate.id);
-            const secondToken = (await api.ensureEstimatePublicLink(estimate.id)).split('/').pop() as string;
+            // Any edit to a sent estimate returns it to draft…
+            await api.updateEstimate(estimate.id, { summary: 'Repriced after a call' });
+            expect((await api.getEstimate(estimate.id)).status).toBe('draft');
 
-            expect((await api.readPublicEstimate(secondToken)).status).toBe(200);
-            if (secondToken !== firstToken) {
-                expect((await api.readPublicEstimate(firstToken)).status).toBe(404);
-            }
+            // …and the link the customer is holding goes dark, with the same
+            // generic 404 a wrong token gets — never a hint that it exists.
+            expect((await api.readPublicEstimate(token)).status).toBe(404);
         } finally {
             await api.cleanup(cleanup);
             await api.dispose();

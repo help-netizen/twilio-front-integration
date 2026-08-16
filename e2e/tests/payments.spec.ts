@@ -94,16 +94,23 @@ test.describe('@suite:payments', () => {
             await expect(page.getByTestId('payment-card')).toBeVisible({ timeout: 20_000 });
 
             // The composer is the job card's own — the point of the whole card.
-            await page.getByText('Add note…').first().click();
+            // The panel renders the notes block twice (a `md:hidden` mobile copy
+            // and the desktop one), and the hidden copy comes first in the DOM —
+            // so ask for the visible one, not the first one.
+            await page.getByText('Add note…').filter({ visible: true }).first().click();
             const editor = page.locator('textarea, [contenteditable="true"]').first();
             await editor.fill(marker);
             await page.getByRole('button', { name: /^(Save|Post|Add note)$/i }).first().click();
 
             await expect(page.getByText(marker).first()).toBeVisible({ timeout: 15_000 });
 
-            // …and it is the JOB's note, not a payment-only one.
-            const notes = await api.getJobNotes(job.id);
-            expect(notes.some(note => note.includes(marker))).toBe(true);
+            // …and it is the JOB's note, not a payment-only one. Polled, because
+            // the composer renders the note the moment the write returns and the
+            // list read can still be a beat behind it.
+            await expect.poll(
+                async () => (await api.getJobNotes(job.id)).some(note => note.includes(marker)),
+                { timeout: 15_000 },
+            ).toBe(true);
         } finally {
             await api.cleanup(cleanup);
             await api.dispose();

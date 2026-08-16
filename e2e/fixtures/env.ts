@@ -46,6 +46,28 @@ export const JOBS_BLOCKED_REASON =
     'Phase F — leave E2E_JOBS_NATIVE unset. See docs/specs/E2E-REGRESSION-001.md';
 
 /**
+ * Can this environment actually dispatch a document to a customer?
+ *
+ * On staging, deliberately NOT: `bin/sanitize-env.sh` blanks every Twilio
+ * credential and rotates `EMAIL_TOKEN_ENCRYPTION_KEY` to a value that cannot
+ * decrypt the seeded mailbox tokens, precisely so a test run can never text or
+ * email a real customer. That is the correct posture, and it means any case
+ * whose SETUP needs a real send is untestable there.
+ *
+ * Invoices feel this and estimates do not: an estimate reaches `sent` through a
+ * plain PUT, while an invoice's status is workflow-owned — only `/send` issues
+ * one. So a case that needs an issued invoice is skipped unless the environment
+ * says it can dispatch (E2E_CAN_DISPATCH_DOCUMENTS=1), rather than reported as
+ * a failure of the code under test.
+ */
+export const CAN_DISPATCH_DOCUMENTS = process.env.E2E_CAN_DISPATCH_DOCUMENTS === '1';
+export const DISPATCH_BLOCKED_REASON =
+    'Skipped: this environment cannot dispatch documents (staging blanks Twilio and ' +
+    'rotates the mailbox key by design), and issuing an invoice requires a real send. ' +
+    'Set E2E_CAN_DISPATCH_DOCUMENTS=1 where sending is genuinely safe. ' +
+    'See docs/specs/E2E-REGRESSION-001.md';
+
+/**
  * Unique per-process run id. Prefixes every created entity name so runs are
  * idempotent, identifiable, and safe to run in parallel / repeatedly (spec §5).
  */
