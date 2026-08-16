@@ -93,7 +93,7 @@ export function GeoPerformanceHeatmap({ from, to }: GeoPerformanceHeatmapProps) 
     });
 
     return (
-        <section className="geo-heatmap" aria-labelledby="geo-performance-title">
+        <section data-testid="geo-heatmap" className="geo-heatmap" aria-labelledby="geo-performance-title">
             {geoQuery.isError ? (
                 <GeoFrameHeader>
                     <div className="geo-heatmap__state" role="alert">
@@ -194,13 +194,13 @@ function GeoPerformanceContent({ geo, from, to }: {
                     <p>Each ZIP is colored by the selected metric. Select a ZIP for details. A conversion is a lead that became a scheduled, non-canceled job.</p>
                 </div>
                 <div className="geo-heatmap__total">
-                    <b>{formatCount(bookedJobs)}</b>
+                    <b data-testid="geo-heatmap-total">{formatCount(bookedJobs)}</b>
                     <span>booked jobs · visible ZIPs</span>
                 </div>
             </header>
 
             <div className="geo-heatmap__grid">
-                <div className="geo-heatmap__map-wrap">
+                <div data-testid="geo-heatmap-map" className="geo-heatmap__map-wrap">
                     <GeoPostalCodeMap
                         rows={visibleRows}
                         colorsByZip={colorsByZip}
@@ -208,7 +208,7 @@ function GeoPerformanceContent({ geo, from, to }: {
                         onSelectZip={selectZip}
                     />
                     {visibleRows.length === 0 && (
-                        <div className="geo-heatmap__map-note">
+                        <div data-testid="geo-heatmap-empty" className="geo-heatmap__map-note">
                             {geo.rows.length === 0
                                 ? 'No booked jobs from ad channels in this period.'
                                 : `No ZIPs with ${minCount}+ booked jobs — lower ‘Min volume’ or adjust zones/period.`}
@@ -261,11 +261,12 @@ function GeoPerformanceContent({ geo, from, to }: {
                         <h3>Top ZIPs</h3>
                         <span>{metricMeta.ranking}</span>
                     </div>
-                    <div className="geo-heatmap__ranking-list">
+                    <div data-testid="geo-heatmap-topzips" className="geo-heatmap__ranking-list">
                         {ranked.slice(0, 5).map(({ row, metrics }, index) => (
                             <button
                                 key={row.zip}
                                 type="button"
+                                data-testid={`geo-heatmap-topzip-${row.zip}`}
                                 className={row.zip === effectiveSelectedZip ? 'is-selected' : undefined}
                                 onClick={() => selectZip(row.zip)}
                             >
@@ -293,6 +294,7 @@ function GeoPerformanceContent({ geo, from, to }: {
                     value={channel}
                     options={CHANNELS}
                     onChange={setChannel}
+                    testIdPrefix="geo-channel"
                 />
                 <SegmentedControl
                     className="geo-heatmap__mode-control"
@@ -300,10 +302,11 @@ function GeoPerformanceContent({ geo, from, to }: {
                     value={mode}
                     options={MODES}
                     onChange={setMode}
+                    testIdPrefix="geo-mode"
                 />
                 <label className="geo-heatmap__control">
                     <span className="geo-heatmap__control-label">Min volume</span>
-                    <select value={minCount} onChange={event => setMinCount(Number(event.target.value))}>
+                    <select data-testid="geo-minvol" value={minCount} onChange={event => setMinCount(Number(event.target.value))}>
                         {MIN_COUNTS.map(value => <option key={value} value={value}>{value}+</option>)}
                     </select>
                 </label>
@@ -314,6 +317,7 @@ function GeoPerformanceContent({ geo, from, to }: {
                             <button
                                 key={zone.area}
                                 type="button"
+                                data-testid={`geo-zone-${zone.area}`}
                                 aria-pressed={activeZones.has(zone.area)}
                                 title={`${zone.zip_count} configured ZIP${zone.zip_count === 1 ? '' : 's'}`}
                                 onClick={() => toggleZone(zone.area)}
@@ -325,7 +329,7 @@ function GeoPerformanceContent({ geo, from, to }: {
                 </div>
             </div>
 
-            <details className="geo-heatmap__method">
+            <details data-testid="geo-methodology" className="geo-heatmap__method">
                 <summary>
                     How these numbers work
                     <ChevronDown size={15} aria-hidden />
@@ -374,12 +378,14 @@ function SegmentedControl<T extends string>({
     options,
     onChange,
     className,
+    testIdPrefix,
 }: {
     label: string;
     value: T;
     options: readonly { value: T; label: string }[];
     onChange: (value: T) => void;
     className?: string;
+    testIdPrefix?: string;
 }) {
     return (
         <div className={`geo-heatmap__control${className ? ` ${className}` : ''}`}>
@@ -389,6 +395,7 @@ function SegmentedControl<T extends string>({
                     <button
                         key={option.value}
                         type="button"
+                        data-testid={testIdPrefix ? `${testIdPrefix}-${option.value}` : undefined}
                         aria-pressed={option.value === value}
                         onClick={() => onChange(option.value)}
                     >

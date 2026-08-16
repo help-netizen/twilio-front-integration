@@ -295,7 +295,7 @@ function ChannelPerformance({ data }: { data: AnalyticsSummary }) {
                                 <ChannelRow key={r.key} row={r} converted={conv(r)} cpa={cpa(r)} maxRoas={maxRoas} color={DOT_PALETTE[i % DOT_PALETTE.length]} />
                             ))}
                             {rows.length > 1 && (
-                                <tr style={{ borderTop: `2px solid ${LINE}` }}>
+                                <tr data-testid="analytics-channel-total" style={{ borderTop: `2px solid ${LINE}` }}>
                                     <td style={{ padding: '11px 10px', textAlign: 'left', fontWeight: 700, color: INK1 }}>All ad channels</td>
                                     <td className="mono" style={tdStyle}>{fmtMoney(tSpend)}</td>
                                     <td className="mono" style={tdStyle}>{fmtMoney(tRev)}</td>
@@ -335,7 +335,7 @@ function ChannelRow({ row, converted, cpa, maxRoas, color }: {
     const roas = row.roas;
     const barW = roas !== null ? Math.round((Math.max(roas, 0) / maxRoas) * 100) : 0;
     return (
-        <tr style={{ borderTop: `1px solid ${LINE}` }}>
+        <tr data-testid={`analytics-channel-row-${row.key}`} style={{ borderTop: `1px solid ${LINE}` }}>
             <td style={{ padding: '11px 10px', textAlign: 'left' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                     <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flex: 'none' }} />
@@ -370,7 +370,12 @@ function BasisToggle({ value, onChange }: { value: ConvBasis; onChange: (b: Conv
                 {(['completed', 'booked'] as ConvBasis[]).map(b => {
                     const on = b === value;
                     return (
-                        <button key={b} type="button" onClick={() => onChange(b)}
+                        <button
+                            key={b}
+                            type="button"
+                            data-testid={`analytics-basis-${b}`}
+                            aria-pressed={on}
+                            onClick={() => onChange(b)}
                             style={{ border: 'none', background: on ? SURFACE : 'transparent', color: on ? INK1 : INK2, font: 'inherit', fontSize: 12.5, fontWeight: 600, padding: '5px 11px', borderRadius: 8, cursor: 'pointer', textTransform: 'capitalize', boxShadow: on ? '0 1px 2px rgba(0,0,0,.06)' : 'none' }}>
                             {b}
                         </button>
@@ -401,7 +406,7 @@ function StatRow({ label, hint, value, sub, valueColor }: {
 function GoogleDetail({ k }: { k: AnalyticsKpis }) {
     const totalGoogle = k.google_lsa_ad_spend_cents + k.google_other_ad_spend_cents;
     return (
-        <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: 22, padding: '18px 20px' }}>
+        <div data-testid="analytics-google-detail" style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: 22, padding: '18px 20px' }}>
             <div style={{ fontFamily: HEAD_FONT, fontSize: 15, fontWeight: 700, color: INK1 }}>Google — details</div>
             <div style={{ fontSize: 11.5, color: INK3, marginBottom: 8 }}>Local Services Ads + Search</div>
             <StatRow label="Total Google spend" value={fmtMoney(totalGoogle)} />
@@ -424,7 +429,7 @@ function GoogleDetail({ k }: { k: AnalyticsKpis }) {
 function ElocalDetail({ k }: { k: AnalyticsKpis }) {
     const matchPct = k.elocal_call_count > 0 ? Math.round((k.elocal_matched_call_count / k.elocal_call_count) * 100) : 0;
     return (
-        <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: 22, padding: '18px 20px' }}>
+        <div data-testid="analytics-elocal-detail" style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: 22, padding: '18px 20px' }}>
             <div style={{ fontFamily: HEAD_FONT, fontSize: 15, fontWeight: 700, color: INK1 }}>eLocal — details</div>
             <div style={{ fontSize: 11.5, color: INK3, marginBottom: 8 }}>Pay-per-call volume</div>
             <StatRow label="Calls" value={fmtCount(k.elocal_call_count)} />
@@ -485,6 +490,7 @@ function FunnelCard({ data, from, to }: {
                     <span style={{ fontSize: 12, color: INK3 }}>acquisition cohort · leads created in period</span>
                     {showChannelSelector && (
                         <select
+                            data-testid="analytics-funnel-channel"
                             aria-label="Funnel channel"
                             value={selectedChannel?.key ?? ''}
                             onChange={event => setChannelKey(event.target.value)}
@@ -558,7 +564,7 @@ function FunnelRow({ stage, prev }: { stage: FunnelStage; prev: FunnelStage | nu
     const relPct = prev && prev.count > 0 ? (stage.count / prev.count) * 100 : null;
     const dropPct = relPct !== null ? 100 - relPct : null;
     return (
-        <div className="flex items-center gap-3.5">
+        <div data-testid={`analytics-funnel-row-${stage.stage}`} className="flex items-center gap-3.5">
             <div className="shrink-0" style={{ width: 140, fontSize: 13, fontWeight: 600, color: INK1 }}>{FUNNEL_LABELS[stage.stage] || stage.stage}</div>
             <div className="flex-1" style={{ height: 34, background: FIELD, borderRadius: 8, overflow: 'hidden' }}>
                 <div
