@@ -122,6 +122,10 @@ AI-ног, потому что это единица supplier cost; UI може�
 | REC-04 | P1 | Два одинаковых GET с минимальным интервалом | `stable_once -> final`, timestamps/version заполнены |
 | REC-05 | P1 | Между совпадениями изменился provider `updatedAt` без cost | Hash contract применён последовательно; stability сбрасывается, если snapshot material changed |
 | REC-06 | P1 | 100 due rows A/B, один provider failure | Company jobs изолированы; один failure не откатывает успешные tenants; no unscoped update |
+| INGEST-01 | P0 | Один EoC доставлен дважды последовательно/конкурентно | Один append-only observation и один provisional usage; wallet unchanged | `SAB-VAPI-EOC-IDEMPOTENCY` |
+| INGEST-02 | P0 | Status credential B присылает call id строки A либо unknown id | Ни session, ни observation, ни usage не создаются; A/B/wallet unchanged | `SAB-VAPI-EOC-COMPANY` |
+| INGEST-03 | P0 | EoC несёт transcript/recording/customer/name/phone и документированный cost | Persisted sanitized payload содержит только identity/lifecycle/cost decimal strings | sanitized-evidence ratchet |
+| INGEST-04 | P0 | Cost находится не в подтверждённом `message.call` | Quarantined observation сохраняет безопасную форму placement; provisional supplier cost отсутствует | fail-closed placement fixture |
 | OBS-01 | P2 | Создать unbound call, stale usage, drift, lease divergence и settlement retry | Каждому соответствует named metric/alert с company/session refs platform-only |
 | OBS-02 | P0 | Просканировать tenant response/log fixture | Нет secret/token/transcript/provider/supplier fields в tenant-visible output |
 | OBS-03 | P2 | Сверить provider export и local audit | Missing/extra/changed calls перечислены; repair требует exact identity, не auto-charge ambiguity |

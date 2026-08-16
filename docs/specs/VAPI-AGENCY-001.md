@@ -86,7 +86,7 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
 сохраняет клиентский Vapi API key; `:271-379` позволяет tenant CRUD ресурсов и
 профилей. Эти поверхности подлежат удалению в T5.
 
-## 2.2 Реализованный delta T1/T2
+## 2.2 Реализованный delta T1/T2/T3
 
 - Flow runtime создаёт durable session/reservation и одноразовый opaque token до
   `<Dial><Sip>`; SIP получает только token, прямые SIP/resource/assistant overrides
@@ -101,8 +101,12 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   profile. Поэтому runtime cutover не выкатывается раньше operator provisioning
   ABC profile/resource/assistant-request credential и provider readback; иначе
   fail-closed ветка корректно отправит входящие в обычный fallback.
-- Raw EoC body по-прежнему не захвачен; его persistence и provisional usage — T3,
-  не часть T2.
+- T3 требует exact raw body до JSON parsing, коррелированный EoC
+  записывает как append-only observation и обновляет единую
+  provisional projection. До persistence попадает только allowlisted
+  sanitized evidence; живое тело EoC ещё не захвачено, поэтому
+  fixture остаётся `live:false`, а неподтверждённое placement стоимости
+  quarantined fail-closed.
 
 ## 3. Закрытые решения — дословно
 
@@ -386,9 +390,10 @@ change; T1 фиксирует точные token/analysis поля.
 6. Twilio child status может отметить телеком-ногу, но не создаёт и не подменяет
    Vapi identity. `answered_by='ai'` остаётся CRM-классификацией, не денежным ключом.
 7. Если штатный assistant-request не выполнил bind, дальнейший callback не ищет
-   session по Twilio SID, company/body или assistant эвристически. T3 сохраняет
-   сырой EoC и может использовать только тот же credential + token/session exact
-   contract; неоднозначность — quarantine и алерт.
+   session по Twilio SID, company/body или assistant эвристически. T3 не создаёт
+   observation/usage для unknown/unbound call id; только после exact
+   credential + session/attempt correlation он сохраняет allowlisted sanitized
+   EoC evidence. Assistant/company mismatch — отказ без денежной строки.
 
 Следствие: Vapi id впервые доступен в доверенном `assistant-request` как
 `message.call.id`; к этому моменту локальная session уже существует, а bind
@@ -425,6 +430,15 @@ EoC observation
 - `end-of-call-report` записывается append-only и идемпотентно по provider event
   identity либо детерминированному payload hash. Он обновляет provisional evidence,
   но никогда не финализирует и не списывает.
+- Status/EoC допускается только company-bound `vapi_call_status` credential; его
+  company должна совпасть с T2 session либо outbound attempt. Assistant id
+  сравнивается с pinned registry identity. Unknown/foreign id не создаёт session,
+  observation или usage.
+- EoC хранит только allowlisted sanitized provider payload: identity, lifecycle и
+  cost lexemes. JSON numbers сохраняются decimal-строками; transcript, messages,
+  recordings, phone/customer data, names, assistant snapshots/overrides и server
+  config отбрасываются до persistence. До живого захвата поддерживается только
+  документационное `message.call.cost`; иное размещение quarantined fail-closed.
 - `GET /call/:id` — авторитетный источник. Snapshot hash включает exact `cost`,
   нормализованный `costBreakdown`, `endedAt`, `endedReason` и provider
   `updatedAt`/эквивалентную версию.
@@ -727,11 +741,12 @@ platform route/permission и всегда требует явного target com
 |---|---|---|---|
 | T1 provider contracts + T2 inbound identity | `tests/vapiAgencyProviderContracts.test.js`, `tests/vapiCallIdentity.test.js`, `tests/vapiAssistantRequest.test.js`, `tests/vapiCallIdentityAlerts.test.js`, `tests/services/callFlowRuntime.vapi.test.js`, `tests/vapiCallStatusWebhook.test.js` | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProviderContracts.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/vapiCallIdentityAlerts.test.js tests/services/callFlowRuntime.vapi.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; финальный combined run с migration/machine/sibling suites: 10 suites / 137 tests |
 | Phase 2 gate | `tests/vapiAgencyGate.test.js` | команда определяется в T8 | PENDING |
-| Usage ingest/reconcile/audit | `tests/vapiUsageIngest.test.js`, `tests/vapiUsageReconcile.test.js`, `tests/vapiUsageAuditRepair.test.js` | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js --runInBand --forceExit` | PENDING |
+| T3 provisional usage ingest | `tests/vapiUsageIngest.test.js`, `tests/vapiUsageIngestMigration.test.js`, provider/route sibling suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 5 suites / 97 tests. T2 identity/assistant-request/machine siblings: 5 suites / 48 tests. Tenant SQL rules PASS; public-route rule PASS after registering the credential-protected assistant-request subrouter. |
+| T4 reconcile/audit | `tests/vapiUsageReconcile.test.js`, `tests/vapiUsageAuditRepair.test.js` | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js --runInBand --forceExit` | PENDING |
 | Registry/provisioning/tools/routes | new registry suites + current Vapi regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAgencyProvisioning.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/services/callFlowRuntime.vapi.test.js --runInBand --forceExit` | PENDING |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
-| Forward/rollback migrations | real disposable PostgreSQL migration suite | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; также реальный `psql -v ON_ERROR_STOP=1 -f` forward/rollback/forward/rollback |
+| Forward/rollback migrations | real disposable PostgreSQL migration suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js tests/vapiUsageIngestMigration.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; migration 267 также прошла реальный `psql -v ON_ERROR_STOP=1 -f` forward/rollback/forward/rollback вместе с 266 |
 | Tenant settings removal | frontend build/tests | `npm --prefix frontend run build` then `npm --prefix frontend test` | PENDING |
 | Full backend regression | all Jest suites | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --forceExit` | PENDING |
 
@@ -754,6 +769,8 @@ forward/rollback migration filenames добавляются в ledger после
 | `SAB-VAPI-BIND-RETRY` | отключить ранний same-call idempotent return | `vapiCallIdentity` duplicate-after-profile-drift | RED как требуется: retry карантинил связанную session; после восстановления suite green |
 | `SAB-VAPI-ASSISTANT` | разрешить assistant lookup только по provider id/env | `vapiAssistantRegistry` cross-tenant collision | PENDING |
 | `SAB-VAPI-WEBHOOK-CREDENTIAL` | доверять `companyId` body вместо credential | `vapiCallStatusWebhook` wrong-company credential | PENDING |
+| `SAB-VAPI-EOC-COMPANY` | ослабить сверку company status credential перед session lookup | `vapiUsageIngest` credential B + local session A | RED как требуется: ожидаемый semantic 403 исчез, запрос дошёл до same-company FK и упал 23503; после восстановления тест green |
+| `SAB-VAPI-EOC-IDEMPOTENCY` | добавить random nonce в deterministic sanitized-payload hash | concurrent + sequential duplicate EoC test | RED как требуется: обе concurrent delivery вернули `observationCreated:true`; после восстановления тест green |
 | `SAB-VAPI-OVERRIDE` | прокинуть `assistantOverrides` из request/body | provider-contract override rejection test | PENDING |
 | `SAB-VAPI-COST-IDEMPOTENCY` | убрать observation/charge unique key | duplicate EoC/poll money test | PENDING |
 | `SAB-VAPI-LATE-COST` | финализировать по EoC либо одному GET | late analysis cost convergence test | PENDING |

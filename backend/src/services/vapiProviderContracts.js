@@ -323,9 +323,7 @@ function normalizeCost(call, numericPrefix, path) {
     };
 }
 
-function parseVapiServerMessageJson(rawJson) {
-    const { value, numericPrefix } = parseExactJson(rawJson);
-    void numericPrefix;
+function parseVapiServerMessageValue(value) {
     const root = requireObject(value, '$');
     const message = requireObject(root.message, '$.message');
     const type = requireEnum(message, 'type', SERVER_MESSAGE_TYPES, '$.message');
@@ -360,6 +358,120 @@ function parseVapiServerMessageJson(rawJson) {
     return { contractVersion: CONTRACT_VERSION, kind: type, endedReason, call };
 }
 
+function parseVapiServerMessageJson(rawJson) {
+    const { value } = parseExactJson(rawJson);
+    return parseVapiServerMessageValue(value);
+}
+
+function parseVapiEndOfCallReportJson(rawJson) {
+    const { value, numericPrefix } = parseExactJson(rawJson);
+    const parsed = parseVapiServerMessageValue(value);
+    if (parsed.kind !== 'end-of-call-report') {
+        fail('unknown_value', '$.message.type', parsed.kind);
+    }
+
+    const rawCall = value.message.call;
+    for (const key of ['createdAt', 'updatedAt', 'startedAt', 'endedAt']) {
+        requireTimestamp(rawCall, key, '$.message.call');
+    }
+
+    return {
+        ...parsed,
+        cost: normalizeCost(rawCall, numericPrefix, '$.message.call'),
+    };
+}
+
+function copyExactNumber(source, target, key, numericPrefix) {
+    if (source[key] === undefined) return;
+    const value = source[key];
+    target[key] = typeof value === 'string' && value.startsWith(numericPrefix)
+        ? value.slice(numericPrefix.length)
+        : null;
+}
+
+function sanitizeCostCandidate(source, numericPrefix) {
+    const sanitized = {};
+    copyExactNumber(source, sanitized, 'cost', numericPrefix);
+
+    if (source.costBreakdown === undefined) return sanitized;
+    if (!source.costBreakdown || typeof source.costBreakdown !== 'object'
+        || Array.isArray(source.costBreakdown)) {
+        sanitized.costBreakdown = null;
+        return sanitized;
+    }
+
+    const breakdown = {};
+    for (const key of [
+        ...CORE_COST_FIELDS,
+        ...OPTIONAL_COST_FIELDS,
+        ...TOKEN_FIELDS,
+        'total',
+    ]) {
+        copyExactNumber(source.costBreakdown, breakdown, key, numericPrefix);
+    }
+
+    const rawAnalysis = source.costBreakdown.analysisCostBreakdown;
+    if (rawAnalysis !== undefined) {
+        if (rawAnalysis && typeof rawAnalysis === 'object' && !Array.isArray(rawAnalysis)) {
+            const analysis = {};
+            for (const key of [...ANALYSIS_COST_FIELDS, ...ANALYSIS_TOKEN_FIELDS]) {
+                copyExactNumber(rawAnalysis, analysis, key, numericPrefix);
+            }
+            breakdown.analysisCostBreakdown = analysis;
+        } else {
+            breakdown.analysisCostBreakdown = null;
+        }
+    }
+    sanitized.costBreakdown = breakdown;
+    return sanitized;
+}
+
+/**
+ * Preserve only provider identity/lifecycle/cost evidence. Numeric lexemes are
+ * strings so JSONB persistence cannot pass through IEEE-754. Transcripts,
+ * messages, recordings, artifacts, customer/phone objects, names, numbers,
+ * assistant snapshots/overrides and server/tool configuration are never copied.
+ */
+function sanitizeVapiServerMessageJson(rawJson) {
+    const { value, numericPrefix } = parseExactJson(rawJson);
+    const parsed = parseVapiServerMessageValue(value);
+    const rawMessage = value.message;
+    const rawCall = rawMessage.call;
+    const call = {
+        id: parsed.call.id,
+        orgId: parsed.call.orgId,
+        type: parsed.call.type,
+    };
+    for (const key of [
+        'assistantId',
+        'status',
+        'createdAt',
+        'updatedAt',
+        'startedAt',
+        'endedAt',
+        'endedReason',
+    ]) {
+        if (parsed.call[key] !== undefined) call[key] = parsed.call[key];
+    }
+    Object.assign(call, sanitizeCostCandidate(rawCall, numericPrefix));
+
+    const message = { type: parsed.kind, call };
+    if (parsed.status !== undefined) message.status = parsed.status;
+    if (parsed.endedReason !== undefined) message.endedReason = parsed.endedReason;
+
+    // Keep documented candidate placement at message level as evidence without
+    // accepting it as the monetary contract. The strict EoC parser accepts only
+    // message.call.cost + message.call.costBreakdown until a live body proves
+    // otherwise.
+    Object.assign(message, sanitizeCostCandidate(rawMessage, numericPrefix));
+
+    return {
+        evidenceSchemaVersion: 1,
+        numberEncoding: 'decimal-string',
+        message,
+    };
+}
+
 function parseVapiGetCallJson(rawJson) {
     const { value, numericPrefix } = parseExactJson(rawJson);
     const rawCall = requireObject(value, '$');
@@ -386,5 +498,7 @@ function parseVapiGetCallJson(rawJson) {
 module.exports = {
     VapiContractError,
     parseVapiServerMessageJson,
+    parseVapiEndOfCallReportJson,
     parseVapiGetCallJson,
+    sanitizeVapiServerMessageJson,
 };

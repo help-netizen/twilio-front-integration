@@ -8315,6 +8315,14 @@ session и attempt.
 Twilio CallSid — только correlation evidence: один parent может содержать
 несколько независимо тарифицируемых AI-ног.
 
+Status/EoC ingress принимает exact raw JSON только после разрешения
+company-bound `vapi_call_status` machine credential. Service повторно
+сверяет credential company в транзакции, коррелирует call только с
+company-scoped session/attempt и сверяет assistant с pinned registry identity.
+Unknown/foreign id не создаёт usage. Для коррелированного EoC до
+persistence копируются только allowlisted identity/lifecycle/cost поля;
+transcripts, recordings, phone/customer/name и provider snapshots отбрасываются.
+
 Supplier accounting — отдельный typed ledger. EoC является provisional
 observation; периодический `GET /call/:id` авторитетен; два разнесённых одинаковых
 snapshot дают final. После 24 часов без сходимости строка остаётся

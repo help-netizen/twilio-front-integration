@@ -112,7 +112,7 @@ Malformed/negative/mismatched payload quarantined. `calls.price` и
 `duration_sec` не переиспользованы. Ни EoC, ни duplicate не создаёт charge/debit.
 
 **Проверка.**
-`NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit`
+`unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"`
 
 **Зависимости:** T2. **Размер/оценка:** M, 3–4 дня. Раздувают schema evolution
 breakdown и безопасная идемпотентность webhook без стабильного event id.
@@ -268,6 +268,13 @@ correlation token hash/TTL; exact NUMERIC costs; reconcile/finality fields;
 безопасный однозначный backfill известных outbound ids. Rollback удаляет новые
 projections после preflight отсутствия непроецированных денежных данных и не
 трогает legacy `calls`/attempt rows.
+
+### `vapi_provisional_usage_ingest`
+
+Добавляет к observation company-bound status credential, provider call/assistant
+shape и allowlisted sanitized payload; к current usage — ссылку на append-only
+provisional observation. Не создаёт charge/settlement/wallet таблиц и блокирует
+rollback после появления evidence.
 
 ### `vapi_assistant_registry`
 

@@ -11,7 +11,7 @@ shape was observed live.
 | `get-call.outbound-live.production-sanitized.json` | Read-only `GET /call/:id` after an owner-authorized outbound call on 2026-08-16; two stable measurements four minutes apart | Yes |
 | `assistant-request.docs.json` | Vapi Server events documentation | No |
 | `status-update.docs.json` | Vapi Server events documentation | No |
-| `end-of-call-report.docs-composed.json` | Vapi Server events shape plus fields observed in `GET /call` | No |
+| `end-of-call-report.docs-composed.json` | Vapi Server events shape plus documented call-level cost candidate populated from sanitized `GET /call` fields | No |
 
 The production captures retain provider field names and exact cost lexemes. Provider,
 organization, assistant, and call identifiers are synthetic. Timestamps were shifted.
@@ -23,9 +23,10 @@ or tool configuration. No API key or webhook secret was captured.
 Documentation source: <https://docs.vapi.ai/server-url/events> and
 <https://docs.vapi.ai/api-reference/calls/get/>.
 
-The webhook fixtures deliberately exclude unobserved cost placement. Until a live
-`end-of-call-report` is captured, only `GET /call/:id` is an accepted authoritative
-cost input for this adapter.
+The EoC fixture pins one documentation-derived candidate placement at
+`message.call.cost`/`costBreakdown`; it remains `live:false`. T3 accepts it only as
+provisional evidence. Any other placement is quarantined and sanitized for review;
+only `GET /call/:id` becomes authoritative in T4.
 
 The live outbound call produced two authenticated `status-update` messages and one
 authenticated `end-of-call-report`. This confirms those message discriminators on the

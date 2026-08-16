@@ -180,6 +180,7 @@ const PUBLIC_ROUTE_FILES = new Map([
     ['backend/src/routes/stripePaymentsWebhook.js', 'Stripe HMAC signature is verified before webhook processing.'],
     ['backend/src/routes/time.js', 'Public clock endpoint returns no tenant or user data.'],
     ['backend/src/routes/vapi-tools.js', 'Fail-closed company-bound x-vapi-secret credential protects the machine endpoint.'],
+    ['backend/src/routes/vapiAssistantRequest.js', 'Company-bound vapi_assistant_request machine credential and scope protect the provider selector subrouter.'],
     ['backend/src/routes/vapiCallStatus.js', 'Fail-closed x-vapi-secret middleware protects the machine webhook.'],
     ['backend/src/routes/webhooks.js', 'Twilio callback/health surface is public by design; every mutating handler now validates the Twilio signature and fails closed in production (TWILIO-SIG-ENFORCE-001).'],
     ['backend/src/routes/zip-check.js', 'Authenticated role-neutral service-area lookup is scoped by the selected company.'],

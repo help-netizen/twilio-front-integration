@@ -12,7 +12,41 @@
       "createdAt": "2026-01-04T14:00:00.000Z",
       "updatedAt": "2026-01-04T14:00:08.500Z",
       "startedAt": "2026-01-04T14:00:00.250Z",
-      "endedAt": "2026-01-04T14:00:08.250Z"
+      "endedAt": "2026-01-04T14:00:08.250Z",
+      "cost": 0.0107,
+      "costBreakdown": {
+        "transport": 0,
+        "stt": 0.001,
+        "llm": 0,
+        "tts": 0,
+        "vapi": 0.0076,
+        "chat": 0,
+        "total": 0.0107,
+        "llmPromptTokens": 0,
+        "llmCompletionTokens": 0,
+        "llmCachedPromptTokens": 0,
+        "ttsCharacters": 0,
+        "analysisCostBreakdown": {
+          "summary": 0.0001,
+          "structuredData": 0,
+          "structuredOutput": 0,
+          "successEvaluation": 0.0021,
+          "summaryPromptTokens": 81,
+          "summaryCompletionTokens": 33,
+          "summaryCachedPromptTokens": 0,
+          "structuredDataPromptTokens": 0,
+          "structuredDataCompletionTokens": 0,
+          "structuredDataCachedPromptTokens": 0,
+          "structuredOutputPromptTokens": 0,
+          "structuredOutputCompletionTokens": 0,
+          "structuredOutputCachedPromptTokens": 0,
+          "successEvaluationPromptTokens": 6788,
+          "successEvaluationCompletionTokens": 10,
+          "successEvaluationCachedPromptTokens": 0
+        },
+        "knowledgeBaseCost": 0,
+        "voicemailDetectionCost": 0
+      }
     }
   }
 }

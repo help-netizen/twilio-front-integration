@@ -14,6 +14,40 @@ const request = require('supertest');
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 
+const mockResolveCredential = jest.fn();
+class MockMachineCredentialError extends Error {
+    constructor(code, status = 401) {
+        super(code);
+        this.code = code;
+        this.status = status;
+    }
+}
+jest.mock('../backend/src/services/machineCredentialService', () => ({
+    SURFACES: {
+        VAPI_CALL_STATUS: 'vapi_call_status',
+        VAPI_ASSISTANT_REQUEST: 'vapi_assistant_request',
+    },
+    ACCESS_SCOPES: {
+        VAPI_CALL_STATUS: 'vapi_call_status:invoke',
+        VAPI_ASSISTANT_REQUEST: 'vapi_assistant_request:invoke',
+    },
+    MachineCredentialError: MockMachineCredentialError,
+    resolveCredential: (...args) => mockResolveCredential(...args),
+}));
+
+const mockIngestServerMessage = jest.fn();
+class MockVapiUsageIngestError extends Error {
+    constructor(code, status = 409) {
+        super(code);
+        this.code = code;
+        this.status = status;
+    }
+}
+jest.mock('../backend/src/services/vapiUsageIngestService', () => ({
+    VapiUsageIngestError: MockVapiUsageIngestError,
+    ingestServerMessage: (...args) => mockIngestServerMessage(...args),
+}));
+
 const mockGetJobById = jest.fn();
 jest.mock('../backend/src/services/jobsService', () => ({
     getJobById: (...a) => mockGetJobById(...a),
@@ -51,7 +85,6 @@ jest.mock('../backend/src/db/timelinesQueries', () => ({
 }));
 
 const SECRET = 'test-webhook-secret';
-process.env.VAPI_WEBHOOK_SECRET = SECRET;
 
 const vapiCallStatusRouter = require('../backend/src/routes/vapiCallStatus');
 const eventService = require('../backend/src/services/eventService');
@@ -66,6 +99,7 @@ const COMPANY = '00000000-0000-0000-0000-000000000001';
 
 function makeApp() {
     const app = express();
+    app.use('/api/vapi/call-status', express.raw({ type: 'application/json' }));
     app.use(express.json());
     app.use('/api/vapi/call-status', vapiCallStatusRouter);
     return app;
@@ -106,6 +140,30 @@ beforeEach(() => {
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     mockQuery.mockImplementation(async () => ({ rows: [], rowCount: 1 }));
     mockFinalize.mockResolvedValue(undefined);
+    mockResolveCredential.mockImplementation(async (secret, options) => {
+        expect(options).toEqual({
+            surface: 'vapi_call_status',
+            requiredScope: 'vapi_call_status:invoke',
+        });
+        if (!secret) throw new MockMachineCredentialError('MACHINE_CREDENTIAL_REQUIRED', 401);
+        if (secret !== SECRET) {
+            throw new MockMachineCredentialError('MACHINE_CREDENTIAL_INVALID', 401);
+        }
+        return { id: '301', companyId: COMPANY };
+    });
+    mockIngestServerMessage.mockImplementation(async ({ companyId, credentialId, rawJson }) => {
+        expect(companyId).toBe(COMPANY);
+        expect(credentialId).toBe('301');
+        const message = JSON.parse(rawJson).message;
+        if (!message?.call?.id) return { correlated: false, reason: 'call_id_missing' };
+        const result = await mockQuery(
+            'SELECT * FROM outbound_call_attempts WHERE vapi_call_id = $1',
+            [message.call.id],
+        );
+        return result.rows.length === 1
+            ? { correlated: true, attempt: result.rows[0], parsed: { kind: message.type } }
+            : { correlated: false, reason: 'attempt_not_found', parsed: { kind: message.type } };
+    });
     marketplaceService.isAppConnected.mockResolvedValue(true);
     scheduleService.getDispatchSettings.mockResolvedValue({ ...NY_DS });
     timelinesQueries.findOrCreateTimeline.mockResolvedValue({ id: 321 });
@@ -187,17 +245,17 @@ describe('route wiring (handleLeadEndOfCall mocked)', () => {
         expect(handleSpy).not.toHaveBeenCalled();
     });
 
-    it('TC-039: auth fail-closed — missing/wrong secret 401, unconfigured 503', async () => {
+    it('TC-039: auth fail-closed — missing/wrong credential 401, resolver unavailable 503', async () => {
         armCorrelate(leadRow());
         expect((await post(endReport('v1', 'x'), { secret: null })).status).toBe(401);
         expect((await post(endReport('v1', 'x'), { secret: 'wrong' })).status).toBe(401);
         expect(handleSpy).not.toHaveBeenCalled();
 
-        const saved = process.env.VAPI_WEBHOOK_SECRET;
-        delete process.env.VAPI_WEBHOOK_SECRET;
+        mockResolveCredential.mockRejectedValueOnce(
+            new MockMachineCredentialError('MACHINE_CREDENTIAL_UNAVAILABLE', 503),
+        );
         const res = await post(endReport('v1', 'x'));
         expect(res.status).toBe(503);
-        process.env.VAPI_WEBHOOK_SECRET = saved;
     });
 
     it('branch throw is safe-failed → still 200', async () => {

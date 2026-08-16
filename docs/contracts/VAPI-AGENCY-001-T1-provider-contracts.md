@@ -15,7 +15,7 @@ wire types, negative costs, and disagreeing totals raise `VapiContractError`.
 |---|---|---|
 | `assistant-request` | `message.type`, `message.call.id`, `orgId`, known `type`; assistant may not exist yet | None assumed |
 | `status-update` | Above plus `assistantId`, known matching `message.status` and `call.status` | None assumed |
-| `end-of-call-report` | Above plus `status=ended` and non-empty, matching `endedReason` when present in `call` | Placement not assumed until a live capture |
+| `end-of-call-report` | Above plus `status=ended`, exact timestamps and non-empty, matching `endedReason` when present in `call` | T3 accepts `message.call.cost` as the single provisional total and requires matching `message.call.costBreakdown.total`; any other placement is quarantined while its allowlisted shape is captured |
 | `GET /call/:id` ended object | `id`, `orgId`, `assistantId`, known `type`, `status=ended`, timestamps, `endedReason` | `call.cost` is canonical; `costBreakdown.total` must equal it |
 
 The adapter never adds components, `costBreakdown.total`, or `costs[]` to derive the
@@ -33,7 +33,10 @@ The live outbound call delivered two authenticated `status-update` messages and 
 authenticated `end-of-call-report` to the repaired deployed endpoint. Only their types,
 authentication and call id were logged; raw bodies were not captured. Consequently the
 webhook body fixtures remain documentation-derived and make no claim about live field
-placement.
+placement. T3 deliberately accepts only the documented call-level candidate and stores
+all exact money as decimal strings/NUMERIC. A different live placement is quarantined,
+not guessed; the sanitizer retains allowlisted identity/lifecycle/cost placement while
+dropping transcripts, recordings, phone/customer data, names and provider snapshots.
 
 The following evidence still needs one controlled provider observation:
 
@@ -46,12 +49,14 @@ The following evidence still needs one controlled provider observation:
 4. A real `assistant-request` from an unbound inbound resource; fixed-assistant SIP is
    also expected to prove the negative case that no assistant request occurs.
 
-A controlled web call is suitable for items 1–3 without dialing a telephone, if it
-uses one of the repaired assistants and that assistant's configured server messages.
-It is not evidence for item 4 or for SIP/Twilio-specific fields and routing. The Vapi
-web-call documentation exposes call lifecycle events, while server events are defined
-for an assistant's server URL; the precise server-payload parity remains part of the
-observation rather than an assumption.
+A controlled web call is protocol-shape evidence for items 1–3 without dialing a
+telephone, if it uses one of the repaired assistants and configured server messages.
+It is not automatically persisted by T3: an uncorrelated `webCall` correctly produces
+no session/observation/usage. Therefore a production-path fixture needs either an
+owner-authorized correlated inbound/outbound call, or a separately authorized test
+session bound to that web call before callback delivery. A web call is not evidence
+for item 4 or for SIP/Twilio-specific fields and routing; precise server-payload parity
+remains part of the observation rather than an assumption.
 
 Sources:
 

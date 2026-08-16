@@ -11,26 +11,26 @@
  *
  *   POST /api/vapi/call-status
  *
- * ── AUTH — shared secret, NOT a user session ────────────────────────────────
+ * ── AUTH — company-bound machine credential, NOT a user session ────────────
  *   Mounted in server.js at `/api/vapi/call-status` BEFORE the session-authed
  *   `/api/vapi` router (which requires `tenant.integrations.manage`) — VAPI is a
- *   machine caller with no session. Fail-closed: no configured secret → 503;
- *   header mismatch → 401. Header `x-vapi-secret`; secret = `VAPI_WEBHOOK_SECRET`
- *   (falls back to `VAPI_TOOLS_SECRET` so a single-secret deploy keeps working).
+ *   machine caller with no session. Header `x-vapi-secret` resolves only through
+ *   the `vapi_call_status` surface and `vapi_call_status:invoke` scope.
  *
- * ── ANTI-SPOOF — company comes from the ROW, never the body (S10 / §Data isolation)
+ * ── ANTI-SPOOF — company comes from credential + ROW, never body (S10)
  *   The only trusted correlation key from the body is `message.call.id`
  *   (`vapi_call_id`). Everything else — companyId, jobId, taskId, attempt_no — is
- *   read from the correlated `outbound_call_attempts` row. An unknown call.id → a
- *   200 no-op (idempotent, non-leaking; a duplicate/foreign webhook is harmless).
+ *   read from the correlated T2 session/outbound attempt. An unknown call.id → a
+ *   200 no-op and no usage row.
  *
  * ── IDEMPOTENCE (S9 / edge-6) ────────────────────────────────────────────────
  *   A `booked` / `exhausted` (any non-`dialing`) attempt is TERMINAL: a repeat
  *   webhook for the same call.id is a 200 no-op.
  *
  * ── SAFE-FAIL ────────────────────────────────────────────────────────────────
- *   Any unexpected error is logged and answered 200 (never a 500-storm that VAPI
- *   would hammer-retry). We never swallow silently — every branch logs.
+ *   Unknown/unbound provider messages are authenticated 200 no-ops. Missing raw
+ *   evidence or ingest infrastructure returns 503 so the provider may retry;
+ *   contract-invalid correlated EoC is quarantined rather than guessed.
  *
  * ── PULSE TIMELINE — OUTBOUND-CALL-TIMELINE-001 (CT-05) ──────────────────────
  *   Two NON-FATAL hooks into `vapiCallTimelineService` (CT-01) put the robot call
@@ -59,6 +59,9 @@
 const express = require('express');
 const router = express.Router();
 const vapiAssistantRequestRouter = require('./vapiAssistantRequest');
+const machineCredentials = require('../services/machineCredentialService');
+const vapiUsageIngestService = require('../services/vapiUsageIngestService');
+const { VapiContractError } = require('../services/vapiProviderContracts');
 const db = require('../db/connection');
 const jobsService = require('../services/jobsService');
 const eventService = require('../services/eventService');
@@ -97,6 +100,27 @@ const agentCallWindowService = require('../services/agentCallWindowService');
 // never disturb the attempt/retry state machine or the webhook's 200.
 const vapiCallTimelineService = require('../services/vapiCallTimelineService');
 
+function parseRawVapiJson(req, res, next) {
+    if (!Buffer.isBuffer(req.body)) return next();
+    const rawJson = req.body.toString('utf8');
+    try {
+        const parsed = JSON.parse(rawJson);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return res.status(400).json({ ok: false, error: 'Invalid JSON object' });
+        }
+        req.vapiRawJson = rawJson;
+        req.body = parsed;
+        return next();
+    } catch (_error) {
+        return res.status(400).json({ ok: false, error: 'Invalid JSON' });
+    }
+}
+
+// The protected server mount supplies express.raw before the global JSON parser.
+// Assistant-request remains compatible with the old parsed-body mount while T3
+// status/EoC explicitly refuses to ingest money without the exact wire body.
+router.use(parseRawVapiJson);
+
 // Reuse the already-mounted protected machine namespace. This exposes exactly
 // one dynamic selector at POST /api/vapi/call-status/assistant-request without
 // changing protected src/server.js or adding a second legacy runtime handler.
@@ -104,22 +128,28 @@ router.use('/assistant-request', vapiAssistantRequestRouter);
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-function webhookSecretAuth(req, res, next) {
-    const secret = process.env.VAPI_WEBHOOK_SECRET;
-    if (!secret) {
-        // Fail closed: a machine webhook must never run unauthenticated.
-        console.error('[vapiCallStatus] no webhook secret configured — refusing (fail-closed)');
-        return res.status(503).json({ ok: false, error: 'vapi call-status webhook not configured' });
+async function statusCredentialAuth(req, res, next) {
+    try {
+        req.machineCredential = await machineCredentials.resolveCredential(
+            req.headers['x-vapi-secret'],
+            {
+                surface: machineCredentials.SURFACES.VAPI_CALL_STATUS,
+                requiredScope: machineCredentials.ACCESS_SCOPES.VAPI_CALL_STATUS,
+            },
+        );
+        return next();
+    } catch (error) {
+        const status = error instanceof machineCredentials.MachineCredentialError
+            ? error.status
+            : 503;
+        return res.status(status).json({
+            ok: false,
+            error: status === 403
+                ? 'Forbidden'
+                : (status === 503 ? 'Authentication unavailable' : 'Unauthorized'),
+            code: error.code || 'MACHINE_CREDENTIAL_UNAVAILABLE',
+        });
     }
-    const header = req.headers['x-vapi-secret'];
-    if (header !== secret) {
-        // Diagnostic (no secret leaked): a webhook we reject never reaches the
-        // finalize/classify body, so a silently-stuck call timeline points here.
-        // Logs only whether VAPI sent ANY x-vapi-secret header, not its value.
-        console.warn(`[vapiCallStatus] 401 x-vapi-secret mismatch (header_present=${header != null})`);
-        return res.status(401).json({ ok: false, error: 'Unauthorized' });
-    }
-    next();
 }
 
 // ─── endedReason → next-state classification (retry state-table, spec §C.6/§Retry)
@@ -161,36 +191,9 @@ async function addAttemptNote(jobId, text, companyId) {
     }
 }
 
-// ─── Correlation (anti-spoof, S10) ────────────────────────────────────────────
-//
-// The body's `message.call.id` (vapi_call_id) is the ONLY value we trust from a
-// machine webhook. Everything else — companyId, jobId, attempt_no — is read from
-// the correlated `outbound_call_attempts` row. Shared by BOTH the end-of-call
-// classifier and the CT-05 status-update timeline branch so the anti-spoof rule
-// (company from the ROW, never the body) lives in exactly one place. An unknown /
-// foreign id → null (the caller answers a 200 no-op).
-async function correlateAttempt(vapiCallId) {
-    const { rows } = await db.query(
-        `SELECT id, company_id, job_id, task_id, attempt_no, status, phone, contact_id, slot_json,
-                scenario, lead_uuid
-         FROM outbound_call_attempts
-         WHERE vapi_call_id = $1
-         ORDER BY id DESC
-         LIMIT 2`,
-        [vapiCallId]
-    );
-    if (rows.length !== 1) {
-        if (rows.length > 1) {
-            console.warn(`[vapiCallStatus] ambiguous vapi_call_id correlation; refusing callId=${vapiCallId}`);
-        }
-        return null;
-    }
-    return rows[0];
-}
-
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
-router.post('/', webhookSecretAuth, async (req, res) => {
+router.post('/', statusCredentialAuth, async (req, res) => {
     try {
         const message = req.body && req.body.message;
         // Diagnostic breadcrumb (auth already passed): which VAPI message types
@@ -201,6 +204,46 @@ router.post('/', webhookSecretAuth, async (req, res) => {
             const dcid = message.call && message.call.id;
             console.log(`[vapiCallStatus] rx type=${message.type} callId=${dcid || '?'}`);
         }
+
+        if (typeof req.vapiRawJson !== 'string') {
+            return res.status(503).json({
+                ok: false,
+                error: 'Exact Vapi body unavailable',
+                code: 'VAPI_USAGE_RAW_JSON_REQUIRED',
+            });
+        }
+
+        let ingest;
+        try {
+            ingest = await vapiUsageIngestService.ingestServerMessage({
+                companyId: req.machineCredential.companyId,
+                credentialId: req.machineCredential.id,
+                rawJson: req.vapiRawJson,
+            });
+        } catch (error) {
+            if (error instanceof VapiContractError) {
+                console.warn(`[vapiCallStatus] provider contract rejected code=${error.code}`);
+                return res.json({ ok: true });
+            }
+            if (error instanceof vapiUsageIngestService.VapiUsageIngestError) {
+                return res.status(error.status).json({
+                    ok: false,
+                    error: 'Vapi usage ingest refused',
+                    code: error.code,
+                });
+            }
+            console.error('[vapiCallStatus] usage ingest unavailable');
+            return res.status(503).json({
+                ok: false,
+                error: 'Vapi usage ingest unavailable',
+                code: 'VAPI_USAGE_INGEST_UNAVAILABLE',
+            });
+        }
+
+        if (!ingest.correlated) {
+            return res.json({ ok: true });
+        }
+        const attempt = ingest.attempt;
 
         // ── OUTBOUND-CALL-TIMELINE-001 (CT-05a): mid-call status-update ───────
         // status-update / conversation-update / tool-calls all reach this same
@@ -215,16 +258,11 @@ router.post('/', webhookSecretAuth, async (req, res) => {
         // serverMessages includes 'status-update' (ops step CT-07); until then
         // this branch is inert — silent degradation, not a blocker.
         if (message && message.type === 'status-update') {
-            const liveCallId = message.call && message.call.id;
-            if (liveCallId) {
-                const liveAttempt = await correlateAttempt(liveCallId);
-                // Unknown/foreign call.id → drop (we didn't place it) — no timeline row.
-                if (liveAttempt) {
-                    try {
-                        await vapiCallTimelineService.applyStatusUpdate({ attempt: liveAttempt, message });
-                    } catch (tlErr) {
-                        console.warn('[vapiCallStatus] applyStatusUpdate failed (non-fatal):', tlErr && tlErr.message);
-                    }
+            if (attempt) {
+                try {
+                    await vapiCallTimelineService.applyStatusUpdate({ attempt, message });
+                } catch (tlErr) {
+                    console.warn('[vapiCallStatus] applyStatusUpdate failed (non-fatal):', tlErr && tlErr.message);
                 }
             }
             return res.json({ ok: true });
@@ -238,19 +276,11 @@ router.post('/', webhookSecretAuth, async (req, res) => {
         if (!message || message.type !== 'end-of-call-report') {
             return res.json({ ok: true });
         }
-        // The correlation key — the ONLY value we trust from the body.
-        const vapiCallId = message && message.call && message.call.id;
         const endedReason = message && (message.endedReason || (message.call && message.call.endedReason));
 
-        if (!vapiCallId) {
-            // Not an end-of-call report we can correlate → no-op (don't error).
-            return res.json({ ok: true });
-        }
-
-        // Correlate → the row is the sole source of companyId (anti-spoof S10).
-        const attempt = await correlateAttempt(vapiCallId);
         if (!attempt) {
-            // Unknown call.id → 200 no-op, no leak (foreign/duplicate/late webhook).
+            // Inbound T2 session: provisional evidence is already persisted; the
+            // outbound retry/timeline state machine has no attempt to update.
             return res.json({ ok: true });
         }
 

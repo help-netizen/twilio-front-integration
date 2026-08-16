@@ -6,7 +6,9 @@ const path = require('path');
 const {
     VapiContractError,
     parseVapiServerMessageJson,
+    parseVapiEndOfCallReportJson,
     parseVapiGetCallJson,
+    sanitizeVapiServerMessageJson,
 } = require('../backend/src/services/vapiProviderContracts');
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'vapi-agency');
@@ -81,8 +83,12 @@ describe('VAPI-AGENCY-001 T1 — documented server-message contracts', () => {
         });
     });
 
-    test('end-of-call-report pins identity and end reason but does not invent a webhook cost shape', () => {
-        const result = parseVapiServerMessageJson(
+    test('end-of-call-report pins documented call-level cost provisionally', () => {
+        const raw = fixture('end-of-call-report.docs-composed.json');
+        const result = parseVapiEndOfCallReportJson(
+            raw,
+        );
+        const identity = parseVapiServerMessageJson(
             fixture('end-of-call-report.docs-composed.json'),
         );
 
@@ -94,7 +100,35 @@ describe('VAPI-AGENCY-001 T1 — documented server-message contracts', () => {
             status: 'ended',
             endedReason: 'customer-ended-call',
         });
-        expect(result.cost).toBeUndefined();
+        expect(result.cost.supplierTotal).toBe('0.0107');
+        expect(result.cost.components.stt).toBe('0.001');
+        expect(identity.cost).toBeUndefined();
+
+        const sanitized = sanitizeVapiServerMessageJson(raw);
+        expect(sanitized.message.call.cost).toBe('0.0107');
+        expect(sanitized.message.call.costBreakdown.analysisCostBreakdown.summary)
+            .toBe('0.0001');
+        expect(JSON.stringify(sanitized)).not.toMatch(
+            /transcript|recording|phoneNumber|messages|artifact/i,
+        );
+        expect(sanitized.message).not.toHaveProperty('customer');
+    });
+
+    test('end-of-call cost placement is fail-closed until a live body proves another shape', () => {
+        const payload = parseFixtureObject('end-of-call-report.docs-composed.json');
+        payload.message.cost = payload.message.call.cost;
+        payload.message.costBreakdown = payload.message.call.costBreakdown;
+        delete payload.message.call.cost;
+        delete payload.message.call.costBreakdown;
+
+        expectContractError(
+            () => parseVapiEndOfCallReportJson(JSON.stringify(payload)),
+            'required_object',
+            '$.message.call.costBreakdown',
+        );
+        const sanitized = sanitizeVapiServerMessageJson(JSON.stringify(payload));
+        expect(sanitized.message.cost).toBe('0.0107');
+        expect(sanitized.message.call.cost).toBeUndefined();
     });
 
     test('unknown additional fields are tolerated at every envelope level', () => {
