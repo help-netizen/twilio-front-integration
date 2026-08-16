@@ -108,6 +108,23 @@ async function getScheduleItems(companyId, filters = {}, providerScope = null) {
         providerScope,
         timezone,
     });
+    // SCHED self-heal: a job read here with an address but no coordinates is
+    // invisible on the map (coordinate presence is the map's only gate). Enqueue a
+    // geocode for it — dedup-guarded so repeated reads never pile up tasks,
+    // fire-and-forget so the read never waits, and 'failed' addresses are left alone
+    // (retrying the same bad address just fails again). This heals legacy/import
+    // jobs and any future job whose async geocode enqueue was swallowed.
+    try {
+        const routeSeg = require('./routeSegmentService');
+        for (const r of result.rows) {
+            if (r.entity_type === 'job' && r.entity_id
+                && r.address_summary && String(r.address_summary).trim()
+                && (r.lat == null || r.lng == null)
+                && r.geocoding_status !== 'failed') {
+                routeSeg.enqueueGeocodeDeduped(companyId, r.entity_id).catch(() => {});
+            }
+        }
+    } catch { /* self-heal must never break a schedule read */ }
     return {
         items: result.rows.map(rowToScheduleItem),
         total: result.total,

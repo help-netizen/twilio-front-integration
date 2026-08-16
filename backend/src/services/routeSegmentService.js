@@ -57,6 +57,30 @@ async function enqueueRouteCalcDeduped(companyId, technicianId, scheduleDate) {
     );
 }
 
+/**
+ * Lazy-on-read geocode enqueue with a dedup guard. A job that has an address but
+ * no coordinates (legacy/import, or an async enqueue that was swallowed) is
+ * invisible on the schedule map — coordinate presence is the only map gate. The
+ * schedule read self-heals such jobs by calling this, which INSERTs a job_geocode
+ * task ONLY when no queued one already exists for that job, so repeated reads of
+ * the same un-geocoded job never pile up tasks. The agentWorker fills the coords.
+ */
+async function enqueueGeocodeDeduped(companyId, jobId) {
+    await db.query(
+        `INSERT INTO tasks (company_id, kind, agent_type, agent_status, agent_input, status, title, created_by)
+         SELECT $1, 'agent', 'job_geocode', 'queued', jsonb_build_object('job_id', $2::bigint), 'open', $3, 'system'
+         WHERE NOT EXISTS (
+             SELECT 1 FROM tasks
+             WHERE company_id = $1
+               AND kind = 'agent'
+               AND agent_type = 'job_geocode'
+               AND agent_status = 'queued'
+               AND (agent_input->>'job_id') = $2::text
+         )`,
+        [companyId, jobId, `Geocode job ${jobId}`]
+    );
+}
+
 // ── initial segment status from a pair's coordinates ─────────────────────────
 function pairInitialStatus(fromJob, toJob) {
     const usable = (j) => j && j.lat != null && j.lng != null;
@@ -165,6 +189,7 @@ module.exports = {
     recalcForJob,
     seedMissingForRange,
     enqueueGeocode,
+    enqueueGeocodeDeduped,
     enqueueRouteCalc,
     enqueueRouteCalcDeduped,
     enqueueAgentTask,
