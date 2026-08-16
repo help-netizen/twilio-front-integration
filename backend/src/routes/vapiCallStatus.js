@@ -58,6 +58,7 @@
 
 const express = require('express');
 const router = express.Router();
+const vapiAssistantRequestRouter = require('./vapiAssistantRequest');
 const db = require('../db/connection');
 const jobsService = require('../services/jobsService');
 const eventService = require('../services/eventService');
@@ -95,6 +96,11 @@ const agentCallWindowService = require('../services/agentCallWindowService');
 // guarded (never throw), but every call here is ALSO wrapped so a hard fault can
 // never disturb the attempt/retry state machine or the webhook's 200.
 const vapiCallTimelineService = require('../services/vapiCallTimelineService');
+
+// Reuse the already-mounted protected machine namespace. This exposes exactly
+// one dynamic selector at POST /api/vapi/call-status/assistant-request without
+// changing protected src/server.js or adding a second legacy runtime handler.
+router.use('/assistant-request', vapiAssistantRequestRouter);
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 

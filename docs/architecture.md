@@ -8308,8 +8308,10 @@ deployment secret store; tenant credentials/keys Vapi не существуют.
 До provider routing Albusto выбирает ровно один active tuple
 `(company,purpose,environment)`, закреплённый SIP resource и отдельный machine
 credential. Inbound session и одноразовый correlation token создаются до SIP;
-первый доверенный callback bind-ит `(provider_account_key,vapi_call_id)`. Outbound
-session создаётся до `POST /call`, response id bind-ится к session и attempt.
+первый доверенный callback bind-ит глобально уникальный `vapi_call_id` единственной
+платформенной организации. `provider_account_key` не образует per-company
+namespace. Outbound session создаётся до `POST /call`, response id bind-ится к
+session и attempt.
 Twilio CallSid — только correlation evidence: один parent может содержать
 несколько независимо тарифицируемых AI-ног.
 

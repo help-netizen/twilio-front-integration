@@ -8,6 +8,7 @@ shape was observed live.
 |---|---|---:|
 | `get-call.inbound-analysis.production-sanitized.json` | Read-only `GET /call/:id` on 2026-08-16 | Yes |
 | `get-call.inbound-short.production-sanitized.json` | Read-only `GET /call/:id` on 2026-08-16 | Yes |
+| `get-call.outbound-live.production-sanitized.json` | Read-only `GET /call/:id` after an owner-authorized outbound call on 2026-08-16; two stable measurements four minutes apart | Yes |
 | `assistant-request.docs.json` | Vapi Server events documentation | No |
 | `status-update.docs.json` | Vapi Server events documentation | No |
 | `end-of-call-report.docs-composed.json` | Vapi Server events shape plus fields observed in `GET /call` | No |
@@ -25,3 +26,10 @@ Documentation source: <https://docs.vapi.ai/server-url/events> and
 The webhook fixtures deliberately exclude unobserved cost placement. Until a live
 `end-of-call-report` is captured, only `GET /call/:id` is an accepted authoritative
 cost input for this adapter.
+
+The live outbound call produced two authenticated `status-update` messages and one
+authenticated `end-of-call-report`. This confirms those message discriminators on the
+deployed callback path, but the handler did not capture their raw bodies. Their fixture
+shapes therefore remain documentation-derived. The outbound readback omitted
+`twilioCallSid`: Albusto's durable outbound link is the `vapi_call_id` written from the
+successful `POST /call` response, not a provider-populated Twilio SID.

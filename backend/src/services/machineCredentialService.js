@@ -4,12 +4,23 @@ const { hashSecret } = require('../middleware/integrationsAuth');
 
 const SURFACES = Object.freeze({
     VAPI_TOOLS: 'vapi_tools',
+    VAPI_CALL_STATUS: 'vapi_call_status',
+    VAPI_ASSISTANT_REQUEST: 'vapi_assistant_request',
     SALES_MCP_PUBLIC: 'sales_mcp_public',
 });
 
 const ACCESS_SCOPES = Object.freeze({
     VAPI_TOOLS: 'vapi_tools:invoke',
+    VAPI_CALL_STATUS: 'vapi_call_status:invoke',
+    VAPI_ASSISTANT_REQUEST: 'vapi_assistant_request:invoke',
     SALES_MCP_PUBLIC: 'sales_mcp_public:access',
+});
+
+const REQUIRED_SCOPE_BY_SURFACE = Object.freeze({
+    [SURFACES.VAPI_TOOLS]: ACCESS_SCOPES.VAPI_TOOLS,
+    [SURFACES.VAPI_CALL_STATUS]: ACCESS_SCOPES.VAPI_CALL_STATUS,
+    [SURFACES.VAPI_ASSISTANT_REQUEST]: ACCESS_SCOPES.VAPI_ASSISTANT_REQUEST,
+    [SURFACES.SALES_MCP_PUBLIC]: ACCESS_SCOPES.SALES_MCP_PUBLIC,
 });
 
 class MachineCredentialError extends Error {
@@ -148,9 +159,7 @@ async function provisionCredential({
     }
     validateSurface(surface);
     const normalizedScopes = normalizeScopes(scopes);
-    const requiredAccessScope = surface === SURFACES.VAPI_TOOLS
-        ? ACCESS_SCOPES.VAPI_TOOLS
-        : ACCESS_SCOPES.SALES_MCP_PUBLIC;
+    const requiredAccessScope = REQUIRED_SCOPE_BY_SURFACE[surface];
     if (!normalizedScopes.includes(requiredAccessScope)) {
         throw new MachineCredentialError('MACHINE_CREDENTIAL_ACCESS_SCOPE_REQUIRED', 400);
     }

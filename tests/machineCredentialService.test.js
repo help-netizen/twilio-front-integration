@@ -110,3 +110,35 @@ test('provisioning requires explicit company and the surface access scope', asyn
     })).rejects.toMatchObject({ code: 'MACHINE_CREDENTIAL_ACCESS_SCOPE_REQUIRED' });
     expect(mockDbQuery).not.toHaveBeenCalled();
 });
+
+test('Vapi status and assistant-request credentials are distinct typed surfaces', () => {
+    expect(service.SURFACES.VAPI_CALL_STATUS).toBe('vapi_call_status');
+    expect(service.ACCESS_SCOPES.VAPI_CALL_STATUS).toBe('vapi_call_status:invoke');
+    expect(service.SURFACES.VAPI_ASSISTANT_REQUEST).toBe('vapi_assistant_request');
+    expect(service.ACCESS_SCOPES.VAPI_ASSISTANT_REQUEST)
+        .toBe('vapi_assistant_request:invoke');
+    expect(service.SURFACES.VAPI_CALL_STATUS).not.toBe(
+        service.SURFACES.VAPI_ASSISTANT_REQUEST,
+    );
+});
+
+test('assistant-request surface resolves only a live credential with its exact scope', async () => {
+    mockDbQuery
+        .mockResolvedValueOnce({ rows: [credentialRow({
+            id: 31,
+            scopes: ['vapi_assistant_request:invoke'],
+        })] })
+        .mockResolvedValueOnce({ rows: [{ id: 31 }], rowCount: 1 });
+
+    await expect(service.resolveCredential(SECRET_A, {
+        surface: service.SURFACES.VAPI_ASSISTANT_REQUEST,
+        requiredScope: service.ACCESS_SCOPES.VAPI_ASSISTANT_REQUEST,
+    })).resolves.toMatchObject({
+        id: '31',
+        companyId: COMPANY_A,
+        surface: 'vapi_assistant_request',
+        scopes: ['vapi_assistant_request:invoke'],
+    });
+
+    expect(mockDbQuery.mock.calls[0][1][0]).toBe('vapi_assistant_request');
+});

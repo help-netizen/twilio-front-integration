@@ -16,6 +16,11 @@ jest.mock('../../backend/src/services/groupRouting', () => ({
     availableAgentsForGroup: jest.fn(),
     isBusinessHours: jest.fn(),
 }));
+const mockReserveInboundSession = jest.fn();
+jest.mock('../../backend/src/services/vapiCallIdentityService', () => ({
+    TOKEN_HEADER: 'x-albusto-call-token',
+    reserveInboundSession: (...args) => mockReserveInboundSession(...args),
+}));
 
 const {
     advance,
@@ -103,5 +108,117 @@ describe('advance() — vapi_agent routing', () => {
         mockExecutionAt('ai');
         const twiml = await advance('CA_vapi', 'vapi.timeout', 'test', 'company-1');
         expect(twiml).toContain('FALLBACK_REACHED');
+    });
+});
+
+describe('advance() — VAPI-AGENCY-001 durable inbound reservation', () => {
+    const inboundGraph = {
+        states: [
+            { id: 'start', kind: 'start' },
+            {
+                id: 'ai',
+                kind: 'vapi_agent',
+                config: {
+                    purpose: 'inbound_call',
+                    environment: 'prod',
+                    sip_uri: 'sip:caller-controlled@sip.vapi.ai',
+                    assistantId: 'caller-controlled-assistant',
+                },
+            },
+            { id: 'fb', kind: 'greeting', config: { text: 'SAFE_FALLBACK' } },
+        ],
+        transitions: [
+            { id: 'start-ai', from_state_id: 'start', to_state_id: 'ai', transitionMode: 'eventless' },
+            {
+                id: 'ai-fb',
+                from_state_id: 'ai',
+                to_state_id: 'fb',
+                transitionMode: 'event',
+                event_key: 'vapi.no_target vapi.failed vapi.timeout',
+            },
+        ],
+    };
+
+    function wireInboundExecution() {
+        const base = {
+            id: 'execution-vapi-identity',
+            call_sid: 'CA_parent_shared',
+            company_id: '00000000-0000-4000-8000-00000000000a',
+            group_id: 'group-a',
+            current_node_id: 'start',
+            status: 'active',
+            context_json: JSON.stringify({
+                graph: inboundGraph,
+                baseUrl: 'https://example.test',
+            }),
+        };
+        let current = base;
+        mockQuery.mockImplementation(async (sql, params) => {
+            if (sql.includes('SELECT * FROM call_flow_executions')) {
+                return { rows: [{ ...current }] };
+            }
+            if (sql.includes('UPDATE call_flow_executions')) {
+                current = {
+                    ...current,
+                    current_node_id: params[2] || current.current_node_id,
+                    context_json: params[3] || current.context_json,
+                    status: params[4] || current.status,
+                };
+                return { rows: [{ ...current }] };
+            }
+            return { rows: [] };
+        });
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        wireInboundExecution();
+    });
+
+    test('creates the session reservation before emitting Sip and exposes only the opaque token', async () => {
+        mockReserveInboundSession.mockResolvedValue({
+            sessionId: 'session-a',
+            correlationToken: 'opaque-token-a',
+            sipUri: 'sip:registry-owned@sip.vapi.ai',
+        });
+
+        const twiml = await advance(
+            'CA_parent_shared',
+            'node.completed',
+            'trace-a',
+            '00000000-0000-4000-8000-00000000000a',
+        );
+
+        expect(mockReserveInboundSession).toHaveBeenCalledWith({
+            companyId: '00000000-0000-4000-8000-00000000000a',
+            twilioParentCallSid: 'CA_parent_shared',
+            flowExecutionId: 'execution-vapi-identity',
+            flowNodeId: 'ai',
+            purpose: 'inbound_call',
+            environment: 'prod',
+        });
+        expect(twiml).toContain('sip:registry-owned@sip.vapi.ai?x-albusto-call-token=opaque-token-a');
+        expect(twiml).not.toContain('caller-controlled');
+        expect(twiml).not.toContain('company-id');
+        expect(twiml).not.toContain('group-id');
+        expect(twiml).not.toContain('CA_parent_shared');
+    });
+
+    test('reservation refusal follows the configured ordinary fallback without Sip', async () => {
+        mockReserveInboundSession.mockRejectedValue(
+            Object.assign(new Error('tuple unavailable'), {
+                code: 'VAPI_IDENTITY_TUPLE_UNAVAILABLE',
+            }),
+        );
+
+        const twiml = await advance(
+            'CA_parent_shared',
+            'node.completed',
+            'trace-a',
+            '00000000-0000-4000-8000-00000000000a',
+        );
+
+        expect(twiml).toContain('SAFE_FALLBACK');
+        expect(twiml).not.toContain('<Sip');
     });
 });

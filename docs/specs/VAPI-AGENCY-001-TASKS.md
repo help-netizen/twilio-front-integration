@@ -87,7 +87,9 @@ assistant-request (если нужен), `end-of-call-report` и `GET /call/:id`
 `vapi_call_identity_and_usage`; flow runtime создаёт tenant-bound session/token;
 status/assistant callback выполняет одноразовый credential+token+resource+
 assistant bind; duplicate идемпотентен, конфликт quarantined; Twilio callback не
-может подменить identity; EoC repair только при единственном точном match. ABC
+может подменить identity; `vapi_call_id` глобально уникален для единственной
+платформенной организации и не зависит от tenant `provider_org_id`; EoC repair
+только при единственном точном match. ABC
 входящий happy path сохраняет Vapi id. Все T-own/T-foreign/T-blast/R-matrix и
 multi-leg cases зелёные.
 

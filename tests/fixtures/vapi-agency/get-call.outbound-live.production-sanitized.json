@@ -1,0 +1,92 @@
+{
+  "id": "call_fixture_outbound_live",
+  "orgId": "org_fixture_platform",
+  "createdAt": "2026-01-05T05:53:54.153Z",
+  "updatedAt": "2026-01-05T05:55:02.208Z",
+  "type": "outboundPhoneCall",
+  "assistantId": "assistant_fixture_outbound",
+  "phoneCallProvider": "twilio",
+  "phoneCallTransport": "pstn",
+  "status": "ended",
+  "endedReason": "silence-timed-out",
+  "startedAt": "2026-01-05T05:53:56.852Z",
+  "endedAt": "2026-01-05T05:54:57.246Z",
+  "cost": 0.0565,
+  "costBreakdown": {
+    "transport": 0,
+    "stt": 0.0052,
+    "llm": 0,
+    "tts": 0,
+    "vapi": 0.0503,
+    "chat": 0,
+    "total": 0.0565,
+    "llmPromptTokens": 0,
+    "llmCompletionTokens": 0,
+    "llmCachedPromptTokens": 0,
+    "ttsCharacters": 0,
+    "analysisCostBreakdown": {
+      "summary": 0.0002,
+      "structuredData": 0,
+      "structuredOutput": 0,
+      "successEvaluation": 0.0007,
+      "summaryPromptTokens": 132,
+      "summaryCompletionTokens": 47,
+      "summaryCachedPromptTokens": 0,
+      "structuredDataPromptTokens": 0,
+      "structuredDataCompletionTokens": 0,
+      "structuredDataCachedPromptTokens": 0,
+      "structuredOutputPromptTokens": 0,
+      "structuredOutputCompletionTokens": 0,
+      "structuredOutputCachedPromptTokens": 0,
+      "successEvaluationPromptTokens": 2325,
+      "successEvaluationCompletionTokens": 10,
+      "successEvaluationCachedPromptTokens": 0
+    },
+    "knowledgeBaseCost": 0,
+    "voicemailDetectionCost": 0
+  },
+  "costs": [
+    {
+      "type": "transcriber",
+      "provider": null,
+      "minutes": 1.0486666666666666,
+      "cost": 0.005242625
+    },
+    {
+      "type": "model",
+      "provider": null,
+      "minutes": null,
+      "cost": 0
+    },
+    {
+      "type": "voice",
+      "provider": null,
+      "minutes": null,
+      "cost": 0
+    },
+    {
+      "type": "vapi",
+      "provider": null,
+      "minutes": 1.0066,
+      "cost": 0.05033
+    },
+    {
+      "type": "knowledge-base",
+      "provider": null,
+      "minutes": null,
+      "cost": 0
+    },
+    {
+      "type": "analysis",
+      "provider": null,
+      "minutes": null,
+      "cost": 0.0001571
+    },
+    {
+      "type": "analysis",
+      "provider": null,
+      "minutes": null,
+      "cost": 0.0007225
+    }
+  ]
+}

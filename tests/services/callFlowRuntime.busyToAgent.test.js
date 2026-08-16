@@ -50,6 +50,11 @@ jest.mock('../../backend/src/services/groupRouting', () => ({
 jest.mock('../../backend/src/services/telephonyTenantService', () => ({
     getAutonomousMode: jest.fn(),
 }));
+const mockReserveInboundSession = jest.fn();
+jest.mock('../../backend/src/services/vapiCallIdentityService', () => ({
+    TOKEN_HEADER: 'x-albusto-call-token',
+    reserveInboundSession: (...args) => mockReserveInboundSession(...args),
+}));
 
 // T1's transform — the tests' graph fixture is its ACTUAL output.
 const { applyBusyToAgentTransform } = require('../../scripts/apply-callflow-busy-to-agent-001.js');
@@ -110,7 +115,7 @@ function clone(value) {
 // ─── Stateful db mock ─────────────────────────────────────────────────────────
 
 let executionRow; // the single call_flow_executions row under test
-let sipRows;      // vapi_tenant_resources SELECT result (default: Sara resolvable)
+let reservation; // durable Vapi identity reservation (default: Sara resolvable)
 
 function installDb() {
     mockQuery.mockImplementation(async (sql, params) => {
@@ -141,9 +146,6 @@ function installDb() {
                 if (status != null) executionRow.status = status;
             }
             return { rows: executionRow ? [{ ...executionRow }] : [] };
-        }
-        if (sql.includes('FROM vapi_tenant_resources r')) {
-            return { rows: sipRows };
         }
         if (sql.includes('UPDATE calls')) {
             return { rows: [] };
@@ -205,7 +207,19 @@ function expectVapiTwiml(twiml) {
 beforeEach(() => {
     jest.clearAllMocks();
     executionRow = null;
-    sipRows = [{ sip_uri: SARA_SIP }]; // Sara resolvable by default (vapi_tenant_resources hit)
+    reservation = {
+        sessionId: 'session-busy-to-agent',
+        sipUri: SARA_SIP,
+        correlationToken: 'opaque-busy-token',
+    };
+    mockReserveInboundSession.mockImplementation(async () => {
+        if (!reservation) {
+            throw Object.assign(new Error('unconfigured'), {
+                code: 'VAPI_IDENTITY_TUPLE_UNAVAILABLE',
+            });
+        }
+        return reservation;
+    });
     installDb();
     telephonyTenantService.getAutonomousMode.mockResolvedValue(false);
     groupRouting.isBusinessHours.mockResolvedValue(true);
@@ -237,8 +251,9 @@ describe('T-G2-01 (S1): business-hours call, zero available agents → vapi TwiM
         // The inbound-webhook response itself is the vapi leg — Sara, not voicemail.
         expectVapiTwiml(twiml);
         expect(twiml).toContain('timeLimit="900"');
-        expect(twiml).toContain(`x-blanc-company-id=${COMPANY_ID}`);
-        expect(twiml).toContain(`x-blanc-group-id=${GROUP_ID}`);
+        expect(twiml).toContain('x-albusto-call-token=opaque-busy-token');
+        expect(twiml).not.toContain('x-blanc-company-id');
+        expect(twiml).not.toContain('x-blanc-group-id');
         // NO announcement, NO voicemail, NO client dial ever happened.
         expect(twiml).not.toContain('<Say');
         expect(twiml).not.toContain('<Client');
@@ -332,9 +347,9 @@ describe('T-G2-04 (S4A): vapi dial failure at n-vapi-bh-backup → business-hour
 
 // ─── T-G2-05 (S4B) — unresolvable SIP → business voicemail in the SAME response ─
 
-describe('T-G2-05 (S4B): no vapi_tenant_resources row AND no env VAPI_SIP_URI → business VM in the same response', () => {
+describe('T-G2-05 (S4B): no durable Vapi reservation → business VM in the same response', () => {
     test('advance(queue.timeout) renders the backup node, SIP unresolvable → t-vapi-bh-backup-fallback → business VM', async () => {
-        sipRows = []; // no active tenant resource; env VAPI_SIP_URI deleted at module top
+        reservation = null;
         seedExecution('sk-current-group');
 
         const twiml = await advance(CALL_SID, 'queue.timeout', 'test', COMPANY_ID);
@@ -351,7 +366,7 @@ describe('T-G2-05 (S4B): no vapi_tenant_resources row AND no env VAPI_SIP_URI �
     });
 
     test('full catastrophe chain: no agents AND no SIP → the inbound response itself is the business VM', async () => {
-        sipRows = [];
+        reservation = null;
         groupRouting.availableAgentsForGroup.mockResolvedValue([]);
 
         const twiml = await runStartExecution(TRANSFORMED);

@@ -9,6 +9,7 @@ const db = require('../db/connection');
 const realtimeService = require('./realtimeService');
 const groupRouting = require('./groupRouting');
 const telephonyTenantService = require('./telephonyTenantService');
+const vapiCallIdentityService = require('./vapiCallIdentityService');
 const { buildSoftphoneIdentity } = require('./softphoneIdentity');
 const { toE164 } = require('../utils/phoneUtils');
 
@@ -389,49 +390,6 @@ async function renderTransferNode({ execution, node, context, traceId }) {
 // prompt, voice, tools, duration) is configured in VAPI, not on the node.
 const VAPI_MAX_DURATION_SECONDS = 900;
 
-async function resolveVapiSipUri(node, context, companyId) {
-    const cfg = node.config || {};
-    if (!companyId) return null;
-    const configuredSipUri = cfg.sip_uri || cfg.sipUri;
-    if (configuredSipUri) return String(configuredSipUri);
-
-    const environment = String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod');
-    const params = [companyId, environment];
-    let scopedFilter = '';
-    if (cfg.vapi_resource_id || cfg.resource_id) {
-        params.push(String(cfg.vapi_resource_id || cfg.resource_id));
-        scopedFilter = `AND r.id = $${params.length}`;
-    } else if (cfg.provider_connection_id) {
-        params.push(String(cfg.provider_connection_id));
-        scopedFilter = `AND r.provider_connection_id = $${params.length}`;
-    }
-
-    try {
-        const result = await db.query(
-            `SELECT NULLIF(BTRIM(r.sip_uri), '') AS sip_uri
-             FROM vapi_tenant_resources r
-             JOIN provider_connections pc
-               ON pc.id = r.provider_connection_id
-              AND pc.company_id = r.company_id
-             WHERE r.company_id = $1
-               AND r.is_active = true
-               AND pc.provider = 'vapi'
-               AND pc.status = 'active'
-               AND NULLIF(BTRIM(r.sip_uri), '') IS NOT NULL
-               ${scopedFilter}
-             ORDER BY
-               CASE WHEN r.environment = $2 THEN 0 ELSE 1 END,
-               r.created_at DESC
-             LIMIT 1`,
-            params
-        );
-        return result.rows[0]?.sip_uri || null;
-    } catch (err) {
-        console.error('[CallFlowRuntime] Failed to resolve VAPI SIP resource:', err.message);
-        return null;
-    }
-}
-
 function appendSipQuery(sipUri, query) {
     const separator = String(sipUri).includes('?') ? '&amp;' : '?';
     return `${escapeXml(sipUri)}${separator}${query}`;
@@ -439,8 +397,18 @@ function appendSipQuery(sipUri, query) {
 
 async function renderVapiNode({ execution, node, context, traceId }) {
     const cfg = node.config || {};
-    const sipUri = await resolveVapiSipUri(node, context, execution.company_id);
-    if (!sipUri) {
+    let reservation;
+    try {
+        reservation = await vapiCallIdentityService.reserveInboundSession({
+            companyId: execution.company_id,
+            twilioParentCallSid: execution.call_sid,
+            flowExecutionId: execution.id,
+            flowNodeId: node.id,
+            purpose: String(cfg.purpose || 'inbound_call'),
+            environment: String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod'),
+        });
+    } catch (error) {
+        console.error('[CallFlowRuntime] Vapi reservation refused:', error.code || 'unknown');
         return followFailureEdge({
             execution,
             node,
@@ -456,10 +424,7 @@ async function renderVapiNode({ execution, node, context, traceId }) {
     const statusCallbackUrl = `${context.baseUrl}/webhooks/twilio/voice-status`;
     const recordingStatusUrl = `${context.baseUrl}/webhooks/twilio/recording-status`;
     const query = new URLSearchParams({
-        'x-blanc-company-id': context.companyId,
-        'x-blanc-group-id': context.groupId,
-        'x-blanc-called-number': context.calledNumber || '',
-        'x-blanc-call-sid': context.callSid || '',
+        [vapiCallIdentityService.TOKEN_HEADER]: reservation.correlationToken,
     }).toString().replace(/&/g, '&amp;');
     return xmlResponse(`
     <Dial action="${actionUrl}"
@@ -472,7 +437,7 @@ async function renderVapiNode({ execution, node, context, traceId }) {
           recordingStatusCallbackMethod="POST">
         <Sip statusCallback="${statusCallbackUrl}"
              statusCallbackEvent="initiated ringing answered completed"
-             statusCallbackMethod="POST">${appendSipQuery(sipUri, query)}</Sip>
+             statusCallbackMethod="POST">${appendSipQuery(reservation.sipUri, query)}</Sip>
     </Dial>`);
 }
 

@@ -27,23 +27,26 @@ Delivery plan: `docs/specs/VAPI-AGENCY-001-TASKS.md`
 
 | ID | P | Предусловие/действие | Ожидаемый результат | Автотест / sabotage |
 |---|---:|---|---|---|
-| ID-01 | P0 | Inbound A flow входит в Vapi node | Session/token/lease созданы до SIP; company/purpose/env/resource зафиксированы; `vapi_call_id` пока null | `vapiCallIdentity`: inbound create |
-| ID-02 | P0 | Первый status callback имеет credential A, valid token, expected resource/assistant и `call.id=C1` | Session A атомарно bind к C1; token больше не переиспользуем | `vapiCallIdentity`: bind |
-| ID-03 | P0 | Повторить точный callback C1 | 2xx/idempotent; та же session; новых rows/lease нет | duplicate bind |
+| ID-01 | P0 | Inbound A flow входит в Vapi node | Session/reservation и token созданы до SIP; company/purpose/env/resource зафиксированы; `vapi_call_id` пока null. Capacity lease добавляется в T8 | `vapiCallIdentity`: inbound create |
+| ID-02 | P0 | `assistant-request` имеет credential A, valid token и `message.call.id=C1` | Session A атомарно bind к C1 до ответа `{assistantId}`; token больше не переиспользуем | `vapiCallIdentity` + `vapiAssistantRequest`: bind |
+| ID-03 | P0 | После bind C1 деактивировать/изменить profile и повторить точный callback C1 | 2xx/idempotent до drift-проверок; session byte-unchanged; новых rows/lease нет | duplicate-after-drift bind sabotage |
 | ID-04 | P0 | После bind C1 прислать C2 с тем же token | Reject/quarantine+alert; C1 не изменён | `SAB-VAPI-IDENTITY-TENANT` suite |
 | ID-05 | P0 | Credential B + token/session A, body утверждает company B/A | Reject; A и B unchanged | wrong credential T-foreign |
 | ID-06 | P0 | Resource A, assistant B либо наоборот | Reject до routing/bind; provider call/tenant rows unchanged | registry cross-owner constraint |
 | ID-07 | P0 | A и B имеют одинаковые Twilio parent/child-like keys | Lookup с явным company выбирает только свою строку | T-blast natural key |
 | ID-08 | P0 | Один Twilio parent A проходит две AI-ноги C1/C2 | Две sessions, два provider ids, общий parent; ни одна не перезаписана | multi-leg identity |
 | ID-09 | P0 | Twilio child status приходит раньше/после Vapi callback | `answered_by='ai'` может обновиться, но Vapi id не создаётся из Twilio evidence | timeline permutation |
-| ID-10 | P0 | EoC приходит первым с exact token/resource/assistant match | Допустим однозначный repair bind; usage provisional | EoC repair unique |
-| ID-11 | P0 | EoC без token либо с двумя подходящими pending sessions | Quarantine+alert; эвристического bind/charge нет | ambiguous repair |
+| ID-10 | P0 | EoC приходит до успешного `assistant-request` bind | Никакого поиска по Twilio SID/company/body/assistant; T3 сохраняет raw evidence только после подтверждения живой формы и применяет тот же exact token/session contract | EoC raw-capture case T3 |
+| ID-11 | P0 | `assistant-request` без token либо с двумя различными token values | Reject; handler не возвращает assistant; эвристического bind нет | assistant-request token fail-closed |
 | ID-12 | P0 | Outbound worker A создаёт call | Session/lease существуют до POST; response id атомарно в session и attempt | outbound identity |
 | ID-13 | P1 | POST мог уйти, ответ timeout | Session `provider_pending`; job не делает второй POST до repair | ambiguous POST test |
 | ID-14 | P0 | В request/tool/public payload переданы `assistantId`, `assistantOverrides`, model, voice, tools, destination, server URL/credential | Поля rejected; provider payload содержит только server-owned template | `SAB-VAPI-OVERRIDE` |
 | ID-15 | P0 | Tool webhook A пытается обратиться к entity F | 404; A/F entities and audit unchanged | tools T-foreign/R-matrix |
 | ID-16 | P0 | Tenant JWT используется на machine webhook либо status credential на tools surface | Deny; surface credentials не взаимозаменяемы | `SAB-VAPI-WEBHOOK-CREDENTIAL` |
 | ID-17 | P0 | Reconcile worker вызван без company либо с company B для session A | Fail closed; usage A unchanged; no provider read attributed to B | worker explicit-company |
+| ID-18 | P0 | A имеет пустой `provider_org_id`, B заполненный; обе пытаются bind одного `vapi_call_id` | Вторая bind quarantined; DB global unique не допускает второй row при любом `provider_account_key` | global provider-call identity sabotage |
+| ID-19 | P1 | Flow повторно входит в тот же node, пока первая unbound reservation/token ещё действуют | Fail closed без новой reservation; исходная session/token byte-unchanged; после TTL возможна замена | reservation-in-flight retry |
+| ID-20 | P1 | Retention удаляет `call_flow_executions` после создания session | Session переживает удаление; `flow_execution_id` становится null, provider identity сохраняется | flow-execution `ON DELETE SET NULL` |
 
 ## 3. Gate, assistant registry, provisioning и лимиты
 

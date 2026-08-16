@@ -45,7 +45,7 @@ Albusto. `assistantId`, SIP URI, входные заголовки или пол
   используется как AI-назначение;
 - миграции и код в рамках данного документного турна.
 
-## 2.1 Current-state baseline (принятая разведка)
+## 2.1 Current-state baseline до T2 (принятая разведка)
 
 Этот раздел фиксирует исходную точку реализации; он не переоткрывает
 TENANT-ISO-002 и не предлагает сохранять legacy-пути.
@@ -55,7 +55,7 @@ TENANT-ISO-002 и не предлагает сохранять legacy-пути.
 | Точка | Текущий путь | Какие id доступны / пробел |
 |---|---|---|
 | Twilio ingress и tenant | `backend/src/webhooks/twilioWebhooks.js:498-590` получает компанию только через `AccountSid`, пишет `call.inbound` в inbox и запускает company flow | Twilio parent `CallSid`, `AccountSid`, `company_id`; Vapi id ещё нет |
-| CRM call row | `backend/src/services/inboxWorker.js:397-436` вызывает `backend/src/db/callsQueries.js:20-68`; conflict key уже `(company_id, call_sid)` | Twilio parent/child SID; в `calls` нет `vapi_call_id` и supplier cost; `price` — нормализованная Twilio цена |
+| CRM call rows | `backend/src/services/inboxWorker.js:397-436` вызывает `backend/src/db/callsQueries.js:20-68`; conflict key уже `(company_id, call_sid)`. Реальный входящий AI-маршрут создаёт отдельные parent и SIP-child строки | У двух строк разные Twilio SID, child хранит `parent_call_sid`; это только группировка. В `calls` нет `vapi_call_id` и supplier cost; `price` — нормализованная Twilio цена |
 | Vapi flow node | `backend/src/services/callFlowRuntime.js:392-476` ищет active SIP resource по company/environment, но допускает `node.config.sip_uri`, не закрепляет assistant и передаёт `x-blanc-company-id`/`x-blanc-call-sid` как SIP query | Company, flow context, Twilio parent SID, SIP URI; durable AI-leg/session и Vapi id отсутствуют |
 | Assistant request prototype | `voice-agent/services/blanc-call-runtime/src/handlers/vapiAssistantRequest.ts:40-91` впервые видит `message.call.id`, но только логирует; `.../lib/resolveAssistantForCall.ts:39-68` выбирает assistant из глобальной in-memory map без company, а unknown profile возвращает transient assistant (`:70-115`) | Здесь Vapi id уже есть, но не сохраняется и не bind-ится к tenant session. Этот prototype не является доказанным main-server runtime contract; T1 обязан зафиксировать фактический deployed callback |
 | Twilio child reconciliation | `backend/src/services/inboxWorker.js:705-799` распознаёт Vapi SIP target и ставит parent `answered_by='ai'` | Twilio parent/child SID и company; Vapi id всё ещё отсутствует. `answered_by` — display classification, не billing identity |
@@ -75,7 +75,9 @@ TENANT-ISO-002 и не предлагает сохранять legacy-пути.
 сохраняет Vapi id только в `outbound_call_attempts`; status/EoC затем находят
 attempt по этому id. `backend/src/services/vapiCallTimelineService.js:264-365` и
 `:390-464` зеркалирует звонок в `calls` и ставит `answered_by='ai'`, но supplier
-cost не хранит.
+cost не хранит. В живом outbound readback через транзитный Twilio caller-ID поле
+`twilioCallSid` отсутствовало: связь существует только потому, что Albusto сам
+сохраняет `vapi_call_id` из ответа `POST /call`, а не благодаря provider SID.
 
 Текущая привязка неполна: tenant-scoped `vapi_assistant_profiles` и
 `vapi_tenant_resources` существуют, но flow выбирает только SIP resource, outbound
@@ -83,6 +85,24 @@ cost не хранит.
 company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` принимает и
 сохраняет клиентский Vapi API key; `:271-379` позволяет tenant CRUD ресурсов и
 профилей. Эти поверхности подлежат удалению в T5.
+
+## 2.2 Реализованный delta T1/T2
+
+- Flow runtime создаёт durable session/reservation и одноразовый opaque token до
+  `<Dial><Sip>`; SIP получает только token, прямые SIP/resource/assistant overrides
+  больше не выбирают destination.
+- Единственный смонтированный selector —
+  `POST /api/vapi/call-status/assistant-request`. Company берётся из отдельного
+  machine credential, а сохранённый assistant возвращается только после exact bind
+  token + company + credential + resource tuple + `message.call.id`.
+- Legacy prototype больше не строит transient assistant, но окончательно удаляется
+  вместе со старыми конфигами в T5.
+- На production на момент T2 есть один legacy SIP resource и нет строк registry
+  profile. Поэтому runtime cutover не выкатывается раньше operator provisioning
+  ABC profile/resource/assistant-request credential и provider readback; иначе
+  fail-closed ветка корректно отправит входящие в обычный fallback.
+- Raw EoC body по-прежнему не захвачен; его persistence и provisional usage — T3,
+  не часть T2.
 
 ## 3. Закрытые решения — дословно
 
@@ -117,8 +137,9 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
 
 ## 4. Архитектурные инварианты
 
-1. Любая AI-нога имеет один локальный `vapi_call_session` и не более одной пары
-   `(provider_account_key, vapi_call_id)`; Twilio CallSid не уникален для AI-ног.
+1. Любая AI-нога имеет один локальный `vapi_call_session`; в единственной
+   платформенной организации `vapi_call_id` глобально уникален независимо от
+   company-scoped `provider_connections`. Twilio CallSid не уникален для AI-ног.
 2. Любое чтение/изменение tenant-данных использует явный `company_id`; webhook
    получает компанию только из серверного credential/resource/session, не из body.
 3. Ассистент, SIP-ресурс и credential одной сессии принадлежат одной компании,
@@ -225,8 +246,8 @@ same-company constraints.
 | Поле | Назначение |
 |---|---|
 | `id`, `company_id`, `direction`, `purpose`, `environment` | локальный canonical root |
-| `assistant_profile_id`, `tenant_resource_id`, `provider_account_key` | server-selected execution tuple |
-| `vapi_call_id` | nullable до bind; globally unique with provider account |
+| `assistant_profile_id`, `tenant_resource_id`, `provider_account_key` | server-selected execution tuple; account key — platform-only audit label, не per-company namespace |
+| `vapi_call_id` | nullable до bind; глобально уникален в единственной платформенной организации |
 | `twilio_parent_call_sid`, `twilio_child_call_sid` | evidence/correlation, не identity AI-ноги |
 | `outbound_call_attempt_id`, `flow_execution_id`, `flow_node_id` | nullable local origins |
 | `correlation_token_hash`, `correlation_expires_at`, `bound_at` | одноразовое inbound bind-доказательство |
@@ -327,7 +348,9 @@ change; T1 фиксирует точные token/analysis поля.
 ### 6.1 Каноническая идентичность
 
 - В Albusto первичный идентификатор AI-ноги — `vapi_call_sessions.id`.
-- Во внешней execution plane — пара `(provider_account_key, vapi_call_id)`.
+- Во внешней execution plane — глобальный `vapi_call_id` единственной
+  платформенной организации; `provider_account_key` не выводится из tenant
+  connection и не фрагментирует пространство идентификаторов.
 - `twilio_parent_call_sid` обозначает исходный звонок и может иметь несколько
   последовательных или параллельных AI-ног.
 - `twilio_child_call_sid`, `outbound_call_attempt_id` и flow execution/node —
@@ -335,31 +358,42 @@ change; T1 фиксирует точные token/analysis поля.
 - Все входящие события сначала устанавливают компанию по аутентифицированному
   server credential, затем ищут session с тем же `company_id`. Body/header claims
   не могут выбрать компанию.
+- Ни inbound, ни outbound не полагаются на `twilioCallSid` из Vapi. У outbound с
+  транзитным Twilio caller-ID это поле отсутствует; canonical bind выполняется из
+  `POST /call` response. Parent SID связывает локальные телеком-ноги только как
+  tenant-scoped grouping evidence.
 
 ### 6.2 Входящий звонок
 
 1. До перевода на SIP runtime, уже знающий `company_id`, flow node, purpose и
    environment, выбирает только активные registry/resource records.
-2. В одной транзакции создаются session, одноразовый correlation token и
-   concurrency lease. В SIP destination уходит opaque token; tenant/company id,
-   provider secret и свободный `assistantId` не передаются.
-3. Закреплённый SIP-resource уже указывает на ровно одного assistant. Динамический
-   assistant selection для штатного пути не нужен.
-4. Первый аутентифицированный Vapi callback, содержащий `message.call.id`
-   (обычно status update; assistant-request допустим лишь для явно включённого
-   dynamic-resource режима), атомарно bind-ит `vapi_call_id` к session.
-5. Bind проходит только если credential company, token/session, resource и
+2. В одной транзакции создаются session/reservation и одноразовый correlation
+   token. В SIP destination уходит только opaque token; tenant/company id,
+   provider secret и свободный `assistantId` не передаются. Атомарный capacity
+   lease добавляется в T8 до снятия multi-tenant gate.
+3. Закреплённый SIP-resource имеет один server-owned assistant profile и отдельный
+   assistant-request credential. Единственный поддерживаемый assistant-request
+   handler возвращает только сохранённый `assistantId`; transient assistant и
+   provider/body selection запрещены.
+4. Аутентифицированный `assistant-request`, содержащий `message.call.id` и opaque
+   token, атомарно bind-ит `vapi_call_id` к session до ответа Vapi.
+5. Первичный bind проходит только если credential company, token/session, resource и
    assistant совпали. Token одноразовый и имеет TTL. Повтор с тем же call id
-   идемпотентен; другой call id или другая company переводит событие в quarantine.
+   идемпотентен до drift-проверок и не меняет уже связанную session; другой call id
+   или другая company переводит событие в quarantine. Повторный вход flow в тот же
+   node не заменяет действующую unbound reservation: он fail closed до её bind/TTL,
+   а истёкшую reservation можно карантинить и заменить.
 6. Twilio child status может отметить телеком-ногу, но не создаёт и не подменяет
    Vapi identity. `answered_by='ai'` остаётся CRM-классификацией, не денежным ключом.
-7. EoC без предварительного bind может восстановить связь только при единственном
-   точном совпадении credential + token/session + resource + assistant. Любая
-   неоднозначность — quarantine и алерт, не эвристическое списание.
+7. Если штатный assistant-request не выполнил bind, дальнейший callback не ищет
+   session по Twilio SID, company/body или assistant эвристически. T3 сохраняет
+   сырой EoC и может использовать только тот же credential + token/session exact
+   contract; неоднозначность — quarantine и алерт.
 
-Следствие: Vapi id впервые доступен в первом доверенном Vapi callback с
-`message.call.id`; к этому моменту локальная session уже существует. EoC не
-является обязательным первым моментом идентичности.
+Следствие: Vapi id впервые доступен в доверенном `assistant-request` как
+`message.call.id`; к этому моменту локальная session уже существует, а bind
+завершается до возврата сохранённого assistant id. EoC не является первым
+моментом идентичности.
 
 ### 6.3 Исходящий звонок
 
@@ -682,21 +716,22 @@ platform route/permission и всегда требует явного target com
 - worker/webhook эквиваленты используют explicit-company, wrong-company и
   missing-company cases, даже если HTTP 404 неприменим.
 
-## 13. Verification — скелет
+## 13. Verification
 
-Результаты в этом документном турне не проставляются. При реализации каждая
-строка получает commit/build и `PASS`/`FAIL` с количеством тестов.
+Результаты проставляются по мере реализации; ещё не начатые фазы остаются
+`PENDING`.
 
 ### 13.1 Автоматические наборы
 
 | Область | Планируемые suites | Точная команда | Результат |
 |---|---|---|---|
-| Provider contracts, identity, gate | `tests/vapiAgencyProviderContracts.test.js`, `tests/vapiCallIdentity.test.js`, `tests/vapiAgencyGate.test.js` | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProviderContracts.test.js tests/vapiCallIdentity.test.js tests/vapiAgencyGate.test.js --runInBand --forceExit` | PENDING |
+| T1 provider contracts + T2 inbound identity | `tests/vapiAgencyProviderContracts.test.js`, `tests/vapiCallIdentity.test.js`, `tests/vapiAssistantRequest.test.js`, `tests/vapiCallIdentityAlerts.test.js`, `tests/services/callFlowRuntime.vapi.test.js`, `tests/vapiCallStatusWebhook.test.js` | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProviderContracts.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/vapiCallIdentityAlerts.test.js tests/services/callFlowRuntime.vapi.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; финальный combined run с migration/machine/sibling suites: 10 suites / 137 tests |
+| Phase 2 gate | `tests/vapiAgencyGate.test.js` | команда определяется в T8 | PENDING |
 | Usage ingest/reconcile/audit | `tests/vapiUsageIngest.test.js`, `tests/vapiUsageReconcile.test.js`, `tests/vapiUsageAuditRepair.test.js` | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js --runInBand --forceExit` | PENDING |
 | Registry/provisioning/tools/routes | new registry suites + current Vapi regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAgencyProvisioning.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/services/callFlowRuntime.vapi.test.js --runInBand --forceExit` | PENDING |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
-| Forward/rollback migrations | real disposable PostgreSQL migration suite | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js --runInBand --forceExit` | PENDING |
+| Forward/rollback migrations | real disposable PostgreSQL migration suite | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; также реальный `psql -v ON_ERROR_STOP=1 -f` forward/rollback/forward/rollback |
 | Tenant settings removal | frontend build/tests | `npm --prefix frontend run build` then `npm --prefix frontend test` | PENDING |
 | Full backend regression | all Jest suites | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --forceExit` | PENDING |
 
@@ -713,7 +748,10 @@ forward/rollback migration filenames добавляются в ledger после
 | ID | Что временно сломать | Какой тест обязан покраснеть | Результат |
 |---|---|---|---|
 | `SAB-VAPI-GATE` | убрать ABC/multi-tenant gate перед inbound и outbound | `vapiAgencyGate` non-ABC deny/no-provider-call | PENDING |
-| `SAB-VAPI-IDENTITY-TENANT` | убрать `company_id` из session lookup | `vapiCallIdentity` T-blast/T-foreign unchanged | PENDING |
+| `SAB-VAPI-IDENTITY-TENANT` | убрать `company_id` из session lookup | `vapiCallIdentity` T-blast/T-foreign unchanged | RED как требуется: T-foreign resolved foreign row вместо 404; после восстановления suite green |
+| `SAB-VAPI-IDENTITY-CREDENTIAL` | отключить сравнение callback credential с credential session/resource | `vapiCallIdentity` wrong same-company credential quarantine | RED как требуется: foreign credential получил `ok:true`; после восстановления suite green |
+| `SAB-VAPI-CALL-ID-GLOBAL` | вернуть unique `(provider_account_key,vapi_call_id)` | `vapiCallIdentity` DB rejects one id across fragmented account labels | RED как требуется: duplicate row с другим account label вставился; после восстановления suite green |
+| `SAB-VAPI-BIND-RETRY` | отключить ранний same-call idempotent return | `vapiCallIdentity` duplicate-after-profile-drift | RED как требуется: retry карантинил связанную session; после восстановления suite green |
 | `SAB-VAPI-ASSISTANT` | разрешить assistant lookup только по provider id/env | `vapiAssistantRegistry` cross-tenant collision | PENDING |
 | `SAB-VAPI-WEBHOOK-CREDENTIAL` | доверять `companyId` body вместо credential | `vapiCallStatusWebhook` wrong-company credential | PENDING |
 | `SAB-VAPI-OVERRIDE` | прокинуть `assistantOverrides` из request/body | provider-contract override rejection test | PENDING |

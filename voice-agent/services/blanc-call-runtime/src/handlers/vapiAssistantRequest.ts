@@ -92,22 +92,10 @@ export async function handleVapiAssistantRequest(req: Request, res: Response) {
     } catch (error) {
         console.error('[vapi-runtime] Error handling assistant-request:', error);
 
-        // On error, return a safe fallback — a minimal greeting assistant
+        // VAPI-AGENCY-001 T2: transient assistants are forbidden. This legacy
+        // prototype is not the supported handler and must fail closed.
         return res.status(200).json({
-            assistant: {
-                firstMessage: 'Thank you for calling. Please hold while we connect you.',
-                model: {
-                    provider: 'openai',
-                    model: 'gpt-4o',
-                    messages: [
-                        {
-                            role: 'system',
-                            content:
-                                'You are a brief receptionist. The system encountered an error resolving the assistant. Keep the caller on the line briefly and politely.',
-                        },
-                    ],
-                },
-            },
+            error: 'Assistant configuration is unavailable.',
         });
     }
 }

@@ -13,6 +13,12 @@ jest.mock('../../backend/src/services/groupRouting', () => ({
     isBusinessHours: jest.fn(),
 }));
 
+const mockReserveInboundSession = jest.fn();
+jest.mock('../../backend/src/services/vapiCallIdentityService', () => ({
+    TOKEN_HEADER: 'x-albusto-call-token',
+    reserveInboundSession: (...args) => mockReserveInboundSession(...args),
+}));
+
 const { advance } = require('../../backend/src/services/callFlowRuntime');
 const groupRouting = require('../../backend/src/services/groupRouting');
 const { buildSoftphoneIdentity } = require('../../backend/src/services/softphoneIdentity');
@@ -308,7 +314,7 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
         expect(twiml).toContain('voicemail.recorded');
     });
 
-    test('resolves VAPI SIP URI from active tenant resource settings', async () => {
+    test('renders VAPI SIP from a durable identity reservation', async () => {
         const vapiGraph = {
             states: [
                 { id: 'start', name: 'Start', kind: 'start' },
@@ -345,13 +351,15 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
             if (sql.includes('SELECT * FROM call_flow_executions')) {
                 return { rows: [selectRows.shift() || vapiExecution] };
             }
-            if (sql.includes('FROM vapi_tenant_resources r')) {
-                return { rows: [{ sip_uri: 'sip:assistant@sip.vapi.ai' }] };
-            }
             if (sql.includes('UPDATE call_flow_executions')) {
                 return { rows: [vapiExecution] };
             }
             return { rows: [] };
+        });
+        mockReserveInboundSession.mockResolvedValue({
+            sessionId: 'session-1',
+            sipUri: 'sip:assistant@sip.vapi.ai',
+            correlationToken: 'opaque-token-1',
         });
 
         const twiml = await advance('CA_vapi', 'node.completed', 'test', 'company-1');
@@ -366,14 +374,17 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
         expect(twiml).toContain('<Sip statusCallback="https://example.test/webhooks/twilio/voice-status"');
         expect(twiml).toContain('statusCallbackEvent="initiated ringing answered completed"');
         expect(twiml).toContain('statusCallbackMethod="POST">sip:assistant@sip.vapi.ai?');
-        expect(twiml).toContain('x-blanc-company-id=company-1');
-        expect(twiml).toContain('x-blanc-group-id=ug-1');
-        const resourceRead = mockQuery.mock.calls.find(([sql]) =>
-            sql.includes('FROM vapi_tenant_resources r'));
-        expect(resourceRead[0]).toContain('r.company_id = $1');
-        expect(resourceRead[0]).toContain('pc.company_id = r.company_id');
-        expect(resourceRead[1][0]).toBe('company-1');
-        expect(JSON.stringify(resourceRead)).not.toContain('default');
+        expect(twiml).toContain('x-albusto-call-token=opaque-token-1');
+        expect(twiml).not.toContain('x-blanc-company-id');
+        expect(twiml).not.toContain('x-blanc-group-id');
+        expect(mockReserveInboundSession).toHaveBeenCalledWith({
+            companyId: 'company-1',
+            twilioParentCallSid: 'CA_vapi',
+            flowExecutionId: undefined,
+            flowNodeId: 'vapi',
+            purpose: 'inbound_call',
+            environment: 'prod',
+        });
     });
 
     test('routes unconfigured VAPI node through its outgoing edge before audible failure', async () => {
@@ -417,14 +428,14 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
             if (sql.includes('SELECT * FROM call_flow_executions')) {
                 return { rows: [selectRows.shift() || voicemailExecution] };
             }
-            if (sql.includes('FROM vapi_tenant_resources r')) {
-                return { rows: [] };
-            }
             if (sql.includes('UPDATE call_flow_executions')) {
                 return { rows: [voicemailExecution] };
             }
             return { rows: [] };
         });
+        mockReserveInboundSession.mockRejectedValue(
+            Object.assign(new Error('unconfigured'), { code: 'VAPI_IDENTITY_TUPLE_UNAVAILABLE' }),
+        );
 
         const twiml = await advance('CA_vapi_missing', 'node.completed', 'test', 'company-1');
 

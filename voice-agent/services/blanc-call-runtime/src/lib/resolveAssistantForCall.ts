@@ -21,12 +21,10 @@ export interface AssistantResolutionInput {
 }
 
 export interface AssistantResolutionResult {
-    /** Return assistantId for a persistent assistant */
+    /** Return only a persistent assistant id. */
     assistantId?: string;
-    /** OR return a transient assistant definition */
-    assistant?: Record<string, any>;
-    /** OR return a destination to skip AI entirely */
-    destination?: Record<string, any>;
+    /** Fail closed when no persistent, server-owned assistant exists. */
+    error?: string;
 }
 
 /**
@@ -47,7 +45,7 @@ const ASSISTANT_PROFILES: Record<string, string> = {
  * Decision logic (Stage 1):
  * 1. Look up the assistant profile ID in the registry
  * 2. If found, return { assistantId }
- * 3. If not found, return a transient fallback assistant
+ * 3. If not found, fail closed; transient assistants are forbidden
  *
  * Future expansion points:
  * - Per-group assistant overrides
@@ -58,7 +56,7 @@ const ASSISTANT_PROFILES: Record<string, string> = {
 export async function resolveAssistantForCall(
     input: AssistantResolutionInput
 ): Promise<AssistantResolutionResult> {
-    const { assistantProfile, companyId, groupId, languageHint } = input;
+    const { assistantProfile, companyId, groupId } = input;
 
     // Stage 1: Simple profile-based lookup
     const assistantId = ASSISTANT_PROFILES[assistantProfile];
@@ -67,50 +65,15 @@ export async function resolveAssistantForCall(
         return { assistantId };
     }
 
-    // Fallback: return a transient assistant definition
-    // This ensures calls always get answered even if config is missing.
+    // VAPI-AGENCY-001 T2: this legacy prototype is not the supported runtime
+    // selector. Keep it fail-closed until it is retired; never synthesize an
+    // assistant from caller-controlled profile/company data.
     console.warn(
         `[resolve-assistant] Profile "${assistantProfile}" not found in registry. ` +
-        `Using transient fallback for company=${companyId}, group=${groupId}.`
+        `Refusing transient fallback for company=${companyId}, group=${groupId}.`
     );
 
     return {
-        assistant: {
-            name: `Fallback Greeting (${companyId})`,
-            firstMessage:
-                'Hello, thank you for calling. How can I help you today?',
-            firstMessageMode: 'assistant-speaks-first',
-            model: {
-                provider: 'openai',
-                model: 'gpt-4o',
-                temperature: 0.7,
-                maxTokens: 300,
-                messages: [
-                    {
-                        role: 'system',
-                        content: `You are a friendly and professional phone receptionist for an appliance repair company.
-Your job is to:
-- Greet the caller warmly
-- Ask how you can help
-- Keep responses short (1-2 sentences)
-- Be polite and professional
-
-Do NOT:
-- Promise appointments or scheduling
-- Quote prices
-- Transfer to a human (not yet implemented)
-- Attempt deep qualification
-
-Language preference: ${languageHint}`,
-                    },
-                ],
-            },
-            voice: {
-                provider: 'azure',
-                voiceId: 'andrew',
-                speed: 1.0,
-            },
-            maxDurationSeconds: 300,
-        },
+        error: 'Assistant configuration is unavailable.',
     };
 }

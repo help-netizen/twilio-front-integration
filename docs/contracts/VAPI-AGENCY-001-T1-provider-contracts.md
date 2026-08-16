@@ -1,6 +1,6 @@
 # VAPI-AGENCY-001 T1 — provider contracts
 
-Status: implemented contract boundary; live webhook evidence pending
+Status: implemented contract boundary; webhook types observed live, raw bodies pending
 Date: 2026-08-16
 Contract/fixture version: 1
 
@@ -24,10 +24,16 @@ for PostgreSQL `NUMERIC`; token/character counters are canonical integer strings
 
 ## Evidence and deliberate gaps
 
-Two `GET /call/:id` fixtures are sanitized projections of real production inbound SIP
-calls: one with summary/success-evaluation cost and one very short call with zero
-analysis cost. The webhook fixtures are documentation-derived, because no live payload
-has arrived since the status path was repaired.
+Three `GET /call/:id` fixtures are sanitized projections of real production calls: two
+inbound SIP calls and one owner-authorized outbound PSTN call. The outbound object was
+read twice, four minutes apart, with identical `cost=0.0565` and `updatedAt`; its
+analysis breakdown was present. The outbound object did not contain `twilioCallSid`.
+
+The live outbound call delivered two authenticated `status-update` messages and one
+authenticated `end-of-call-report` to the repaired deployed endpoint. Only their types,
+authentication and call id were logged; raw bodies were not captured. Consequently the
+webhook body fixtures remain documentation-derived and make no claim about live field
+placement.
 
 The following evidence still needs one controlled provider observation:
 
@@ -35,8 +41,8 @@ The following evidence still needs one controlled provider observation:
    exact headers and whether `call.status` always mirrors `message.status`.
 2. A raw `end-of-call-report`, with the exact placement/timing of `cost`,
    `costBreakdown`, `analysis`, `artifact`, and any provider event identifier/version.
-3. `GET /call/:id` immediately after end and again after analysis completion, to prove
-   cost maturation and `updatedAt` behavior for T3/T4.
+3. A `GET /call/:id` pair in which analysis changes between observations. The live
+   outbound pair proves stability handling, but not a changing `updatedAt`/cost pair.
 4. A real `assistant-request` from an unbound inbound resource; fixed-assistant SIP is
    also expected to prove the negative case that no assistant request occurs.
 

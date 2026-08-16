@@ -12,6 +12,11 @@
       "live": true
     },
     {
+      "file": "get-call.outbound-live.production-sanitized.json",
+      "provenance": "production-read-only-get-call-two-stable-measurements",
+      "live": true
+    },
+    {
       "file": "assistant-request.docs.json",
       "provenance": "official-documentation",
       "live": false
@@ -26,5 +31,15 @@
       "provenance": "official-documentation-plus-sanitized-get-call-shape",
       "live": false
     }
-  ]
+  ],
+  "liveEvidence": {
+    "serverMessageTypesObserved": [
+      "status-update",
+      "end-of-call-report"
+    ],
+    "serverMessageBodiesCaptured": false,
+    "endOfCallReportShapeProvenance": "official-documentation-plus-sanitized-get-call-shape",
+    "getCallStableMeasurements": 2,
+    "getCallStableMeasurementSpacingSeconds": 240
+  }
 }

@@ -35,12 +35,19 @@ describe('VAPI-AGENCY-001 T1 — documented server-message contracts', () => {
         const manifest = parseFixtureObject('manifest.v1.json');
 
         expect(manifest.contractVersion).toBe(1);
-        expect(manifest.fixtures).toHaveLength(5);
+        expect(manifest.fixtures).toHaveLength(6);
         expect(manifest.fixtures.filter((entry) => entry.live).map((entry) => entry.file))
             .toEqual([
                 'get-call.inbound-analysis.production-sanitized.json',
                 'get-call.inbound-short.production-sanitized.json',
+                'get-call.outbound-live.production-sanitized.json',
             ]);
+        expect(manifest.liveEvidence).toEqual(expect.objectContaining({
+            serverMessageTypesObserved: ['status-update', 'end-of-call-report'],
+            serverMessageBodiesCaptured: false,
+            getCallStableMeasurements: 2,
+            getCallStableMeasurementSpacingSeconds: 240,
+        }));
     });
 
     test('assistant-request establishes call identity without inventing an assistant', () => {
@@ -194,6 +201,13 @@ describe('VAPI-AGENCY-001 T1 — production-sanitized GET /call contracts', () =
             '0',
             '0',
         ],
+        [
+            'get-call.outbound-live.production-sanitized.json',
+            '0.0565',
+            '0.0052',
+            '0.0007',
+            '2325',
+        ],
     ])(
         'normalizes %s without IEEE-754 arithmetic',
         (name, total, stt, evaluation, evaluationPromptTokens) => {
@@ -203,10 +217,7 @@ describe('VAPI-AGENCY-001 T1 — production-sanitized GET /call contracts', () =
             expect(result.contractVersion).toBe(1);
             expect(result.call).toMatchObject({
                 orgId: 'org_fixture_platform',
-                type: 'inboundPhoneCall',
-                assistantId: 'assistant_fixture_inbound',
                 status: 'ended',
-                endedReason: 'customer-ended-call',
             });
             expect(result.cost.supplierTotal).toBe(total);
             expect(result.cost.components.stt).toBe(stt);
@@ -215,6 +226,22 @@ describe('VAPI-AGENCY-001 T1 — production-sanitized GET /call contracts', () =
                 .toBe(evaluationPromptTokens);
         },
     );
+
+    test('live outbound readback has no provider Twilio SID and remains outbound', () => {
+        const raw = fixture('get-call.outbound-live.production-sanitized.json');
+        const source = JSON.parse(raw);
+        const result = parseVapiGetCallJson(raw);
+
+        expect(source).not.toHaveProperty('twilioCallSid');
+        expect(result.call).toMatchObject({
+            type: 'outboundPhoneCall',
+            assistantId: 'assistant_fixture_outbound',
+            endedReason: 'silence-timed-out',
+            updatedAt: '2026-01-05T05:55:02.208Z',
+        });
+        expect(result.cost.supplierTotal).toBe('0.0565');
+        expect(result.cost.analysis.costs.summary).toBe('0.0002');
+    });
 
     test('call.cost is the only canonical total; components are never summed into it', () => {
         const raw = fixture('get-call.inbound-analysis.production-sanitized.json')
