@@ -3,15 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import { useEstimates } from '../hooks/useEstimates';
 import { EstimateDetailPanel } from '../components/estimates/EstimateDetailPanel';
 import { EstimateEditorDialog } from '../components/estimates/EstimateEditorDialog';
-import { EstimateSendDialog } from '../components/estimates/EstimateSendDialog';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { StatusPill } from '../components/estimates/EstimateStatusPill';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import type { Estimate, EstimateCreateData } from '../services/estimatesApi';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
-import { formatCompanyTime, useCompanyTime } from '../lib/companyTime';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
@@ -24,32 +22,16 @@ const STATUS_OPTIONS = [
     { value: 'declined', label: 'Declined' },
 ];
 
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-    draft: 'secondary',
-    sent: 'outline',
-    viewed: 'outline',
-    approved: 'default',
-    declined: 'destructive',
-};
-
 function formatMoney(value: string | number): string {
     return Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function formatDate(value: string | null, timeZone: string): string {
-    if (!value) return '-';
-    return formatCompanyTime(value, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function EstimatesPage() {
-    const { timeZone } = useCompanyTime();
     const page = useEstimates();
     const [editorOpen, setEditorOpen] = useState(false);
     const [editingEstimate, setEditingEstimate] = useState<Estimate | null>(null);
-    const [sendDialogOpen, setSendDialogOpen] = useState(false);
-    const [sendEstimateId, setSendEstimateId] = useState<number | null>(null);
     const [searchParams, setSearchParams] = useSearchParams();
 
     // Auto-open an estimate when navigated with ?openId=<id> (e.g. from a Task).
@@ -86,17 +68,30 @@ export function EstimatesPage() {
         }
     };
 
+    /**
+     * Creating an estimate from the estimates page did not exist: the page mounted
+     * an editor with no way to open it for a new record, and the save callback
+     * only handled an existing one. A page whose whole subject is estimates could
+     * not make one — you had to find a job or a lead first.
+     *
+     * A parentless estimate is allowed (P4 backend): you often start pricing
+     * before you know which job it will belong to. Sending it and turning it into
+     * an invoice both still require a customer, which is where that actually
+     * matters.
+     */
+    const handleNew = () => {
+        setEditingEstimate(null);
+        setEditorOpen(true);
+    };
+
     const handleEditorSave = async (data: EstimateCreateData) => {
         if (editingEstimate) {
             await page.handleUpdateEstimate(editingEstimate.id, data);
+        } else {
+            await page.handleCreateEstimate(data);
         }
         setEditorOpen(false);
         setEditingEstimate(null);
-    };
-
-    const handleSend = (id: number) => {
-        setSendEstimateId(id);
-        setSendDialogOpen(true);
     };
 
     return (
@@ -143,6 +138,9 @@ export function EstimatesPage() {
                             ))}
                         </SelectContent>
                     </Select>
+                    <Button onClick={handleNew} data-testid="estimate-new">
+                        <Plus className="mr-1.5 size-4" />New estimate
+                    </Button>
                 </div>
             </div>
 
@@ -162,58 +160,51 @@ export function EstimatesPage() {
                             No estimates found
                         </div>
                     ) : (
-                        <table className="w-full text-sm blanc-table-tiles">
-                            <thead>
-                                <tr>
-                                    <th className="text-left px-4 py-1">#</th>
-                                    <th className="text-left px-4 py-1">Customer</th>
-                                    <th className="text-left px-4 py-1">Status</th>
-                                    <th className="text-right px-4 py-1">Total</th>
-                                    <th className="text-left px-4 py-1">Created</th>
-                                    <th className="text-right px-4 py-1 w-10"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {page.estimates.map(est => (
-                                    <tr
-                                        key={est.id}
-                                        className={`cursor-pointer ${page.selectedEstimate?.id === est.id ? 'blanc-tile-row-selected' : ''} ${est.archived_at ? 'grayscale opacity-60' : ''}`}
-                                        onClick={() => page.selectEstimate(est.id)}
-                                    >
-                                        <td className="px-4 py-2 font-mono text-xs">{est.estimate_number}</td>
-                                        <td className="px-4 py-2 truncate max-w-[180px]">{est.contact_name || est.title || '-'}</td>
-                                        <td className="px-4 py-2">
-                                            <Badge variant={STATUS_VARIANT[est.status] || 'secondary'} className="capitalize">
-                                                {est.status}
-                                            </Badge>
-                                            {est.archived_at && <Badge variant="outline" className="ml-1">Archived</Badge>}
-                                        </td>
-                                        <td className="px-4 py-2 text-right font-mono">${formatMoney(est.total)}</td>
-                                        <td className="px-4 py-2 text-muted-foreground">{formatDate(est.created_at, timeZone)}</td>
-                                        <td className="px-4 py-2 text-right">
-                                            <DropdownMenu>
-                                                <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
-                                                    <Button variant="ghost" size="sm" className="size-7 p-0">
-                                                        <MoreHorizontal className="size-4" />
-                                                    </Button>
-                                                </DropdownMenuTrigger>
-                                                <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
-                                                    {!est.archived_at && <DropdownMenuItem onClick={() => handleEdit(est)}>Edit</DropdownMenuItem>}
-                                                    {!est.archived_at && (
-                                                        <DropdownMenuItem onClick={() => handleSend(est.id)}>Send</DropdownMenuItem>
-                                                    )}
-                                                    {est.archived_at ? (
-                                                        <DropdownMenuItem onClick={() => page.handleRestoreEstimate(est.id)}>Restore to draft</DropdownMenuItem>
-                                                    ) : (
-                                                        <DropdownMenuItem onClick={() => page.handleArchiveEstimate(est.id)}>Archive</DropdownMenuItem>
-                                                    )}
-                                                </DropdownMenuContent>
-                                            </DropdownMenu>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                        /* ESTIMATE-REDESIGN-001 S1 — rows, not a seven-column table
+                           squeezed onto a phone. Each row answers the three things
+                           you scan a proposal list for: whose it is, how much, and
+                           where it stands — with the age built into the status,
+                           because how long it has been waiting IS the reason to act.
+                           Opening the row is the action; there is no per-row menu. */
+                        <div className="space-y-2 px-3 py-2" data-testid="estimates-list">
+                            {page.estimates.map(est => (
+                                <button
+                                    key={est.id}
+                                    type="button"
+                                    onClick={() => page.selectEstimate(est.id)}
+                                    data-testid={`estimate-row-${est.id}`}
+                                    className={`block w-full rounded-2xl px-4 py-3.5 text-left transition-colors ${
+                                        page.selectedEstimate?.id === est.id ? 'ring-1' : ''
+                                    } ${est.archived_at ? 'opacity-60' : ''}`}
+                                    style={{
+                                        background: 'var(--blanc-surface-strong)',
+                                        ...(page.selectedEstimate?.id === est.id
+                                            ? { boxShadow: 'inset 0 0 0 1px var(--blanc-accent)' }
+                                            : {}),
+                                    }}
+                                >
+                                    <div className="flex items-baseline justify-between gap-3">
+                                        <span className="blanc-l2 truncate" style={{ fontWeight: 600 }}>
+                                            {est.contact_name || est.title || 'No customer yet'}
+                                        </span>
+                                        <span
+                                            className="shrink-0 text-[20px] font-semibold tabular-nums"
+                                            style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em' }}
+                                        >
+                                            ${formatMoney(est.total)}
+                                        </span>
+                                    </div>
+                                    <div className="blanc-l2 blanc-l2-quiet mt-0.5 truncate">
+                                        {est.estimate_number}
+                                        {est.summary ? ` · ${est.summary}` : ''}
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                        <StatusPill estimate={est} />
+                                        {est.archived_at && <Badge variant="outline">Archived</Badge>}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
                     )}
                 </div>
 
@@ -252,15 +243,11 @@ export function EstimatesPage() {
                 onSave={handleEditorSave}
             />
 
-            {sendEstimateId != null && (
-                <EstimateSendDialog
-                    open={sendDialogOpen}
-                    onOpenChange={open => { setSendDialogOpen(open); if (!open) setSendEstimateId(null); }}
-                    estimateId={sendEstimateId}
-                    contactEmail={page.selectedEstimate?.contact_email || ''}
-                    onSend={data => page.handleSendEstimate(sendEstimateId, data)}
-                />
-            )}
+            {/* Sending lives on the estimate you opened, and nowhere else.
+                This page used to host its own send dialog fed by the row's id and
+                by `selectedEstimate`'s recipient — two different estimates could
+                supply the two halves, so one customer's proposal could be
+                addressed to another's inbox. One object, one estimate, no seam. */}
             </div>
 
             <FloatingDetailPanel open={!!page.selectedEstimate} onClose={page.closeDetail} wide>

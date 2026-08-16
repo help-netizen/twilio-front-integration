@@ -331,7 +331,7 @@ router.post('/:id/send', requirePermission('estimates.send'), async (req, res) =
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
         const { id } = req.params;
-        const { channel, recipient, message } = req.body || {};
+        const { channel, recipient, recipient_override: recipientOverride, message } = req.body || {};
         const userEmail = getUserEmail(req);
 
         const result = await withTransaction(client => estimatesService.sendEstimate(
@@ -341,6 +341,7 @@ router.post('/:id/send', requirePermission('estimates.send'), async (req, res) =
             {
                 channel,
                 recipient,
+                recipientOverride,
                 message,
                 userEmail,
                 noteActor: actorFromRequest(req),

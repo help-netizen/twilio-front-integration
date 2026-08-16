@@ -94,18 +94,36 @@ async function listEstimates(companyId, filters = {}) {
 
     const { rows } = await db.query(
         `SELECT e.*,
-                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS contact_name,
-                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
-                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone,
+                COALESCE(NULLIF(c.full_name, ''),
+                    CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_name, '') END
+                ) AS contact_name,
+                COALESCE(NULLIF(c.email, ''),
+                    CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_email, '') END
+                ) AS contact_email,
+                COALESCE(NULLIF(c.phone_e164, ''),
+                    CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_phone, '') END
+                ) AS contact_phone,
                 j.job_number AS job_number,
+                viewed.viewed_at AS viewed_at,
                 inv.id AS invoice_id,
                 inv.invoice_number AS invoice_number,
                 COUNT(*) OVER() AS _total
          FROM estimates e
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
          LEFT JOIN contacts c
-           ON c.id = COALESCE(j.contact_id, e.contact_id)
+           ON c.id = COALESCE(e.contact_id, j.contact_id)
           AND c.company_id = e.company_id
+         LEFT JOIN LATERAL (
+            SELECT ee.created_at AS viewed_at
+            FROM estimate_events ee
+            JOIN estimates event_owner
+              ON event_owner.id = ee.estimate_id
+             AND event_owner.company_id = e.company_id
+            WHERE ee.estimate_id = e.id
+              AND ee.event_type = 'viewed'
+            ORDER BY ee.created_at ASC
+            LIMIT 1
+         ) viewed ON true
          LEFT JOIN LATERAL (
             SELECT id, invoice_number
             FROM invoices
@@ -129,9 +147,15 @@ async function getEstimateById(companyId, id, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
         `SELECT e.*,
-                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS contact_name,
-                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
-                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone,
+                COALESCE(NULLIF(c.full_name, ''),
+                    CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_name, '') END
+                ) AS contact_name,
+                COALESCE(NULLIF(c.email, ''),
+                    CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_email, '') END
+                ) AS contact_email,
+                COALESCE(NULLIF(c.phone_e164, ''),
+                    CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_phone, '') END
+                ) AS contact_phone,
                 j.job_number AS job_number,
                 j.address AS service_address,
                 COALESCE(
@@ -153,7 +177,7 @@ async function getEstimateById(companyId, id, client = null) {
          FROM estimates e
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
          LEFT JOIN contacts c
-           ON c.id = COALESCE(j.contact_id, e.contact_id)
+           ON c.id = COALESCE(e.contact_id, j.contact_id)
           AND c.company_id = e.company_id
          LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
          LEFT JOIN LATERAL (

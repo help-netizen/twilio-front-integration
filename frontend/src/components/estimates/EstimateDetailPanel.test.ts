@@ -40,11 +40,13 @@ describe('estimate detail — the decisions', () => {
         expect(panelRaw).not.toContain('Editing returns this to Draft');
     });
 
-    it('states the status in plain language with its age', () => {
-        // "Sent yesterday" is a decision; "sent" is trivia.
-        expect(panelRaw).toContain('Draft · not sent');
-        expect(panelRaw).toContain('function ago');
-        expect(panelRaw).toContain('yesterday');
+    it('states the status through the ONE shared vocabulary', () => {
+        // The words themselves live in EstimateStatusPill and are asserted there.
+        // What matters here is that the card does not grow a second copy of them:
+        // the list and the detail must not tell the same story differently.
+        expect(panelRaw).toContain("from './EstimateStatusPill'");
+        expect(panelRaw).toContain('<StatusPill estimate={estimate} />');
+        expect(panelRaw).not.toContain('const STATUS_TONE');
     });
 
     it('writes history as events rather than as a log', () => {

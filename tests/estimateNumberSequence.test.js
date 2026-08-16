@@ -53,4 +53,14 @@ describe('nextEstimateSequence (EST-DUP-001)', () => {
         expect(estimatesQueries.buildEstimateNumber({ leadSerialId: 1528, sequence: 2 })).toBe('ESTIMATE L-1528-2');
         expect(estimatesQueries.buildEstimateNumber({ leadSerialId: 53, sequence: 1 })).toBe('ESTIMATE L-53-1');
     });
+
+    test('standalone estimates use one company-scoped L-0 namespace', async () => {
+        const client = mockClient(4);
+        const seq = await estimatesQueries.nextEstimateSequence('co', { leadSerialId: null }, client);
+
+        expect(seq).toBe(4);
+        expect(client.calls[0].params).toEqual(['co', 'ESTIMATE L-0-%']);
+        expect(estimatesQueries.buildEstimateNumber({ leadSerialId: null, sequence: seq }))
+            .toBe('ESTIMATE L-0-4');
+    });
 });

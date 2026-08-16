@@ -22,6 +22,7 @@ import {
 } from '../../services/estimateItemPresetsApi';
 import { useAuthz } from '../../hooks/useAuthz';
 import { TaskStack } from '../tasks/TaskStack';
+import { StatusPill } from './EstimateStatusPill';
 import type { Estimate, EstimateEvent, EstimateItem, EstimateSendData, EstimateDiscountType } from '../../services/estimatesApi';
 import {
     convertEstimateToInvoice,
@@ -37,48 +38,6 @@ import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 function money(value: string | number | null | undefined): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-/**
- * How long a proposal has been waiting is the reason to act on it, so the status
- * carries it: "Sent yesterday" and "Opened 2 days ago" are decisions, where a
- * bare "sent" chip is trivia. Older than a week it stops helping and goes quiet.
- */
-function ago(value: string | null | undefined): string {
-    if (!value) return '';
-    const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
-    if (!Number.isFinite(days) || days < 0) return '';
-    if (days === 0) return ' today';
-    if (days === 1) return ' yesterday';
-    if (days <= 7) return ` ${days} days ago`;
-    return '';
-}
-
-const STATUS_TONE: Record<string, { background: string; color: string }> = {
-    draft: { background: 'rgba(25,25,25,.06)', color: 'var(--blanc-ink-2)' },
-    sent: { background: 'rgba(47,99,216,.10)', color: 'var(--blanc-job)' },
-    viewed: { background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' },
-    approved: { background: 'rgba(27,139,99,.10)', color: 'var(--blanc-success)' },
-    declined: { background: 'rgba(240,80,63,.10)', color: 'var(--blanc-danger)' },
-};
-
-function StatusPill({ estimate }: { estimate: Estimate }) {
-    const tone = STATUS_TONE[estimate.status] || STATUS_TONE.draft;
-    const label = estimate.status === 'draft' ? 'Draft · not sent'
-        : estimate.status === 'sent' ? `Sent${ago(estimate.sent_at)}`
-            : estimate.status === 'viewed' ? `Opened${ago(estimate.updated_at)}`
-                : estimate.status === 'approved' ? 'Approved'
-                    : estimate.status === 'declined' ? 'Declined'
-                        : estimate.status;
-    return (
-        <span
-            className="blanc-l2 inline-flex items-center px-2.5"
-            style={{ ...tone, minHeight: 26, borderRadius: 8 }}
-            data-testid="estimate-status"
-        >
-            {label}
-        </span>
-    );
 }
 
 function fmtDateTime(value: string | null | undefined, timeZone: string): string {

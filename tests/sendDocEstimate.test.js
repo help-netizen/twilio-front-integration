@@ -138,6 +138,8 @@ function estimateRow(overrides = {}) {
         status: 'draft',
         archived_at: null,
         contact_id: 7,
+        contact_email: 'c@x.com',
+        contact_phone: '+15551234567',
         job_id: JOB_ID,
         public_token: 'tok_estABCDE', // pre-seeded → ensurePublicLink never re-mints
         order_list: [{
@@ -211,7 +213,11 @@ describe('sendEstimate — email happy path', () => {
             EST_ID_S, COMPANY_A, expect.objectContaining({ status: 'sent', sent_at: expect.any(String) }),
         );
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            COMPANY_A, EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'email', recipient: 'c@x.com' },
+            COMPANY_A, EST_ID_S, 'sent', 'user', CRM_USER_ID, {
+                channel: 'email',
+                recipient: 'c@x.com',
+                recipient_source: 'contact',
+            },
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,
@@ -239,6 +245,79 @@ describe('sendEstimate — email happy path', () => {
         expect(res.status).toBe(200);
         expect(mockSendEmail).toHaveBeenCalledTimes(1);
         expect(mockUpdateEstimate).toHaveBeenCalledWith(EST_ID_S, COMPANY_A, expect.objectContaining({ status: 'sent' }));
+    });
+
+    it('derives the recipient from the estimate contact when the payload omits recipient', async () => {
+        const res = await request(appWith())
+            .post(`/${EST_ID}/send`)
+            .send({ channel: 'email', message: 'Hi' });
+
+        expect(res.status).toBe(200);
+        expect(mockSendEmail.mock.calls[0][1].to).toBe('c@x.com');
+        expect(mockCreateEvent).toHaveBeenCalledWith(
+            COMPANY_A,
+            EST_ID_S,
+            'sent',
+            'user',
+            CRM_USER_ID,
+            expect.objectContaining({
+                recipient: 'c@x.com',
+                recipient_source: 'contact',
+            }),
+        );
+    });
+
+    it("rejects estimate A with contact B's address before dispatch or status writes", async () => {
+        const res = await request(appWith())
+            .post(`/${EST_ID}/send`)
+            .send({ channel: 'email', recipient: 'contact-b@example.com', message: 'Wrong person' });
+
+        expect(res.status).toBe(409);
+        expect(res.body.error.code).toBe('RECIPIENT_MISMATCH');
+        expect(mockSendEmail).not.toHaveBeenCalled();
+        expect(mockSendMessage).not.toHaveBeenCalled();
+        expect(mockUpdateEstimate).not.toHaveBeenCalled();
+        expect(mockCreateEvent).not.toHaveBeenCalled();
+    });
+
+    it('requires an explicit override when the estimate has no contact email', async () => {
+        mockGetEstimateById.mockResolvedValue(estimateRow({
+            contact_id: null,
+            contact_email: null,
+        }));
+
+        const res = await request(appWith())
+            .post(`/${EST_ID}/send`)
+            .send({ channel: 'email', message: 'No contact address' });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('VALIDATION');
+        expect(mockSendEmail).not.toHaveBeenCalled();
+        expect(mockUpdateEstimate).not.toHaveBeenCalled();
+    });
+
+    it('allows a deliberate recipient_override and records that source', async () => {
+        const res = await request(appWith())
+            .post(`/${EST_ID}/send`)
+            .send({
+                channel: 'email',
+                recipient_override: 'dispatcher-entered@example.com',
+                message: 'Requested alternate address',
+            });
+
+        expect(res.status).toBe(200);
+        expect(mockSendEmail.mock.calls[0][1].to).toBe('dispatcher-entered@example.com');
+        expect(mockCreateEvent).toHaveBeenCalledWith(
+            COMPANY_A,
+            EST_ID_S,
+            'sent',
+            'user',
+            CRM_USER_ID,
+            expect.objectContaining({
+                recipient: 'dispatcher-entered@example.com',
+                recipient_source: 'override',
+            }),
+        );
     });
 
     it('TC-SD-016: subject falls back to "Estimate <number>" when company name unavailable', async () => {
@@ -270,7 +349,11 @@ describe('sendEstimate — sms happy path', () => {
         expect(mockSendMessage.mock.invocationCallOrder[0])
             .toBeLessThan(mockUpdateEstimate.mock.invocationCallOrder[0]);
         expect(mockCreateEvent).toHaveBeenCalledWith(
-            COMPANY_A, EST_ID_S, 'sent', 'user', CRM_USER_ID, { channel: 'sms', recipient: '+15551234567' },
+            COMPANY_A, EST_ID_S, 'sent', 'user', CRM_USER_ID, {
+                channel: 'sms',
+                recipient: '+15551234567',
+                recipient_source: 'contact',
+            },
         );
         expect(mockAddNote).toHaveBeenCalledWith(
             JOB_ID,
@@ -306,7 +389,7 @@ describe('sendEstimate — document send note is best-effort', () => {
 
         const res = await request(appWith())
             .post(`/${EST_ID}/send`)
-            .send({ channel: 'email', recipient: 'one-off@example.com', message: 'Hi' });
+            .send({ channel: 'email', recipient_override: 'one-off@example.com', message: 'Hi' });
 
         expect(res.status).toBe(200);
         expect(mockUpdateEstimate).toHaveBeenCalledWith(
@@ -432,7 +515,11 @@ describe('sendEstimate — error matrix (status NEVER flips on failure)', () => 
     });
 
     it('TC-SD-028: invalid recipient phone → 422 NO_PHONE (conv not reached)', async () => {
-        const res = await request(appWith()).post(`/${EST_ID}/send`).send({ channel: 'sms', recipient: 'abc', message: 'x' });
+        const res = await request(appWith()).post(`/${EST_ID}/send`).send({
+            channel: 'sms',
+            recipient_override: 'abc',
+            message: 'x',
+        });
         expect(res.status).toBe(422);
         expect(res.body.error.code).toBe('NO_PHONE');
         expect(mockGetOrCreateConversation).not.toHaveBeenCalled();

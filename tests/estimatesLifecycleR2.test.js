@@ -23,7 +23,7 @@ const mockQueries = {
     getLeadContext: jest.fn(),
     getContactContext: jest.fn(),
     nextEstimateSequence: jest.fn(),
-    buildEstimateNumber: jest.fn(({ leadSerialId, sequence }) => `ESTIMATE L-${leadSerialId}-${sequence}`),
+    buildEstimateNumber: jest.fn(({ leadSerialId, sequence }) => `ESTIMATE L-${leadSerialId || '0'}-${sequence}`),
     createEstimate: jest.fn(),
     updateEstimate: jest.fn(),
     archiveEstimate: jest.fn(),
@@ -125,6 +125,60 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         expect(mockQueries.replaceEstimateItems).toHaveBeenCalledWith(COMPANY_ID, EST_ID, [
             expect.objectContaining({ name: 'Labor', quantity: 1, taxable: false }),
         ], null);
+    });
+
+    it('creates a standalone estimate in the company-scoped L-0 number namespace', async () => {
+        mockQueries.nextEstimateSequence.mockResolvedValue(4);
+        mockQueries.createEstimate.mockResolvedValue({ id: EST_ID });
+        mockQueries.getEstimateById.mockResolvedValue(estimate({
+            estimate_number: 'ESTIMATE L-0-4',
+        }));
+        mockQueries.getEstimateItems.mockResolvedValue([item()]);
+
+        await service.createEstimate(COMPANY_ID, USER_ID, {
+            items: [{ name: 'Diagnostic', unit_price: 125 }],
+        });
+
+        expect(mockQueries.nextEstimateSequence).toHaveBeenCalledWith(
+            COMPANY_ID,
+            { leadSerialId: null },
+            null
+        );
+        expect(mockQueries.createEstimate).toHaveBeenCalledWith(
+            COMPANY_ID,
+            expect.objectContaining({
+                contact_id: null,
+                lead_id: null,
+                job_id: null,
+                estimate_number: 'ESTIMATE L-0-4',
+                estimate_sequence: 4,
+                created_by: USER_ID,
+            }),
+            null
+        );
+    });
+
+    it('accepts an owned contact without a lead/job and rejects a foreign contact before insert', async () => {
+        mockQueries.getContactContext.mockResolvedValue({ id: 9, company_id: COMPANY_ID });
+        mockQueries.nextEstimateSequence.mockResolvedValue(1);
+        mockQueries.createEstimate.mockResolvedValue({ id: EST_ID });
+        mockQueries.getEstimateById.mockResolvedValue(estimate({ contact_id: 9 }));
+        mockQueries.getEstimateItems.mockResolvedValue([item()]);
+
+        await expect(service.createEstimate(COMPANY_ID, USER_ID, {
+            contact_id: 9,
+            items: [{ name: 'Repair', unit_price: 200 }],
+        })).resolves.toMatchObject({ id: EST_ID, contact_id: 9 });
+        expect(mockQueries.getContactContext).toHaveBeenCalledWith(COMPANY_ID, 9, null);
+
+        jest.clearAllMocks();
+        mockQueries.getContactContext.mockResolvedValue(null);
+        await expect(service.createEstimate(COMPANY_ID, USER_ID, {
+            contact_id: 9009,
+            items: [{ name: 'Foreign repair', unit_price: 200 }],
+        })).rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
+        expect(mockQueries.nextEstimateSequence).not.toHaveBeenCalled();
+        expect(mockQueries.createEstimate).not.toHaveBeenCalled();
     });
 
     it('allows saving summary-only draft but blocks send/approve without items', async () => {

@@ -350,7 +350,21 @@ async function resolveContext(companyId, data = {}, client = null) {
         };
     }
 
-    throw new EstimatesServiceError('VALIDATION', 'lead_id or job_id is required', 400);
+    const sequence = await estimatesQueries.nextEstimateSequence(
+        companyId,
+        { leadSerialId: null },
+        client
+    );
+    return {
+        contact_id: data.contact_id || null,
+        lead_id: null,
+        job_id: null,
+        estimate_sequence: sequence,
+        estimate_number: estimatesQueries.buildEstimateNumber({
+            leadSerialId: null,
+            sequence,
+        }),
+    };
 }
 
 async function snapshotEstimate(companyId, id, client = null) {
@@ -717,6 +731,54 @@ function buildSmsBody(message, link) {
     return base;
 }
 
+function recipientKey(channel, value) {
+    const text = asText(value);
+    if (!text) return '';
+    if (channel === 'email') return text.toLowerCase();
+    return toE164(text) || text;
+}
+
+function resolveSendRecipient(estimate, channel, recipient, recipientOverride) {
+    if (recipientOverride !== undefined) {
+        const override = asText(recipientOverride);
+        if (!override) {
+            throw new EstimatesServiceError(
+                'VALIDATION',
+                'recipient_override must be a non-empty address or phone number.',
+                400
+            );
+        }
+        return { value: override, source: 'override' };
+    }
+
+    const canonical = asText(channel === 'email'
+        ? estimate.contact_email
+        : estimate.contact_phone);
+    if (!canonical) {
+        throw new EstimatesServiceError(
+            'VALIDATION',
+            `The estimate contact has no ${channel === 'email' ? 'email address' : 'phone number'}.`,
+            400
+        );
+    }
+
+    if (recipient !== undefined) {
+        const asserted = asText(recipient);
+        if (!asserted) {
+            throw new EstimatesServiceError('VALIDATION', 'Recipient is required.', 400);
+        }
+        if (recipientKey(channel, asserted) !== recipientKey(channel, canonical)) {
+            throw new EstimatesServiceError(
+                'RECIPIENT_MISMATCH',
+                'Recipient does not match this estimate contact. Use recipient_override for a deliberate override.',
+                409
+            );
+        }
+    }
+
+    return { value: canonical, source: 'contact' };
+}
+
 /**
  * SEND-DOC-001 (SD-5) — actually dispatch the estimate by email or SMS, then
  * (and only then) flip status → 'sent' + stamp sent_at and log the `sent` event.
@@ -728,7 +790,7 @@ async function sendEstimate(
     companyId,
     userId,
     id,
-    { channel, recipient, message, userEmail, noteActor } = {},
+    { channel, recipient, recipientOverride, message, userEmail, noteActor } = {},
     client = null,
     activityActor = null
 ) {
@@ -742,10 +804,13 @@ async function sendEstimate(
     if (!['email', 'sms'].includes(normalizedChannel)) {
         throw new EstimatesServiceError('VALIDATION', 'channel must be email or sms', 400);
     }
-    const to = asText(recipient);
-    if (!to) {
-        throw new EstimatesServiceError('VALIDATION', 'Recipient is required.', 400);
-    }
+    const resolvedRecipient = resolveSendRecipient(
+        estimate,
+        normalizedChannel,
+        recipient,
+        recipientOverride
+    );
+    const to = resolvedRecipient.value;
     const number = estimate.estimate_number || `estimate-${id}`;
     // "ESTIMATE L-53-5" → "L-53-5" wherever we say the word "Estimate" ourselves.
     const shortNumber = shortDocNumber(number) || number;
@@ -852,12 +917,14 @@ async function sendEstimate(
         await estimatesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
             channel: normalizedChannel,
             recipient: to,
+            recipient_source: resolvedRecipient.source,
         }, client);
     } else {
         await estimatesQueries.updateEstimate(id, companyId, statusPatch);
         await estimatesQueries.createEvent(companyId, id, 'sent', 'user', userId, {
             channel: normalizedChannel,
             recipient: to,
+            recipient_source: resolvedRecipient.source,
         });
     }
     if (activityActor) {

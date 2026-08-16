@@ -62,6 +62,9 @@ export interface Estimate {
     signed_at: string | null;
     valid_until: string | null;
     sent_at: string | null;
+    /** When the CUSTOMER first opened the link (P1 writes it, P4 puts it on list
+     *  rows). `updated_at` moves for reasons that have nothing to do with them. */
+    viewed_at?: string | null;
     accepted_at: string | null;
     declined_at: string | null;
     created_by: string | null;

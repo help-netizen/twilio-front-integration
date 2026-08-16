@@ -203,6 +203,32 @@ describe('estimate route permission matrix', () => {
             .not.toContain(KEYCLOAK_SUB);
     });
 
+    test('standalone create uses companyFilter and crmUser.id, ignoring a forged body tenant', async () => {
+        mockEstimatesService.createEstimate.mockResolvedValue({
+            id: 43,
+            estimate_number: 'ESTIMATE L-0-1',
+        });
+        const body = {
+            company_id: '00000000-0000-0000-0000-00000000000b',
+            summary: 'Standalone diagnostic',
+        };
+
+        const response = await request(appWith({ permissions: ['estimates.create'] }))
+            .post('/api/estimates')
+            .send(body);
+
+        expect(response.status).toBe(201);
+        expect(mockEstimatesService.createEstimate).toHaveBeenCalledWith(
+            COMPANY_A,
+            CRM_USER_ID,
+            body,
+            mockTxClient,
+            { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' }
+        );
+        expect(JSON.stringify(mockEstimatesService.createEstimate.mock.calls))
+            .not.toContain(KEYCLOAK_SUB);
+    });
+
     test('T-foreign: service 404 is preserved and no success body is returned', async () => {
         mockEstimatesService.undoInvoiceConversion.mockRejectedValue(Object.assign(
             new Error('Estimate 42 not found'),
