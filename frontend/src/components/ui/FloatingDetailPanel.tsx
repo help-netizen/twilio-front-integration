@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { Overlay } from './Overlay';
 import { OverlayClose } from './OverlayClose';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useSheetViewport } from '../../hooks/useSheetViewport';
 
 interface Props {
     open: boolean;
@@ -28,6 +29,17 @@ export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
     // scrollers lack `overscroll-contain`). Locking here fixes them all at once. Desktop
     // stays unlocked — the drawer is only 420px and the list beside it is meant to scroll.
     const isMobile = useIsMobile();
+    // MOBILE KEYBOARD (owner, 2026-08-16 — "нажать на почту, форма уезжает").
+    // The mobile panel is `position: fixed; inset: 0; height: 100dvh`. On iOS the
+    // keyboard shrinks the VISUAL viewport but not the layout one, so the browser
+    // scrolls the layout viewport to reveal the focused input — and drags this
+    // fixed, full-height panel off the visible area with it. The email field on
+    // the receipt (TransactionReview) ended up behind the keyboard with the job
+    // card showing through above it.
+    //
+    // BottomSheet and Dialog already follow visualViewport through the shared
+    // hook; this panel was simply never wired to it. Same canon, same numbers.
+    const sheetViewport = useSheetViewport({ open, enabled: isMobile });
     return (
         <Overlay open={open} onClose={onClose} variant="right-drawer" modal={false} backdrop={false} scrollLock={isMobile}>
             {({ panelProps, backdropProps, stack }) => (
@@ -37,6 +49,7 @@ export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
             {/* `peer` so the desktop slideover close button's peer-hover reveal fires */}
             <div
                 {...panelProps}
+                onFocusCapture={sheetViewport.onFocusCapture}
                 className={`blanc-floating-panel peer${wide ? ' blanc-floating-panel--wide' : ''}`}
                 // Desktop card-stack (Phase 3): when a modal/dialog opens OVER this non-modal
                 // view card, it slides left + dims + scales so it peeks behind the top layer.
@@ -47,6 +60,16 @@ export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
                     transformOrigin: stack.transformOrigin,
                     filter: stack.filter,
                     transition: stack.transition,
+                    // Follow the visible viewport while the keyboard is up: the panel
+                    // stops at the keyboard instead of being pushed underneath it.
+                    ...(sheetViewport.geometry
+                        ? {
+                            top: sheetViewport.geometry.visualTop,
+                            bottom: sheetViewport.geometry.bottomInset,
+                            height: 'auto',
+                            maxHeight: sheetViewport.geometry.usableHeight,
+                        }
+                        : {}),
                 }}
             >
                 {/* Mobile-only close ×. Rendered as a CHILD of the full-screen panel
