@@ -7,3 +7,6 @@ blob-report/
 .env
 .env.*
 .env.local
+
+# The template carries no secrets and must travel with the code.
+!.env.local.example
