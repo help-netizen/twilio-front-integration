@@ -24,6 +24,7 @@ const jobTagsSettingsRouter = require('../backend/src/routes/job-tags-settings')
 const jobsListFieldsRouter = require('../backend/src/routes/jobs-list-fields-settings');
 const usersRouter = require('../backend/src/routes/users');
 const messagingRouter = require('../backend/src/routes/messaging');
+const { mediaTemporaryUrlHandler } = require('../backend/src/routes/mediaTemporaryUrl');
 const pulseRouter = require('../backend/src/routes/pulse');
 const quickMessagesRouter = require('../backend/src/routes/quick-messages');
 const textPolishRouter = require('../backend/src/routes/text-polish');
@@ -139,38 +140,12 @@ app.use('/events', eventsRouter);
 // Auth + tenant-scoped CRM API routes
 app.use('/api/voice', authenticate, requireCompanyAccess, voiceTokenRouter); // Voice token (Keycloak-authed)
 app.use('/api/calls', authenticate, requireCompanyAccess, callsRouter);
-// Media proxy — no auth (browser <img src> can't send JWT; UUID provides security)
-// Proxies media content through the backend to avoid CORS and expired-URL issues
-app.get('/api/messaging/media/:mediaId/temporary-url', async (req, res, next) => {
-    const conversationsService = require('../backend/src/services/conversationsService');
-    try {
-        const result = await conversationsService.getMediaTemporaryUrl(req.params.mediaId);
-        if (!result.url) return res.status(404).json({ error: 'Media URL not available' });
-
-        // Proxy: fetch from Twilio and pipe to response
-        const upstream = await fetch(result.url);
-        if (!upstream.ok) {
-            // URL might be expired — clear cache and retry once
-            console.warn(`[Media] Upstream ${upstream.status} for ${req.params.mediaId}, retrying with fresh URL`);
-            const fresh = await conversationsService.getMediaTemporaryUrl(req.params.mediaId, true);
-            if (!fresh.url) return res.status(404).json({ error: 'Media URL not available' });
-            const retry = await fetch(fresh.url);
-            if (!retry.ok) return res.status(502).json({ error: 'Upstream media fetch failed' });
-            res.set('Content-Type', fresh.contentType || retry.headers.get('content-type') || 'application/octet-stream');
-            res.set('Cache-Control', 'private, max-age=3600');
-            const { Readable } = require('stream');
-            Readable.fromWeb(retry.body).pipe(res);
-            return;
-        }
-        res.set('Content-Type', result.contentType || upstream.headers.get('content-type') || 'application/octet-stream');
-        res.set('Cache-Control', 'private, max-age=3600');
-        const { Readable } = require('stream');
-        Readable.fromWeb(upstream.body).pipe(res);
-    } catch (err) {
-        console.error('[Media] proxy error:', err.message);
-        res.status(err.message.includes('not found') ? 404 : 500).json({ error: err.message });
-    }
-});
+// Media proxy. Reachable without a bearer on purpose: the browser loads this straight
+// from <img src> and download links, where it cannot send an Authorization header. The
+// capability is the `?cap=` signature — short-lived and bound to one media id and one
+// company — minted by the authenticated endpoint in the messaging router. The handler
+// lives in its own module so this behaviour is testable; do not inline it again.
+app.get('/api/messaging/media/:mediaId/temporary-url', mediaTemporaryUrlHandler);
 app.use('/api/messaging', authenticate, requireCompanyAccess, messagingRouter);
 app.use('/api/app-studio', authenticate, requireCompanyAccess, appStudioRouter);
 app.use('/api/apps', authenticate, requireCompanyAccess, appViewsRouter);
