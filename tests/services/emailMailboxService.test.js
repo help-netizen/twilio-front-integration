@@ -126,6 +126,136 @@ describe('emailMailboxService', () => {
         });
     });
 
+    // ─── getDecryptedTokens — undecryptable tokens ───────────────────────
+    //
+    // Regression: a token the current key cannot open used to let the raw crypto
+    // error ("Invalid key length" / "unable to authenticate data") escape
+    // getDecryptedTokens → getValidAccessToken → sendInvoice, where the route
+    // turned it into `500 {"code":"INTERNAL","message":"Invalid key length"}`.
+    // getMailboxStatus does NOT decrypt, so the send paths' own pre-check still
+    // reported `connected` and waved the send through to fail unguarded.
+    //
+    // Contract now: undecryptable ⇒ reconnect_required (recorded), and a
+    // 409-shaped error — the shape invoicesService / estimatesService /
+    // paymentsService / emailTimelineService already map to MAILBOX_NOT_CONNECTED.
+    describe('getDecryptedTokens — undecryptable token', () => {
+        // Seal a token under a DIFFERENT 32-byte key, in this service's own
+        // `iv:authTag:data` hex envelope. This is the real-world case: the key was
+        // rotated while mailbox rows still hold tokens from the previous one.
+        function encryptUnderForeignKey(plaintext) {
+            const crypto = require('crypto');
+            const foreignKey = Buffer.from('b'.repeat(64), 'hex'); // module's key is 'a'*64
+            const iv = crypto.randomBytes(12);
+            const cipher = crypto.createCipheriv('aes-256-gcm', foreignKey, iv);
+            const data = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+            return [
+                iv.toString('hex'),
+                cipher.getAuthTag().toString('hex'),
+                data.toString('hex'),
+            ].join(':');
+        }
+
+        beforeEach(() => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
+            emailQueries.getMailboxWithTokens.mockResolvedValue({
+                id: 'mb-1',
+                company_id: 'c1',
+                status: 'connected',
+                access_token_encrypted: encryptUnderForeignKey('stale-access-token'),
+                refresh_token_encrypted: encryptUnderForeignKey('stale-refresh-token'),
+                token_expires_at: new Date(Date.now() + 3600000),
+            });
+            emailQueries.updateMailboxStatus.mockResolvedValue({ id: 'mb-1', status: 'reconnect_required' });
+        });
+
+        afterEach(() => { console.error.mockRestore(); });
+
+        test('throws the 409-shaped error the send paths map to MAILBOX_NOT_CONNECTED', async () => {
+            await expect(emailMailboxService.getDecryptedTokens('c1')).rejects.toMatchObject({
+                statusCode: 409,
+                code: 'MAILBOX_RECONNECT_REQUIRED',
+            });
+        });
+
+        test('flips the mailbox to reconnect_required with a last_sync_error', async () => {
+            await expect(emailMailboxService.getDecryptedTokens('c1')).rejects.toThrow();
+
+            expect(emailQueries.updateMailboxStatus).toHaveBeenCalledWith('mb-1', expect.objectContaining({
+                status: 'reconnect_required',
+                last_sync_status: 'error',
+                last_sync_error: expect.stringMatching(/could not be decrypted/i),
+            }));
+        });
+
+        test('never leaks the crypto internal to the caller', async () => {
+            const err = await emailMailboxService.getDecryptedTokens('c1').catch(e => e);
+            expect(err.message).toBe('Mailbox requires reconnection');
+            expect(err.message).not.toMatch(/invalid key length|unable to authenticate|cipher|decipher/i);
+        });
+
+        test('getValidAccessToken propagates the 409 unchanged (no 500 upstream)', async () => {
+            await expect(emailMailboxService.getValidAccessToken('c1')).rejects.toMatchObject({
+                statusCode: 409,
+                code: 'MAILBOX_RECONNECT_REQUIRED',
+            });
+        });
+
+        // The pre-check the send paths run BEFORE deciding to send reads the same row
+        // and must now agree — this is what turns the failure into an up-front 409.
+        test('the recorded status is what getMailboxStatus will report next', async () => {
+            await expect(emailMailboxService.getDecryptedTokens('c1')).rejects.toThrow();
+            const [, patch] = emailQueries.updateMailboxStatus.mock.calls[0];
+
+            emailQueries.getMailboxByCompany.mockResolvedValue({ id: 'mb-1', status: patch.status });
+            const status = await emailMailboxService.getMailboxStatus('c1');
+            expect(status.status).not.toBe('connected'); // ⇒ 409 before any Gmail call
+        });
+    });
+
+    // ─── A broken KEY is not a broken tenant row ─────────────────────────
+    describe('getDecryptedTokens — EMAIL_TOKEN_ENCRYPTION_KEY itself is malformed', () => {
+        let isolatedService;
+        let isolatedQueries;
+        const REAL_KEY = process.env.EMAIL_TOKEN_ENCRYPTION_KEY;
+
+        beforeEach(() => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
+            jest.resetModules();
+            process.env.EMAIL_TOKEN_ENCRYPTION_KEY = 'abc123'; // set, but not 32 bytes
+            jest.isolateModules(() => {
+                isolatedService = require('../../backend/src/services/emailMailboxService');
+                isolatedQueries = require('../../backend/src/db/emailQueries');
+            });
+            isolatedQueries.getMailboxWithTokens.mockResolvedValue({
+                id: 'mb-1',
+                company_id: 'c1',
+                status: 'connected',
+                access_token_encrypted: 'aa:bb:cc',
+            });
+        });
+
+        afterEach(() => {
+            process.env.EMAIL_TOKEN_ENCRYPTION_KEY = REAL_KEY;
+            jest.resetModules();
+            console.error.mockRestore();
+        });
+
+        test('still 409-shaped — the client is never handed "Invalid key length"', async () => {
+            const err = await isolatedService.getDecryptedTokens('c1').catch(e => e);
+            expect(err.statusCode).toBe(409);
+            expect(err.code).toBe('MAILBOX_ENCRYPTION_KEY_INVALID');
+            expect(err.message).not.toMatch(/invalid key length/i);
+        });
+
+        // A server-wide misconfiguration must NOT mark tenant rows: nothing flips a
+        // mailbox back to 'connected' except a fresh OAuth connect, so flipping here
+        // would make every company re-authorize after ops merely fixes the env var.
+        test('does NOT touch mailbox rows', async () => {
+            await expect(isolatedService.getDecryptedTokens('c1')).rejects.toThrow();
+            expect(isolatedQueries.updateMailboxStatus).not.toHaveBeenCalled();
+        });
+    });
+
     // ─── connectMailbox ──────────────────────────────────────────────────
     describe('connectMailbox', () => {
         test('upserts mailbox with encrypted tokens and creates sync state', async () => {

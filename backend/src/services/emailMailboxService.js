@@ -38,11 +38,68 @@ const SCOPES = [
     'https://www.googleapis.com/auth/userinfo.profile',
 ];
 
+// ─── Typed failures ──────────────────────────────────────────────────────
+
+/**
+ * The mailbox cannot be used until the tenant re-runs the OAuth connect.
+ *
+ * `statusCode = 409` is the seam every send path already understands:
+ * invoicesService.sendInvoice, estimatesService.sendDocEstimate, paymentsService
+ * (receipts) and emailTimelineService all translate a 409 into
+ * MAILBOX_NOT_CONNECTED / "Connect Google Email to send.". Anything else reaches
+ * the client as a raw 500 carrying whatever internal message threw — which is
+ * exactly how an undecryptable token used to surface as `{"code":"INTERNAL",
+ * "message":"Invalid key length"}`.
+ */
+class MailboxReconnectRequiredError extends Error {
+    constructor(message = 'Mailbox requires reconnection', code = 'MAILBOX_RECONNECT_REQUIRED') {
+        super(message);
+        this.name = 'MailboxReconnectRequiredError';
+        this.code = code;
+        this.statusCode = 409;
+    }
+}
+
+/**
+ * EMAIL_TOKEN_ENCRYPTION_KEY itself is absent or is not 32 bytes of hex — a
+ * server-wide misconfiguration, NOT a rotten mailbox row. Deliberately a sibling
+ * of (not a subclass of) MailboxReconnectRequiredError: it must never flip tenant
+ * rows to reconnect_required (see getDecryptedTokens), yet it carries the same
+ * 409 so the client is told to reconnect instead of being handed a crypto
+ * internal. Mirrors the GOOGLE_ADS_ENCRYPTION_KEY_* / _TOKEN_DECRYPT_FAILED split
+ * already used by googleAdsCredentials.js.
+ */
+class MailboxEncryptionKeyError extends Error {
+    constructor(message, code) {
+        super(message);
+        this.name = 'MailboxEncryptionKeyError';
+        this.code = code;
+        this.statusCode = 409;
+    }
+}
+
 // ─── Encryption helpers ──────────────────────────────────────────────────
 
+const KEY_BYTES = 32; // aes-256-gcm
+
 function getEncryptionKey() {
-    if (!ENCRYPTION_KEY) throw new Error('EMAIL_TOKEN_ENCRYPTION_KEY is not configured');
-    return Buffer.from(ENCRYPTION_KEY, 'hex');
+    if (!ENCRYPTION_KEY) {
+        throw new MailboxEncryptionKeyError(
+            'Email token encryption is not configured.',
+            'MAILBOX_ENCRYPTION_KEY_MISSING'
+        );
+    }
+    // Buffer.from(<malformed hex>, 'hex') truncates SILENTLY rather than throwing,
+    // so a typo'd or half-length key only detonates deep inside createDecipheriv
+    // as "Invalid key length". Name it here, before it can reach a client.
+    const key = Buffer.from(ENCRYPTION_KEY, 'hex');
+    if (key.length !== KEY_BYTES) {
+        throw new MailboxEncryptionKeyError(
+            'Email token encryption is misconfigured.',
+            'MAILBOX_ENCRYPTION_KEY_INVALID'
+        );
+    }
+    return key;
 }
 
 function encrypt(plaintext) {
@@ -177,13 +234,52 @@ async function getDecryptedTokens(companyId) {
     if (!mailbox) return null;
     if (!mailbox.access_token_encrypted) return null;
 
-    return {
-        mailbox_id: mailbox.id,
-        access_token: decrypt(mailbox.access_token_encrypted),
-        refresh_token: mailbox.refresh_token_encrypted ? decrypt(mailbox.refresh_token_encrypted) : null,
-        token_expires_at: mailbox.token_expires_at,
-        status: mailbox.status,
-    };
+    try {
+        return {
+            mailbox_id: mailbox.id,
+            access_token: decrypt(mailbox.access_token_encrypted),
+            refresh_token: mailbox.refresh_token_encrypted ? decrypt(mailbox.refresh_token_encrypted) : null,
+            token_expires_at: mailbox.token_expires_at,
+            status: mailbox.status,
+        };
+    } catch (err) {
+        // A broken KEY is not this tenant's fault. Flipping rows here would force
+        // every company to re-run OAuth once ops fixes the env var — nothing flips a
+        // mailbox back to 'connected' except a fresh connect. Surface it, loudly,
+        // and leave stored state alone.
+        if (err instanceof MailboxEncryptionKeyError) {
+            console.error(
+                `[EmailMailboxService] ${err.code} — cannot decrypt tokens for company `
+                + `${companyId}. Check EMAIL_TOKEN_ENCRYPTION_KEY.`
+            );
+            throw err;
+        }
+
+        // Row-level failure: the key is well-formed but THIS ciphertext will not open
+        // under it — the usual cause is a key rotation that left old rows behind. That
+        // is the same operational state as an expired grant, so record it as one; the
+        // getMailboxStatus pre-check in the send paths then answers 409 up front
+        // instead of failing unguarded inside Gmail. Log the reason only — never the
+        // ciphertext, never the key.
+        console.error(
+            `[EmailMailboxService] Token decrypt failed for company ${companyId} `
+            + `(mailbox ${mailbox.id}): ${err.message}`
+        );
+        try {
+            await emailQueries.updateMailboxStatus(mailbox.id, {
+                status: 'reconnect_required',
+                last_sync_status: 'error',
+                last_sync_error: 'Stored tokens could not be decrypted — reconnection needed',
+            });
+        } catch (flipErr) {
+            // Bookkeeping must never mask the real failure.
+            console.error(
+                `[EmailMailboxService] Failed to mark mailbox ${mailbox.id} `
+                + `reconnect_required: ${flipErr.message}`
+            );
+        }
+        throw new MailboxReconnectRequiredError();
+    }
 }
 
 async function refreshAccessToken(companyId) {
@@ -216,8 +312,15 @@ async function refreshAccessToken(companyId) {
 
 async function getValidAccessToken(companyId) {
     const tokenData = await getDecryptedTokens(companyId);
-    if (!tokenData) throw new Error('No mailbox connected');
-    if (tokenData.status !== 'connected') throw new Error(`Mailbox status: ${tokenData.status}`);
+    // 409-shaped, not plain Errors: once the guard above flips a mailbox to
+    // reconnect_required, the NEXT send that skips the getMailboxStatus pre-check
+    // (emailTimelineService → GmailProvider, sync, draft prune) lands right here.
+    // A plain Error would put us back where we started — a 500 for a state the
+    // product already has a 409 for.
+    if (!tokenData) throw new MailboxReconnectRequiredError('No mailbox connected', 'MAILBOX_NOT_CONNECTED');
+    if (tokenData.status !== 'connected') {
+        throw new MailboxReconnectRequiredError(`Mailbox status: ${tokenData.status}`, 'MAILBOX_NOT_CONNECTED');
+    }
 
     // If token expires within 5 minutes, refresh
     const expiresAt = tokenData.token_expires_at ? new Date(tokenData.token_expires_at) : null;
@@ -234,6 +337,9 @@ async function disconnectMailbox(companyId, userId) {
 }
 
 module.exports = {
+    // typed failures
+    MailboxReconnectRequiredError,
+    MailboxEncryptionKeyError,
     // encryption (internal, but exported for testing)
     encrypt,
     decrypt,
