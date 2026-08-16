@@ -495,10 +495,34 @@ function parseVapiGetCallJson(rawJson) {
     };
 }
 
+function sanitizeVapiGetCallJson(rawJson) {
+    const { value, numericPrefix } = parseExactJson(rawJson);
+    const rawCall = requireObject(value, '$');
+    const parsed = parseCallIdentity(rawCall, '$', {
+        requireAssistant: true,
+        requireStatus: true,
+    });
+    const call = {};
+    for (const key of [
+        'id', 'orgId', 'type', 'assistantId', 'status', 'createdAt',
+        'updatedAt', 'startedAt', 'endedAt', 'endedReason',
+    ]) {
+        if (parsed[key] !== undefined) call[key] = parsed[key];
+    }
+    Object.assign(call, sanitizeCostCandidate(rawCall, numericPrefix));
+    return {
+        evidenceSchemaVersion: 1,
+        numberEncoding: 'decimal-string',
+        call,
+    };
+}
+
 module.exports = {
     VapiContractError,
+    parseExactJson,
     parseVapiServerMessageJson,
     parseVapiEndOfCallReportJson,
     parseVapiGetCallJson,
+    sanitizeVapiGetCallJson,
     sanitizeVapiServerMessageJson,
 };

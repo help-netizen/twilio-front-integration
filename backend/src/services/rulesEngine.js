@@ -19,6 +19,7 @@ require('./taskNotificationScheduler').registerScheduler(schedulerRegistry);
 require('./savedCardCleanupScheduler').registerScheduler(schedulerRegistry);
 require('./appScheduleWorker').registerScheduler(schedulerRegistry);
 require('./appEventWorker').registerScheduler(schedulerRegistry);
+require('./vapiUsageReconcileScheduler').registerScheduler(schedulerRegistry);
 
 // ── Condition evaluation: {all|any: [{field, op, value}]} over a context ─────
 

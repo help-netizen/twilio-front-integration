@@ -432,9 +432,11 @@ async function projectObservation(client, {
     if (error) {
         await client.query(
             `INSERT INTO vapi_call_usage (
-                 company_id, vapi_call_session_id, state, last_error,
-                 provisional_updated_at
-             ) VALUES ($1, $2, 'quarantined', $3, now())
+             company_id, vapi_call_session_id, state, last_error,
+                 provisional_updated_at, next_reconcile_at
+             ) VALUES (
+                 $1, $2, 'quarantined', $3, now(), now() + interval '1 minute'
+             )
              ON CONFLICT (vapi_call_session_id) DO NOTHING`,
             [companyId, session.id, error],
         );
@@ -450,7 +452,7 @@ async function projectObservation(client, {
          ) VALUES (
              $1, $2, 'provisional', $3::numeric,
              $4::jsonb, $5, $6::numeric,
-             now(), $7, now(), NULL
+             now() + interval '1 minute', $7, now(), NULL
          )
          ON CONFLICT (vapi_call_session_id) DO UPDATE
          SET state = 'provisional',
@@ -458,7 +460,10 @@ async function projectObservation(client, {
              normalized_breakdown = EXCLUDED.normalized_breakdown,
              ended_reason = EXCLUDED.ended_reason,
              duration_seconds = EXCLUDED.duration_seconds,
-             next_reconcile_at = COALESCE(vapi_call_usage.next_reconcile_at, now()),
+             next_reconcile_at = COALESCE(
+                 vapi_call_usage.next_reconcile_at,
+                 now() + interval '1 minute'
+             ),
              provisional_observation_id = EXCLUDED.provisional_observation_id,
              provisional_updated_at = now(),
              last_error = NULL
@@ -577,6 +582,8 @@ async function ingestServerMessage(input) {
 module.exports = {
     VapiUsageIngestError,
     stableStringify,
+    hashEvidence,
+    normalizeObservation,
     addDecimalStrings,
     correlateCallWithClient,
     ingestServerMessage,

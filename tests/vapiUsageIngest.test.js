@@ -375,7 +375,9 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
         const stored = await client.query(
             `SELECT observation.supplier_cost::text,
                     observation.breakdown_total::text,
-                    usage.state
+                    usage.state,
+                    usage.next_reconcile_at >= usage.provisional_updated_at
+                        + interval '59 seconds' AS first_poll_scheduled
              FROM vapi_call_usage_observations observation
              JOIN vapi_call_usage usage
                ON usage.vapi_call_session_id = observation.vapi_call_session_id
@@ -387,6 +389,7 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
             supplier_cost: '0.010700000000',
             breakdown_total: '0.010700000000',
             state: 'provisional',
+            first_poll_scheduled: true,
         }]);
     });
 
