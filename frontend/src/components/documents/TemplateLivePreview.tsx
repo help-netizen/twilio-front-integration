@@ -167,7 +167,12 @@ const FIXTURE: PreviewEstimate = {
 };
 
 function money(value: number) {
-    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const amount = Number(value || 0);
+    const body = Math.abs(amount).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+    return (amount < 0 ? '−$' : '$') + body;
 }
 
 function formatDate(iso: string, timeZone: string) {

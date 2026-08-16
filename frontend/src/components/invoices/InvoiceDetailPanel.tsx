@@ -53,10 +53,12 @@ import { invoiceStatusTone } from './InvoiceMobileRow';
 import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
 function money(value: string | number | null | undefined): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', {
+    const amount = Number(value || 0);
+    const body = Math.abs(amount).toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     });
+    return (amount < 0 ? '−$' : '$') + body;
 }
 
 function fmtDate(value: string | null | undefined, timeZone: string): string {

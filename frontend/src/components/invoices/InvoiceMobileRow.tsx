@@ -54,10 +54,12 @@ export function invoiceBalanceTone(status: Invoice['status']): string {
 }
 
 function money(value: string | number | null | undefined): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', {
+    const amount = Number(value || 0);
+    const body = Math.abs(amount).toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     });
+    return (amount < 0 ? '−$' : '$') + body;
 }
 
 export function InvoiceMobileRow({ invoice, onOpen }: Props) {

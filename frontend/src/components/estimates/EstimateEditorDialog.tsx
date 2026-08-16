@@ -59,7 +59,12 @@ const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-$
 const emptyItem = (): LineItem => ({ key: newKey(), name: '', description: '', quantity: '1', unit_price: '0', taxable: true });
 
 function money(value: number | string | null | undefined): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const amount = Number(value || 0);
+    const body = Math.abs(amount).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+    return (amount < 0 ? '−$' : '$') + body;
 }
 
 function amount(item: LineItem): number {
@@ -518,10 +523,17 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     </div>
                                     {discountType ? (
                                         <div className="space-y-1">
-                                            {/* OB-24: wrap on narrow widths so the amount can drop to its own
-                                                right-aligned line instead of overflowing the panel edge. */}
-                                            <div className="flex flex-wrap items-center gap-2 text-sm">
+                                            {/* Two lines, not one that wraps (owner, iPhone 16, 2026-08-16).
+                                                OB-24 let the amount "drop to its own line" — on a phone that
+                                                meant it landed under the bin icon, orphaned from the row it
+                                                belongs to. The figure now sits on the Discount row itself,
+                                                where Subtotal and Tax put theirs, and the controls get a
+                                                line of their own that cannot wrap into nonsense. */}
+                                            <div className="flex min-h-8 items-center justify-between gap-3 text-sm">
                                                 <span style={{ color: 'var(--blanc-ink-3)' }}>Discount</span>
+                                                <span className="font-mono text-red-600">−{money(discountAmount)}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-sm">
                                                 <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
                                                     <button
                                                         type="button"
@@ -567,9 +579,11 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                 <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
                                                     <Trash2 className="size-4" />
                                                 </Button>
-                                                <span className="font-mono text-red-600 ml-auto">-{money(discountAmount)}</span>
                                             </div>
-                                            {discountError && <p className="text-xs text-red-600">{discountError}</p>}
+                                            {/* Under the field it is about, at the size everything else
+                                                on this screen is — the smallest text must not be the one
+                                                carrying the problem. */}
+                                            {discountError && <p className="text-sm text-red-600">{discountError}</p>}
                                         </div>
                                     ) : (
                                         <button type="button" className="w-fit text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>

@@ -35,7 +35,12 @@ interface Props {
 const PLACEHOLDER = 'Search the price book or add a new item…';
 
 function money(value: number): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const amount = Number(value || 0);
+    const body = Math.abs(amount).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+    return (amount < 0 ? '−$' : '$') + body;
 }
 
 function itemAsPreset(item: PriceBookItem): EstimateItemPreset {

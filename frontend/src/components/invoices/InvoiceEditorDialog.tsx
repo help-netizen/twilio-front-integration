@@ -62,10 +62,12 @@ const emptyItem = (): LineItem => ({
 });
 
 function money(value: number | string | null | undefined): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', {
+    const amount = Number(value || 0);
+    const body = Math.abs(amount).toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     });
+    return (amount < 0 ? '−$' : '$') + body;
 }
 
 function amount(item: InvoiceItemDraft): number {
@@ -551,36 +553,68 @@ export function InvoiceEditorDialog({
                                         <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
                                         <span className="font-mono font-semibold text-[var(--blanc-ink-1)]">{money(subtotal)}</span>
                                     </div>
+                                    {/* Two lines, not one that wraps (owner, iPhone 16, 2026-08-16).
+                                        Label + toggle + field + bin + the resulting amount was
+                                        ~330px of controls in a ~350px column: on a phone the
+                                        amount was pushed onto a line of its own by `ml-auto`,
+                                        landing under the bin, orphaned from the row it belongs
+                                        to — and the error then read as a page-level alert rather
+                                        than "this number is wrong".
+
+                                        So: line one is the totals row it actually is (name left,
+                                        figure right, same shape as Subtotal and Tax); line two is
+                                        the controls; the error sits directly under the field it
+                                        is about. Nothing here can wrap into nonsense. */}
                                     {discountType ? (
-                                        <div className="flex flex-wrap items-center gap-2 py-1">
-                                            <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                            <div className="inline-flex shrink-0 rounded-[10px] border border-[var(--blanc-line)] p-0.5">
-                                                <button type="button" onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Fixed discount">$</button>
-                                                <button type="button" onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Percentage discount">%</button>
+                                        <div className="py-1">
+                                            <div className="flex min-h-8 items-center justify-between gap-3">
+                                                <span className="text-[var(--blanc-ink-2)]">Discount</span>
+                                                <span className="font-mono font-semibold text-[var(--blanc-danger)]">−{money(discountAmount)}</span>
                                             </div>
-                                            {discountType === 'fixed' ? (
-                                                <FloatingLabel label="Amount" filled className="w-28">
-                                                    <MoneyInput value={discountValue} onValueChange={setDiscountValue} className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right text-sm tabular-nums outline-none focus:border-[var(--blanc-line-strong)]" />
-                                                </FloatingLabel>
-                                            ) : (
-                                                <FloatingField label="Percent" value={discountValue} inputMode="decimal" containerClassName="w-28" onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))} />
-                                            )}
-                                            <Button type="button" variant="ghost" size="icon" className="size-10" onClick={() => { setDiscountType(null); setDiscountValue('0'); }} aria-label="Remove discount">
-                                                <Trash2 className="size-4" />
-                                            </Button>
-                                            <span className="ml-auto font-mono font-semibold text-[var(--blanc-danger)]">-{money(discountAmount)}</span>
+                                            <div className="mt-1.5 flex items-center gap-2">
+                                                <div className="inline-flex shrink-0 rounded-[10px] border border-[var(--blanc-line)] p-0.5">
+                                                    <button type="button" onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Fixed discount">$</button>
+                                                    <button type="button" onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Percentage discount">%</button>
+                                                </div>
+                                                {discountType === 'fixed' ? (
+                                                    <FloatingLabel label="Amount" filled className="w-28">
+                                                        <MoneyInput
+                                                            value={discountValue}
+                                                            onValueChange={setDiscountValue}
+                                                            aria-invalid={!!discountError}
+                                                            aria-describedby={discountError ? 'invoice-discount-error' : undefined}
+                                                            className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right text-sm tabular-nums outline-none focus:border-[var(--blanc-line-strong)]"
+                                                        />
+                                                    </FloatingLabel>
+                                                ) : (
+                                                    <FloatingField
+                                                        label="Percent"
+                                                        value={discountValue}
+                                                        inputMode="decimal"
+                                                        containerClassName="w-28"
+                                                        aria-invalid={!!discountError}
+                                                        aria-describedby={discountError ? 'invoice-discount-error' : undefined}
+                                                        onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
+                                                    />
+                                                )}
+                                                <Button type="button" variant="ghost" size="icon" className="size-10 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }} aria-label="Remove discount">
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                            </div>
+                                            {discountError ? (
+                                                <p id="invoice-discount-error" className="mt-1.5 text-sm text-[var(--blanc-danger)]">{discountError}</p>
+                                            ) : null}
                                         </div>
                                     ) : (
                                         <button type="button" className="min-h-10 text-sm font-medium text-[var(--blanc-job)]" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>+ Add discount</button>
                                     )}
-                                    {discountError ? <div className="rounded-xl bg-[var(--blanc-danger-soft)] px-3.5 py-2.5 text-xs text-[var(--blanc-danger)]">{discountError}</div> : null}
                                     <div className="flex items-center justify-between gap-3 py-1">
                                         <span className="text-[var(--blanc-ink-2)]">Tax rate</span>
                                         <FloatingField
                                             label="Percent"
                                             value={taxRate}
                                             inputMode="decimal"
-                                            containerClassName="w-28"
+                                            containerClassName="w-24"
                                             onChange={event => setTaxRate(event.target.value.replace(/[^0-9.]/g, ''))}
                                             onBlur={() => { const next = Number(taxRate); if (Number.isFinite(next)) setTaxRate(next.toFixed(2)); }}
                                         />
