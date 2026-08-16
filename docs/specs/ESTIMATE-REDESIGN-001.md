@@ -1,7 +1,8 @@
 # ESTIMATE-REDESIGN-001 — Estimates, rebuilt around getting a yes
 
 **Owner directive (2026-08-14/15):** rebuild every estimate screen the way invoices were
-rebuilt. UX follows `INVOICE-REDESIGN-001` (one scroll, one ✕, big buttons, no kebab);
+rebuilt. UX follows `INVOICE-REDESIGN-001` (one scroll, one ✕, big buttons; the
+no-kebab rule was reversed by the owner on 2026-08-16 — see §2.2);
 type follows the payment card, `TYPE-CANON-001` (32 / 20 / 15, weight and colour only).
 
 **Visual spec = the approved mockups** — 10 screens, owner-reviewed live, in
@@ -35,9 +36,32 @@ approved estimate can be re-sent back to `sent`, and a declined one can be appro
    document — Summary → Items → Total, present on every surface that shows the estimate,
    including the customer's page. ③ The record — History, at the very bottom, in grey.
    Actions sit between ① and ②.
-2. **"Create invoice" is available at every status**, beside the primary. From `draft` or
-   `sent` it also marks the estimate approved, in the same transaction. Reason: the
-   customer usually says yes on the spot, and recording that should not cost three taps.
+2. **"Create invoice" is available at every status.** From `draft` or `sent` it also marks
+   the estimate approved, in the same transaction. Reason: the customer usually says yes
+   on the spot, and recording that should not cost three taps.
+
+   **Revised 2026-08-16 (owner, on the shipped desktop card).** Available, but no longer
+   necessarily *on screen*. At most **two** actions are visible at any status — the move
+   the status is waiting for, plus at most one more — and everything else, including
+   Create invoice where it is not the primary, moves into a menu **labelled "More"**
+   (`estimate-more`). The original reasoning ("an action you cannot see is not simpler,
+   only slower") lost to what six visible actions actually look like: nothing is louder
+   than anything else, and the two ways to lose a proposal sit in the same breath as the
+   primary. The pairs:
+
+   | Status | On screen | In the menu |
+   |---|---|---|
+   | `draft` | Send estimate · Edit | Create invoice, Preview PDF, Link a job, — Decline, Archive |
+   | `sent` / `viewed` | Mark approved · Resend | Create invoice, Preview PDF, Edit, — Decline, Archive |
+   | `approved` | Create invoice **or** Open invoice | Resend, Preview PDF, Edit, — Decline, Archive |
+   | `declined` | Revise & resend | Create invoice, Preview PDF, Edit, — Archive |
+   | archived | Restore to draft | — |
+
+   Edit is deliberately NOT one of the two once the estimate has left the building: it
+   returns the document to draft and kills the customer's link, which is worth an extra
+   tap. On a draft there is nothing to lose, so it sits next to Send. Approved and
+   declined get one visible action each — padding them to two would be filling a slot,
+   not making a recommendation.
 3. **No confirmation for it — an Undo instead.** The toast states what changed ("Invoice
    #1043 created · marked approved") and offers Undo. Confirm the rare and destructive;
    undo the frequent and constructive.
@@ -74,7 +98,7 @@ Ten mockup screens; nineteen inventoried surfaces. Every surface has a verdict.
 | # | Surface | Verdict |
 |---|---|---|
 | S1 | Estimates list (`EstimatesPage`) | Rebuild: mobile rows, plain-language status with age, load-more, **and a New action — standalone creation is absent today**. |
-| S2–S4 | Detail (`EstimateDetailPanel`) | Rebuild on the one skeleton; actions out of the kebab; status-driven button matrix; History at the bottom. |
+| S2–S4 | Detail (`EstimateDetailPanel`) | Rebuild on the one skeleton; status-driven matrix of at most two visible actions + a labelled "More" menu (§2.2, revised); History at the bottom. |
 | S5 | Editor (`EstimateEditorDialog`) | Rebuild: one scroll, floating fields, item rows → sheet, generate card above Summary. |
 | S6 | Report editor (`FullScreenTextEditor`) | **Unchanged.** Generate moves into its action bar on mobile. |
 | S7 | Item sheet (`EstimateItemDialog` + the editor's inline twin) | **Collapse the two implementations into one.** |
@@ -86,7 +110,7 @@ Ten mockup screens; nineteen inventoried surfaces. Every surface has a verdict.
 | K | Preview | The detail's instance is **unreachable dead code** — delete it. Fix the template-failure state that shows "Loading template…" forever. |
 | M | Order list | Keep, labelled internal. |
 | N | Decline reason (staff) | Keep; share its vocabulary with S10. |
-| P, Q | Two kebab menus | Delete both; actions become visible. |
+| P, Q | Two kebab menus | Collapse to ONE menu, labelled "More", holding only what does not fit the two visible slots (§2.2, revised). |
 | R | Link Job (`window.prompt`) | Replace with a job picker sheet. |
 | O | Task surfaces | Reuse unchanged. |
 | S | PDF | Unchanged. |
@@ -119,7 +143,7 @@ the phase's E2E green on staging.
 - **P1 — the yes.** BE: public approve/decline (rate-limited, idempotent, token dies on
   decline, records actor/IP/UA), decline → task, `viewed` on first open, transition
   guards. FE: S9 + S10.
-- **P2 — detail.** FE: S2–S4 on the skeleton, button matrix, History, no kebab, Edit
+- **P2 — detail.** FE: S2–S4 on the skeleton, button matrix, History, Edit
   confirm (§2.12). BE: convert-from-any-status + approval side-effect + Undo endpoint,
   permission-gated action visibility.
 - **P3 — editor.** FE: S5 + S7 (one item sheet, one summary editor), generate card. BE:

@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, Pencil, Plus, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+    DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
 import { Input } from '../ui/input';
 import { MoneyInput } from '../ui/MoneyInput';
 import { Label } from '../ui/label';
@@ -414,47 +418,77 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     const openLinkedInvoice = () => navigate(`/invoices?openId=${estimate.invoice_id}`);
 
     /**
-     * The action matrix (ESTIMATE-REDESIGN-001 §2.2). One primary — the next real
-     * move toward an answer — and "Create invoice" beside it at EVERY live status,
-     * because the customer usually says yes on the spot and recording that should
-     * not cost three taps. Everything else is visible and quiet; there is no kebab,
-     * because hiding an action does not make a screen simpler, only slower.
+     * The action matrix (ESTIMATE-REDESIGN-001 §2.2, revised by the owner
+     * 2026-08-16). At most TWO actions are on the screen: the move this status
+     * is actually waiting for, and the one thing you reach for next. Everything
+     * else lives behind a menu that says "More" out loud.
      *
-     * Declined is the one place the shortcut is withheld: they said no, and if they
-     * changed their mind the estimate gets revived deliberately.
+     * The first draft showed all six at once, on the reasoning that an action
+     * you cannot see is not simpler, only slower. Six visible actions turned out
+     * to be its own kind of slow — nothing was louder than anything else, and
+     * the destructive pair sat in the same breath as the primary. Two is a
+     * recommendation the screen can actually make.
+     *
+     * Editing is deliberately NOT one of the two once an estimate has left the
+     * building: it returns the document to draft and kills the customer's link,
+     * which is worth the extra tap. On a draft there is nothing to lose, so Edit
+     * sits right next to Send.
      */
-    type Action = { label: string; icon?: React.ReactNode; onClick: () => void; disabled?: boolean; testid?: string };
+    type Action = {
+        key: string;
+        label: string;
+        icon?: React.ReactNode;
+        onClick: () => void;
+        disabled?: boolean;
+        testid?: string;
+        danger?: boolean;
+    };
 
     const invoiceAction: Action = estimate.invoice_id
-        ? { label: `Open invoice${estimate.invoice_number ? ` #${estimate.invoice_number}` : ''}`, icon: <FileText className="size-4" />, onClick: openLinkedInvoice, testid: 'estimate-open-invoice' }
-        : { label: converting ? 'Creating…' : 'Create invoice', icon: <FileText className="size-4" />, onClick: handleConvertToInvoice, disabled: converting, testid: 'estimate-create-invoice' };
+        ? { key: 'invoice', label: `Open invoice${estimate.invoice_number ? ` #${estimate.invoice_number}` : ''}`, icon: <FileText className="size-4" />, onClick: openLinkedInvoice, testid: 'estimate-open-invoice' }
+        : { key: 'invoice', label: converting ? 'Creating…' : 'Create invoice', icon: <FileText className="size-4" />, onClick: handleConvertToInvoice, disabled: converting, testid: 'estimate-create-invoice' };
 
     const live = !archived;
     const waiting = estimate.status === 'sent' || estimate.status === 'viewed';
     const approved = estimate.status === 'approved';
     const declined = estimate.status === 'declined';
 
+    const editAction: Action = { key: 'edit', label: 'Edit', icon: <Pencil className="size-4" />, onClick: startEditing, testid: 'estimate-edit' };
+    const resendAction: Action = { key: 'resend', label: 'Resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-resend' };
+
     const primaryAction: Action | null =
-        archived ? { label: 'Restore to draft', icon: <RotateCcw className="size-4" />, onClick: onRestore }
+        archived ? { key: 'restore', label: 'Restore to draft', icon: <RotateCcw className="size-4" />, onClick: onRestore }
         : approved ? invoiceAction
-        : waiting ? { label: 'Mark approved', icon: <Check className="size-4" />, onClick: doApprove, testid: 'estimate-approve' }
-        : declined ? { label: 'Revise & resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-revise' }
-        : canSend ? { label: 'Send estimate', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-send' }
-        : { label: 'Mark approved', icon: <Check className="size-4" />, onClick: doApprove, testid: 'estimate-approve' };
+        : waiting ? { key: 'approve', label: 'Mark approved', icon: <Check className="size-4" />, onClick: doApprove, testid: 'estimate-approve' }
+        : declined ? { key: 'revise', label: 'Revise & resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-revise' }
+        : canSend ? { key: 'send', label: 'Send estimate', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-send' }
+        : { key: 'approve', label: 'Mark approved', icon: <Check className="size-4" />, onClick: doApprove, testid: 'estimate-approve' };
 
+    /**
+     * The second button, or nothing. A draft is still being written, so Edit
+     * earns it; while you wait for an answer, Resend is the only other thing
+     * that moves the estimate along. Approved and declined have exactly one
+     * next move each — padding them to two would be filling a slot, not
+     * making a recommendation.
+     */
     const secondaryAction: Action | null =
-        !live || declined ? null
-        : approved ? { label: 'Resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-resend' }
-        : invoiceAction;
+        !live ? null
+        : waiting ? resendAction
+        : approved || declined ? null
+        : readOnly ? editAction
+        : null;
 
-    const quietActions: Action[] = live
+    const shown = new Set([primaryAction?.key, secondaryAction?.key].filter(Boolean) as string[]);
+    const menuActions: Action[] = live
         ? [
-            ...(waiting ? [{ label: 'Resend', icon: <Send className="size-4" />, onClick: doSend, testid: 'estimate-resend' }] : []),
-            { label: 'Preview PDF', icon: <Eye className="size-4" />, onClick: previewPdf },
-            ...(readOnly ? [{ label: 'Edit', icon: <Pencil className="size-4" />, onClick: startEditing, testid: 'estimate-edit' }] : []),
-            ...(declined ? [invoiceAction] : []),
-            ...(estimate.job_id ? [] : [{ label: 'Link a job', icon: <Link2 className="size-4" />, onClick: openLinkJobPrompt }]),
-        ]
+            invoiceAction,
+            resendAction,
+            { key: 'preview', label: 'Preview PDF', icon: <Eye className="size-4" />, onClick: previewPdf },
+            ...(readOnly ? [editAction] : []),
+            ...(estimate.job_id ? [] : [{ key: 'link-job', label: 'Link a job', icon: <Link2 className="size-4" />, onClick: openLinkJobPrompt }]),
+            ...(declined ? [] : [{ key: 'decline', label: 'Decline on customer’s behalf', icon: <XCircle className="size-4" />, onClick: () => setDeclineOpen(true), testid: 'estimate-decline', danger: true }]),
+            { key: 'archive', label: 'Archive estimate', icon: <Archive className="size-4" />, onClick: onArchive, testid: 'estimate-archive', danger: true },
+        ].filter(action => !shown.has(action.key))
         : [];
 
     return (
@@ -517,7 +551,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     the first screen (owner, 2026-08-16). Losing moves — declining
                     for the customer, archiving — go to the far right, away from the
                     hand that is reaching for the primary. */}
-                {!editing && (primaryAction || secondaryAction || quietActions.length > 0) && (
+                {!editing && (primaryAction || secondaryAction || menuActions.length > 0) && (
                     <div className="mt-4 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
                         {primaryAction && (
                             <Button
@@ -542,48 +576,43 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <span className="ml-1.5">{secondaryAction.label}</span>
                             </Button>
                         )}
-                        {quietActions.map(action => (
-                            <Button
-                                key={action.label}
-                                variant="ghost"
-                                className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
-                                style={{ color: 'var(--blanc-ink-2)' }}
-                                onClick={action.onClick}
-                                disabled={action.disabled}
-                                data-testid={action.testid}
-                            >
-                                {action.icon}
-                                <span className="ml-1.5">{action.label}</span>
-                            </Button>
-                        ))}
-                        {/* Refusing on the customer's behalf, and archiving, sit last and
-                            muted: rare, and one of them is how you lose a proposal. */}
-                        <div className="flex flex-col gap-2 md:ml-auto md:flex-row md:items-center md:gap-1">
-                            {live && !declined && (
-                                <Button
-                                    variant="ghost"
-                                    className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
-                                    style={{ color: 'var(--blanc-danger)' }}
-                                    onClick={() => setDeclineOpen(true)}
-                                    data-testid="estimate-decline"
-                                >
-                                    <XCircle className="size-4" />
-                                    <span className="ml-1.5">Decline on customer’s behalf</span>
-                                </Button>
-                            )}
-                            {live && (
-                                <Button
-                                    variant="ghost"
-                                    className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
-                                    style={{ color: 'var(--blanc-danger)' }}
-                                    onClick={onArchive}
-                                    data-testid="estimate-archive"
-                                >
-                                    <Archive className="size-4" />
-                                    <span className="ml-1.5">Archive estimate</span>
-                                </Button>
-                            )}
-                        </div>
+                        {/* Named, not a bare row of dots: three dots are a shrug, and
+                            a menu holding "Archive" should say that it holds something. */}
+                        {menuActions.length > 0 && (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
+                                        style={{ color: 'var(--blanc-ink-2)' }}
+                                        data-testid="estimate-more"
+                                    >
+                                        <MoreHorizontal className="size-4" />
+                                        <span className="ml-1.5">More</span>
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start" className="w-56">
+                                    {menuActions.map((action, index) => (
+                                        <Fragment key={action.key}>
+                                            {/* The two ways to lose a proposal are set apart
+                                                from the four ways to move it forward. */}
+                                            {action.danger && !menuActions[index - 1]?.danger && (
+                                                <DropdownMenuSeparator />
+                                            )}
+                                            <DropdownMenuItem
+                                                onSelect={action.onClick}
+                                                disabled={action.disabled}
+                                                data-testid={action.testid}
+                                                style={action.danger ? { color: 'var(--blanc-danger)' } : undefined}
+                                            >
+                                                {action.icon}
+                                                {action.label}
+                                            </DropdownMenuItem>
+                                        </Fragment>
+                                    ))}
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        )}
                     </div>
                 )}
                 </div>

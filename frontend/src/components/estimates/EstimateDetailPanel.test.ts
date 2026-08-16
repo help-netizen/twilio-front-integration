@@ -8,26 +8,49 @@ import panelRaw from './EstimateDetailPanel.tsx?raw';
  * would quietly rot back if someone re-added a menu "to tidy things up".
  */
 describe('estimate detail — the decisions', () => {
-    it('has no kebab: an action you cannot see is not simpler, only slower', () => {
-        expect(panelRaw).not.toContain('DropdownMenu');
-        expect(panelRaw).not.toContain('MoreHorizontal');
+    it('puts at most two actions on the screen (owner, 2026-08-16)', () => {
+        // The first draft showed all six at once. Six visible actions is its own
+        // kind of slow: nothing is louder than anything else, and the two ways to
+        // lose a proposal sit in the same breath as the primary. Everything past
+        // the second lives behind the menu — so there are exactly two buttons
+        // rendered from the matrix, and the rest is `menuActions`.
+        expect(panelRaw).toContain('const primaryAction');
+        expect(panelRaw).toContain('const secondaryAction');
+        expect(panelRaw).toContain('const menuActions');
+        expect(panelRaw).not.toContain('quietActions');
+        // A third rendered <Button> from the matrix would be a third action.
+        expect(panelRaw.match(/\{primaryAction && \(/g) || []).toHaveLength(1);
+        expect(panelRaw.match(/\{secondaryAction && \(/g) || []).toHaveLength(1);
     });
 
-    it('offers Create invoice beside the primary at every live status', () => {
-        // The customer says yes in the kitchen, out loud. Recording that used to
-        // cost three taps and two status changes, so dispatchers stopped using
-        // the combined path entirely.
+    it('names the menu instead of leaving a row of dots', () => {
+        // Three dots are a shrug. A menu that holds "Archive estimate" should
+        // say that it holds something.
+        expect(panelRaw).toContain('DropdownMenu');
+        expect(panelRaw).toContain('<span className="ml-1.5">More</span>');
+        expect(panelRaw).toContain("data-testid=\"estimate-more\"");
+    });
+
+    it('keeps the destructive pair set apart inside the menu', () => {
+        expect(panelRaw).toContain('DropdownMenuSeparator');
+        expect(panelRaw).toContain("testid: 'estimate-decline', danger: true");
+        expect(panelRaw).toContain("testid: 'estimate-archive', danger: true");
+    });
+
+    it('never makes a second invoice — it opens the one that exists', () => {
         expect(panelRaw).toContain('const invoiceAction');
         expect(panelRaw).toContain("testid: 'estimate-create-invoice'");
-        // …and when an invoice exists it OPENS it. Never a second one.
         expect(panelRaw).toContain("testid: 'estimate-open-invoice'");
         expect(panelRaw).toContain('estimate.invoice_id');
     });
 
-    it('withholds the shortcut only from a declined estimate', () => {
-        // They said no. If they changed their mind the estimate is revived
-        // deliberately — that is the one place an extra step is worth paying.
-        expect(panelRaw).toContain('!live || declined ? null');
+    it('gives the second slot to Edit on a draft and to Resend while waiting', () => {
+        // A draft is still being written, so Edit earns the slot. Once it is out,
+        // editing resets the document to draft and kills the customer's link —
+        // worth the extra tap, so it drops to the menu and Resend takes over.
+        expect(panelRaw).toContain('waiting ? resendAction');
+        expect(panelRaw).toContain('readOnly ? editAction');
+        expect(panelRaw).toContain('approved || declined ? null');
     });
 
     it('warns at the tap on Edit, not with a caption that lives forever', () => {
