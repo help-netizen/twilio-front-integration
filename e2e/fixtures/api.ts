@@ -515,6 +515,32 @@ export class ApiClient {
         return data.url;
     }
 
+    /** Turn an estimate into an invoice — the P2 shortcut, available at any live status. */
+    async convertEstimate(id: number): Promise<JsonObject> {
+        return this.post<JsonObject>(`/api/estimates/${id}/convert`, {});
+    }
+
+    /** Take that conversion back while it is still untouched (five-minute window). */
+    async undoEstimateConversion(id: number, invoiceId: number): Promise<JsonObject> {
+        return this.post<JsonObject>(`/api/estimates/${id}/convert/undo`, { invoice_id: invoiceId });
+    }
+
+    /** Update an estimate through the same route the editor uses. */
+    async updateEstimate(id: number, data: JsonObject): Promise<JsonObject> {
+        return this.put<JsonObject>(`/api/estimates/${id}`, data);
+    }
+
+    /** Read the customer-facing view by its opaque token, unauthenticated. */
+    async readPublicEstimate(token: string): Promise<{ status: number; body: unknown }> {
+        const anonymous = await playwrightRequest.newContext({ baseURL: BASE_URL, ignoreHTTPSErrors: true });
+        try {
+            const response = await anonymous.get(`/api/public/estimates/${token}`);
+            return { status: response.status(), body: await response.json().catch(() => null) };
+        } finally {
+            await anonymous.dispose();
+        }
+    }
+
     async getEstimateEvents(id: number): Promise<JsonObject[]> {
         const data = await this.get<unknown>(`/api/estimates/${id}/events`);
         return Array.isArray(data) ? data.filter(isObject) : [];
