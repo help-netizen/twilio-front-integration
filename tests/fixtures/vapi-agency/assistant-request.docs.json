@@ -1,0 +1,15 @@
+{
+  "message": {
+    "type": "assistant-request",
+    "call": {
+      "id": "call_fixture_assistant_request",
+      "orgId": "org_fixture_platform",
+      "type": "inboundPhoneCall",
+      "status": "ringing",
+      "createdAt": "2026-01-04T12:00:00.000Z"
+    },
+    "phoneNumber": {
+      "id": "phone_number_fixture"
+    }
+  }
+}

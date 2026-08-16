@@ -1,0 +1,74 @@
+{
+  "id": "call_fixture_inbound_analysis",
+  "orgId": "org_fixture_platform",
+  "createdAt": "2026-01-02T15:00:00.000Z",
+  "updatedAt": "2026-01-02T15:00:14.419Z",
+  "type": "inboundPhoneCall",
+  "assistantId": "assistant_fixture_inbound",
+  "phoneCallProvider": "vapi",
+  "phoneCallTransport": "sip",
+  "status": "ended",
+  "endedReason": "customer-ended-call",
+  "startedAt": "2026-01-02T15:00:00.224Z",
+  "endedAt": "2026-01-02T15:00:09.341Z",
+  "cost": 0.0107,
+  "costBreakdown": {
+    "transport": 0,
+    "stt": 0.001,
+    "llm": 0,
+    "tts": 0,
+    "vapi": 0.0076,
+    "chat": 0,
+    "total": 0.0107,
+    "llmPromptTokens": 0,
+    "llmCompletionTokens": 0,
+    "llmCachedPromptTokens": 0,
+    "ttsCharacters": 0,
+    "analysisCostBreakdown": {
+      "summary": 0.0001,
+      "structuredData": 0,
+      "structuredOutput": 0,
+      "successEvaluation": 0.0021,
+      "summaryPromptTokens": 81,
+      "summaryCompletionTokens": 33,
+      "summaryCachedPromptTokens": 0,
+      "structuredDataPromptTokens": 0,
+      "structuredDataCompletionTokens": 0,
+      "structuredDataCachedPromptTokens": 0,
+      "structuredOutputPromptTokens": 0,
+      "structuredOutputCompletionTokens": 0,
+      "structuredOutputCachedPromptTokens": 0,
+      "successEvaluationPromptTokens": 6788,
+      "successEvaluationCompletionTokens": 10,
+      "successEvaluationCachedPromptTokens": 0
+    },
+    "knowledgeBaseCost": 0,
+    "voicemailDetectionCost": 0
+  },
+  "costs": [
+    {
+      "type": "transcriber",
+      "provider": null,
+      "minutes": 0.19423333333333334,
+      "cost": 0.0009717083333333333
+    },
+    {
+      "type": "vapi",
+      "provider": null,
+      "minutes": 0.152,
+      "cost": 0.0076
+    },
+    {
+      "type": "analysis",
+      "provider": null,
+      "minutes": null,
+      "cost": 0.0001068
+    },
+    {
+      "type": "analysis",
+      "provider": null,
+      "minutes": null,
+      "cost": 0.0020614
+    }
+  ]
+}

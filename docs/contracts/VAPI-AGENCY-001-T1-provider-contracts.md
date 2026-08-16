@@ -1,0 +1,61 @@
+# VAPI-AGENCY-001 T1 — provider contracts
+
+Status: implemented contract boundary; live webhook evidence pending
+Date: 2026-08-16
+Contract/fixture version: 1
+
+## Accepted inputs
+
+The adapter accepts raw JSON text only. This preserves every provider numeric lexeme
+before JavaScript can coerce it to IEEE-754. Unknown additional object fields are
+ignored. Missing required fields, unknown message/call/status discriminators, wrong
+wire types, negative costs, and disagreeing totals raise `VapiContractError`.
+
+| Input | Required identity/lifecycle | Cost treatment |
+|---|---|---|
+| `assistant-request` | `message.type`, `message.call.id`, `orgId`, known `type`; assistant may not exist yet | None assumed |
+| `status-update` | Above plus `assistantId`, known matching `message.status` and `call.status` | None assumed |
+| `end-of-call-report` | Above plus `status=ended` and non-empty, matching `endedReason` when present in `call` | Placement not assumed until a live capture |
+| `GET /call/:id` ended object | `id`, `orgId`, `assistantId`, known `type`, `status=ended`, timestamps, `endedReason` | `call.cost` is canonical; `costBreakdown.total` must equal it |
+
+The adapter never adds components, `costBreakdown.total`, or `costs[]` to derive the
+supplier total. It normalizes money to canonical non-negative decimal strings suitable
+for PostgreSQL `NUMERIC`; token/character counters are canonical integer strings.
+
+## Evidence and deliberate gaps
+
+Two `GET /call/:id` fixtures are sanitized projections of real production inbound SIP
+calls: one with summary/success-evaluation cost and one very short call with zero
+analysis cost. The webhook fixtures are documentation-derived, because no live payload
+has arrived since the status path was repaired.
+
+The following evidence still needs one controlled provider observation:
+
+1. Raw `status-update` requests for at least `in-progress` and `ended`, including the
+   exact headers and whether `call.status` always mirrors `message.status`.
+2. A raw `end-of-call-report`, with the exact placement/timing of `cost`,
+   `costBreakdown`, `analysis`, `artifact`, and any provider event identifier/version.
+3. `GET /call/:id` immediately after end and again after analysis completion, to prove
+   cost maturation and `updatedAt` behavior for T3/T4.
+4. A real `assistant-request` from an unbound inbound resource; fixed-assistant SIP is
+   also expected to prove the negative case that no assistant request occurs.
+
+A controlled web call is suitable for items 1–3 without dialing a telephone, if it
+uses one of the repaired assistants and that assistant's configured server messages.
+It is not evidence for item 4 or for SIP/Twilio-specific fields and routing. The Vapi
+web-call documentation exposes call lifecycle events, while server events are defined
+for an assistant's server URL; the precise server-payload parity remains part of the
+observation rather than an assumption.
+
+Sources:
+
+- <https://docs.vapi.ai/server-url/events>
+- <https://docs.vapi.ai/api-reference/calls/get/>
+- <https://docs.vapi.ai/quickstart/web>
+
+## Secret readback asymmetry
+
+An assistant's `server.secret` is write-only: assistant readback exposes only
+`isServerUrlSecretSet`. Tool secrets at `model.tools[].server.secret` remain readable.
+Assistant secret provisioning/readback must therefore verify the boolean flag and must
+never treat an absent secret value as failed persistence.

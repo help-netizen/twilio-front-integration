@@ -8,6 +8,9 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-027 (2026-08-16)** — Vapi assistant webhook `server.secret` is write-only: `GET /assistant`
+  returns only `isServerUrlSecretSet`; verify a PATCH by that flag, never by secret echo. This differs
+  from `model.tools[].server.secret`, whose value is readable, so never log or fixture tool readback.
 - **L-026 (2026-08-14)** — Before adding authentication middleware to an existing route, find every
   frontend consumer and prove that its request mechanism can send the required credential. Browser
   subresources such as `<img src>` and ordinary download links cannot attach an Authorization header;

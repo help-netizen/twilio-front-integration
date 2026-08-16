@@ -1,0 +1,30 @@
+{
+  "contractVersion": 1,
+  "fixtures": [
+    {
+      "file": "get-call.inbound-analysis.production-sanitized.json",
+      "provenance": "production-read-only-get-call",
+      "live": true
+    },
+    {
+      "file": "get-call.inbound-short.production-sanitized.json",
+      "provenance": "production-read-only-get-call",
+      "live": true
+    },
+    {
+      "file": "assistant-request.docs.json",
+      "provenance": "official-documentation",
+      "live": false
+    },
+    {
+      "file": "status-update.docs.json",
+      "provenance": "official-documentation",
+      "live": false
+    },
+    {
+      "file": "end-of-call-report.docs-composed.json",
+      "provenance": "official-documentation-plus-sanitized-get-call-shape",
+      "live": false
+    }
+  ]
+}

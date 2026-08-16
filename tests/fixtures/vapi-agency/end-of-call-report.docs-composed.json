@@ -1,0 +1,18 @@
+{
+  "message": {
+    "type": "end-of-call-report",
+    "endedReason": "customer-ended-call",
+    "call": {
+      "id": "call_fixture_end_of_call_report",
+      "orgId": "org_fixture_platform",
+      "type": "webCall",
+      "assistantId": "assistant_fixture_outbound",
+      "status": "ended",
+      "endedReason": "customer-ended-call",
+      "createdAt": "2026-01-04T14:00:00.000Z",
+      "updatedAt": "2026-01-04T14:00:08.500Z",
+      "startedAt": "2026-01-04T14:00:00.250Z",
+      "endedAt": "2026-01-04T14:00:08.250Z"
+    }
+  }
+}

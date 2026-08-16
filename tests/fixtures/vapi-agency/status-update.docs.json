@@ -1,0 +1,15 @@
+{
+  "message": {
+    "type": "status-update",
+    "status": "in-progress",
+    "call": {
+      "id": "call_fixture_status_update",
+      "orgId": "org_fixture_platform",
+      "type": "webCall",
+      "assistantId": "assistant_fixture_outbound",
+      "status": "in-progress",
+      "createdAt": "2026-01-04T13:00:00.000Z",
+      "startedAt": "2026-01-04T13:00:00.250Z"
+    }
+  }
+}
