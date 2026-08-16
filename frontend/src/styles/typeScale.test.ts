@@ -66,6 +66,26 @@ describe('TYPE-CANON-001 ratchet', () => {
         expect(halves.length).toBeLessThanOrEqual(CEILING.halfSteps);
     });
 
+    it('never lets a Tailwind utility fight .blanc-l2 on the same element', () => {
+        // design-system.css is loaded AFTER Tailwind's utilities, so on equal
+        // specificity `.blanc-l2` WINS: `blanc-l2 font-semibold` renders at 500,
+        // and `blanc-l2 text-[var(--blanc-ink-2)]` renders black. Nothing warns
+        // you — the class is simply ignored and the design quietly flattens.
+        // Weight and colour ride `.blanc-l2-heading` / `.blanc-l2-quiet`;
+        // semantic colour (success / danger / job) rides a style prop.
+        const offenders: string[] = [];
+        for (const file of walk(SRC)) {
+            const source = readFileSync(file, 'utf8');
+            for (const match of source.matchAll(/className="([^"]*\bblanc-l2\b[^"]*)"/g)) {
+                const classes = match[1];
+                if (/\bfont-(semibold|bold)\b/.test(classes) || /text-\[var\(--blanc-ink/.test(classes)) {
+                    offenders.push(`${file.slice(SRC.length)} → ${classes}`);
+                }
+            }
+        }
+        expect(offenders).toEqual([]);
+    });
+
     it('keeps the canon itself defined in exactly one place', () => {
         // Two spellings of one rule (class + style prop) are allowed; a third
         // definition somewhere else is how a canon quietly forks.

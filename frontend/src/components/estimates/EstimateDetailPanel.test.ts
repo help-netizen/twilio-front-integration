@@ -87,12 +87,20 @@ describe('estimate detail — the decisions', () => {
         expect(panelRaw).not.toContain('>Contact<');
     });
 
-    it('uses the level-two type, not hand-written sizes', () => {
-        // 32 is the hero. Everything else comes from .blanc-l2 / the section
-        // heading, so the card cannot drift into a font sampler again.
+    it('carries exactly one hand-written size — the hero', () => {
+        // The payment card is the base (TYPE-CANON-001): 32 for the one number
+        // the screen exists for, .blanc-section-heading for the card's name, and
+        // .blanc-l2 / -quiet / -heading for everything below it. Nothing else may
+        // name a size, or the card drifts back into a font sampler.
         const sizes = [...panelRaw.matchAll(/text-\[(\d+)px\]/g)].map(m => m[1]);
-        expect(new Set(sizes)).toEqual(new Set(['32', '15']));
-        expect(panelRaw).toContain('blanc-l2');
+        expect(new Set(sizes)).toEqual(new Set(['32']));
+        expect(panelRaw).toContain('blanc-section-heading');
+        expect(panelRaw).toContain('blanc-l2-heading');
+        expect(panelRaw).not.toContain('blanc-eyebrow');
+        // Weight and colour ride the classes: a `font-semibold` or a colour
+        // utility on the same element loses to .blanc-l2, silently.
+        expect(panelRaw).not.toMatch(/className="[^"]*blanc-l2[^"]*font-(semibold|bold)/);
+        expect(panelRaw).not.toMatch(/className="[^"]*blanc-l2[^"]*text-\[var\(--blanc-ink/);
     });
 });
 

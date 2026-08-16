@@ -63,6 +63,40 @@ One definition, two spellings, never a third:
 A call site that writes `text-[13px]` or `fontSize: '12.5px'` is the exact
 regression this canon exists to prevent.
 
+### The base — five roles, and the payment card is the copy to work from
+
+Owner, 2026-08-16: «мы готовили набор для карточки payment, возьми оттуда,
+кажется 5 видов. Вот его и. Читай базой.» Read
+`components/payments/PaymentIdentity.tsx` before styling any new surface — the
+whole set is on that one screen, and there is nothing else:
+
+| # | Role | How to write it | Where you see it on the payment card |
+|---|---|---|---|
+| 1 | The one number the screen exists for | `text-[32px] font-semibold leading-none tabular-nums` + Manrope, `-0.025em` | `$88.00` |
+| 2 | The card's name | `.blanc-section-heading` (20px Manrope 600) | `Payment`, `Description` |
+| 3 | A value | `.blanc-l2` (15px, 500, ink-1) | `(202) 696-1282` |
+| 4 | What a value is called | `.blanc-l2 .blanc-l2-quiet` (ink-3) | `Phone`, `Email` |
+| 5 | What a GROUP of values is called | `.blanc-l2 .blanc-l2-heading` (600, ink-1) | `Contact`, `Schedule` |
+
+Applied to a document card (invoice, estimate): role 2 is the document's number
+(`INVOICE L-1630-1`), role 5 is each section inside it (Summary, Items, Totals,
+History) — they are groups within one document, exactly like Contact and
+Schedule are groups within one job. Column headings in the items table are
+role 4: they name columns, they are not sections.
+
+### ⚠ The trap: a utility on the same element loses, silently
+
+`design-system.css` is loaded **after** Tailwind's utilities, so at equal
+specificity `.blanc-l2` wins. That means:
+
+- `className="blanc-l2 font-semibold"` renders at weight **500**, not 600.
+- `className="blanc-l2 text-[var(--blanc-ink-2)]"` renders **ink-1**, not grey.
+
+Nothing warns you; the design just flattens. Weight and colour ride the modifier
+classes (`.blanc-l2-heading`, `.blanc-l2-quiet`); semantic colour (success /
+danger / job) rides a `style` prop, which beats both. `typeScale.test.ts` fails
+the build if any element carries the combination.
+
 ## Migration — a ratchet, not a rewrite
 
 Restyling 605 call sites at once would be one enormous untestable diff. Instead

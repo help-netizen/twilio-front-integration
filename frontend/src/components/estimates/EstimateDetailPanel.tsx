@@ -512,7 +512,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     Contact and job were a section with an icon in the first draft —
                     which fairly invited the question of why the job did not get one
                     too. A line answers both and claims to be neither. */}
-                <p className="blanc-l2 blanc-l2-quiet">{estimate.estimate_number}</p>
+                <p className="blanc-section-heading" style={{ marginBottom: 0 }}>{estimate.estimate_number}</p>
                 <h2
                     className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
                     style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.025em' }}
@@ -555,7 +555,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <div className="mt-4 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
                         {primaryAction && (
                             <Button
-                                className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
+                                className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
                                 onClick={primaryAction.onClick}
                                 disabled={primaryAction.disabled}
                                 data-testid={primaryAction.testid}
@@ -567,7 +567,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         {secondaryAction && (
                             <Button
                                 variant="secondary"
-                                className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
+                                className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
                                 onClick={secondaryAction.onClick}
                                 disabled={secondaryAction.disabled}
                                 data-testid={secondaryAction.testid}
@@ -583,7 +583,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <DropdownMenuTrigger asChild>
                                     <Button
                                         variant="ghost"
-                                        className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
+                                        className="h-11 w-full justify-center blanc-l2 md:w-auto md:px-3"
                                         style={{ color: 'var(--blanc-ink-2)' }}
                                         data-testid="estimate-more"
                                     >
@@ -640,11 +640,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 onClick={() => setSummaryOpen(o => !o)}
                                 className="flex items-center gap-1.5"
                             >
-                                <span className="blanc-eyebrow">Summary</span>
+                                <span className="blanc-l2 blanc-l2-heading">Summary</span>
                                 <ChevronDown className={`size-3.5 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
                             </button>
                             {summaryOpen && (
-                                <p className="mt-3 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</p>
+                                <p className="mt-3 blanc-l2 whitespace-pre-wrap blanc-l2-quiet">{estimate.summary}</p>
                             )}
                         </section>
                     ) : (
@@ -653,7 +653,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <button
                                     type="button"
                                     onClick={() => setSummaryOpen(o => !o)}
-                                    className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
+                                    className="flex flex-1 items-center gap-2 text-left blanc-l2"
                                 >
                                     <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
                                     Summary
@@ -665,14 +665,14 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 )}
                             </div>
                             {summaryOpen && (
-                                <div className="border-t border-[var(--blanc-line)] px-4 py-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</div>
+                                <div className="border-t border-[var(--blanc-line)] px-4 py-4 blanc-l2 whitespace-pre-wrap blanc-l2-quiet">{estimate.summary}</div>
                             )}
                         </section>
                     ) : !readOnly ? (
                         /* Edit mode only — no empty-state box in the preview. */
                         <div className="rounded-md border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
-                            <p className="text-sm font-medium">Summary</p>
-                            <p className="mt-1 text-sm text-[var(--blanc-ink-3)]">Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
+                            <p className="blanc-l2">Summary</p>
+                            <p className="mt-1 blanc-l2 blanc-l2-quiet">Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
                             {!readOnly && (
                                 <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setSummaryDialogOpen(true)}>
                                     <Plus className="mr-1 size-4" /> Add summary
@@ -685,7 +685,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <section>
                         <div className="mb-3 flex items-end justify-between gap-3">
                             <div>
-                                <p className="blanc-eyebrow">Items</p>
+                                <p className="blanc-l2 blanc-l2-heading">Items</p>
                             </div>
                         </div>
                         {hasItems ? (
@@ -693,10 +693,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 {/* Column headings exist only where there are columns. */}
                                 {readOnly && (
                                     <div className="hidden border-b border-[var(--blanc-line)] pb-1.5 md:flex md:items-end md:gap-3">
-                                        <span className="blanc-eyebrow flex-1">Description</span>
-                                        <span className="blanc-eyebrow w-20 text-right">Qty</span>
-                                        <span className="blanc-eyebrow w-32 text-right">Rate</span>
-                                        <span className="blanc-eyebrow w-32 text-right">Amount</span>
+                                        <span className="blanc-l2 blanc-l2-quiet flex-1">Description</span>
+                                        <span className="blanc-l2 blanc-l2-quiet w-20 text-right">Qty</span>
+                                        <span className="blanc-l2 blanc-l2-quiet w-32 text-right">Rate</span>
+                                        <span className="blanc-l2 blanc-l2-quiet w-32 text-right">Amount</span>
                                     </div>
                                 )}
                                 {estimate.items!.map(item => readOnly ? (
@@ -705,7 +705,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                        and is omitted for qty 1 (the overwhelmingly common case, so the
                                        row stays one line shorter). Long names truncate. Taxable trails
                                        the description on the same line. */
-                                    <div key={item.id} className="text-sm md:flex md:items-baseline md:gap-3">
+                                    <div key={item.id} className="blanc-l2 md:flex md:items-baseline md:gap-3">
                                         <div className="min-w-0 md:flex-1">
                                             <div className="flex items-baseline justify-between gap-3">
                                                 <p className="min-w-0 truncate font-medium">{item.name}</p>
@@ -722,7 +722,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                             {(item.description || item.taxable) && (
                                                 <p className="mt-0.5 whitespace-pre-wrap text-[var(--blanc-ink-2)] md:max-w-[68ch]">
                                                     {item.description}
-                                                    {item.taxable && <span className="text-xs text-[var(--blanc-ink-3)]">{item.description ? ' · ' : ''}Taxable</span>}
+                                                    {item.taxable && <span className="blanc-l2 blanc-l2-quiet">{item.description ? ' · ' : ''}Taxable</span>}
                                                 </p>
                                             )}
                                         </div>
@@ -735,7 +735,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                        row with actions — no dead right gutter on narrow widths. */
                                     <div
                                         key={item.id}
-                                        className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors cursor-pointer hover:bg-white"
+                                        className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 blanc-l2 transition-colors cursor-pointer hover:bg-white"
                                         onClick={() => openEditItem(item)}
                                     >
                                         <div className="flex items-start justify-between gap-3">
@@ -743,7 +743,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                             <p className="shrink-0 font-mono font-semibold whitespace-nowrap">{money(item.amount)}</p>
                                         </div>
                                         {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
-                                        <div className="mt-2 flex items-center gap-2 text-xs text-[var(--blanc-ink-2)]">
+                                        <div className="mt-2 flex items-center gap-2 blanc-l2 blanc-l2-quiet">
                                             <span>{Number(item.quantity)} × {money(item.unit_price)}</span>
                                             {item.taxable && <span className="blanc-l2 blanc-l2-quiet">· taxable</span>}
                                             <span className="ml-auto flex items-center gap-1">
@@ -759,11 +759,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 ))}
                             </div>
                         ) : hydrating ? (
-                            <div className="flex items-center gap-2 rounded-md border border-[var(--blanc-line)] px-4 py-3 text-sm text-[var(--blanc-ink-2)]">
+                            <div className="flex items-center gap-2 rounded-md border border-[var(--blanc-line)] px-4 py-3 blanc-l2 blanc-l2-quiet">
                                 <Loader2 className="size-4 animate-spin" /> Loading items…
                             </div>
                         ) : (
-                            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 blanc-l2 text-amber-900">
                                 This estimate has no items. Add at least one priced item before sending or approving.
                             </div>
                         )}
@@ -782,8 +782,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         right, under the Amount column, not full-width rows with the
                         number stranded a screen away from its label. */}
                     <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 md:ml-auto md:w-[420px]">
-                        <p className="mb-3 blanc-eyebrow">Totals</p>
-                        <div className="space-y-2 text-sm">
+                        <p className="mb-3 blanc-l2 blanc-l2-heading">Totals</p>
+                        <div className="space-y-2 blanc-l2">
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
                                 <span className="font-mono">{money(estimate.subtotal)}</span>
@@ -799,20 +799,20 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 </div>
                             ) : (
                                 /* OB-24: wrap so the amount drops to its own line on narrow widths. */
-                                <div className="flex flex-wrap items-center gap-2 text-sm">
+                                <div className="flex flex-wrap items-center gap-2 blanc-l2">
                                     <span className="text-[var(--blanc-ink-2)]">Discount</span>
                                     <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 bg-[var(--blanc-panel-surface,#fffdf9)] shrink-0">
                                         <button
                                             type="button"
                                             disabled={readOnly}
                                             onClick={() => { setDiscountType('fixed'); persist({ discount_type: 'fixed', discount_value: discountValue || '0' } as any); }}
-                                            className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
+                                            className={`px-2.5 py-0.5 rounded-md blanc-l2 transition-colors ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
                                         >$</button>
                                         <button
                                             type="button"
                                             disabled={readOnly}
                                             onClick={() => { setDiscountType('percentage'); persist({ discount_type: 'percentage', discount_value: discountValue || '0' } as any); }}
-                                            className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
+                                            className={`px-2.5 py-0.5 rounded-md blanc-l2 transition-colors ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
                                         >%</button>
                                     </div>
                                     {discountType === 'fixed' ? (
@@ -821,7 +821,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                             onValueChange={setDiscountValue}
                                             onBlur={() => persist({ discount_value: discountValue || '0' } as any)}
                                             disabled={readOnly}
-                                            className="h-8 w-24 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 text-right text-sm tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
+                                            className="h-8 w-24 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 text-right blanc-l2 tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
                                         />
                                     ) : (
                                         <Input
@@ -840,7 +840,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                     <span className="font-mono text-red-600 ml-auto">-{money(estimate.discount_amount)}</span>
                                 </div>
                             ) : !readOnly && (
-                                <button type="button" className="text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); persist({ discount_type: 'fixed', discount_value: '0' } as any); }}>
+                                <button type="button" className="blanc-l2 text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); persist({ discount_type: 'fixed', discount_value: '0' } as any); }}>
                                     Add Discount
                                 </button>
                             )}
@@ -852,7 +852,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                    <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
+                                    <Label className="blanc-l2 blanc-l2-quiet">Tax rate</Label>
                                     <div className="relative w-24">
                                         <Input
                                             type="text"
@@ -867,7 +867,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                             }}
                                             className="h-8 w-full pr-7 text-right tabular-nums"
                                         />
-                                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--blanc-ink-3)]">%</span>
+                                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 blanc-l2 blanc-l2-quiet">%</span>
                                     </div>
                                 </div>
                             )}
@@ -905,8 +905,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
                     </div>
 
-                    <section className="space-y-3 text-sm md:max-w-[560px]">
-                        <p className="blanc-eyebrow">Document settings</p>
+                    <section className="space-y-3 blanc-l2 md:max-w-[560px]">
+                        <p className="blanc-l2 blanc-l2-heading">Document settings</p>
                         {readOnly ? (
                             /* View mode: plain Yes/No — same style as the Deposit row below. */
                             <div className="flex items-center justify-between">
@@ -929,14 +929,14 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     </section>
 
                     {estimate.signature_required && (
-                        <section className="space-y-3 text-sm">
-                            <p className="blanc-eyebrow">Signature</p>
+                        <section className="space-y-3 blanc-l2">
+                            <p className="blanc-l2 blanc-l2-heading">Signature</p>
                             {estimate.signature_consented_at ? (
                                 <div className="flex items-start gap-2">
                                     <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
                                     <div>
                                         <p className="font-medium">Signed by {estimate.signature_name || 'customer'}</p>
-                                        <p className="text-xs text-[var(--blanc-ink-3)]">{fmtDateTime(estimate.signature_consented_at, timeZone)}</p>
+                                        <p className="blanc-l2 blanc-l2-quiet">{fmtDateTime(estimate.signature_consented_at, timeZone)}</p>
                                     </div>
                                 </div>
                             ) : (
@@ -944,7 +944,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                     <span className="mt-1.5 size-2 shrink-0 rounded-full bg-amber-500" />
                                     <div>
                                         <p className="font-medium">Awaiting signature</p>
-                                        <p className="text-xs text-[var(--blanc-ink-3)]">The customer signs when viewing the estimate.</p>
+                                        <p className="blanc-l2 blanc-l2-quiet">The customer signs when viewing the estimate.</p>
                                     </div>
                                 </div>
                             )}

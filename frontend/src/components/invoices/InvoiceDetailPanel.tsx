@@ -408,7 +408,7 @@ export function InvoiceDetailPanel({
                         17 / 26) saying it, including an uppercase 10px label above the
                         figure — a caption for a number that needs none. */}
                     <header className="pr-10 md:pr-0">
-                        <p className="blanc-l2 blanc-l2-quiet">{invoice.invoice_number}</p>
+                        <p className="blanc-section-heading" style={{ marginBottom: 0 }}>{invoice.invoice_number}</p>
                         <h2
                             className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
                             style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.025em' }}
@@ -453,7 +453,7 @@ export function InvoiceDetailPanel({
                                 {primaryAction && (
                                     <Button
                                         type="button"
-                                        className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
+                                        className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
                                         onClick={primaryAction.onClick}
                                         data-testid={primaryAction.testid}
                                     >
@@ -465,7 +465,7 @@ export function InvoiceDetailPanel({
                                     <Button
                                         type="button"
                                         variant="secondary"
-                                        className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
+                                        className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
                                         onClick={secondaryAction.onClick}
                                         data-testid={secondaryAction.testid}
                                     >
@@ -479,7 +479,7 @@ export function InvoiceDetailPanel({
                                             <Button
                                                 type="button"
                                                 variant="ghost"
-                                                className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
+                                                className="h-11 w-full justify-center blanc-l2 md:w-auto md:px-3"
                                                 style={{ color: 'var(--blanc-ink-2)' }}
                                                 data-testid="invoice-more"
                                             >
@@ -511,28 +511,28 @@ export function InvoiceDetailPanel({
                     {(invoice.notes || editing) ? (
                         <section>
                             <div className="flex min-h-[30px] items-center justify-between gap-3">
-                                <p className="blanc-eyebrow">Summary</p>
+                                <p className="blanc-l2 blanc-l2-heading">Summary</p>
                                 {editing ? (
                                     <Button type="button" variant="ghost" size="icon" className="size-[30px] rounded-[9px]" onClick={() => setNotesDialogOpen(true)} aria-label={invoice.notes ? 'Edit summary' : 'Add summary'}>
                                         {invoice.notes ? <Pencil className="size-4" /> : <Plus className="size-4" />}
                                     </Button>
                                 ) : null}
                             </div>
-                            {invoice.notes ? <p className="mt-2 whitespace-pre-wrap text-[14px] leading-relaxed text-[var(--blanc-ink-2)]">{invoice.notes}</p> : <p className="mt-2 text-[13px] text-[var(--blanc-ink-3)]">Add context for the customer.</p>}
+                            {invoice.notes ? <p className="mt-2 whitespace-pre-wrap blanc-l2 leading-relaxed blanc-l2-quiet">{invoice.notes}</p> : <p className="mt-2 blanc-l2 blanc-l2-quiet">Add context for the customer.</p>}
                         </section>
                     ) : null}
 
                     <section>
-                        <p className="blanc-eyebrow">Items</p>
+                        <p className="blanc-l2 blanc-l2-heading">Items</p>
                         {hasItems ? (
                             <div className="mt-2">
                                 {/* Column headers exist only where there are columns.
                                     On the phone the row folds back to name + amount. */}
                                 <div className="hidden border-b border-[var(--blanc-line)] px-1 pb-1.5 md:flex md:items-end md:gap-3">
-                                    <span className="blanc-eyebrow flex-1">Description</span>
-                                    <span className="blanc-eyebrow w-20 text-right">Qty</span>
-                                    <span className="blanc-eyebrow w-32 text-right">Rate</span>
-                                    <span className="blanc-eyebrow w-32 text-right">Amount</span>
+                                    <span className="blanc-l2 blanc-l2-quiet flex-1">Description</span>
+                                    <span className="blanc-l2 blanc-l2-quiet w-20 text-right">Qty</span>
+                                    <span className="blanc-l2 blanc-l2-quiet w-32 text-right">Rate</span>
+                                    <span className="blanc-l2 blanc-l2-quiet w-32 text-right">Amount</span>
                                     {editing ? <span className="w-4" /> : null}
                                 </div>
                                 {invoice.items!.map(item => (
@@ -544,39 +544,39 @@ export function InvoiceDetailPanel({
                                         data-testid="invoice-item-row"
                                     >
                                         <span className="min-w-0 flex-1">
-                                            <span className="block truncate text-[15px] font-semibold text-[var(--blanc-ink-1)]">{item.name}</span>
-                                            {item.description ? <span className="mt-0.5 block truncate text-[13px] text-[var(--blanc-ink-2)] md:max-w-[68ch]">{item.description}</span> : null}
+                                            <span className="block truncate blanc-l2 blanc-l2-heading">{item.name}</span>
+                                            {item.description ? <span className="mt-0.5 block truncate blanc-l2 blanc-l2-quiet md:max-w-[68ch]">{item.description}</span> : null}
                                             {/* The phone cannot afford columns, so it keeps
                                                 the arithmetic inline; the desktop shows it
                                                 where the numbers actually line up. */}
                                             {(Number(item.quantity) !== 1 || item.taxable) ? (
-                                                <span className="mt-1 block text-[12px] text-[var(--blanc-ink-3)] md:hidden">
+                                                <span className="mt-1 block blanc-l2 blanc-l2-quiet md:hidden">
                                                     {Number(item.quantity) !== 1 ? `${Number(item.quantity)} × ${money(item.unit_price)}` : ''}
                                                     {Number(item.quantity) !== 1 && item.taxable ? ' · ' : ''}
                                                     {item.taxable ? 'Taxable' : ''}
                                                 </span>
                                             ) : null}
-                                            {item.taxable ? <span className="mt-1 hidden text-[12px] text-[var(--blanc-ink-3)] md:block">Taxable</span> : null}
+                                            {item.taxable ? <span className="mt-1 hidden blanc-l2 blanc-l2-quiet md:block">Taxable</span> : null}
                                         </span>
-                                        <span className="hidden w-20 shrink-0 text-right text-[15px] tabular-nums text-[var(--blanc-ink-2)] md:block">
+                                        <span className="hidden w-20 shrink-0 text-right blanc-l2 tabular-nums blanc-l2-quiet md:block">
                                             {Number(item.quantity)}
                                         </span>
-                                        <span className="hidden w-32 shrink-0 text-right font-mono text-[15px] text-[var(--blanc-ink-2)] md:block">
+                                        <span className="hidden w-32 shrink-0 text-right font-mono blanc-l2 blanc-l2-quiet md:block">
                                             {money(item.unit_price)}
                                         </span>
                                         <span className="flex shrink-0 items-center justify-end gap-2 md:w-32">
-                                            <span className="font-mono text-[15px] font-semibold text-[var(--blanc-ink-1)]">{money(item.amount ?? Number(item.quantity) * Number(item.unit_price))}</span>
+                                            <span className="font-mono blanc-l2 blanc-l2-heading">{money(item.amount ?? Number(item.quantity) * Number(item.unit_price))}</span>
                                             {editing ? <ChevronRight className="size-4 text-[var(--blanc-ink-3)]" /> : null}
                                         </span>
                                     </button>
                                 ))}
                             </div>
                         ) : invoiceData.isLoading ? (
-                            <div className="mt-2 flex items-center gap-2 rounded-xl bg-[var(--blanc-surface-muted)] px-4 py-3 text-sm text-[var(--blanc-ink-3)]">
+                            <div className="mt-2 flex items-center gap-2 rounded-xl bg-[var(--blanc-surface-muted)] px-4 py-3 blanc-l2 blanc-l2-quiet">
                                 <Loader2 className="size-4 animate-spin" /> Loading items…
                             </div>
                         ) : (
-                            <div className="mt-2 rounded-xl bg-[var(--blanc-surface-muted)] px-4 py-3 text-sm text-[var(--blanc-ink-2)]">
+                            <div className="mt-2 rounded-xl bg-[var(--blanc-surface-muted)] px-4 py-3 blanc-l2 blanc-l2-quiet">
                                 This invoice has no items. Add at least one priced item before sending.
                             </div>
                         )}
@@ -591,8 +591,8 @@ export function InvoiceDetailPanel({
                         paper invoice puts them in — not as full-width rows with the
                         number stranded a screen away from its label. */}
                     <section className="md:ml-auto md:w-[420px]">
-                        <p className="blanc-eyebrow">Totals</p>
-                        <div className="mt-2 space-y-1 text-[14px]">
+                        <p className="blanc-l2 blanc-l2-heading">Totals</p>
+                        <div className="mt-2 space-y-1 blanc-l2">
                             <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Subtotal</span><span className="font-mono font-semibold">{money(invoice.subtotal)}</span></div>
                             {hasDiscount ? editing ? (
                                 <div className="flex flex-wrap items-center gap-2 py-1">
@@ -602,7 +602,7 @@ export function InvoiceDetailPanel({
                                             value={discountAmount}
                                             onValueChange={setDiscountAmount}
                                             onBlur={() => persist({ discount_amount: discountAmount || '0' })}
-                                            className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right text-sm tabular-nums outline-none focus:border-[var(--blanc-line-strong)]"
+                                            className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right blanc-l2 tabular-nums outline-none focus:border-[var(--blanc-line-strong)]"
                                         />
                                     </FloatingLabel>
                                     <Button type="button" variant="ghost" className="h-10 px-2 text-[var(--blanc-danger)]" onClick={() => { setHasDiscount(false); setDiscountAmount('0'); persist({ discount_amount: '0' }); }}>Remove</Button>
@@ -611,7 +611,7 @@ export function InvoiceDetailPanel({
                             ) : (
                                 <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Discount</span><span className="font-mono font-semibold text-[var(--blanc-danger)]">-{money(invoice.discount_amount)}</span></div>
                             ) : editing ? (
-                                <button type="button" className="min-h-10 text-sm font-medium text-[var(--blanc-job)]" onClick={() => { setHasDiscount(true); setDiscountAmount('0'); }}>+ Add discount</button>
+                                <button type="button" className="min-h-10 blanc-l2" style={{ color: 'var(--blanc-job)' }} onClick={() => { setHasDiscount(true); setDiscountAmount('0'); }}>+ Add discount</button>
                             ) : null}
                             {editing ? (
                                 <div className="flex items-center justify-between gap-3 py-1">
@@ -629,15 +629,15 @@ export function InvoiceDetailPanel({
                                 <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Tax rate</span><span className="font-mono font-semibold">{taxRate}%</span></div>
                             ) : null}
                             <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Tax</span><span className="font-mono font-semibold">{money(invoice.tax_amount)}</span></div>
-                            <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] text-[16px] font-semibold"><span>Total</span><span className="font-mono">{money(invoice.total)}</span></div>
+                            <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] blanc-l2 blanc-l2-heading"><span>Total</span><span className="font-mono">{money(invoice.total)}</span></div>
                             <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Amount paid</span><span className="font-mono font-semibold text-[var(--blanc-success)]">{money(invoice.amount_paid)}</span></div>
-                            <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] text-[16px] font-semibold"><span>Balance due</span><span className="font-mono">{money(invoice.balance_due)}</span></div>
+                            <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] blanc-l2 blanc-l2-heading"><span>Balance due</span><span className="font-mono">{money(invoice.balance_due)}</span></div>
                         </div>
                     </section>
 
                     {(editing || dueDate || paymentTerms) ? (
                         <section className="md:max-w-[560px]">
-                            <p className="blanc-eyebrow">Document settings</p>
+                            <p className="blanc-l2 blanc-l2-heading">Document settings</p>
                             {editing ? (
                                 <div className="mt-3 space-y-3.5">
                                     <FloatingLabel label="Due date" htmlFor="invoice-due-date" filled={!!dueDate}>
@@ -647,7 +647,7 @@ export function InvoiceDetailPanel({
                                             value={dueDate}
                                             onChange={event => setDueDate(event.target.value)}
                                             onBlur={() => persist({ due_date: dueDate || null })}
-                                            className="h-[50px] w-full min-w-0 rounded-xl border-[1.5px] border-transparent bg-transparent px-3.5 text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none focus:border-[var(--blanc-line-strong)]"
+                                            className="h-[50px] w-full min-w-0 rounded-xl border-[1.5px] border-transparent bg-transparent px-3.5 blanc-l2 outline-none focus:border-[var(--blanc-line-strong)]"
                                         />
                                     </FloatingLabel>
                                     <FloatingSelect
@@ -667,7 +667,7 @@ export function InvoiceDetailPanel({
                                     </FloatingSelect>
                                 </div>
                             ) : (
-                                <div className="mt-2 space-y-1 text-[14px]">
+                                <div className="mt-2 space-y-1 blanc-l2">
                                     {dueDate ? <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Due date</span><span className="font-medium">{fmtDate(dueDate, timeZone)}</span></div> : null}
                                     {paymentTerms ? <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Payment terms</span><span className="font-medium">{paymentTerms}</span></div> : null}
                                 </div>
@@ -676,19 +676,19 @@ export function InvoiceDetailPanel({
                     ) : null}
 
                     {!isTerminal && balanceDue <= 0 ? (
-                        <div className="flex items-center gap-2 text-sm font-medium text-[var(--blanc-success)]">
+                        <div className="flex items-center gap-2 blanc-l2" style={{ color: 'var(--blanc-success)' }}>
                             <Check className="size-4" /> Invoice is fully paid
                         </div>
                     ) : null}
 
                     {payments && payments.length > 0 ? (
                         <section className="md:max-w-[560px]">
-                            <p className="blanc-eyebrow">Payments</p>
+                            <p className="blanc-l2 blanc-l2-heading">Payments</p>
                             <div className="mt-2">
                                 {[...payments]
                                     .sort((left, right) => (left.voided_at ? 1 : 0) - (right.voided_at ? 1 : 0))
                                     .map(payment => (
-                                        <div key={payment.id} className="flex min-h-10 items-center justify-between gap-3 border-b border-[var(--blanc-line)] py-2 text-[12px] last:border-b-0">
+                                        <div key={payment.id} className="flex min-h-10 items-center justify-between gap-3 border-b border-[var(--blanc-line)] py-2 blanc-l2 last:border-b-0">
                                             <span className="min-w-0">
                                                 <span className="text-[var(--blanc-ink-2)]">{fmtDate(payment.processed_at || payment.created_at, timeZone)} · {paymentMethodLabel(payment.payment_method)}</span>
                                                 <PaymentStatusChip status={payment.status} transactionType={payment.transaction_type} className="ml-2" />
@@ -713,10 +713,10 @@ export function InvoiceDetailPanel({
 
                     {events.length > 0 ? (
                         <section className="md:max-w-[560px]">
-                            <p className="blanc-eyebrow">History</p>
+                            <p className="blanc-l2 blanc-l2-heading">History</p>
                             <div className="mt-2 space-y-3">
                                 {events.map(event => (
-                                    <div key={event.id} className="text-[12px]">
+                                    <div key={event.id} className="blanc-l2">
                                         <span className="font-medium capitalize text-[var(--blanc-ink-1)]">{event.event_type.replace(/_/g, ' ')}</span>
                                         <p className="mt-0.5 text-[var(--blanc-ink-3)]">{fmtDateTime(event.created_at, timeZone)}</p>
                                     </div>
@@ -732,7 +732,7 @@ export function InvoiceDetailPanel({
                         look for Edit. */}
                     {editing ? (
                         <section className="pt-1">
-                            <Button type="button" className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5" onClick={explicitSave}>
+                            <Button type="button" className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5" onClick={explicitSave}>
                                 <Check className="mr-2 size-4" /> Save changes
                             </Button>
                         </section>
