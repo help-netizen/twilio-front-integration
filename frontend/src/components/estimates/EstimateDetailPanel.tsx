@@ -467,8 +467,12 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 lives INSIDE this scroller (owner 2026-08-08: it scrolls with the content,
                 not pinned); overflow-x-hidden blocks the mobile horizontal rubber-band. */}
             <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
-                <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14 md:px-6 md:pr-14">
-                <div className="mx-auto w-full max-w-[740px]">
+                {/* The rule and the tint run the full width; the CONTENT sits on the
+                    same 740px axis as the document below it. Padding lives on the
+                    inner block for exactly that reason — put the close-button gutter
+                    on the outer one and the header centres 18px left of the body. */}
+                <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
+                <div className="mx-auto w-full max-w-[740px] px-5 py-4 pr-14 md:px-6">
                 {/* IDENTITY (ESTIMATE-REDESIGN-001): the amount is the title, one grey
                     line names who it is for and what it belongs to, then the status.
                     Contact and job were a section with an icon in the first draft —
