@@ -38,7 +38,23 @@ export function loadGoogleMaps(): Promise<void> {
         script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&loading=async`;
         script.async = true;
         script.defer = true;
-        script.onload = () => resolve();
+        // With loading=async the script's onload fires when the bootstrap has loaded,
+        // but the map CLASSES (google.maps.Map / Marker) are imported lazily and are
+        // NOT yet available — constructing a Map here throws "google.maps.Map is not a
+        // constructor". Resolve only after the 'maps' library is actually imported.
+        script.onload = () => {
+            const importer = (google as typeof google | undefined)?.maps?.importLibrary;
+            if (typeof importer !== 'function') {
+                // Older sync behavior: classes are already on the namespace.
+                resolve();
+                return;
+            }
+            importer('maps')
+                .then(() => resolve())
+                .catch((error: unknown) => reject(
+                    error instanceof Error ? error : new Error('Failed to import Google Maps library'),
+                ));
+        };
         script.onerror = () => reject(new Error('Failed to load Google Maps JS API'));
         document.head.appendChild(script);
     });

@@ -7,6 +7,7 @@ import {
     type AnalyticsGeo,
     type GeoRow,
 } from '../../services/leadChannelAnalyticsApi';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { GeoPostalCodeMap } from './GeoPostalCodeMap';
 import {
     GEO_METRIC_META,
@@ -201,12 +202,17 @@ function GeoPerformanceContent({ geo, from, to }: {
 
             <div className="geo-heatmap__grid">
                 <div data-testid="geo-heatmap-map" className="geo-heatmap__map-wrap">
-                    <GeoPostalCodeMap
-                        rows={visibleRows}
-                        colorsByZip={colorsByZip}
-                        selectedZip={effectiveSelectedZip}
-                        onSelectZip={selectZip}
-                    />
+                    <ErrorBoundary
+                        resetKey={`${channel}:${from}:${to}`}
+                        fallback={<div className="geo-heatmap__map-note">Map unavailable — see Top ZIPs below.</div>}
+                    >
+                        <GeoPostalCodeMap
+                            rows={visibleRows}
+                            colorsByZip={colorsByZip}
+                            selectedZip={effectiveSelectedZip}
+                            onSelectZip={selectZip}
+                        />
+                    </ErrorBoundary>
                     {visibleRows.length === 0 && (
                         <div data-testid="geo-heatmap-empty" className="geo-heatmap__map-note">
                             {geo.rows.length === 0
