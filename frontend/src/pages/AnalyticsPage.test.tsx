@@ -104,21 +104,21 @@ const fixtures = vi.hoisted(() => ({
                     status: 'resolved',
                 },
                 google_lsa: {
-                    converted_count: 3,
+                    converted_count: 1,
                     ad_spend_cents: 90_000,
                     revenue_net_cents: 360_000,
-                    cpa_cents: 30_000,
-                    avg_revenue_cents: 120_000,
+                    cpa_cents: 90_000,
+                    avg_revenue_cents: 360_000,
                     roas: 4,
                     spend_is_modeled: true,
                 },
                 elocal: {
-                    converted_count: 2,
-                    ad_spend_cents: 50_000,
-                    revenue_net_cents: 140_000,
-                    cpa_cents: 25_000,
-                    avg_revenue_cents: 70_000,
-                    roas: 2.8,
+                    converted_count: 0,
+                    ad_spend_cents: 0,
+                    revenue_net_cents: 0,
+                    cpa_cents: null,
+                    avg_revenue_cents: null,
+                    roas: null,
                     spend_is_modeled: false,
                 },
             },
@@ -167,11 +167,12 @@ describe('AnalyticsPage', () => {
         ].forEach(label => expect(markup).toContain(label));
         expect(markup).toContain('Google Ads');
         expect(markup).toContain('Paid Social');
+        expect(markup).toContain('aria-label="Funnel channel"');
+        expect(markup).toContain('All channels');
         expect(markup).toContain('−$250');
         expect(markup).toContain('Where booked jobs come from');
         expect(markup).toContain('Top ZIPs');
-        expect(markup).toContain('02118');
-        expect(markup).toContain('5 jobs');
+        expect(markup).toContain('aria-label="Details for ZIP 02118"');
         expect(markup).toContain('2 booked jobs are outside mapped ZIPs');
     });
 });

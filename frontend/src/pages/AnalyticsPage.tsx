@@ -128,7 +128,7 @@ export default function AnalyticsPage() {
                 <>
                     <KpiRow data={summaryQ.data} />
                     <ChannelPerformance data={summaryQ.data} />
-                    <FunnelCard data={summaryQ.data} />
+                    <FunnelCard data={summaryQ.data} from={range.from} to={range.to} />
                 </>
             )}
 
@@ -451,16 +451,64 @@ function Card({ title, right, children }: { title: string; right?: ReactNode; ch
 }
 
 /* ── funnel ─────────────────────────────────────────────────────────────── */
-function FunnelCard({ data }: { data: AnalyticsSummary }) {
-    const stages = data.funnel;
+function FunnelCard({ data, from, to }: {
+    data: AnalyticsSummary;
+    from: string;
+    to: string;
+}) {
+    const [channelKey, setChannelKey] = useState('');
+    const channelQ = useQuery({
+        queryKey: ['lca-breakdown', 'channel', from, to],
+        queryFn: () => fetchAnalyticsBreakdown({ from, to, dimension: 'channel' }),
+    });
+    const channelRows = channelQ.isLoading || channelQ.isError
+        ? []
+        : channelQ.data?.rows ?? [];
+    const selectedChannel = channelRows.find(row => row.key === channelKey);
+    const stages = selectedChannel
+        ? funnelStagesForCounts(selectedChannel.funnel_counts)
+        : data.funnel;
     const leadCount = stages[0]?.count ?? 0;
-    const jobsDone = data.kpis.jobs_done;
-    const revenue = data.kpis.revenue_net_cents;
+    const jobsDone = selectedChannel?.funnel_counts.jobs_done ?? data.kpis.jobs_done;
+    const revenue = selectedChannel?.revenue_net_cents ?? data.kpis.revenue_net_cents;
     const doneStage = stages.find(s => s.stage === 'job_is_done');
     const netWidth = doneStage?.conv_pct ?? 0;
+    const showChannelSelector = !channelQ.isLoading
+        && !channelQ.isError
+        && Boolean(channelQ.data);
 
     return (
-        <Card title="Funnel — request → repair → paid" right={<span style={{ fontSize: 12, color: INK3 }}>acquisition cohort · leads created in period</span>}>
+        <Card
+            title="Funnel — request → repair → paid"
+            right={(
+                <div className="flex items-center gap-2.5" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <span style={{ fontSize: 12, color: INK3 }}>acquisition cohort · leads created in period</span>
+                    {showChannelSelector && (
+                        <select
+                            aria-label="Funnel channel"
+                            value={selectedChannel?.key ?? ''}
+                            onChange={event => setChannelKey(event.target.value)}
+                            style={{
+                                background: FIELD,
+                                border: `1px solid ${LINE}`,
+                                borderRadius: 10,
+                                color: INK1,
+                                cursor: 'pointer',
+                                font: 'inherit',
+                                fontSize: 12.5,
+                                fontWeight: 600,
+                                padding: '6px 9px',
+                            }}
+                        >
+                            <option value="">All channels</option>
+                            {channelRows.map(row => (
+                                <option key={row.key} value={row.key}>{row.label}</option>
+                            ))}
+                        </select>
+                    )}
+                </div>
+            )}
+        >
             {leadCount === 0 ? (
                 <EmptyLine text="No leads in this period." />
             ) : (
@@ -490,6 +538,19 @@ function FunnelCard({ data }: { data: AnalyticsSummary }) {
             )}
         </Card>
     );
+}
+
+function funnelStagesForCounts(counts: BreakdownRow['funnel_counts']): FunnelStage[] {
+    const leadCount = counts.leads;
+    return [
+        { stage: 'leads', count: counts.leads },
+        { stage: 'converted', count: counts.converted },
+        { stage: 'visit_completed', count: counts.visit_completed },
+        { stage: 'job_is_done', count: counts.jobs_done },
+    ].map(stage => ({
+        ...stage,
+        conv_pct: leadCount > 0 ? (stage.count / leadCount) * 100 : 0,
+    }));
 }
 
 function FunnelRow({ stage, prev }: { stage: FunnelStage; prev: FunnelStage | null }) {

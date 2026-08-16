@@ -133,7 +133,7 @@ function GeoPerformanceContent({ geo, from, to }: {
 }) {
     const [channel, setChannel] = useState<GeoChannelSelection>('all');
     const [mode, setMode] = useState<GeoMetricMode>('count');
-    const [minCount, setMinCount] = useState<number>(3);
+    const [minCount, setMinCount] = useState<number>(1);
     const [selectedZones, setSelectedZones] = useState<string[] | null>(null);
     const [selectedZip, setSelectedZip] = useState<string | null>(null);
 
@@ -208,7 +208,11 @@ function GeoPerformanceContent({ geo, from, to }: {
                         onSelectZip={selectZip}
                     />
                     {visibleRows.length === 0 && (
-                        <div className="geo-heatmap__map-note">No ZIPs meet the current filters.</div>
+                        <div className="geo-heatmap__map-note">
+                            {geo.rows.length === 0
+                                ? 'No booked jobs from ad channels in this period.'
+                                : `No ZIPs with ${minCount}+ booked jobs — lower ‘Min volume’ or adjust zones/period.`}
+                        </div>
                     )}
                     <div className="geo-heatmap__badge">
                         <span aria-hidden />
