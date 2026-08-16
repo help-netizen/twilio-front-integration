@@ -480,8 +480,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
         !live ? null
         : waiting ? resendAction
         : approved || declined ? null
-        : readOnly ? editAction
-        : null;
+        // Draft: the estimate's version of "they said yes and are paying now" is
+        // the invoice — same reasoning as the invoice card's Collect payment
+        // (owner, 2026-08-16: apply the invoice decisions to estimates where they
+        // apply). Edit drops to the menu; a draft you are billing is finished.
+        : invoiceAction;
 
     const shown = new Set([primaryAction?.key, secondaryAction?.key].filter(Boolean) as string[]);
     const menuActions: Action[] = live
@@ -511,13 +514,14 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     inner block for exactly that reason — put the close-button gutter
                     on the outer one and the header centres 18px left of the body. */}
                 <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
-                <div className="w-full px-5 py-4 pr-14 md:px-10">
+                <div className="w-full px-5 py-4 md:px-10">
                 {/* IDENTITY (ESTIMATE-REDESIGN-001): the amount is the title, one grey
                     line names who it is for and what it belongs to, then the status.
                     Contact and job were a section with an icon in the first draft —
                     which fairly invited the question of why the job did not get one
                     too. A line answers both and claims to be neither. */}
-                <p className="blanc-section-heading" style={{ marginBottom: 0 }}>{estimate.estimate_number}</p>
+                <div className="pr-12 md:pr-0">
+                    <p className="blanc-section-heading" style={{ marginBottom: 0 }}>{estimate.estimate_number}</p>
                 <h2
                     className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
                     style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.025em' }}
@@ -541,6 +545,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         </>
                     )}
                 </p>
+                </div>
                 <div className="mt-2.5 flex flex-wrap items-center gap-2">
                     <StatusPill estimate={estimate} />
                     {archived && <Badge variant="outline">Archived</Badge>}
@@ -557,10 +562,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     for the customer, archiving — go to the far right, away from the
                     hand that is reaching for the primary. */}
                 {!editing && (primaryAction || secondaryAction || menuActions.length > 0) && (
-                    <div className="mt-4 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+                            <div className={`mt-4 grid grid-cols-2 gap-2 md:flex md:flex-row md:flex-wrap md:items-center`}>
                         {primaryAction && (
                             <Button
-                                className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
+                                className={`h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px] ${secondaryAction ? '' : 'col-span-2'}`}
                                 onClick={primaryAction.onClick}
                                 disabled={primaryAction.disabled}
                                 data-testid={primaryAction.testid}
@@ -572,7 +577,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         {secondaryAction && (
                             <Button
                                 variant="secondary"
-                                className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
+                                className="h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px]"
                                 onClick={secondaryAction.onClick}
                                 disabled={secondaryAction.disabled}
                                 data-testid={secondaryAction.testid}
@@ -588,7 +593,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <DropdownMenuTrigger asChild>
                                     <Button
                                         variant="ghost"
-                                        className="h-11 w-full justify-center blanc-l2 md:w-auto md:px-3"
+                                        className="col-span-2 h-11 w-full justify-center md:w-auto md:px-3 text-[15px]"
                                         style={{ color: 'var(--blanc-ink-2)' }}
                                         data-testid="estimate-more"
                                     >
@@ -768,7 +773,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <Loader2 className="size-4 animate-spin" /> Loading items…
                             </div>
                         ) : (
-                            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 blanc-l2 text-amber-900">
+                            <div
+                                className="rounded-md px-4 py-3 blanc-l2"
+                                style={{ background: 'var(--blanc-lead-soft)', color: 'var(--blanc-warning)' }}
+                            >
                                 This estimate has no items. Add at least one priced item before sending or approving.
                             </div>
                         )}
@@ -845,7 +853,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                     <span className="font-mono text-red-600 ml-auto">-{money(estimate.discount_amount)}</span>
                                 </div>
                             ) : !readOnly && (
-                                <button type="button" className="blanc-l2 text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); persist({ discount_type: 'fixed', discount_value: '0' } as any); }}>
+                                <button type="button" className="blanc-l2" style={{ color: 'var(--blanc-job)' }} onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); persist({ discount_type: 'fixed', discount_value: '0' } as any); }}>
                                     Add Discount
                                 </button>
                             )}

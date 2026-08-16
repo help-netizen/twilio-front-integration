@@ -36,7 +36,14 @@ export function getInvoiceCapabilities(
     const isDraft = invoice?.status === 'draft';
     const hasBalance = invoice ? Number(invoice.balance_due || 0) > 0 : false;
     const canManageInvoice = granted.has('invoices.create');
-    const collectionEligible = !!invoice && !isDraft && !isTerminal && hasBalance;
+    /**
+     * A draft can be paid (owner, 2026-08-16). The customer approves on the spot,
+     * in the kitchen, and there is no reason to send them an email first just to
+     * unlock the card reader — that detour is why money got recorded against the
+     * job instead of the invoice. Only a voided or refunded invoice, or one with
+     * nothing left owing, is genuinely uncollectable.
+     */
+    const collectionEligible = !!invoice && !isTerminal && hasBalance;
     const canCollectOnline = collectionEligible && granted.has('payments.collect_online');
     const canCollectKeyed = collectionEligible && granted.has('payments.collect_keyed');
     const canCollectTerminal = collectionEligible && granted.has('payments.collect_terminal');

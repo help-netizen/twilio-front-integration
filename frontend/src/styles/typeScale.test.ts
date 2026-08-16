@@ -78,7 +78,13 @@ describe('TYPE-CANON-001 ratchet', () => {
             const source = readFileSync(file, 'utf8');
             for (const match of source.matchAll(/className="([^"]*\bblanc-l2\b[^"]*)"/g)) {
                 const classes = match[1];
-                if (/\bfont-(semibold|bold)\b/.test(classes) || /text-\[var\(--blanc-ink/.test(classes)) {
+                // ANY colour utility, not a hand-picked list. The first version of
+                // this guard named `text-[var(--blanc-ink…)]` and missed
+                // `text-primary-foreground` — which is how the primary button's
+                // white label went black in production: .blanc-l2 repainted it
+                // ink-1 and nothing complained.
+                const colourUtility = /\btext-(?:\[(?!\d)[^\]]*\]|white|black|primary-foreground|secondary-foreground|destructive-foreground|muted-foreground|accent-foreground|[a-z]+-\d{2,3})\b/;
+                if (/\bfont-(semibold|bold)\b/.test(classes) || colourUtility.test(classes)) {
                     offenders.push(`${file.slice(SRC.length)} → ${classes}`);
                 }
             }

@@ -44,12 +44,14 @@ describe('estimate detail — the decisions', () => {
         expect(panelRaw).toContain('estimate.invoice_id');
     });
 
-    it('gives the second slot to Edit on a draft and to Resend while waiting', () => {
-        // A draft is still being written, so Edit earns the slot. Once it is out,
-        // editing resets the document to draft and kills the customer's link —
-        // worth the extra tap, so it drops to the menu and Resend takes over.
+    it('gives the second slot to the invoice on a draft and to Resend while waiting', () => {
+        // Owner 2026-08-16: whatever the invoice card decides applies here where
+        // it applies. There, a draft's second button became Collect payment —
+        // the customer says yes on the spot. An estimate's equivalent of taking
+        // the money is turning it into an invoice, so that takes the slot and
+        // Edit drops to the menu. Once the estimate is out, Resend takes over.
         expect(panelRaw).toContain('waiting ? resendAction');
-        expect(panelRaw).toContain('readOnly ? editAction');
+        expect(panelRaw).toContain(': invoiceAction;');
         expect(panelRaw).toContain('approved || declined ? null');
     });
 
@@ -92,8 +94,10 @@ describe('estimate detail — the decisions', () => {
         // the screen exists for, .blanc-section-heading for the card's name, and
         // .blanc-l2 / -quiet / -heading for everything below it. Nothing else may
         // name a size, or the card drifts back into a font sampler.
+        // 15 is allowed on a <Button>: the button owns its colour by variant,
+        // and .blanc-l2 would repaint a primary button's white label ink-1.
         const sizes = [...panelRaw.matchAll(/text-\[(\d+)px\]/g)].map(m => m[1]);
-        expect(new Set(sizes)).toEqual(new Set(['32']));
+        expect(new Set(sizes)).toEqual(new Set(['32', '15']));
         expect(panelRaw).toContain('blanc-section-heading');
         expect(panelRaw).toContain('blanc-l2-heading');
         expect(panelRaw).not.toContain('blanc-eyebrow');

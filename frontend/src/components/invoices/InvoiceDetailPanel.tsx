@@ -343,20 +343,26 @@ export function InvoiceDetailPanel({
     const previewAction: Action = { key: 'preview', label: 'Preview PDF', icon: <Eye className="size-4" />, onClick: previewPdf };
 
     const primaryAction: Action | null =
-        capabilities.canCollect ? collectAction
+        isDraft && capabilities.canSend ? sendAction
+        : capabilities.canCollect ? collectAction
         : capabilities.canSend ? sendAction
         : previewAction;
 
     /**
-     * A draft is still being written, so Edit earns the second slot. Once money
-     * is owed, the second thing you reach for is the reminder, not the pencil.
-     * Everything else has exactly one next move, and padding it to two would be
-     * filling a slot rather than making a recommendation.
+     * On a draft, taking the money is the second button (owner, 2026-08-16).
+     * The customer says yes on the spot and hands over a card; making the
+     * dispatcher send an email first, purely to unlock the card reader, is the
+     * detour that got payments recorded against the job instead of the invoice.
+     * Send stays primary — it is still the ordinary path — and Edit drops to the
+     * menu, because a draft you are being paid for is finished being written.
+     *
+     * Once the invoice is out, the second thing you reach for is the reminder.
      */
     const secondaryAction: Action | null =
-        isDraft ? (capabilities.canEdit ? editAction : null)
-        : capabilities.canCollect && capabilities.canSend ? sendAction
-        : null;
+        isDraft
+            ? (capabilities.canCollect ? collectAction : capabilities.canEdit ? editAction : null)
+            : capabilities.canCollect && capabilities.canSend ? sendAction
+                : null;
 
     const shownActions = new Set([primaryAction?.key, secondaryAction?.key].filter(Boolean) as string[]);
     const menuActions: Action[] = [
@@ -409,8 +415,9 @@ export function InvoiceDetailPanel({
                         The old header spent five hand-written type sizes (10 / 11 / 13 /
                         17 / 26) saying it, including an uppercase 10px label above the
                         figure — a caption for a number that needs none. */}
-                    <header className="pr-10 md:pr-0">
-                        <p className="blanc-section-heading" style={{ marginBottom: 0 }}>{invoice.invoice_number}</p>
+                    <header>
+                        <div className="pr-12 md:pr-0">
+                            <p className="blanc-section-heading" style={{ marginBottom: 0 }}>{invoice.invoice_number}</p>
                         <h2
                             className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
                             style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.025em' }}
@@ -424,6 +431,7 @@ export function InvoiceDetailPanel({
                             {invoice.contact_name || 'No customer linked'}
                             {invoice.job_id ? ` · Job #${invoice.job_number || invoice.job_id}` : ''}
                         </p>
+                        </div>
                         <div className="mt-2.5 flex flex-wrap items-center gap-2">
                             {/* The list's vocabulary, not a second one: an outline chip
                                 here and a tinted pill in the list told the same fact
@@ -451,11 +459,11 @@ export function InvoiceDetailPanel({
                             the sheet is the button's width; sized to their labels on the
                             desktop, where a thousand-pixel bar reads as a banner. */}
                         {!editing && (primaryAction || secondaryAction || menuActions.length > 0) ? (
-                            <div className="mt-4 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+                            <div className={`mt-4 grid grid-cols-2 gap-2 md:flex md:flex-row md:flex-wrap md:items-center`}>
                                 {primaryAction && (
                                     <Button
                                         type="button"
-                                        className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
+                                        className={`h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px] ${secondaryAction ? '' : 'col-span-2'}`}
                                         onClick={primaryAction.onClick}
                                         data-testid={primaryAction.testid}
                                     >
@@ -467,7 +475,7 @@ export function InvoiceDetailPanel({
                                     <Button
                                         type="button"
                                         variant="secondary"
-                                        className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5"
+                                        className="h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px]"
                                         onClick={secondaryAction.onClick}
                                         data-testid={secondaryAction.testid}
                                     >
@@ -481,7 +489,7 @@ export function InvoiceDetailPanel({
                                             <Button
                                                 type="button"
                                                 variant="ghost"
-                                                className="h-11 w-full justify-center blanc-l2 md:w-auto md:px-3"
+                                                className="col-span-2 h-11 w-full justify-center md:w-auto md:px-3 text-[15px]"
                                                 style={{ color: 'var(--blanc-ink-2)' }}
                                                 data-testid="invoice-more"
                                             >
@@ -734,7 +742,7 @@ export function InvoiceDetailPanel({
                         look for Edit. */}
                     {editing ? (
                         <section className="pt-1">
-                            <Button type="button" className="h-[50px] w-full blanc-l2 md:h-11 md:w-auto md:px-5" onClick={explicitSave}>
+                            <Button type="button" className="h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px]" onClick={explicitSave}>
                                 <Check className="mr-2 size-4" /> Save changes
                             </Button>
                         </section>
