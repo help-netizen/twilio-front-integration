@@ -4,6 +4,9 @@ import { AnalyticsPage } from '../pages/AnalyticsPage';
 
 test.describe('@suite:analytics', () => {
     test.skip(!hasAdmin(), 'requires E2E_ADMIN_USER / E2E_ADMIN_PASS');
+    // Cold app bootstrap over the staging link can push a first navigation past the
+    // default 60s; give these read-only cases room so goto()'s wait isn't the ceiling.
+    test.describe.configure({ timeout: 120_000 });
 
     test('@p0 ANALYTICS-01 page loads with channel comparison', async ({ page }) => {
         const analytics = new AnalyticsPage(page);
@@ -72,7 +75,9 @@ test.describe('@suite:analytics', () => {
     test('@p0 ANALYTICS-05 funnel filters by channel', async ({ page }) => {
         const analytics = new AnalyticsPage(page);
         await analytics.goto();
-        await expect(analytics.funnelChannel).toBeVisible();
+        // The funnel channel selector renders after its own (breakdown) fetch, which
+        // can lag the summary on a cold staging link.
+        await expect(analytics.funnelChannel).toBeVisible({ timeout: 30_000 });
 
         const options = await analytics.funnelChannelOptions();
         const channel = options.find(option => option.value !== '');

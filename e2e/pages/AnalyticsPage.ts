@@ -87,9 +87,14 @@ export class AnalyticsPage {
     }
 
     async goto(): Promise<void> {
-        await this.page.goto('/settings/analytics');
-        await expect(this.heading).toBeVisible();
-        await expect(this.page.getByText('Loading analytics…', { exact: true })).toHaveCount(0);
+        await this.page.goto('/settings/analytics', { waitUntil: 'domcontentloaded' });
+        // Cold app bootstrap (auth + workspace) over the staging link can leave the
+        // shell blank well past the default 15s expect timeout; wait generously for
+        // the page shell, then for the analytics data to finish loading. No
+        // networkidle wait — the app holds an SSE connection so it never goes idle.
+        await expect(this.heading).toBeVisible({ timeout: 60_000 });
+        await expect(this.page.getByText('Loading analytics…', { exact: true }))
+            .toHaveCount(0, { timeout: 30_000 });
     }
 
     async selectFunnelChannel(value: string): Promise<void> {
@@ -116,8 +121,15 @@ export class AnalyticsPage {
     }
 
     async waitForGeo(): Promise<void> {
+        // The geo section is at the page bottom and fetches its own /geo data. Scroll it
+        // in and wait for a TERMINAL state (top-ZIPs OR the empty note) — waiting only for
+        // the loading text to vanish is unreliable, since count 0 is also true before the
+        // section has even mounted.
+        await this.geoHeatmap.scrollIntoViewIfNeeded();
+        await expect(this.geoHeatmap).toBeVisible({ timeout: 30_000 });
         await expect(this.geoHeatmap.getByText('Loading geographic performance…', { exact: true }))
-            .toHaveCount(0);
+            .toHaveCount(0, { timeout: 30_000 });
+        await expect(this.geoTopZips.or(this.geoEmpty)).toBeVisible({ timeout: 30_000 });
     }
 
     async firstTopZip(): Promise<{ row: Locator; zip: string } | null> {
