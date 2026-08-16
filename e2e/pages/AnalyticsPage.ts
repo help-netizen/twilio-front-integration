@@ -125,8 +125,10 @@ export class AnalyticsPage {
         // in and wait for a TERMINAL state (top-ZIPs OR the empty note) — waiting only for
         // the loading text to vanish is unreliable, since count 0 is also true before the
         // section has even mounted.
-        await this.geoHeatmap.scrollIntoViewIfNeeded();
         await expect(this.geoHeatmap).toBeVisible({ timeout: 30_000 });
+        // best-effort scroll AFTER the section is confirmed present — scrollIntoViewIfNeeded
+        // is an action that would otherwise time out the test if the element isn't ready yet.
+        await this.geoHeatmap.scrollIntoViewIfNeeded().catch(() => {});
         await expect(this.geoHeatmap.getByText('Loading geographic performance…', { exact: true }))
             .toHaveCount(0, { timeout: 30_000 });
         await expect(this.geoTopZips.or(this.geoEmpty)).toBeVisible({ timeout: 30_000 });
