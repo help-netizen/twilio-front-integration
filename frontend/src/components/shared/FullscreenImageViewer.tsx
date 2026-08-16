@@ -100,8 +100,8 @@ export function FullscreenImageViewer({
             style={{ background: 'rgba(0,0,0,0.92)', zIndex: z }}
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
-            {/* Top bar */}
-            <div className="flex items-center gap-3 px-4 py-3 shrink-0">
+            {/* Top bar — above the image so its controls stay clickable */}
+            <div className="relative z-10 flex items-center gap-3 px-4 py-3 shrink-0">
                 <span className="text-white/70 text-sm font-medium">
                     {index + 1} / {images.length}
                 </span>
@@ -132,7 +132,7 @@ export function FullscreenImageViewer({
                 <button
                     disabled={index === 0}
                     onClick={(e) => { e.stopPropagation(); navigate(-1); }}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
                 >
                     <ChevronLeft className="size-6 text-white" />
                 </button>
@@ -149,7 +149,7 @@ export function FullscreenImageViewer({
                 <button
                     disabled={index >= images.length - 1}
                     onClick={(e) => { e.stopPropagation(); navigate(1); }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
                 >
                     <ChevronRightIcon className="size-6 text-white" />
                 </button>
@@ -180,75 +180,59 @@ export function FullscreenImageViewer({
     );
 }
 
-// ─── RotatableImage — fits container width even when rotated 90/270 ──────────
+// ─── RotatableImage — contain-fit inside the available box in EVERY rotation ──
 
 export function RotatableImage({ src, alt, rotation, fullscreen, zoom = 1 }: {
     src: string; alt: string; rotation: number; fullscreen?: boolean; zoom?: number;
 }) {
-    const imgRef = useRef<HTMLImageElement>(null);
-    const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+    const wrapRef = useRef<HTMLDivElement>(null);
+    const [box, setBox] = useState({ w: 0, h: 0 });
 
     const norm = ((rotation % 360) + 360) % 360;
     const isRotatedSideways = norm === 90 || norm === 270;
 
-    const handleLoad = () => {
-        if (imgRef.current) {
-            setNaturalSize({ w: imgRef.current.naturalWidth, h: imgRef.current.naturalHeight });
-        }
+    // Measure the real available area so the fit is exact (not a guessed vh).
+    useEffect(() => {
+        const el = wrapRef.current;
+        if (!el) return;
+        const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight });
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
+    // When rotated 90/270 the image's width and height swap on screen, so bound the
+    // (unrotated) image to the SWAPPED box — after the rotation it lands inside the
+    // real box. Result: it fits by whichever side is tighter, and NEITHER side ever
+    // leaves the viewport, in any orientation. zoom multiplies on top (may overflow,
+    // which the wrapper clips — that is intentional zoom behaviour).
+    const maxW = isRotatedSideways ? box.h : box.w;
+    const maxH = isRotatedSideways ? box.w : box.h;
+
+    const imgStyle: React.CSSProperties = {
+        maxWidth: maxW ? `${maxW}px` : '100%',
+        maxHeight: maxH ? `${maxH}px` : (fullscreen ? '85vh' : '70vh'),
+        transform: `rotate(${rotation}deg) scale(${zoom})`,
+        transformOrigin: 'center center',
+        transition: 'transform 0.2s ease',
     };
 
-    let imgStyle: React.CSSProperties;
-    let wrapperStyle: React.CSSProperties;
-
-    if (isRotatedSideways && naturalSize.w && naturalSize.h) {
-        const scale = naturalSize.w / naturalSize.h;
-        wrapperStyle = {
-            width: '100%',
-            aspectRatio: `${naturalSize.h} / ${naturalSize.w}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-        };
-        const totalScale = scale * zoom;
-        imgStyle = {
-            width: '100%',
-            transform: `rotate(${rotation}deg) scale(${totalScale})`,
-            transformOrigin: 'center center',
-            transition: 'transform 0.2s ease',
-        };
-    } else {
-        wrapperStyle = {
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-        };
-        const transforms = [
-            rotation ? `rotate(${rotation}deg)` : '',
-            zoom !== 1 ? `scale(${zoom})` : '',
-        ].filter(Boolean).join(' ');
-        imgStyle = {
-            maxWidth: '100%',
-            maxHeight: fullscreen ? '85vh' : '70vh',
-            objectFit: 'contain',
-            transform: transforms || undefined,
-            transformOrigin: 'center center',
-            transition: 'transform 0.2s ease',
-        };
-    }
-
     return (
-        <div style={wrapperStyle}>
-            <img
-                ref={imgRef}
-                src={src}
-                alt={alt}
-                onLoad={handleLoad}
-                className="rounded"
-                style={imgStyle}
-            />
+        <div
+            ref={wrapRef}
+            style={{
+                flex: '1 1 0%',
+                alignSelf: 'stretch',
+                minWidth: 0,
+                minHeight: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden',
+            }}
+        >
+            <img src={src} alt={alt} className="rounded" style={imgStyle} />
         </div>
     );
 }
