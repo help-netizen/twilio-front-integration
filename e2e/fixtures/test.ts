@@ -22,11 +22,18 @@ export const test = base.extend({
                 '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;' +
                 'transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important}';
             const inject = () => {
+                // An init script runs before the document exists, so head AND
+                // documentElement are both null on the first call — this used to
+                // throw "Cannot read properties of null (reading 'appendChild')"
+                // on every navigation in every spec. The listener below does the
+                // real work; this early call is just an optimisation.
+                const root = document.head || document.documentElement;
+                if (!root) return;
                 if (document.querySelector('style[data-e2e-no-anim]')) return;
                 const style = document.createElement('style');
                 style.setAttribute('data-e2e-no-anim', '');
                 style.textContent = css;
-                (document.head || document.documentElement).appendChild(style);
+                root.appendChild(style);
             };
             inject();
             document.addEventListener('DOMContentLoaded', inject);
