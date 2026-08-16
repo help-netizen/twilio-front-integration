@@ -13,7 +13,6 @@ import {
     Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -50,18 +49,8 @@ import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
 import { InvoiceCollectPaymentDialog } from './InvoiceCollectPaymentDialog';
 import { InvoiceItemSheet, type InvoiceItemDraft } from './InvoiceItemSheet';
+import { invoiceStatusTone } from './InvoiceMobileRow';
 import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
-
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-    draft: 'secondary',
-    sent: 'outline',
-    viewed: 'outline',
-    partial: 'outline',
-    paid: 'default',
-    overdue: 'destructive',
-    void: 'secondary',
-    refunded: 'secondary',
-};
 
 function money(value: string | number | null | undefined): string {
     return '$' + Number(value || 0).toLocaleString('en-US', {
@@ -426,9 +415,16 @@ export function InvoiceDetailPanel({
                             {invoice.job_id ? ` · Job #${invoice.job_number || invoice.job_id}` : ''}
                         </p>
                         <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                            <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">
+                            {/* The list's vocabulary, not a second one: an outline chip
+                                here and a tinted pill in the list told the same fact
+                                two different ways. */}
+                            <span
+                                className={`blanc-l2 inline-flex items-center px-2.5 capitalize ${invoiceStatusTone(invoice.status)}`}
+                                style={{ minHeight: 26, borderRadius: 8 }}
+                                data-testid="invoice-status"
+                            >
                                 {invoice.status}
-                            </Badge>
+                            </span>
                         </div>
                         {/* The bar is about progress, so it only appears once there IS
                             progress — an empty rail under a draft measures nothing. */}
