@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
     Ban,
     Check,
@@ -6,13 +6,19 @@ import {
     CreditCard,
     Eye,
     Loader2,
+    MoreHorizontal,
     Pencil,
     Plus,
     Send,
+    Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+    DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
 import { FloatingField, FloatingLabel } from '../ui/floating-field';
 import { FloatingSelect } from '../ui/floating-select';
 import { MoneyInput } from '../ui/MoneyInput';
@@ -320,6 +326,59 @@ export function InvoiceDetailPanel({
         ).catch(() => toast.error('Could not open the PDF'));
     };
 
+    /**
+     * The action matrix — one cluster, at most two buttons, the rest behind a
+     * menu that says "More" (owner, 2026-08-16, matching the estimate card).
+     *
+     * Before this, the desktop card was the phone layout stretched wide: every
+     * action a full-width bar, and — worse — the set was SPLIT. Send and Preview
+     * sat under the header while Edit and Delete lived at the very bottom, past
+     * the items and the history, where nobody thinks to scroll. Actions that
+     * belong to the same decision belong in the same place.
+     */
+    type Action = {
+        key: string;
+        label: string;
+        icon?: React.ReactNode;
+        onClick: () => void;
+        testid?: string;
+        danger?: boolean;
+    };
+
+    const isDraft = invoice.status === 'draft';
+    const sendAction: Action = { key: 'send', label: isDraft ? 'Send invoice' : 'Resend', icon: <Send className="size-4" />, onClick: onSend, testid: 'invoice-send' };
+    const collectAction: Action = { key: 'collect', label: 'Collect payment', icon: <CreditCard className="size-4" />, onClick: onCollect || (() => setCollectOpen(true)), testid: 'collect-open' };
+    const editAction: Action = { key: 'edit', label: 'Edit invoice', icon: <Pencil className="size-4" />, onClick: () => setEditing(true), testid: 'invoice-edit' };
+    const previewAction: Action = { key: 'preview', label: 'Preview PDF', icon: <Eye className="size-4" />, onClick: previewPdf };
+
+    const primaryAction: Action | null =
+        capabilities.canCollect ? collectAction
+        : capabilities.canSend ? sendAction
+        : previewAction;
+
+    /**
+     * A draft is still being written, so Edit earns the second slot. Once money
+     * is owed, the second thing you reach for is the reminder, not the pencil.
+     * Everything else has exactly one next move, and padding it to two would be
+     * filling a slot rather than making a recommendation.
+     */
+    const secondaryAction: Action | null =
+        isDraft ? (capabilities.canEdit ? editAction : null)
+        : capabilities.canCollect && capabilities.canSend ? sendAction
+        : null;
+
+    const shownActions = new Set([primaryAction?.key, secondaryAction?.key].filter(Boolean) as string[]);
+    const menuActions: Action[] = [
+        ...(capabilities.canSend ? [sendAction] : []),
+        previewAction,
+        ...(capabilities.canEdit ? [editAction] : []),
+        // NOTE: the panel also receives an `onSyncEstimate` prop that it has never
+        // rendered a control for. Left alone — surfacing it here would be shipping
+        // an action nobody has specified, not fixing a layout.
+        ...(capabilities.canDelete ? [{ key: 'delete', label: 'Delete draft', icon: <Trash2 className="size-4" />, onClick: () => setDestructiveAction('delete'), danger: true }] : []),
+        ...(capabilities.canVoid ? [{ key: 'void', label: 'Void invoice', icon: <Ban className="size-4" />, onClick: () => setDestructiveAction('void'), testid: 'invoice-void', danger: true }] : []),
+    ].filter(action => !shownActions.has(action.key));
+
     const confirmDestructive = async () => {
         if (!destructiveAction || destructiveBusy) return;
         setDestructiveBusy(true);
@@ -346,61 +405,104 @@ export function InvoiceDetailPanel({
         <div className={`h-full min-h-0 bg-[var(--blanc-panel-surface)] text-[var(--blanc-ink-1)] ${isTerminal ? 'opacity-70' : ''}`} data-testid="invoice-detail">
             <div className="h-full overflow-y-auto overflow-x-hidden overscroll-contain px-[18px] pb-8 pt-6 md:px-8 md:py-7">
                 <div className="mx-auto w-full max-w-[820px] space-y-6">
+                    {/* IDENTITY — the same skeleton as the estimate card: what this is,
+                        the one number that matters, who it is for, where it stands.
+                        The old header spent five hand-written type sizes (10 / 11 / 13 /
+                        17 / 26) saying it, including an uppercase 10px label above the
+                        figure — a caption for a number that needs none. */}
                     <header className="pr-10 md:pr-0">
-                        <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <h2 className="font-mono text-[17px] font-semibold text-[var(--blanc-ink-1)]">
-                                        {invoice.invoice_number}
-                                    </h2>
-                                    <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">
-                                        {invoice.status}
-                                    </Badge>
-                                </div>
-                                <p className="mt-2 text-[13px] text-[var(--blanc-ink-2)]">
-                                    {invoice.contact_name || 'No customer linked'}
-                                    {invoice.job_id ? ` · Job #${invoice.job_number || invoice.job_id}` : ''}
-                                </p>
-                            </div>
-                            <div className="shrink-0 text-right">
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--blanc-ink-3)]">Balance due</p>
-                                <p className="mt-0.5 font-mono text-[26px] font-semibold leading-tight text-[var(--blanc-ink-1)]">{money(invoice.balance_due)}</p>
-                                <p className="text-[11px] text-[var(--blanc-ink-3)]">of {money(invoice.total)}</p>
-                            </div>
+                        <p className="blanc-l2 blanc-l2-quiet">{invoice.invoice_number}</p>
+                        <h2
+                            className="mt-1.5 text-[32px] font-semibold leading-none tabular-nums"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.025em' }}
+                        >
+                            {money(invoice.balance_due)}
+                        </h2>
+                        {Number(invoice.balance_due || 0) !== Number(invoice.total || 0) && (
+                            <p className="blanc-l2 blanc-l2-quiet mt-1">of {money(invoice.total)}</p>
+                        )}
+                        <p className="blanc-l2 blanc-l2-quiet mt-1.5">
+                            {invoice.contact_name || 'No customer linked'}
+                            {invoice.job_id ? ` · Job #${invoice.job_number || invoice.job_id}` : ''}
+                        </p>
+                        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                            <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">
+                                {invoice.status}
+                            </Badge>
                         </div>
-                        {total > 0 ? (
+                        {/* The bar is about progress, so it only appears once there IS
+                            progress — an empty rail under a draft measures nothing. */}
+                        {total > 0 && paymentProgress > 0 ? (
                             <div className="mt-3">
                                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--blanc-surface-muted)]">
                                     <div className="h-full rounded-full bg-[var(--blanc-success)]" style={{ width: `${paymentProgress}%` }} />
                                 </div>
-                                <p className="mt-1 text-right text-[11px] text-[var(--blanc-ink-3)]">{paymentProgress.toFixed(0)}% paid</p>
+                                <p className="blanc-l2 blanc-l2-quiet mt-1 text-right">{paymentProgress.toFixed(0)}% paid</p>
+                            </div>
+                        ) : null}
+
+                        {/* ONE cluster, right here. Full-width stack on the phone, where
+                            the sheet is the button's width; sized to their labels on the
+                            desktop, where a thousand-pixel bar reads as a banner. */}
+                        {!editing && (primaryAction || secondaryAction || menuActions.length > 0) ? (
+                            <div className="mt-4 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+                                {primaryAction && (
+                                    <Button
+                                        type="button"
+                                        className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
+                                        onClick={primaryAction.onClick}
+                                        data-testid={primaryAction.testid}
+                                    >
+                                        {primaryAction.icon}
+                                        <span className="ml-1.5">{primaryAction.label}</span>
+                                    </Button>
+                                )}
+                                {secondaryAction && (
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
+                                        onClick={secondaryAction.onClick}
+                                        data-testid={secondaryAction.testid}
+                                    >
+                                        {secondaryAction.icon}
+                                        <span className="ml-1.5">{secondaryAction.label}</span>
+                                    </Button>
+                                )}
+                                {menuActions.length > 0 && (
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
+                                                style={{ color: 'var(--blanc-ink-2)' }}
+                                                data-testid="invoice-more"
+                                            >
+                                                <MoreHorizontal className="size-4" />
+                                                <span className="ml-1.5">More</span>
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="start" className="w-56">
+                                            {menuActions.map((action, index) => (
+                                                <Fragment key={action.key}>
+                                                    {action.danger && !menuActions[index - 1]?.danger && <DropdownMenuSeparator />}
+                                                    <DropdownMenuItem
+                                                        onSelect={action.onClick}
+                                                        data-testid={action.testid}
+                                                        style={action.danger ? { color: 'var(--blanc-danger)' } : undefined}
+                                                    >
+                                                        {action.icon}
+                                                        {action.label}
+                                                    </DropdownMenuItem>
+                                                </Fragment>
+                                            ))}
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                )}
                             </div>
                         ) : null}
                     </header>
-
-                    {!editing ? (
-                        <section className="space-y-2.5">
-                            {capabilities.canCollect ? (
-                                <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={onCollect || (() => setCollectOpen(true))} data-testid="collect-open">
-                                    <CreditCard className="mr-2 size-5" /> Collect payment
-                                </Button>
-                            ) : invoice.status === 'draft' && capabilities.canSend ? (
-                                <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={onSend} data-testid="invoice-send">
-                                    <Send className="mr-2 size-5" /> Send invoice
-                                </Button>
-                            ) : null}
-                            <div className="grid grid-cols-2 gap-2.5">
-                                {invoice.status !== 'draft' && capabilities.canSend ? (
-                                    <Button type="button" variant="outline" className="h-[46px] rounded-[13px] text-[14px] font-semibold" onClick={onSend} data-testid="invoice-send">
-                                        <Send className="mr-1.5 size-4" /> Resend
-                                    </Button>
-                                ) : null}
-                                <Button type="button" variant="outline" className={`h-[46px] rounded-[13px] text-[14px] font-semibold ${invoice.status === 'draft' || !capabilities.canSend ? 'col-span-2' : ''}`} onClick={previewPdf}>
-                                    <Eye className="mr-1.5 size-4" /> Preview PDF
-                                </Button>
-                            </div>
-                        </section>
-                    ) : null}
 
                     {(invoice.notes || editing) ? (
                         <section>
@@ -595,26 +697,18 @@ export function InvoiceDetailPanel({
                         </section>
                     ) : null}
 
-                    <section className="space-y-2.5 pt-1">
-                        {editing ? (
-                            <Button type="button" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={explicitSave}>
-                                <Check className="mr-2 size-5" /> Save changes
+                    {/* While editing, Save is the only thing that matters — every other
+                        action would act on a half-written document. It stays at the end
+                        because that is where you finish writing; the view-mode actions
+                        do NOT, which was the bug: nobody scrolls past the history to
+                        look for Edit. */}
+                    {editing ? (
+                        <section className="pt-1">
+                            <Button type="button" className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5" onClick={explicitSave}>
+                                <Check className="mr-2 size-4" /> Save changes
                             </Button>
-                        ) : capabilities.canEdit ? (
-                            <Button type="button" variant="outline" className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold" onClick={() => setEditing(true)}>
-                                <Pencil className="mr-2 size-5" /> Edit invoice
-                            </Button>
-                        ) : null}
-                        {!editing && capabilities.canDelete ? (
-                            <Button type="button" variant="ghost" className="mt-6 h-10 w-full text-[13px] text-[var(--blanc-danger)] hover:text-[var(--blanc-danger)]" onClick={() => setDestructiveAction('delete')}>
-                                Delete draft
-                            </Button>
-                        ) : !editing && capabilities.canVoid ? (
-                            <Button type="button" variant="ghost" className="mt-6 h-10 w-full text-[13px] text-[var(--blanc-ink-3)] hover:text-[var(--blanc-danger)]" onClick={() => setDestructiveAction('void')}>
-                                <Ban className="mr-1.5 size-4" /> Void invoice
-                            </Button>
-                        ) : null}
-                    </section>
+                        </section>
+                    ) : null}
                 </div>
             </div>
 

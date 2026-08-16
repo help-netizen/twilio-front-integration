@@ -41,8 +41,12 @@ test.describe('@suite:invoice-redesign detail', () => {
             const detail = await invoices.openInvoice(issued.id, issued.invoiceNumber);
             await expect(detail.root.getByText('partial', { exact: true })).toBeVisible();
             await detail.expectIssuedActions();
-            await expect(detail.voidInvoice).toHaveClass(/text-\[var\(--blanc-ink-3\)\]/);
-            await expect(detail.root.getByRole('button').last()).toHaveText(/Void invoice/);
+            // Voiding is last in the menu and set apart from the ways to move the
+            // invoice forward — it is how you lose one.
+            await detail.openMore();
+            await expect(detail.voidInvoice).toHaveAttribute('style', /--blanc-danger/);
+            await expect(page.getByRole('menuitem').last()).toHaveText(/Void invoice/);
+            await page.keyboard.press('Escape');
 
             await detail.openVoidConfirm(issued.invoiceNumber, '$150.00');
             const voidDialog = page.getByRole('dialog').filter({
@@ -54,6 +58,7 @@ test.describe('@suite:invoice-redesign detail', () => {
             await invoices.openInvoice(draft.id, draft.invoiceNumber);
             await expect(detail.root.getByText('draft', { exact: true })).toBeVisible();
             await detail.expectDraftActions();
+            await detail.openMore();
             await detail.deleteDraft.click();
             await expect(detail.deleteConfirm).toBeVisible();
             await expect(page.getByRole('heading', {

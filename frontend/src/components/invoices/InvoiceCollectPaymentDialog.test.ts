@@ -43,7 +43,9 @@ describe('invoice-bound collection wiring', () => {
         expect(collectSource).toContain('data-testid="collect-amount"');
         expect(collectSource).toContain('data-testid="collect-method"');
         expect(collectSource).toContain('data-testid="collect-charge"');
-        expect(detailSource).toContain('data-testid="collect-open"');
+        // The card renders its actions from a matrix now, so the testid is
+        // declared on the action rather than written on a bare <Button>.
+        expect(detailSource).toContain("testid: 'collect-open'");
         expect(detailSource).toContain('<InvoiceCollectPaymentDialog');
     });
 });
