@@ -1,0 +1,807 @@
+# VAPI-AGENCY-001 — Albusto как агентство Vapi
+
+Статус: draft для реализации
+Дата: 2026-08-16
+Связанные документы: `docs/specs/VAPI-AGENCY-001-TASKS.md`,
+`docs/test-cases/VAPI-AGENCY-001.md`,
+`docs/specs/TENANCY-RBAC-CANON.md`
+
+## 1. Цель
+
+Albusto использует один платформенный аккаунт и одну организацию Vapi как
+недоверенную execution plane. Тенанты не получают аккаунт, ключ, org id или
+прямой доступ к Vapi. Albusto создаёт и закрепляет ассистентов и SIP-ресурсы за
+компаниями, измеряет фактическую стоимость каждой AI-ноги, применяет
+версионируемую наценку и списывает результат через существующие prepaid wallet и
+auto-recharge.
+
+Изоляция, авторизация, корреляция, лимиты, денежный учёт и биллинг находятся в
+Albusto. `assistantId`, SIP URI, входные заголовки или поля webhook не считаются
+границей доверия сами по себе.
+
+## 2. Границы
+
+В объёме:
+
+- входящие и исходящие Vapi-звонки, включая неуспешные и несколько AI-ног на
+  один Twilio-звонок;
+- реестр ассистентов `(company, purpose, environment)` и закреплённые SIP-ресурсы;
+- устойчивая идентичность AI-ноги, типизированный usage ledger, reconcile и
+  финализация supplier cost;
+- атомарные глобальные и покомпанейские concurrency leases;
+- cost-plus pricing, settlement и проекция в существующий кошелёк;
+- provisioning, drift detection, эксплуатационные алерты и безопасный rollout;
+- tenant aggregate API и platform-only audit API без UI-дизайна;
+- удаление прежней модели «Vapi-организация/ключ на тенанта».
+
+Вне объёма:
+
+- дизайн tenant/platform экранов;
+- новый расчётный контур, новый кошелёк или использование Stripe Connect для
+  оплаты Vapi usage;
+- выдача тенанту Vapi credentials либо provider diagnostics;
+- изменения TENANT-ISO-002;
+- покупка телефонных номеров у Vapi: Twilio остаётся владельцем номера, Vapi SIP
+  используется как AI-назначение;
+- миграции и код в рамках данного документного турна.
+
+## 2.1 Current-state baseline (принятая разведка)
+
+Этот раздел фиксирует исходную точку реализации; он не переоткрывает
+TENANT-ISO-002 и не предлагает сохранять legacy-пути.
+
+### Входящий AI-звонок сегодня
+
+| Точка | Текущий путь | Какие id доступны / пробел |
+|---|---|---|
+| Twilio ingress и tenant | `backend/src/webhooks/twilioWebhooks.js:498-590` получает компанию только через `AccountSid`, пишет `call.inbound` в inbox и запускает company flow | Twilio parent `CallSid`, `AccountSid`, `company_id`; Vapi id ещё нет |
+| CRM call row | `backend/src/services/inboxWorker.js:397-436` вызывает `backend/src/db/callsQueries.js:20-68`; conflict key уже `(company_id, call_sid)` | Twilio parent/child SID; в `calls` нет `vapi_call_id` и supplier cost; `price` — нормализованная Twilio цена |
+| Vapi flow node | `backend/src/services/callFlowRuntime.js:392-476` ищет active SIP resource по company/environment, но допускает `node.config.sip_uri`, не закрепляет assistant и передаёт `x-blanc-company-id`/`x-blanc-call-sid` как SIP query | Company, flow context, Twilio parent SID, SIP URI; durable AI-leg/session и Vapi id отсутствуют |
+| Assistant request prototype | `voice-agent/services/blanc-call-runtime/src/handlers/vapiAssistantRequest.ts:40-91` впервые видит `message.call.id`, но только логирует; `.../lib/resolveAssistantForCall.ts:39-68` выбирает assistant из глобальной in-memory map без company, а unknown profile возвращает transient assistant (`:70-115`) | Здесь Vapi id уже есть, но не сохраняется и не bind-ится к tenant session. Этот prototype не является доказанным main-server runtime contract; T1 обязан зафиксировать фактический deployed callback |
+| Twilio child reconciliation | `backend/src/services/inboxWorker.js:705-799` распознаёт Vapi SIP target и ставит parent `answered_by='ai'` | Twilio parent/child SID и company; Vapi id всё ещё отсутствует. `answered_by` — display classification, не billing identity |
+| Vapi tool endpoint | `backend/src/routes/vapi-tools.js:120-145` обрабатывает только `tool-calls`; echoed `assistantOverrides.variableValues` читаются в `:95-115`, ownership ремонтируется transport/company context | Для outbound может найти attempt через `backend/src/services/vapiCallContextService.js:14-50`; inbound call id нигде не сохраняется. Non-tool EoC сюда не попадает |
+| Vapi status/EoC | `backend/src/routes/vapiCallStatus.js:158-248` доверяет `message.call.id`, но коррелирует только с `outbound_call_attempts.vapi_call_id`; unknown inbound id — 200 no-op | Vapi id есть в webhook, но inbound row/session для него нет; cost/costBreakdown не сохраняются |
+
+Итоговый пробел: входящий Vapi id рождается в доверенном provider callback, но
+сегодня нет заранее созданной локальной AI-session и нет persistence bind. Поэтому
+основной входящий объём нельзя ни полно доказуемо досвести, ни биллить.
+
+### Исходящий AI-звонок сегодня
+
+`backend/src/services/outboundCallService.js:73-133` выбирает assistant из общих
+`VAPI_LEAD_CALL_ASSISTANT_ID`/`VAPI_OUTBOUND_ASSISTANT_ID`, формирует
+`assistantOverrides.variableValues` и вызывает платформенный Vapi. Worker
+`backend/src/services/outboundCallWorker.js:287-305` после успешного ответа
+сохраняет Vapi id только в `outbound_call_attempts`; status/EoC затем находят
+attempt по этому id. `backend/src/services/vapiCallTimelineService.js:264-365` и
+`:390-464` зеркалирует звонок в `calls` и ставит `answered_by='ai'`, но supplier
+cost не хранит.
+
+Текущая привязка неполна: tenant-scoped `vapi_assistant_profiles` и
+`vapi_tenant_resources` существуют, но flow выбирает только SIP resource, outbound
+использует global env assistant ids, а assistant-request prototype игнорирует
+company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` принимает и
+сохраняет клиентский Vapi API key; `:271-379` позволяет tenant CRUD ресурсов и
+профилей. Эти поверхности подлежат удалению в T5.
+
+## 3. Закрытые решения — дословно
+
+### 3.1 Решения владельца
+
+1. **Тариф: себестоимость × наценка.** Реальный supplier cost хранится всегда. Наценка —
+   конфигурируемая, версионируемая (смена наценки не переписывает прошлые начисления).
+2. **Второй тенант — только после фазы 2.** Это ГЕЙТ, а не пожелание: пока нет жёсткой привязки
+   ассистента, отдельных вебхук-секретов, устойчивой идентичности звонка и атомарных лимитов —
+   голос доступен только ABC. Заложи feature gate, который это физически не даёт обойти, и опиши
+   в спеке, какие ровно проверки его снимают.
+3. **Поведение на лимите:** входящие уходят на запасную ветку flow (обычная маршрутизация/
+   голосовая почта), исходящие остаются в очереди без вызова `POST /call`.
+
+### 3.2 Решения тимлида
+
+- Твои инженерные пункты 1–4 принимаю целиком: отдельный типизированный ledger (не в `calls`);
+  EoC = provisional, `GET /call/:id` = авторитет, финализация по двум совпавшим замерам,
+  через 24 ч — `stale_pending` + алерт, НЕ тихое списание; SIP-ресурс на компанию с закреплённым
+  ассистентом и своим server credential; `provider_connections` больше не хранит клиентский ключ
+  Vapi, платформенный ключ живёт только в секрет-хранилище.
+- **Вчерашние `vapiOrgProvisioningService` + `provision-vapi-tenant.js` выводятся из эксплуатации.**
+  В спеке отдельным разделом: что удаляется, что мигрирует, почему (архитектура изменилась после
+  того, как выяснилось, что `/org` нашему ключу закрыт). Не оставляй их «на всякий случай».
+- **Что видит тенант:** минуты, звонки и итоговая сумма к оплате. Vapi, org id, supplier cost и
+  разбивка — только платформенные, тенанту не показываем и в API ему не отдаём.
+- **Неуспешные звонки:** биллим фактический supplier cost (модель cost-plus), правило записать в
+  спеке явно, с матрицей по ended reason. Голосовая почта и недозвон тоже стоят денег.
+- Кошелёк: переиспользуем существующий prepaid + auto-recharge. Второй расчётный контур не заводим.
+- Деньги: `NUMERIC`, никаких float. Округление до центов — на уровне settlement, не по звонку.
+- Реестр ассистентов по ключу `(company, purpose, environment)`.
+
+## 4. Архитектурные инварианты
+
+1. Любая AI-нога имеет один локальный `vapi_call_session` и не более одной пары
+   `(provider_account_key, vapi_call_id)`; Twilio CallSid не уникален для AI-ног.
+2. Любое чтение/изменение tenant-данных использует явный `company_id`; webhook
+   получает компанию только из серверного credential/resource/session, не из body.
+3. Ассистент, SIP-ресурс и credential одной сессии принадлежат одной компании,
+   purpose и environment. Несовпадение закрывает вызов.
+4. Внешний caller не может задавать `assistantId`, `assistantOverrides`, model,
+   voice, tools, destinations, server URL/credential или provider metadata.
+5. EoC — только наблюдение. Только два одинаковых авторитетных `GET /call/:id`
+   переводят стоимость в `final`.
+6. Денежные значения — PostgreSQL `NUMERIC`; supplier cost не перезаписывается,
+   pricing policy фиксируется в начислении, округление выполняется один раз на
+   settlement.
+7. Атомарный admission резервирует одновременно глобальную и tenant capacity до
+   provider call. Ошибка/timeout освобождает lease идемпотентно.
+8. Vapi usage списывается только существующим wallet ledger; Connect/application
+   fee остаются отдельным контуром tenant-to-customer payments.
+9. До снятия Phase 2 gate голос доступен только канонической компании ABC.
+10. Tenant API никогда не сериализует provider/supplier поля, даже для admin.
+
+## 4.1 Untrusted Vapi input inventory
+
+T5 обязан закрыть либо сделать evidence-only каждый внешний путь, способный
+сегодня влиять на provider call:
+
+| Вход | Опасные поля/поведение | Требуемый контракт |
+|---|---|---|
+| Call Flow Vapi node config | прямой `sip_uri`, `vapi_resource_id`, `provider_connection_id`, environment | Flow хранит только server-defined purpose/policy ref; runtime разрешает registry tuple той же company и не принимает direct SIP/provider ids |
+| Tenant Vapi routes/UI | `api_key`, `base_config_json`, `vapi_assistant_id`, SIP/server URL | Поверхность удаляется; только platform provisioning из template |
+| SIP query/custom headers | `company-id`, profile, group/flow/node, caller data | Никакой header не авторизует tenant/assistant; только opaque one-time session token, credential и stored resource binding |
+| `assistant-request` body | `call.id`, assistant profile/overrides, customer, destination | `call.id` — evidence для exact bind; assistant/resource уже server-selected. Unknown/mismatch fail closed, transient assistant запрещён |
+| `/api/vapi-tools` public body | tool args, `message.call.assistantOverrides.variableValues`, claimed company/subject | Company только из surface credential; session repairs subject; args allowlisted per tool; ownership claims не доверяются |
+| Outbound HTTP/job data | scenario, purpose, first message, arbitrary variables/assistant overrides | Worker разрешает server-owned scenario→purpose mapping и typed template variables; caller не передаёт provider config |
+| Status/EoC body | company/org/assistant/resource ids, Twilio SID, timestamps, cost/breakdown | Company из credential; call/session exact bind. Lifecycle/cost — validated evidence, не authorization |
+| Provider readback/create response | ids, server URL, tools/model/voice/destination | Canonical allowlist/hash; unexpected privileged fields либо drift закрывают readiness |
+
+Даже если поле совпадает с БД, оно не становится authority: authority —
+company-bound credential плюс server-created session/resource relation.
+
+## 5. Модель данных (логическая, без номеров миграций)
+
+Все денежные поля ниже — `NUMERIC(18,8)` или более строгий согласованный
+`NUMERIC`; JavaScript не преобразует их через `Number`. Внешние идентификаторы
+всегда используются вместе с `company_id`, кроме отдельного глобального
+уникального ограничения provider account + provider call id.
+
+### 5.1 Конфигурация и реестр
+
+#### `vapi_tenant_voice_configs` (новая, platform-owned)
+
+| Поле | Назначение |
+|---|---|
+| `id`, `company_id`, `environment` | tenant/environment scope; unique `(company_id, environment)` |
+| `rollout_state` | `legacy_canary`, `provisioning`, `ready`, `enabled`, `suspended` |
+| `company_concurrency_limit` | положительный локальный предел |
+| `fallback_flow_node_id` | серверная входящая ветка при deny/limit |
+| `pricing_policy_id` | активная политика для новых сессий |
+| `readiness_evidence`, `verified_at` | platform-only результаты проверок; не источник истины |
+| `enabled_at`, `enabled_by`, `suspended_at`, `suspend_reason` | platform audit |
+| `created_at`, `updated_at` | аудит |
+
+Tenant route записи отсутствует. Runtime повторно проверяет связанные записи, а
+не доверяет одному `rollout_state`. `pricing_policy_id` и его FK добавляются
+группой `vapi_usage_charges` в T9; до этого поле логически unset, поэтому non-ABC
+production gate остаётся закрыт.
+
+#### `vapi_assistant_profiles` (существующая, становится authoritative registry)
+
+| Поле | Назначение |
+|---|---|
+| `company_id`, `purpose`, `environment` | unique business key |
+| `vapi_assistant_id`, `provider_account_key` | provider identity; platform-only |
+| `template_version`, `template_hash` | версия server-owned шаблона |
+| `tools_credential_id`, `call_status_credential_id` | разные company-bound `api_integrations` credentials/surfaces |
+| `status` | `provisioning`, `active`, `drifted`, `disabled`, `deleting` |
+| `provider_generation`, `provider_updated_at`, `last_verified_at` | readback/drift evidence |
+| `created_at`, `updated_at` | аудит |
+
+Должно существовать не более одной активной записи на `(company_id, purpose,
+environment)` и не более одного владельца `(provider_account_key,
+vapi_assistant_id)`.
+
+#### `vapi_tenant_resources` (существующая, расширяется)
+
+| Поле | Назначение |
+|---|---|
+| `company_id`, `purpose`, `environment`, `assistant_profile_id` | закрепление ресурса за тем же tenant tuple |
+| `resource_type` | `sip_destination` либо последующие server-owned типы |
+| `vapi_phone_number_id`, `sip_uri` | platform-only provider data |
+| `server_credential_id` | собственный company-bound credential ресурса; для assistant-request/resource server, не plaintext secret |
+| `status`, `config_hash`, `provider_updated_at`, `last_verified_at` | readiness/drift |
+| `created_at`, `updated_at` | аудит |
+
+База и сервис запрещают ссылку ресурса компании A на профиль/credential компании
+B. `tools`, `call_status` и resource `assistant_request` используют разные
+`api_integrations.machine_surface`; их secret hashes не совпадают. Migration 264
+даёт подложку, новая registry migration расширяет разрешённые surface values и
+same-company constraints.
+
+### 5.2 Идентичность и supplier usage
+
+#### `vapi_call_sessions` (новая)
+
+Одна запись — одна AI-нога, в том числе до появления Vapi call id.
+
+| Поле | Назначение |
+|---|---|
+| `id`, `company_id`, `direction`, `purpose`, `environment` | локальный canonical root |
+| `assistant_profile_id`, `tenant_resource_id`, `provider_account_key` | server-selected execution tuple |
+| `vapi_call_id` | nullable до bind; globally unique with provider account |
+| `twilio_parent_call_sid`, `twilio_child_call_sid` | evidence/correlation, не identity AI-ноги |
+| `outbound_call_attempt_id`, `flow_execution_id`, `flow_node_id` | nullable local origins |
+| `correlation_token_hash`, `correlation_expires_at`, `bound_at` | одноразовое inbound bind-доказательство |
+| `state` | `created`, `admitted`, `provider_pending`, `active`, `ended`, `cost_pending`, `closed`, `quarantined` |
+| `started_at`, `ended_at`, `provider_ended_reason` | provider lifecycle evidence |
+| `created_at`, `updated_at` | аудит |
+
+Все lookups по Twilio SID дополнительно фильтруются `company_id`; несколько
+сессий с одним parent SID допустимы.
+
+#### `vapi_call_usage_observations` (новая, append-only)
+
+| Поле | Назначение |
+|---|---|
+| `id`, `company_id`, `vapi_call_session_id` | tenant-bound observation |
+| `source` | `end_of_call_report`, `get_call`, `audit_repair` |
+| `provider_event_id`, `payload_hash` | идемпотентность; raw payload не обязан храниться |
+| `supplier_cost`, `breakdown_total` | авторитетный `cost` и заявленный `costBreakdown.total`, exact NUMERIC |
+| `transport_cost`, `stt_cost`, `llm_cost`, `tts_cost`, `vapi_cost`, `chat_cost`, `analysis_cost` | nullable NUMERIC компоненты; evidence, не повторное начисление |
+| `prompt_tokens`, `completion_tokens`, `total_tokens` | nullable BIGINT; дополнительные token counters добавляются по T1 contract |
+| `breakdown_schema_version`, `cost_breakdown_evidence` | версия нормализатора + platform-only JSONB исходной разбивки, включая `analysisCostBreakdown` |
+| `provider_updated_at`, `observed_at` | provider и receive clocks |
+| `started_at`, `ended_at`, `ended_reason` | нормализованное evidence |
+| `validation_state`, `validation_error` | accepted/quarantined reason |
+
+`breakdown_total` сверяется с `supplier_cost`, но transport/STT/LLM/TTS/Vapi/
+chat/analysis компоненты никогда не суммируются поверх `total`. Неизвестные
+provider keys остаются evidence JSON и не входят в деньги до versioned parser
+change; T1 фиксирует точные token/analysis поля.
+
+#### `vapi_call_usage` (новая, текущий снимок)
+
+| Поле | Назначение |
+|---|---|
+| `company_id`, `vapi_call_session_id` | exactly one current row per session |
+| `state` | `provisional`, `reconciling`, `stable_once`, `final`, `stale_pending`, `quarantined` |
+| `supplier_cost`, `normalized_breakdown`, `ended_reason` | current authoritative typed snapshot; components NUMERIC/tokens BIGINT по той же schema version |
+| `duration_seconds` | provider `startedAt`→`endedAt` duration как non-negative NUMERIC; не Twilio parent duration |
+| `snapshot_hash`, `stable_count`, `last_authoritative_at` | convergence evidence |
+| `reconcile_attempts`, `next_reconcile_at`, `first_pending_at`, `last_error` | retry schedule |
+| `final_snapshot_version`, `finalized_at` | immutable pricing input version |
+| `created_at`, `updated_at` | аудит |
+
+### 5.3 Capacity, pricing и списание
+
+#### `vapi_concurrency_leases` (новая)
+
+| Поле | Назначение |
+|---|---|
+| `id`, `company_id`, `vapi_call_session_id`, `direction` | owner и session |
+| `state` | `reserved`, `active`, `released`, `expired` |
+| `reserved_at`, `activated_at`, `heartbeat_at`, `expires_at`, `released_at` | lifecycle |
+| `release_reason` | end/error/timeout/reaper evidence |
+| `provider_subscription_limits` | диагностический снимок ответа Vapi, не admission source |
+
+Одна транзакция/блокировка резервирует глобальную и tenant capacity. Provider
+`subscriptionLimits` приходит после `POST /call` и используется только для
+телеметрии и сверки общего пула.
+
+#### `vapi_pricing_policies` (новая, immutable versions)
+
+| Поле | Назначение |
+|---|---|
+| `id`, `version`, `markup_multiplier` | exact cost-plus multiplier, например `1.25000000` |
+| `effective_from`, `effective_to`, `status` | выбор политики по времени сессии |
+| `created_by`, `created_at`, `reason` | platform audit |
+
+Опубликованная версия не обновляется; изменение создаёт новую версию.
+
+#### `vapi_usage_charges` (новая, immutable ledger)
+
+| Поле | Назначение |
+|---|---|
+| `id`, `company_id`, `vapi_call_session_id` | charge owner/source |
+| `usage_snapshot_version`, `pricing_policy_id` | frozen inputs |
+| `supplier_cost`, `markup_multiplier`, `retail_amount_unrounded` | exact NUMERIC audit |
+| `kind` | `usage`, `adjustment`, `reversal` |
+| `state` | `priced`, `settlement_pending`, `settled`, `voided` |
+| `settlement_id`, `wallet_ledger_entry_id` | existing billing projection |
+| `idempotency_key`, `created_at`, `settled_at` | exactly-once boundary |
+
+#### `vapi_settlements` (новая)
+
+| Поле | Назначение |
+|---|---|
+| `id`, `company_id`, `subscription_id`, `period_start`, `period_end` | billing-period identity |
+| `exact_amount`, `rounding_carry_in`, `wallet_amount_usd`, `rounding_carry_out` | exact NUMERIC; `wallet_amount_usd` имеет scale 2 после единственного rounding |
+| `state`, `idempotency_key`, `wallet_ledger_entry_id` | durable write protocol |
+| `created_at`, `posted_at`, `last_error` | retry/audit |
+
+Период определяется существующей подпиской компании, а не календарным днём.
+Остаток точности переносится в следующий settlement. Существующий wallet ledger
+остаётся единственным балансом; `vapi_usage_charges` — его audit/source detail,
+а не второй кошелёк.
+
+## 6. Контракт корреляции и идентичность звонка
+
+### 6.1 Каноническая идентичность
+
+- В Albusto первичный идентификатор AI-ноги — `vapi_call_sessions.id`.
+- Во внешней execution plane — пара `(provider_account_key, vapi_call_id)`.
+- `twilio_parent_call_sid` обозначает исходный звонок и может иметь несколько
+  последовательных или параллельных AI-ног.
+- `twilio_child_call_sid`, `outbound_call_attempt_id` и flow execution/node —
+  корреляционные доказательства, но не замена Vapi call id.
+- Все входящие события сначала устанавливают компанию по аутентифицированному
+  server credential, затем ищут session с тем же `company_id`. Body/header claims
+  не могут выбрать компанию.
+
+### 6.2 Входящий звонок
+
+1. До перевода на SIP runtime, уже знающий `company_id`, flow node, purpose и
+   environment, выбирает только активные registry/resource records.
+2. В одной транзакции создаются session, одноразовый correlation token и
+   concurrency lease. В SIP destination уходит opaque token; tenant/company id,
+   provider secret и свободный `assistantId` не передаются.
+3. Закреплённый SIP-resource уже указывает на ровно одного assistant. Динамический
+   assistant selection для штатного пути не нужен.
+4. Первый аутентифицированный Vapi callback, содержащий `message.call.id`
+   (обычно status update; assistant-request допустим лишь для явно включённого
+   dynamic-resource режима), атомарно bind-ит `vapi_call_id` к session.
+5. Bind проходит только если credential company, token/session, resource и
+   assistant совпали. Token одноразовый и имеет TTL. Повтор с тем же call id
+   идемпотентен; другой call id или другая company переводит событие в quarantine.
+6. Twilio child status может отметить телеком-ногу, но не создаёт и не подменяет
+   Vapi identity. `answered_by='ai'` остаётся CRM-классификацией, не денежным ключом.
+7. EoC без предварительного bind может восстановить связь только при единственном
+   точном совпадении credential + token/session + resource + assistant. Любая
+   неоднозначность — quarantine и алерт, не эвристическое списание.
+
+Следствие: Vapi id впервые доступен в первом доверенном Vapi callback с
+`message.call.id`; к этому моменту локальная session уже существует. EoC не
+является обязательным первым моментом идентичности.
+
+### 6.3 Исходящий звонок
+
+1. Worker выбирает company-bound registry entry, проходит gate и атомарно
+   резервирует lease, затем создаёт session до сетевого вызова.
+2. `POST /call` строится только из server-owned полей. Ответный Vapi call id
+   атомарно записывается и в session, и в существующий outbound attempt.
+3. Timeout после отправки означает `provider_pending`, а не немедленный повтор:
+   repair ищет call по поддержанному provider contract/idempotency key. Повторный
+   `POST /call` запрещён до разрешения неопределённости.
+4. Gate/limit deny оставляет задачу в очереди, не создаёт provider attempt и не
+   вызывает `POST /call`.
+
+## 7. Жизненный цикл стоимости
+
+```text
+EoC observation
+  -> provisional
+  -> reconciling
+  -> GET #1 stable_once
+  -> GET #2 (same authoritative snapshot, separated in time) final
+  -> priced (immutable policy version)
+  -> settlement_pending
+  -> settled (existing wallet ledger)
+```
+
+### 7.1 Приём наблюдений
+
+- `end-of-call-report` записывается append-only и идемпотентно по provider event
+  identity либо детерминированному payload hash. Он обновляет provisional evidence,
+  но никогда не финализирует и не списывает.
+- `GET /call/:id` — авторитетный источник. Snapshot hash включает exact `cost`,
+  нормализованный `costBreakdown`, `endedAt`, `endedReason` и provider
+  `updatedAt`/эквивалентную версию.
+- Два совпавших авторитетных snapshot, полученных разными успешными reconcile
+  попытками с минимальным интервалом, дают `final`. Два чтения в одном цикле не
+  считаются двумя замерами.
+- Рекомендуемый retry schedule: около 1 мин, 5 мин, 30 мин, 2 ч и 24 ч с jitter.
+  Конкретные интервалы конфигурируемы; семантика состояний неизменна.
+- Через 24 часа без двух совпадений состояние становится `stale_pending`, создаётся
+  алерт, списания нет. Repair продолжает редкие попытки; молчаливая оценка/списание
+  запрещены.
+- Negative, non-numeric, malformed или несогласованный cost переводит observation
+  в `quarantined`. `costBreakdown.total` не прибавляется к `cost` и компонентам.
+
+### 7.2 Финал, поздняя коррекция и идемпотентность
+
+- `final_snapshot_version` монотонна. Из final создаётся не более одного `usage`
+  charge для `(session, snapshot version)`.
+- Если последующий authoritative audit меняет уже финальный supplier snapshot,
+  прошлые usage/settlement/wallet записи не переписываются. Создаётся следующая
+  snapshot version и точный `adjustment` либо `reversal` на дельту с новой
+  идемпотентностью.
+- Retry после crash между settlement и wallet write находит ту же idempotency key
+  и тот же wallet entry. Не существует окна для двойного дебета.
+- Worker/cron принимает `companyId` явно и выбирает строки с tenant predicate;
+  глобальный dispatcher лишь перечисляет компании, не выполняет unscoped money SQL.
+
+### 7.3 Pricing и settlement
+
+`retail_amount_unrounded = supplier_cost × markup_multiplier`, где multiplier
+выбирается по времени вызова/зафиксированному policy id до settlement. Оба операнда
+и результат остаются `NUMERIC`. На звонке нет округления до центов.
+
+Settlement суммирует exact unrounded charges внутри периода существующей
+подписки, прибавляет carry-in, один раз округляет к целым центам по утверждённому
+правилу PostgreSQL и сохраняет carry-out. Только после этого выполняется один
+идемпотентный debit существующего prepaid wallet. Недостаток баланса обрабатывается
+существующим auto-recharge; отдельный Vapi balance не создаётся.
+
+### 7.4 Матрица ended reason
+
+Главное правило: если авторитетный final supplier cost положителен, фактический
+cost биллится независимо от коммерческого результата звонка.
+
+| Нормализованная группа | Примеры provider reason | Supplier cost | Действие |
+|---|---|---:|---|
+| Нормальное завершение | customer/assistant ended, completed | `> 0` | cost-plus charge |
+| Перевод/разрыв после соединения | transfer, customer hangup, assistant hangup | `> 0` | cost-plus charge |
+| Нет ответа/занято | no-answer, busy, timeout | `> 0` | cost-plus charge |
+| Голосовая почта | voicemail/answering-machine | `> 0` | cost-plus charge |
+| Provider/start/tool error | provider-error, assistant-error, failed | `> 0` | cost-plus charge + operational metric |
+| Любая известная группа | любое | `= 0` | zero usage record, без debit |
+| Отмена до provider identity | queued/cancelled before `POST /call` | отсутствует | без usage charge |
+| Неизвестная причина | новый/unknown reason | `> 0` | cost-plus charge + alert для классификатора |
+| Invalid/missing final cost | любое | неизвестен | `stale_pending`/`quarantined`, без debit |
+
+Ended reason влияет на аналитику и алерты, но не отменяет подтверждённый supplier
+cost. Несколько AI-ног одного Twilio parent тарифицируются каждая по своему
+финальному Vapi call id.
+
+## 8. Gate второго тенанта
+
+Gate выполняется через единую серверную функцию допуска, вызываемую как входящим
+flow runtime до выдачи SIP destination, так и outbound worker до lease/`POST
+/call`. UI-флаг, readiness JSON и наличие assistant id сами по себе gate не
+снимают.
+
+До завершения Phase 2 допускается только канонический immutable id компании ABC,
+проверяемый на сервере. Для любой другой компании функция обязана одновременно
+подтвердить:
+
+1. глобальный VAPI agency runtime включён;
+2. отдельный multi-tenant rollout flag включён platform operator;
+3. компания активна, а `(company, environment)` имеет `rollout_state='enabled'`;
+4. существует ровно один active assistant registry row для требуемых company,
+   purpose и environment;
+5. существует ровно один active SIP resource той же компании, закреплённый за
+   этим assistant;
+6. provider readback совпадает с template/resource hashes и не помечен drifted;
+7. существуют активные, неистёкшие и разные server credentials для
+   `vapi_tools`, `vapi_call_status` и credential закреплённого SIP resource;
+   endpoint `vapi_assistant_request` вызывается только если явно включён
+   dynamic-resource path;
+8. inbound durable session/token bind contract включён и прошёл health/readback;
+9. положительный company concurrency limit и global policy обслуживаются
+   атомарным admission/lease механизмом;
+10. есть активная pricing policy и разрешимая существующая subscription/wallet
+    связь компании.
+
+Переход `ready -> enabled` доступен только platform manage и транзакционно заново
+вычисляет условия. На каждом звонке runtime повторяет критические relational
+проверки, поэтому устаревший readiness snapshot не открывает доступ.
+
+ABC-only Phase 2 flag становится доступен для изменения только после приёмки
+T1–T8, прохождения всех их P0/P1 и sabotage тестов, provider readback и периода
+наблюдения ABC без необъяснимых/некоррелированных AI-ног. Это не включает tenant
+автоматически: runtime всё равно проверяет пункты 1–10. Поэтому production voice
+второго tenant дополнительно ждёт T9 и действующие pricing/subscription/wallet
+связи. При любом deny:
+
+- входящий flow продолжает заранее настроенную обычную/voicemail fallback ветку,
+  не выдавая Vapi SIP и не удерживая lease;
+- исходящий job остаётся queued с retry reason, не вызывает `POST /call`, не
+  увеличивает provider attempt count и не списывает деньги.
+
+Отключение multi-tenant flag снова закрывает все компании, кроме отдельно
+контролируемого ABC canary; `suspended` закрывает и конкретный tenant.
+
+## 9. Provisioning и drift
+
+Полностью автоматизируется:
+
+1. создание `provisioning` tenant config;
+2. выпуск отдельных machine credentials на базе механизма migration 264 —
+   `vapi_tools`, `vapi_call_status` и свой credential SIP resource, с
+   company-bound scopes, hash-at-rest, ротацией и отзывом;
+3. рендер server-owned assistant template без tenant/provider overrides;
+4. create/update assistant в общей Vapi organization;
+5. настройка tools/server URLs на соответствующие credential endpoints;
+6. создание/обновление SIP resource компании с фиксированным assistant;
+7. `GET` readback, canonical hashing, сохранение provider generation и перевод в
+   `ready` только при полном совпадении;
+8. идемпотентный повтор, repair частично созданных ресурсов, drift scan и
+   безопасное disable/rotate.
+
+Человеку остаётся:
+
+- владение/настройка Twilio number и его маршрутизация на конкретный выданный SIP
+  destination, если используемый Twilio/provider contract не позволяет безопасную
+  полную автоматизацию;
+- одобрение pricing policy, concurrency cap и platform transition в `enabled`;
+- проверка тестового звонка/readback и разбор drift/quarantine/stale alerts;
+- увеличение общего лимита Vapi линий в панели поставщика.
+
+Legacy direct SIP и новый per-company Vapi resource могут различаться деталями
+provider API, но обязаны реализовать один registry/session/credential контракт.
+T1 фиксирует живые provider fixtures до выбора адаптера.
+
+## 10. Что удаляется и что мигрирует
+
+### Удаляется при реализации
+
+- `backend/src/services/vapiOrgProvisioningService.js`;
+- `backend/scripts/provision-vapi-tenant.js`;
+- `tests/vapiOrgProvisioningService.test.js` как тест отменённой архитектуры; вместо
+  него появляются registry/resource provisioning и drift tests;
+- tenant-facing `frontend/src/pages/VapiSettingsPage.tsx` и
+  `frontend/src/services/vapiApi.ts`, а также tenant routes из
+  `backend/src/routes/vapi.js`, которые позволяют вводить Vapi API key, создавать
+  org/assistant/phone resources или видеть provider metadata;
+- legacy environment-driven assistant selection
+  (`VAPI_LEAD_CALL_ASSISTANT_ID`, `VAPI_OUTBOUND_ASSISTANT_ID`) после перевода ABC
+  и worker/runtime на реестр;
+- клиентский Vapi API key в `provider_connections` и любой API, который его
+  принимает/возвращает. Платформенный ключ существует только в deployment secret
+  store и никогда не сохраняется в tenant DB.
+
+Эти компоненты не остаются отключённым fallback: их наличие создаёт второй путь,
+обходящий registry, gate и platform-key ownership.
+
+### Мигрирует
+
+- существующие ABC `vapi_assistant_profiles` и `vapi_tenant_resources` в новый
+  tuple registry с environment/purpose/template evidence;
+- текущий SIP `sip:blanc-ai-dev@sip.vapi.ai` — в resource ABC после provider
+  readback, без предположения, что это купленный номер;
+- известные `outbound_call_attempts.vapi_call_id` — в session/usage identity при
+  однозначном company-bound соответствии;
+- существующие machine credentials — в отдельные surfaces и ротацию; секреты не
+  копируются в документы/логи;
+- tenant billing link — на существующие subscription, prepaid wallet и
+  auto-recharge, без миграции Stripe Connect в usage billing;
+- исторические `calls.price` не становятся Vapi cost: это поле сохраняет текущую
+  Twilio-семантику.
+
+Неоднозначные исторические звонки не получают вычисленный supplier cost. Они
+попадают в backfill exception report и не списываются автоматически.
+
+Почему: `/org`, `/org/:id` и `/org/limits` закрыты платформенному private key,
+отдельного agency tariff нет. Архитектура «организация и ключ Vapi на тенанта» не
+реализуема и противоречит принятой модели единого supplier contract.
+
+## 11. API-контракты без UI-дизайна
+
+### Tenant projection
+
+`GET /api/billing/voice-usage?period_start=&period_end=` использует
+`authenticate, requireCompanyAccess`, получает компанию только из
+`req.companyFilter?.company_id` и требует `tenant.company.manage`.
+
+Минимальный ответ для активного периода:
+
+```json
+{
+  "period": { "start": "...", "end": "...", "currency": "usd" },
+  "totals": {
+    "calls": 0,
+    "minutes": "0.00",
+    "period_closed": false,
+    "amount_accrued_to_date": "0.00000000"
+  },
+  "daily": [
+    { "date": "YYYY-MM-DD", "calls": 0, "minutes": "0.00", "amount_accrued": "0.00000000" }
+  ]
+}
+```
+
+После settlement ответ того же периода меняет только денежный discriminator и
+итоговое поле:
+
+```json
+{
+  "period": { "start": "...", "end": "...", "currency": "usd" },
+  "totals": {
+    "calls": 0,
+    "minutes": "0.00",
+    "period_closed": true,
+    "amount_due": "0.00"
+  },
+  "daily": [
+    { "date": "YYYY-MM-DD", "calls": 0, "minutes": "0.00", "amount_accrued": "0.00000000" }
+  ]
+}
+```
+
+`calls` считает финализированные тарифицируемые Vapi AI-ноги, а не уникальные
+Twilio parent calls. Unique Twilio conversations остаются внутренней группировкой
+и в tenant projection не выдаются. `minutes` — сумма provider duration этих же
+ног, делённая на 60.
+
+Для незакрытого периода `period_closed=false` и
+`amount_accrued_to_date` содержит exact unrounded NUMERIC-сумму уже
+финализированных и оценённых retail charges на текущий момент. Это промежуточное
+накопление: оно может увеличиваться по мере финализации звонков и не называется
+суммой к оплате. Поле `amount_due` до settlement отсутствует. После settlement
+`period_closed=true`, промежуточное поле отсутствует, а `amount_due` содержит
+единственную округлённую до центов итоговую сумму с учётом rounding carry.
+`daily.amount_accrued` всегда остаётся exact consumption attribution и не
+объявляется суммой к оплате.
+
+Provisional/stale calls не входят в calls/minutes/amount до финализации.
+Длительность и деньги передаются decimal strings. Семантический `amount` из MCP
+parity проецируется в одно из двух явно названных полей выше; сырого поля
+`amount` tenant API не сериализует. Tenant contract не содержит
+`vapi`, `orgId`, assistant/provider ids, supplier cost, markup multiplier,
+costBreakdown, tokens, credentials, raw ended reason или platform alerts.
+Границы периода совпадают с существующим subscription period, а звонок относится
+к периоду по `session.started_at`.
+
+### Platform projection
+
+Platform-only read (`platform.companies.view`) может возвращать session identity,
+provider ids, supplier snapshots/breakdown, pricing policy, leases, reconcile и
+settlement state. Provision/enable/rotate/reconcile repair требуют
+`platform.companies.manage`. Формат UI в этой задаче не определяется.
+
+## 12. Tenancy & Roles
+
+Канон: `docs/specs/TENANCY-RBAC-CANON.md`. Для tenant HTTP foreign entity
+возвращается 404; platform cross-company доступ возможен только через отдельную
+platform route/permission и всегда требует явного target company. Webhook body не
+является источником scope.
+
+| surface (route/worker/webhook/SSE/aggregate) | scoped by | key used | permission | roles ✓/✗ | blast-radius risk |
+|---|---|---|---|---|---|
+| `GET /api/billing/voice-usage` | `req.companyFilter?.company_id` | company + subscription period | `tenant.company.manage` | tenant admin/custom-with-permission ✓; manager/dispatcher/provider/custom-without ✗ | unscoped aggregate reveals other tenants' calls/money |
+| platform usage read | authenticated platform actor + explicit target company | target company + session/period | `platform.companies.view` | platform super_admin ✓; tenant/unscoped roles ✗ | provider ids and supplier economics leak |
+| platform provision/enable/rotate/repair | authenticated platform actor + explicit target company | company + purpose + environment | `platform.companies.manage` | platform super_admin ✓; tenant/unscoped roles ✗ | wrong assistant/secret can receive another tenant's calls |
+| inbound flow Vapi-node runtime | existing flow execution company | company + flow execution/node + registry tuple | internal worker contract; originating flow already tenant-scoped | runtime service ✓; direct user input ✗ | unscoped assistant lookup routes a call across companies |
+| outbound call worker | job/attempt `company_id` passed explicitly | company + attempt + registry tuple | internal worker contract | worker ✓; HTTP caller ✗ | global env assistant sends call under wrong tenant |
+| Vapi tool webhook | server credential resolved to company | credential + company + session + tool call id | machine surface `vapi_tools` | matching active credential ✓; tenant JWT/body company/other credential ✗ | shared secret/body scope invokes tools cross-tenant |
+| Vapi call-status/EoC webhook | server credential resolved to company | credential + company + provider call id/session | machine surface `vapi_call_status` | matching active credential ✓; tenant JWT/body company/other credential ✗ | forged event binds/costs another tenant's call |
+| Vapi assistant-request webhook (only if enabled) | dedicated resource credential + pending token | credential + company + resource + token/session | machine surface `vapi_assistant_request` | exact active credential/resource ✓; all others ✗ | override/assistant injection defeats hard binding |
+| reconcile dispatcher | platform enumeration only | due company ids | internal scheduler | scheduler ✓; users ✗ | one unbounded query silently skips tenant predicate |
+| reconcile company worker | explicit `companyId` argument | company + session + provider call id | internal worker contract | worker for dispatched company ✓; absent/mismatched company ✗ | provider read updates foreign usage |
+| atomic admission/lease/reaper | explicit `companyId`, session and global policy | company + session/lease | internal worker contract | runtime/worker ✓; user/webhook body ✗ | race exceeds tenant/global cap or frees foreign lease |
+| pricing/settlement worker | explicit `companyId` + subscription period | company + final snapshot + immutable policy | internal billing worker | billing worker ✓; tenant/provider caller ✗ | cross-tenant debit or policy rewrite |
+| wallet projection | existing billing company scope | company + settlement idempotency key | existing billing service contract | billing worker ✓; Connect webhook ✗ | double debit or Connect/usage ledger mixing |
+| tenant usage SSE/cache (если добавится) | authenticated subscription company | company + aggregate version | `tenant.company.manage` | same as tenant read ✓/✗ | shared cache/channel leaks amounts; v1 may use no SSE |
+| MCP voice-usage tool/resource | authenticated company context | company + same aggregate service | `tenant.company.manage` | same as tenant read ✓/✗ | MCP-specific SQL/drift exposes supplier fields |
+
+Обязательная матрица тестов для каждой company-scoped строки:
+
+- `T-own`: собственная запись/агрегат доступна и меняется только в своей компании;
+- `T-foreign`: foreign id даёт 404 и byte-for-byte unchanged rows/ledger/wallet;
+- `T-blast`: одинаковые provider/natural keys в A и B не смешивают результат;
+- `R-matrix`: проверяется каждая deny-клетка таблицы, включая custom role без
+  разрешения;
+- worker/webhook эквиваленты используют explicit-company, wrong-company и
+  missing-company cases, даже если HTTP 404 неприменим.
+
+## 13. Verification — скелет
+
+Результаты в этом документном турне не проставляются. При реализации каждая
+строка получает commit/build и `PASS`/`FAIL` с количеством тестов.
+
+### 13.1 Автоматические наборы
+
+| Область | Планируемые suites | Точная команда | Результат |
+|---|---|---|---|
+| Provider contracts, identity, gate | `tests/vapiAgencyProviderContracts.test.js`, `tests/vapiCallIdentity.test.js`, `tests/vapiAgencyGate.test.js` | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProviderContracts.test.js tests/vapiCallIdentity.test.js tests/vapiAgencyGate.test.js --runInBand --forceExit` | PENDING |
+| Usage ingest/reconcile/audit | `tests/vapiUsageIngest.test.js`, `tests/vapiUsageReconcile.test.js`, `tests/vapiUsageAuditRepair.test.js` | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js --runInBand --forceExit` | PENDING |
+| Registry/provisioning/tools/routes | new registry suites + current Vapi regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAgencyProvisioning.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/services/callFlowRuntime.vapi.test.js --runInBand --forceExit` | PENDING |
+| Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
+| Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
+| Forward/rollback migrations | real disposable PostgreSQL migration suite | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js --runInBand --forceExit` | PENDING |
+| Tenant settings removal | frontend build/tests | `npm --prefix frontend run build` then `npm --prefix frontend test` | PENDING |
+| Full backend regression | all Jest suites | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --forceExit` | PENDING |
+
+Database integration suites используют disposable PostgreSQL и реальный migration
+runner; mock-only SQL tests не закрывают денежные/tenant инварианты. Точные
+forward/rollback migration filenames добавляются в ledger после назначения
+номеров, не резервируемых этой спецификацией.
+
+### 13.2 Sabotage ledger
+
+Каждая строка означает реальную временную поломку implementation seam; тест обязан
+стать красным, после возврата кода — зелёным.
+
+| ID | Что временно сломать | Какой тест обязан покраснеть | Результат |
+|---|---|---|---|
+| `SAB-VAPI-GATE` | убрать ABC/multi-tenant gate перед inbound и outbound | `vapiAgencyGate` non-ABC deny/no-provider-call | PENDING |
+| `SAB-VAPI-IDENTITY-TENANT` | убрать `company_id` из session lookup | `vapiCallIdentity` T-blast/T-foreign unchanged | PENDING |
+| `SAB-VAPI-ASSISTANT` | разрешить assistant lookup только по provider id/env | `vapiAssistantRegistry` cross-tenant collision | PENDING |
+| `SAB-VAPI-WEBHOOK-CREDENTIAL` | доверять `companyId` body вместо credential | `vapiCallStatusWebhook` wrong-company credential | PENDING |
+| `SAB-VAPI-OVERRIDE` | прокинуть `assistantOverrides` из request/body | provider-contract override rejection test | PENDING |
+| `SAB-VAPI-COST-IDEMPOTENCY` | убрать observation/charge unique key | duplicate EoC/poll money test | PENDING |
+| `SAB-VAPI-LATE-COST` | финализировать по EoC либо одному GET | late analysis cost convergence test | PENDING |
+| `SAB-VAPI-FINALITY` | перезаписать settled usage вместо adjustment | post-final provider correction test | PENDING |
+| `SAB-VAPI-MONEY-MATH` | преобразовать NUMERIC в JS `Number`/round per call | precision + aggregate rounding test | PENDING |
+| `SAB-VAPI-SETTLEMENT-DUP` | изменить wallet idempotency key на retry | crash/retry exactly-once debit test | PENDING |
+| `SAB-VAPI-CONCURRENCY` | разделить check и lease insert | parallel tenant/global cap test | PENDING |
+| `SAB-VAPI-LEASE-RECOVERY` | не освобождать provider timeout lease | reaper/no-capacity-leak test | PENDING |
+| `SAB-VAPI-PROVIDER-HIDDEN` | сериализовать internal usage row tenant API | response allowlist/forbidden-key recursive test | PENDING |
+| `SAB-VAPI-CONNECT-SEPARATION` | направить usage charge в Connect ledger | wallet-vs-Connect separation test | PENDING |
+| `SAB-VAPI-MCP-PARITY` | сделать MCP отдельный unscoped aggregate | MCP/HTTP parity + T-blast test | PENDING |
+
+Полная ручная/автоматическая матрица: `docs/test-cases/VAPI-AGENCY-001.md`.
+
+## 14. Наблюдаемость и алерты
+
+Минимальные platform-only метрики/алерты:
+
+- unbound provider calls и bind conflicts;
+- invalid/quarantined cost, `stale_pending > 24h`, provider cost changed after
+  final, reconcile error rate/lag;
+- active/reserved leases против company/global caps, expired/reaped leases и
+  provider `subscriptionLimits` divergence;
+- assistant/resource/template drift, credential expiry/rotation failures;
+- settlement retry, wallet idempotency conflict, exact charges versus cents/carry
+  reconciliation;
+- tenant aggregate totals versus immutable charge/settlement totals.
+
+Логи не содержат credentials, correlation token, full transcript или tenant API
+supplier breakdown. Provider ids допустимы только в platform-restricted logs.
+
+## 15. MCP parity
+
+MCP использует тот же company-scoped tenant aggregate service, permission
+`tenant.company.manage` и тот же allowlist `{minutes, calls, amount}`; отдельного
+SQL/бизнес-правил нет, Vapi/org/provider/supplier поля не выдаются.
+
+## 16. Закрытые решения второго круга
+
+Эти решения окончательны и дополняют §3; вариантов для выбора перед реализацией
+не осталось.
+
+### Продуктовые
+
+1. Tenant-метрика `calls` — количество тарифицируемых Vapi AI-ног. Unique Twilio
+   conversations тенанту не показываются: это внутренняя группировка Albusto и не
+   единица supplier cost или начисления.
+2. Звонок относится к subscription period по `session.started_at`. Поздняя
+   финализация не переносит consumption в другой период; provider correction после
+   закрытия периода становится корректировкой в следующем settlement.
+3. Для активного незакрытого периода tenant API возвращает явно промежуточную
+   `amount_accrued_to_date` рядом с `period_closed=false`, а не `null` и не поле,
+   похожее на сумму к оплате. Пустая текущая сумма читается пользователем как
+   неисправность и создаёт предсказуемое обращение в поддержку. Итоговое поле
+   `amount_due` появляется только после settlement рядом с `period_closed=true`;
+   одновременно два денежных поля не возвращаются.
+
+### Инженерные/финансовые
+
+1. Округление до центов использует одно правило decimal half-away-from-zero,
+   включая отрицательные корректировки. Оно одинаково реализуется в PostgreSQL и
+   settlement audit и проверяется на большом наборе положительных, отрицательных и
+   tie-case значений.
+2. Версия pricing policy фиксируется на `admitted_at`. Поздняя provider correction
+   использует ту же исходную policy, а не текущую: смена наценки не переписывает
+   прошлые начисления.
+3. Стартовый минимальный интервал между двумя совпавшими авторитетными замерами —
+   5 минут. Стартовое observe-only окно ABC — 48 часов. Оба значения
+   конфигурируются без изменения машины состояний.
+
+## 17. Risk register
+
+| Риск | Последствие | Контроль | Тест/сигнал |
+|---|---|---|---|
+| Общая Vapi org не даёт provider-side hard isolation | Provider/operator error затрагивает несколько tenants | Vapi считается untrusted plane; server-owned registry/resource/credential bindings, per-call gate, least provider access | T-blast registry/webhooks; drift/unbound-call alert |
+| Inbound callback потерян или пришёл не по ожидаемому endpoint | AI-нога без identity/cost | Session до SIP, one-time bind, audit provider calls против local sessions | ID-01..ID-11, unbound provider metric |
+| Provider schema/ended taxonomy изменились | Cost quarantined либо неверная аналитика | Sanitized contracts, tolerant unknown fields, required-field validation, unknown reason bills positive final cost + alerts | T1 fixtures, MONEY-20/26 |
+| Analysis cost дозревает после EoC | Недобиллинг | EoC provisional, two authoritative GET snapshots, 24h stale without debit | MONEY-01/16/25 |
+| Duplicate/reordered callbacks и concurrent workers | Двойное observation/charge/debit | Unique identities, append-only observations, state locks, stable idempotency keys | MONEY-02/03/09 |
+| JS float либо per-call rounding | Систематическая денежная дельта | NUMERIC/string boundaries, round once, exact carry | MONEY-06..08 |
+| Позднее изменение уже settled cost | История переписана либо correction потеряна | Versioned snapshot + immutable adjustment/reversal | MONEY-14/15 |
+| Один Twilio parent содержит несколько AI-ног | Нога потеряна при дедупликации по CallSid | Session/Vapi id — billing grain; Twilio SID только correlation | ID-08, MONEY-10/11 |
+| Звонок попал на границу billing period | Двойное/пропущенное settlement | Одно утверждённое call-time rule и unique charge/period keys | MONEY-12 |
+| POST timeout приводит к повторному вызову | Двойной supplier cost и звонок клиенту | `provider_pending`, repair before retry, provider idempotency contract from T1 | ID-13 |
+| Check-then-call race превышает общий/tenant cap | Один tenant выедает линии | Atomic DB admission, leases, heartbeat/reaper | CAP-01..CAP-07 |
+| Lease reaper освобождает живой звонок либо оставляет orphan | Oversubscription/вечная блокировка | Provider/session evidence, conservative TTL, idempotent release | CAP-06/07 + lease metrics |
+| Supplier fields попадают в tenant HTTP/MCP/log | Раскрытие поставщика и маржи | Separate DTO allowlist, shared aggregate service, restricted logs | API-06, MCP-01..03, OBS-02 |
+| Usage попадает в Stripe Connect | Неверный merchant/payment ledger | Единственная wallet projection boundary | MONEY-23/24 |
+| История до identity ledger неоднозначна | Придуманные начисления | Backfill только exact unique matches; exception report, no auto-charge | MIG-03/04 |

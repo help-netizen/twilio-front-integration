@@ -7166,3 +7166,37 @@ Full draft, contracts, Tenancy & Roles matrix, and verification ledger:
 - Existing tenant and RBAC boundaries remain unchanged; no route or permission is
   added. Full draft and verification ledger:
   `docs/specs/EMAIL-OCCURRED-AT-001.md`.
+
+## VAPI-AGENCY-001 — Albusto сам себе агентство (2026-08-16)
+
+**Цель словами владельца:** Albusto становится агентством: **один платформенный
+аккаунт Vapi**, тенанты его не видят вовсе. Мы заводим ассистентов по компаниям,
+считаем расход и **биллим тенантов сами**. Vapi для нас — поставщик по одному
+контракту, а не место, где живут учётки клиентов.
+
+Закрытые продуктовые решения:
+
+- тариф — фактический supplier cost × конфигурируемая immutable-versioned
+  наценка; смена версии не переписывает прошлые начисления;
+- второй tenant физически закрыт gate до завершения Phase 2: устойчивой call
+  identity, жёстких assistant/resource/credential bindings и атомарных
+  global/company limits;
+- при лимите inbound идёт в обычную/voicemail fallback-ветку, outbound остаётся
+  queued без `POST /call`;
+- положительный final supplier cost биллится и для failed, no-answer и voicemail;
+- tenant видит только минуты, звонки и итоговую сумму. Vapi/org/provider,
+  supplier cost и breakdown остаются platform-only;
+- используется существующий prepaid wallet + auto-recharge; Stripe Connect и
+  application fees не становятся usage billing;
+- все деньги — exact `NUMERIC`; округление до cents выполняется один раз на
+  settlement, не по звонку.
+
+Engineering decisions: usage хранится в отдельном typed ledger, а не `calls`;
+EoC provisional, два совпавших `GET /call/:id` дают final, 24 часа без сходимости
+дают `stale_pending` + alert без списания; реестр имеет ключ
+`(company,purpose,environment)`; per-company SIP resource использует свой server
+credential; platform key хранится только в secret store. Прежние tenant-org/BYO
+key provisioner, CLI и tenant Vapi settings удаляются, а не сохраняются fallback.
+
+Полные data/API contracts, роли, gate и verification:
+`docs/specs/VAPI-AGENCY-001.md`.

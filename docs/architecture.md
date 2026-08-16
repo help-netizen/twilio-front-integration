@@ -8295,3 +8295,59 @@ date. A source ratchet prevents browser-local date formatting from reappearing.
 No new route, permission, timestamp convention, or ChatGPT MCP email projection is
 introduced. Full decision and verification record:
 `docs/specs/EMAIL-OCCURRED-AT-001.md`.
+
+## VAPI-AGENCY-001 — shared untrusted execution plane (2026-08-16)
+
+Vapi — одна общая, недоверенная execution plane под одним платформенным
+контрактом Albusto. Provider organization, assistant id, SIP address и webhook
+body не являются tenant boundary. Albusto остаётся system of record для company
+ownership, permissions, assistant/resource registry, call identity, concurrency,
+supplier usage, pricing и settlement. Платформенный Vapi key существует только в
+deployment secret store; tenant credentials/keys Vapi не существуют.
+
+До provider routing Albusto выбирает ровно один active tuple
+`(company,purpose,environment)`, закреплённый SIP resource и отдельный machine
+credential. Inbound session и одноразовый correlation token создаются до SIP;
+первый доверенный callback bind-ит `(provider_account_key,vapi_call_id)`. Outbound
+session создаётся до `POST /call`, response id bind-ится к session и attempt.
+Twilio CallSid — только correlation evidence: один parent может содержать
+несколько независимо тарифицируемых AI-ног.
+
+Supplier accounting — отдельный typed ledger. EoC является provisional
+observation; периодический `GET /call/:id` авторитетен; два разнесённых одинаковых
+snapshot дают final. После 24 часов без сходимости строка остаётся
+`stale_pending`, поднимается alert и debit не выполняется. Позднее изменение final
+создаёт новую snapshot version и adjustment/reversal, никогда не переписывает
+историю. Immutable pricing version вычисляет exact NUMERIC cost-plus; cent rounding
+происходит один раз на subscription-period settlement, который идемпотентно
+проецируется в существующий prepaid wallet/auto-recharge. Stripe Connect остаётся
+контуром tenant-to-customer payments.
+
+Admission одной DB-операцией резервирует global и company concurrency lease до
+provider call. Vapi `subscriptionLimits` — post-request telemetry, не источник
+допуска. Limit deny отправляет inbound в configured non-AI/voicemail fallback и
+оставляет outbound queued без provider POST. До приёмки Phase 2 единая runtime
+gate допускает только immutable ABC company id; второй tenant требует registry,
+per-surface credentials, durable identity, provider readback, pricing/wallet link
+и атомарные limits на каждом входящем и исходящем пути.
+
+Отвергнутые альтернативы:
+
+- организация Vapi на tenant: `/org` family закрыта платформенному private key,
+  agency tariff/CLI provisioning отсутствуют;
+- tenant BYO Vapi key в `provider_connections`: раскрывает поставщика и создаёт
+  второй ownership/security contract;
+- assistant id/environment как изоляция: это routing metadata, а не hard tenant
+  boundary;
+- supplier cost в `calls`: Twilio call и Vapi AI-leg имеют разную кардинальность,
+  а `calls.price` уже несёт другую семантику;
+- EoC-only либо daily aggregate accounting: analysis cost дозревает, а агрегат
+  теряет идемпотентность, audit и correction path;
+- `subscriptionLimits` как admission: ответ доступен после provider request и
+  отражает общий provider pool, поэтому гонку уже не предотвращает;
+- новый wallet/Connect usage billing: дублирует существующий prepaid +
+  auto-recharge и смешивает platform cost с tenant-customer payment flow;
+- сохранение `vapiOrgProvisioningService`/CLI «на всякий случай»: оставляет путь,
+  обходящий registry/gate и обслуживающий невозможную архитектуру.
+
+Полный контракт: `docs/specs/VAPI-AGENCY-001.md`.
