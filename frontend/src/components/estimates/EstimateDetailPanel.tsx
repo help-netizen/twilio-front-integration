@@ -467,7 +467,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 lives INSIDE this scroller (owner 2026-08-08: it scrolls with the content,
                 not pinned); overflow-x-hidden blocks the mobile horizontal rubber-band. */}
             <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
-                <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14">
+                <div className="border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14 md:px-6 md:pr-14">
+                <div className="mx-auto w-full max-w-[740px]">
                 {/* IDENTITY (ESTIMATE-REDESIGN-001): the amount is the title, one grey
                     line names who it is for and what it belongs to, then the status.
                     Contact and job were a section with an icon in the first draft —
@@ -503,12 +504,20 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 </div>
 
                 {/* ACTIONS — visible, never in a kebab, ordered by how often each is
-                    the right one. Hidden while editing: then the only move is Save. */}
+                    the right one. Hidden while editing: then the only move is Save.
+
+                    Full-width stack on mobile, where the sheet IS the button's width.
+                    On desktop they size to their labels and sit in one row: a
+                    thousand-pixel "Create invoice" bar reads as a banner, not a
+                    button, and six of them stacked pushed the estimate itself off
+                    the first screen (owner, 2026-08-16). Losing moves — declining
+                    for the customer, archiving — go to the far right, away from the
+                    hand that is reaching for the primary. */}
                 {!editing && (primaryAction || secondaryAction || quietActions.length > 0) && (
-                    <div className="mt-4 space-y-2">
+                    <div className="mt-4 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
                         {primaryAction && (
                             <Button
-                                className="h-[50px] w-full text-[15px]"
+                                className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
                                 onClick={primaryAction.onClick}
                                 disabled={primaryAction.disabled}
                                 data-testid={primaryAction.testid}
@@ -520,7 +529,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         {secondaryAction && (
                             <Button
                                 variant="secondary"
-                                className="h-[50px] w-full text-[15px]"
+                                className="h-[50px] w-full text-[15px] md:h-11 md:w-auto md:px-5"
                                 onClick={secondaryAction.onClick}
                                 disabled={secondaryAction.disabled}
                                 data-testid={secondaryAction.testid}
@@ -533,7 +542,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             <Button
                                 key={action.label}
                                 variant="ghost"
-                                className="h-11 w-full justify-center text-[15px] font-medium"
+                                className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
                                 style={{ color: 'var(--blanc-ink-2)' }}
                                 onClick={action.onClick}
                                 disabled={action.disabled}
@@ -545,35 +554,44 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         ))}
                         {/* Refusing on the customer's behalf, and archiving, sit last and
                             muted: rare, and one of them is how you lose a proposal. */}
-                        {live && !declined && (
-                            <Button
-                                variant="ghost"
-                                className="h-11 w-full justify-center text-[15px] font-medium"
-                                style={{ color: 'var(--blanc-danger)' }}
-                                onClick={() => setDeclineOpen(true)}
-                                data-testid="estimate-decline"
-                            >
-                                <XCircle className="size-4" />
-                                <span className="ml-1.5">Decline on customer’s behalf</span>
-                            </Button>
-                        )}
-                        {live && (
-                            <Button
-                                variant="ghost"
-                                className="h-11 w-full justify-center text-[15px] font-medium"
-                                style={{ color: 'var(--blanc-danger)' }}
-                                onClick={onArchive}
-                                data-testid="estimate-archive"
-                            >
-                                <Archive className="size-4" />
-                                <span className="ml-1.5">Archive estimate</span>
-                            </Button>
-                        )}
+                        <div className="flex flex-col gap-2 md:ml-auto md:flex-row md:items-center md:gap-1">
+                            {live && !declined && (
+                                <Button
+                                    variant="ghost"
+                                    className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
+                                    style={{ color: 'var(--blanc-danger)' }}
+                                    onClick={() => setDeclineOpen(true)}
+                                    data-testid="estimate-decline"
+                                >
+                                    <XCircle className="size-4" />
+                                    <span className="ml-1.5">Decline on customer’s behalf</span>
+                                </Button>
+                            )}
+                            {live && (
+                                <Button
+                                    variant="ghost"
+                                    className="h-11 w-full justify-center text-[15px] font-medium md:w-auto md:px-3"
+                                    style={{ color: 'var(--blanc-danger)' }}
+                                    onClick={onArchive}
+                                    data-testid="estimate-archive"
+                                >
+                                    <Archive className="size-4" />
+                                    <span className="ml-1.5">Archive estimate</span>
+                                </Button>
+                            )}
+                        </div>
                     </div>
                 )}
+                </div>
             </div>
-                <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_300px] md:gap-8">
-                <main className="min-w-0 space-y-6 p-5 md:py-6 md:pl-6 md:pr-0">
+                {/* ONE column at every width (owner, 2026-08-16). The panel is wide,
+                    but wide is not a reason to split: the estimate is a document you
+                    read top to bottom, and a 300px rail beside it turned Tasks and
+                    History into a second thing competing for the same first screen.
+                    The measure is the form canon's 740px — a line of item text stays
+                    readable instead of running the whole width of a laptop. */}
+                <div className="mx-auto w-full max-w-[740px] space-y-6 p-5 md:px-6 md:py-6">
+                <main className="min-w-0 space-y-6">
                     {/* Summary — OB-28: same presentation as the create/edit form (owner):
                         dashed invite block when empty, collapsible card when filled. */}
                     {estimate.summary ? readOnly ? (
@@ -820,9 +838,9 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     </section>
                 </main>
 
-                {/* Meta column: invisible container (no tint, no border) — flows under
-                    the document on mobile, sticks beside it on desktop. */}
-                <aside className="min-w-0 space-y-6 px-5 pb-6 md:sticky md:top-0 md:self-start md:py-6 md:pl-0 md:pr-6">
+                {/* Meta: invisible container (no tint, no border), always after the
+                    document — tasks and history are about the estimate, not part of it. */}
+                <aside className="min-w-0 space-y-6">
                     {/* Tasks are meta, not document content — they live beside the
                         document (desktop) / after it (mobile), so the first screen
                         belongs to the estimate itself (green-path review). */}
