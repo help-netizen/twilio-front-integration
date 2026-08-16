@@ -3,30 +3,78 @@
     "tag": "Feature",
     "text": "Avatars — give each teammate a personal AI copy (ChatGPT or Claude) that works in Albusto with their own access, never more"
   },
-  "a0737cf": { "hide": true },
-  "d3c5e6a": { "hide": true },
-  "e881077": { "hide": true },
-  "8f52ec2": { "hide": true },
-  "e9fa46f": { "hide": true },
-  "29f44f9": { "hide": true },
-  "75c1420": { "hide": true },
-  "bb81e01": { "hide": true },
-  "8a8ffe3": { "hide": true },
-  "1347d8b": { "hide": true },
-  "61a24a0": { "hide": true },
-  "3ce7619": { "hide": true },
-  "df457c0": { "hide": true },
-  "ff2719d": { "hide": true },
-  "0be1875": { "hide": true },
-  "e3af485": { "hide": true },
-  "bc3fe81": { "hide": true },
-  "03de707": { "hide": true },
-  "71dd077": { "hide": true },
-  "520d9bd": { "hide": true },
-  "4d47ae0": { "hide": true },
-  "4bea552": { "hide": true },
-  "6f32353": { "hide": true },
-  "630bc24": { "hide": true },
+  "a0737cf": {
+    "hide": true
+  },
+  "d3c5e6a": {
+    "hide": true
+  },
+  "e881077": {
+    "hide": true
+  },
+  "8f52ec2": {
+    "hide": true
+  },
+  "e9fa46f": {
+    "hide": true
+  },
+  "29f44f9": {
+    "hide": true
+  },
+  "75c1420": {
+    "hide": true
+  },
+  "bb81e01": {
+    "hide": true
+  },
+  "8a8ffe3": {
+    "hide": true
+  },
+  "1347d8b": {
+    "hide": true
+  },
+  "61a24a0": {
+    "hide": true
+  },
+  "3ce7619": {
+    "hide": true
+  },
+  "df457c0": {
+    "hide": true
+  },
+  "ff2719d": {
+    "hide": true
+  },
+  "0be1875": {
+    "hide": true
+  },
+  "e3af485": {
+    "hide": true
+  },
+  "bc3fe81": {
+    "hide": true
+  },
+  "03de707": {
+    "hide": true
+  },
+  "71dd077": {
+    "hide": true
+  },
+  "520d9bd": {
+    "hide": true
+  },
+  "4d47ae0": {
+    "hide": true
+  },
+  "4bea552": {
+    "hide": true
+  },
+  "6f32353": {
+    "hide": true
+  },
+  "630bc24": {
+    "hide": true
+  },
   "6c10055": {
     "tag": "Fix",
     "text": "Fixed the message timeline scrolling past the reply box on phones"
@@ -788,5 +836,52 @@
   },
   "94107a3": {
     "hide": true
+  },
+  "d297b84c": {
+    "tag": "Feature",
+    "text": "Customers can approve or decline an estimate straight from the link you send"
+  },
+  "925be0f2": {
+    "tag": "Feature",
+    "text": "Turn an estimate into an invoice in one action — with undo if it was a mistake"
+  },
+  "8a68ef3d": {
+    "tag": "Fix",
+    "text": "Editing an estimate no longer drops its line items"
+  },
+  "13f99b64": {
+    "tag": "Feature",
+    "text": "Create an estimate from the Estimates page, and send it to one clear recipient"
+  },
+  "b326f149": {
+    "tag": "Feature",
+    "text": "Estimate links now expire, and a job is chosen from a picker instead of typed by id"
+  },
+  "762b8c8e": {
+    "hide": true
+  },
+  "cabde4b8": {
+    "tag": "Polish",
+    "text": "Estimate card: the two actions that matter, the rest in one menu"
+  },
+  "05992a58": {
+    "tag": "Polish",
+    "text": "Invoice card: every action in one place, and a desktop layout of its own"
+  },
+  "b66057a7": {
+    "tag": "Polish",
+    "text": "Invoices and estimates use the full width on desktop — line items now show Qty and Rate"
+  },
+  "de036a50": {
+    "tag": "Fix",
+    "text": "Jobs with an address but no coordinates no longer go missing from the map"
+  },
+  "92a06529": {
+    "tag": "Fix",
+    "text": "Sending asks you to reconnect the mailbox instead of failing with a technical error"
+  },
+  "08ec1801": {
+    "tag": "Fix",
+    "text": "Analytics stays up when the map fails to load"
   }
 }
