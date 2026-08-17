@@ -10,7 +10,7 @@ const reconcile = require('../backend/src/services/vapiUsageReconcileService');
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
 const TAG = `${Date.now()}-${process.pid}`;
-const MIGRATIONS = [266, 267, 269].map((number) => fs.readFileSync(
+const MIGRATIONS = [266, 267, 269, 272].map((number) => fs.readFileSync(
     path.join(
         __dirname,
         '..',
@@ -21,7 +21,9 @@ const MIGRATIONS = [266, 267, 269].map((number) => fs.readFileSync(
             ? '266_vapi_call_identity_and_usage.sql'
             : number === 267
                 ? '267_vapi_provisional_usage_ingest.sql'
-                : '269_vapi_usage_reconcile_and_finalization.sql',
+                : number === 269
+                    ? '269_vapi_usage_reconcile_and_finalization.sql'
+                    : '272_vapi_loss_protection.sql',
     ),
     'utf8',
 ));
@@ -220,7 +222,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
     await client.query(
-        `TRUNCATE vapi_usage_alerts, vapi_usage_audit_runs,
+        `TRUNCATE vapi_usage_alert_delivery_items,
+                  vapi_usage_alert_delivery_runs, vapi_call_cost_input_events,
+                  vapi_usage_alerts, vapi_usage_audit_runs,
                   vapi_call_usage_adjustments, vapi_call_usage_final_snapshots,
                   vapi_call_usage, vapi_call_usage_observations, vapi_call_sessions`,
     );

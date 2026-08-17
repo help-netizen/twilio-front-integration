@@ -1,7 +1,10 @@
 'use strict';
 
 const axios = require('axios');
-const { parseExactJson } = require('./vapiProviderContracts');
+const {
+    normalizeUnsignedDecimal,
+    parseExactJson,
+} = require('./vapiProviderContracts');
 
 const DEFAULT_BASE_URL = 'https://api.vapi.ai';
 const MAX_LIST_LIMIT = 1000;
@@ -51,8 +54,9 @@ function requireTimestamp(value, code) {
 
 function sanitizeListedCalls(rawJson) {
     let value;
+    let numericPrefix;
     try {
-        value = parseExactJson(rawJson).value;
+        ({ value, numericPrefix } = parseExactJson(rawJson));
     } catch (_error) {
         throw new VapiProviderClientError('VAPI_LIST_CALLS_INVALID_JSON', { retryable: false });
     }
@@ -70,6 +74,24 @@ function sanitizeListedCalls(rawJson) {
                 retryable: false,
             });
         }
+        let supplierCost = null;
+        if (call.cost !== undefined && call.cost !== null) {
+            if (typeof call.cost !== 'string' || !call.cost.startsWith(numericPrefix)) {
+                throw new VapiProviderClientError(`VAPI_LIST_CALL_COST_INVALID_${index}`, {
+                    retryable: false,
+                });
+            }
+            try {
+                supplierCost = normalizeUnsignedDecimal(
+                    call.cost.slice(numericPrefix.length),
+                    `$[${index}].cost`,
+                );
+            } catch (_error) {
+                throw new VapiProviderClientError(`VAPI_LIST_CALL_COST_INVALID_${index}`, {
+                    retryable: false,
+                });
+            }
+        }
         return {
             id: call.id,
             createdAt: requireTimestamp(
@@ -80,6 +102,7 @@ function sanitizeListedCalls(rawJson) {
                 call.updatedAt,
                 `VAPI_LIST_CALL_UPDATED_AT_REQUIRED_${index}`,
             ),
+            supplierCost,
         };
     });
 }

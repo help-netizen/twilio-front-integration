@@ -320,13 +320,55 @@ function assertClaimUpdated(result) {
     return result;
 }
 
-async function emitSessionAlert(client, { companyId, sessionId, kind, details }) {
+async function emitSessionAlert(client, {
+    companyId,
+    sessionId,
+    providerCallId,
+    supplierCost,
+    kind,
+    details,
+    now = new Date(),
+}) {
     await client.query(
         `INSERT INTO vapi_usage_alerts (
-             company_id, vapi_call_session_id, kind, dedupe_key, details
-         ) VALUES ($1, $2, $3, $4, $5::jsonb)
-         ON CONFLICT (dedupe_key) DO NOTHING`,
-        [companyId, sessionId, kind, `${kind}:${sessionId}`, JSON.stringify(details || {})],
+             company_id, vapi_call_session_id, provider_call_id,
+             kind, dedupe_key, details, supplier_cost_at_risk,
+             cost_basis, updated_at
+         ) VALUES (
+             $1, $2, $3, $4, $5, $6::jsonb, $7::numeric,
+             CASE WHEN $7::numeric IS NULL THEN 'unknown' ELSE 'supplier' END,
+             $8
+         )
+         ON CONFLICT (dedupe_key) DO UPDATE
+         SET details = EXCLUDED.details,
+             supplier_cost_at_risk = EXCLUDED.supplier_cost_at_risk,
+             cost_basis = EXCLUDED.cost_basis,
+             updated_at = EXCLUDED.updated_at
+         WHERE vapi_usage_alerts.details IS DISTINCT FROM EXCLUDED.details
+            OR vapi_usage_alerts.supplier_cost_at_risk
+                IS DISTINCT FROM EXCLUDED.supplier_cost_at_risk`,
+        [
+            companyId,
+            sessionId,
+            providerCallId,
+            kind,
+            `${kind}:${sessionId}`,
+            JSON.stringify(details || {}),
+            supplierCost || null,
+            now,
+        ],
+    );
+}
+
+async function resolveSessionAlerts(client, { companyId, sessionId, kinds, now }) {
+    await client.query(
+        `UPDATE vapi_usage_alerts
+         SET resolved_at = COALESCE(resolved_at, $4), updated_at = $4
+         WHERE company_id = $1
+           AND vapi_call_session_id = $2
+           AND kind = ANY($3::text[])
+           AND resolved_at IS NULL`,
+        [companyId, sessionId, kinds, now],
     );
 }
 
@@ -376,20 +418,26 @@ async function recordProviderFailureWithClient({ claim, error, now = new Date() 
         await emitSessionAlert(client, {
             companyId: claim.company_id,
             sessionId: claim.vapi_call_session_id,
+            providerCallId: claim.vapi_call_id,
+            supplierCost: claim.supplier_cost,
             kind: 'stale_pending',
             details: { reason: 'provider_unavailable', attempts },
+            now,
         });
     }
     if (correctionStale) {
         await emitSessionAlert(client, {
             companyId: claim.company_id,
             sessionId: claim.vapi_call_session_id,
+            providerCallId: claim.vapi_call_id,
+            supplierCost: claim.supplier_cost,
             kind: 'late_correction_stale',
             details: {
                 reason: 'late_supplier_correction_not_stable',
                 targetSnapshotVersion: Number(claim.final_snapshot_version) + 1,
                 attempts,
             },
+            now,
         });
     }
     return {
@@ -669,6 +717,12 @@ async function applyAuthoritativeWithClient({
                     claim.claim_token,
                 ],
             ));
+            await resolveSessionAlerts(client, {
+                companyId: claim.company_id,
+                sessionId: claim.vapi_call_session_id,
+                kinds: ['late_correction_stale'],
+                now,
+            });
             return {
                 state: 'final', observationCreated: shouldAppend,
                 corrected: true, snapshotVersion: nextVersion,
@@ -736,6 +790,12 @@ async function applyAuthoritativeWithClient({
                 latestProviderUpdatedAt, observationId, now, claim.claim_token,
             ],
         ));
+        await resolveSessionAlerts(client, {
+            companyId: claim.company_id,
+            sessionId: claim.vapi_call_session_id,
+            kinds: ['stale_pending', 'local_missing', 'quarantined'],
+            now,
+        });
         return { state: 'final', observationCreated: shouldAppend, finalized: true };
     }
 
@@ -775,8 +835,11 @@ async function applyAuthoritativeWithClient({
         await emitSessionAlert(client, {
             companyId: claim.company_id,
             sessionId: claim.vapi_call_session_id,
+            providerCallId: parsed.call.id,
+            supplierCost: normalized.supplierCost,
             kind: 'stale_pending',
             details: { reason: 'supplier_cost_not_stable', attempts },
+            now,
         });
     }
     return { state: stale ? 'stale_pending' : 'stable_once', observationCreated: shouldAppend };

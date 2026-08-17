@@ -311,6 +311,46 @@ change; T1 фиксирует точные token/analysis поля.
 | `final_snapshot_version`, `finalized_at` | immutable pricing input version |
 | `created_at`, `updated_at` | аудит |
 
+#### `vapi_fallback_rate_policies` и `vapi_call_cost_input_events`
+
+`vapi_fallback_rate_policies` хранит версии резервной ставки
+`rate_per_started_minute`, их `effective_from`/`effective_to` и источник. Стартовая
+версия — `$0.25` за начатую минуту. Runtime-настройка
+`VAPI_FALLBACK_RATE_PER_MINUTE` создаёт новую временную версию; сессия выбирает
+версию по `admitted_at`, поэтому последующая смена ставки не переписывает прошлое.
+
+`vapi_call_cost_input_events` — immutable append-only вход будущего pricing, а не
+второй кошелёк:
+
+| Поле | Назначение |
+|---|---|
+| `company_id`, `vapi_call_session_id`, `input_version` | tenant/session scope и монотонная версия |
+| `event_kind` | `fallback_estimate` либо `supplier_actual_correction` |
+| `fallback_rate_policy_id`, `rate_per_started_minute` | pinned версия и exact ставка |
+| `duration_seconds`, `billed_started_minutes` | известная длительность и `GREATEST(1, CEIL(seconds / 60))` |
+| `supplier_snapshot_version` | nullable у оценки, обязательная ссылка на immutable supplier snapshot у коррекции |
+| `amount_delta`, `effective_supplier_cost`, `is_estimate` | signed delta, текущая exact база и явный признак оценки |
+| `state`, `created_at` | `pending_pricing`; списания здесь нет |
+
+На сессию допускается только одна первоначальная оценка. Первый настоящий
+supplier snapshot добавляет correction `actual - estimate`; последующие supplier
+snapshot versions добавляют свои дельты. Оценка не обновляется и не удаляется.
+Если supplier snapshot существовал до оценки, оценка вообще не создаётся.
+
+#### `vapi_usage_alerts` и доставка
+
+`vapi_usage_alerts` — текущие platform-only причины денежного риска. Поддерживаются
+ровно `provider_orphan`, `stale_pending`, `local_missing`, `quarantined`,
+`late_correction_stale`, `assistant_mismatch`, `attempt_mismatch` и
+`provider_call_collision`. Кроме scope/типа строка хранит только безопасные
+идентификаторы, известный exact `supplier_cost_at_risk` либо `NULL`, признак базы
+`supplier`/`fallback_estimate`/`unknown`, change clock и отметку последней доставки.
+
+`vapi_usage_alert_delivery_runs` и `vapi_usage_alert_delivery_items` сохраняют
+content fingerprint сводки, причину `digest`/`threshold`, денежные totals,
+получателя, send claim/status и состав строк. Успешная сводка отмечает входившие
+alerts; неизменившийся fingerprint повторно не отправляется.
+
 ### 5.3 Capacity, pricing и списание
 
 #### `vapi_concurrency_leases` (новая)
@@ -464,8 +504,10 @@ EoC observation
 - Рекомендуемый retry schedule: около 1 мин, 5 мин, 30 мин, 2 ч и 24 ч с jitter.
   Конкретные интервалы конфигурируемы; семантика состояний неизменна.
 - Через 24 часа без двух совпадений состояние становится `stale_pending`, создаётся
-  алерт, списания нет. Repair продолжает редкие попытки; молчаливая оценка/списание
-  запрещены.
+  алерт. Repair продолжает редкие попытки. Если известны сама AI-нога и её
+  длительность, отдельный явно помеченный fallback input резервирует стоимость по
+  §7.3; если длительность неизвестна, остаётся только денежный алерт. Тихая нулевая
+  финализация запрещена.
 - Negative, non-numeric, malformed или несогласованный cost переводит observation
   в `quarantined`. `costBreakdown.total` не прибавляется к `cost` и компонентам.
 
@@ -482,7 +524,35 @@ EoC observation
 - Worker/cron принимает `companyId` явно и выбирает строки с tenant predicate;
   глобальный dispatcher лишь перечисляет компании, не выполняет unscoped money SQL.
 
-### 7.3 Pricing и settlement
+### 7.3 Резервная стоимость при отсутствии supplier cost
+
+Авторитетный `GET /call/:id` и его final snapshots всегда имеют приоритет. Резервная
+оценка создаётся только для `stale_pending`/`quarantined` сессии без supplier
+snapshot и без provisional `usage.supplier_cost`, когда локально известна
+длительность AI-ноги. Любое настоящее supplier cost имеет приоритет независимо
+от состояния стабилизации. Полностью невидимый звонок
+или provider orphan без длительности не оценивается: он остаётся алертом с
+`cost=unknown`.
+
+Формула — `started_minutes = GREATEST(1, CEIL(duration_seconds / 60))`,
+`estimated_supplier_cost = started_minutes × pinned_rate`. Все операнды и результат
+— PostgreSQL `NUMERIC`; JavaScript float и округление до центов отсутствуют.
+Десять секунд равны одной начатой минуте. Дефолтная ставка — `$0.25/мин`.
+
+Когда настоящий supplier snapshot появляется после оценки, создаётся отдельный
+immutable `supplier_actual_correction` на `actual - estimate`; первоначальная
+оценка не переписывается. Pricing обязан выбрать actual при его наличии и не
+суммировать полную оценку с полной actual стоимостью дважды.
+
+Контрольный production-замер владельца на 93 обезличенных звонках: actual `$45.34`,
+оценка по `$0.25` с округлением минут вверх `$48.00`, покрытие `106%`; оценка ниже
+actual на 32 звонках и выше на 61. Ставка безубыточности для этой выборки около
+`$0.24/мин`; владелец выбрал `$0.25`, чтобы совокупно оставаться выше себестоимости.
+**Плоская ставка всё равно недобирает на отдельных длинных звонках** — разброс
+себестоимости по звонку двенадцатикратный, и единая цена минуты покрывает сумму,
+а не каждый звонок. Это evidence для выбора значения, не обещание будущего покрытия.
+
+### 7.4 Pricing и settlement
 
 `retail_amount_unrounded = supplier_cost × markup_multiplier`, где multiplier
 выбирается по времени вызова/зафиксированному policy id до settlement. Оба операнда
@@ -494,7 +564,7 @@ Settlement суммирует exact unrounded charges внутри период�
 идемпотентный debit существующего prepaid wallet. Недостаток баланса обрабатывается
 существующим auto-recharge; отдельный Vapi balance не создаётся.
 
-### 7.4 Матрица ended reason
+### 7.5 Матрица ended reason
 
 Главное правило: если авторитетный final supplier cost положителен, фактический
 cost биллится независимо от коммерческого результата звонка.
@@ -760,6 +830,7 @@ platform route/permission и всегда требует явного target com
 | T3 provisional usage ingest | `tests/vapiUsageIngest.test.js`, `tests/vapiUsageIngestMigration.test.js`, provider/route sibling suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 5 suites / 97 tests. T2 identity/assistant-request/machine siblings: 5 suites / 48 tests. Tenant SQL rules PASS; public-route rule PASS after registering the credential-protected assistant-request subrouter. |
 | T4 reconcile/audit | reconcile, audit, provider client, scheduler, migration + затронутые T3/provider/rules siblings | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js tests/vapiProviderClient.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiUsageReconcileMigration.test.js tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js tests/outboundLeadCallSmsCancel.test.js tests/repairAdvisorEvents.test.js tests/rulesEngine.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 13 suites / 160 tests. Включает missing-EoC repair, createdAt+updatedAt audit, exact decimals, leases, T-foreign, no-wallet и scheduler registration. Targeted `tenantSafetyLint` R-natural-key: PASS. |
 | Phase-1 adversarial fixes | независимый FSM, registry-less outbound ingest, identity quarantine, cached tokens, missed-day audit | команда T3/T4 с `tests/vapiProviderMessageQuarantineMigration.test.js` и webhook/provider siblings | PASS; целевой combined run 11 suites / 147 tests; targeted tenant safety 1/1; migration 270 forward×2/rollback/restore через real `psql` PASS |
+| Loss protection: digest + fallback cost | `tests/vapiUsageAlertDelivery.test.js`, `tests/vapiFallbackRating.test.js`, `tests/vapiLossProtectionMigration.test.js`, scheduler/provider/T3/T4 regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageAlertDelivery.test.js tests/vapiFallbackRating.test.js tests/vapiLossProtectionMigration.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiProviderClient.test.js tests/vapiUsageIngest.test.js tests/vapiUsageAuditRepair.test.js tests/vapiUsageReconcile.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; combined 9 suites / 96 tests, включая 12 новых digest/fallback/migration кейсов; targeted tenant SQL sanitizer — 0 нарушений |
 | Registry/provisioning/tools/routes | new registry suites + current Vapi regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAgencyProvisioning.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/services/callFlowRuntime.vapi.test.js --runInBand --forceExit` | PENDING |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
@@ -794,6 +865,9 @@ forward/rollback migration filenames добавляются в ledger после
 | `SAB-VAPI-COST-IDEMPOTENCY` | убрать observation/charge unique key | duplicate EoC/poll money test | PENDING |
 | `SAB-VAPI-LATE-COST` | считать немедленный одинаковый повтор вторым разнесённым замером | `vapiUsageReconcile` identical immediate poll | RED как требуется: повтор через 30 секунд дал `final` вместо `stable_once`; после восстановления тест green |
 | `SAB-VAPI-PROVIDER-ERROR-STABILITY` | увеличивать `stable_count` при provider API failure | `vapiUsageReconcile` provider failure is neither zero nor stability evidence | RED как требуется: outage поднял `stable_count` с 1 до 2; после восстановления тест green |
+| `SAB-VAPI-ALERT-DIGEST` | удалить стабильный content fingerprint/unchanged suppression | `vapiUsageAlertDelivery` one due digest covers many alerts and unchanged state never spams again | RED как требуется: неизменная сводка отправилась второй раз; после восстановления suite green |
+| `SAB-VAPI-ALERT-THRESHOLD` | заменить немедленную threshold ветку только обычным digest interval | `vapiUsageAlertDelivery` cost above threshold sends before digest window | RED как требуется: `$10.000000000001` вернул `digest_not_due`; после восстановления suite green |
+| `SAB-VAPI-FALLBACK-ACTUAL` | разрешить estimate при существующем supplier snapshot либо обновить estimate настоящей ценой | `vapiFallbackRating` supplier-final precedence + append-only correction tests | RED как требуется: при готовом supplier snapshot создалась fallback estimate; после восстановления suite green |
 | `SAB-VAPI-FINALITY` | перезаписать settled usage вместо adjustment | post-final provider correction test | PENDING |
 | `SAB-VAPI-MONEY-MATH` | преобразовать NUMERIC в JS `Number`/round per call | precision + aggregate rounding test | PENDING |
 | `SAB-VAPI-SETTLEMENT-DUP` | изменить wallet idempotency key на retry | crash/retry exactly-once debit test | PENDING |
@@ -818,6 +892,25 @@ forward/rollback migration filenames добавляются в ledger после
 - settlement retry, wallet idempotency conflict, exact charges versus cents/carry
   reconciliation;
 - tenant aggregate totals versus immutable charge/settlement totals.
+
+Доставка использует существующий callback `vapi-usage-reconcile` в
+`schedulerRegistry`; отдельного планировщика и изменения `src/server.js` нет.
+Каждую минуту он сначала создаёт доступные fallback/correction inputs, затем
+проверяет delivery. Обычная сводка настраивается
+`VAPI_USAGE_ALERT_DIGEST_INTERVAL_MINUTES` (default `60`). Если текущая известная
+неотнесённая/невыставляемая себестоимость строго больше
+`VAPI_USAGE_ALERT_THRESHOLD_USD` (default `$10`), изменившаяся сводка отправляется
+на ближайшем минутном tick, не ожидая digest window. Получатель задаётся
+`VAPI_USAGE_ALERT_RECIPIENT`, default совпадает с `FEEDBACK_INBOX_EMAIL`; sender
+company — `VAPI_USAGE_ALERT_SENDER_COMPANY_ID`, default совпадает с feedback.
+
+Первая строка text/HTML письма — exact сумма денежного риска, отдельно её
+fallback-estimated часть и число звонков с пока неизвестной стоимостью. Ниже идут разбивка по восьми
+типам и ограниченный список provider call/session identifiers. Transcript,
+recording, номер телефона, имя, credentials и сырой payload не читаются в email
+projection. Одно письмо содержит все изменившиеся unresolved alerts; одинаковая
+сводка не отправляется повторно даже после следующего digest interval. Изменение
+содержимого или переход выше порога создаёт новый delivery fingerprint.
 
 Логи не содержат credentials, correlation token, full transcript или tenant API
 supplier breakdown. Provider ids допустимы только в platform-restricted logs.

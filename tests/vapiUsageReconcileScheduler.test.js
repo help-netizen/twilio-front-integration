@@ -6,6 +6,19 @@ const {
 } = require('../backend/src/services/vapiUsageReconcileScheduler');
 
 describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
+    function lossProtectionDependencies() {
+        return {
+            fallbackRatingService: {
+                syncConfiguredRate: jest.fn().mockResolvedValue({ version: '1' }),
+                listDueCompanies: jest.fn().mockResolvedValue([]),
+                processCompany: jest.fn(),
+            },
+            alertDeliveryService: {
+                dispatchAlerts: jest.fn().mockResolvedValue({ skipped: true }),
+            },
+        };
+    }
+
     test('global dispatcher passes explicit company ids and isolates one company failure', async () => {
         const now = new Date('2026-08-16T06:00:00.000Z');
         const reconcileService = {
@@ -31,6 +44,7 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
         const scheduler = createVapiUsageReconcileScheduler({
             reconcileService,
             auditService,
+            ...lossProtectionDependencies(),
         });
 
         const result = await scheduler.tick(now);
@@ -71,6 +85,7 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
         const scheduler = createVapiUsageReconcileScheduler({
             reconcileService,
             auditService,
+            ...lossProtectionDependencies(),
         });
         const now = new Date('2026-08-16T06:00:00.000Z');
 
@@ -102,6 +117,7 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
         const scheduler = createVapiUsageReconcileScheduler({
             reconcileService,
             auditService,
+            ...lossProtectionDependencies(),
         });
         const now = new Date('2026-08-16T06:00:00.000Z');
 
@@ -111,6 +127,45 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
 
         expect(auditService.runNightlyAudit).toHaveBeenCalledTimes(2);
         expect(caughtUp.audit).toEqual({ skipped: true });
+    });
+
+    test('runs fallback rating before alert delivery inside the existing scheduler', async () => {
+        const calls = [];
+        const scheduler = createVapiUsageReconcileScheduler({
+            reconcileService: {
+                listDueCompanies: jest.fn().mockResolvedValue([]),
+                processDueCompany: jest.fn(),
+            },
+            auditService: {
+                utcDayWindow: jest.fn().mockReturnValue({ auditDate: '2026-08-15' }),
+                runNightlyAudit: jest.fn().mockResolvedValue({
+                    status: 'succeeded',
+                    auditDate: '2026-08-15',
+                }),
+            },
+            fallbackRatingService: {
+                syncConfiguredRate: jest.fn().mockResolvedValue({ version: '1' }),
+                listDueCompanies: jest.fn().mockResolvedValue(['company-a']),
+                processCompany: jest.fn().mockImplementation(async (companyId) => {
+                    calls.push('fallback');
+                    return { companyId, estimatesCreated: 1, correctionsCreated: 0 };
+                }),
+            },
+            alertDeliveryService: {
+                dispatchAlerts: jest.fn().mockImplementation(async () => {
+                    calls.push('delivery');
+                    return { sent: true };
+                }),
+            },
+        });
+
+        const result = await scheduler.tick(new Date('2026-08-16T06:00:00.000Z'));
+
+        expect(calls).toEqual(['fallback', 'delivery']);
+        expect(result).toMatchObject({
+            fallbackRating: { estimatesCreated: 1, dueCompanies: 1 },
+            alertDelivery: { sent: true },
+        });
     });
 
     test('registers one scheduler without a new server mount', () => {

@@ -607,6 +607,7 @@ function sanitizeVapiGetCallJson(rawJson) {
 
 module.exports = {
     VapiContractError,
+    normalizeUnsignedDecimal,
     parseExactJson,
     parseVapiServerMessageJson,
     parseVapiEndOfCallReportJson,

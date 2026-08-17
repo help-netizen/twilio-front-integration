@@ -2,12 +2,16 @@
 
 const reconcileService = require('./vapiUsageReconcileService');
 const auditService = require('./vapiUsageAuditService');
+const fallbackRatingService = require('./vapiFallbackRatingService');
+const alertDeliveryService = require('./vapiUsageAlertDeliveryService');
 
 const TICK_INTERVAL_MS = 60 * 1000;
 
 function createVapiUsageReconcileScheduler(dependencies = {}) {
     const reconcile = dependencies.reconcileService || reconcileService;
     const audit = dependencies.auditService || auditService;
+    const fallbackRating = dependencies.fallbackRatingService || fallbackRatingService;
+    const alertDelivery = dependencies.alertDeliveryService || alertDeliveryService;
     let nextRunAt = 0;
     let running = false;
     let lastAuditDate = null;
@@ -46,6 +50,49 @@ function createVapiUsageReconcileScheduler(dependencies = {}) {
                     lastAuditDate = auditDate;
                 }
             }
+            let fallbackResult;
+            try {
+                const fallbackPolicy = await fallbackRating.syncConfiguredRate({ now });
+                const fallbackCompanyIds = await fallbackRating.listDueCompanies(now);
+                const fallbackCompanies = [];
+                for (const companyId of fallbackCompanyIds) {
+                    try {
+                        fallbackCompanies.push(await fallbackRating.processCompany(
+                            companyId,
+                            { now },
+                        ));
+                    } catch (_error) {
+                        fallbackCompanies.push({ companyId, failed: true });
+                    }
+                }
+                fallbackResult = {
+                    policyVersion: String(fallbackPolicy.version),
+                    dueCompanies: fallbackCompanyIds.length,
+                    estimatesCreated: fallbackCompanies.reduce(
+                        (sum, row) => sum + (row.estimatesCreated || 0),
+                        0,
+                    ),
+                    correctionsCreated: fallbackCompanies.reduce(
+                        (sum, row) => sum + (row.correctionsCreated || 0),
+                        0,
+                    ),
+                    failedCompanies: fallbackCompanies.filter((row) => row.failed).length,
+                };
+            } catch (error) {
+                fallbackResult = {
+                    failed: true,
+                    error: String(error?.code || error?.message || 'fallback_rating_failed'),
+                };
+            }
+            let alertResult;
+            try {
+                alertResult = await alertDelivery.dispatchAlerts({ now });
+            } catch (error) {
+                alertResult = {
+                    failed: true,
+                    error: String(error?.code || error?.message || 'alert_delivery_failed'),
+                };
+            }
             return {
                 skipped: false,
                 companies,
@@ -62,6 +109,8 @@ function createVapiUsageReconcileScheduler(dependencies = {}) {
                     ...operational,
                 },
                 audit: auditResult,
+                fallbackRating: fallbackResult,
+                alertDelivery: alertResult,
             };
         } finally {
             running = false;

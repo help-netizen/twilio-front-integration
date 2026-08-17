@@ -358,6 +358,21 @@ function hashWirePayload(rawJson) {
     return crypto.createHash('sha256').update(rawJson, 'utf8').digest('hex');
 }
 
+function alertKindForCorrelation(reason) {
+    if (['assistant_mismatch', 'attempt_mismatch', 'provider_call_collision'].includes(reason)) {
+        return reason;
+    }
+    return 'quarantined';
+}
+
+function sanitizedSupplierCost(sanitizedPayload) {
+    const candidate = sanitizedPayload.message?.call?.cost
+        ?? sanitizedPayload.message?.cost;
+    if (typeof candidate !== 'string'
+        || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(candidate)) return null;
+    return candidate;
+}
+
 async function quarantineProviderMessage(client, {
     companyId,
     credentialId,
@@ -372,6 +387,7 @@ async function quarantineProviderMessage(client, {
     const validation = typeof error === 'string'
         ? error.slice(0, 255)
         : validationError(error);
+    const supplierCost = sanitizedSupplierCost(sanitizedPayload);
     const quarantined = await client.query(
         `INSERT INTO vapi_provider_message_quarantine (
              company_id, status_credential_id, payload_hash,
@@ -397,11 +413,24 @@ async function quarantineProviderMessage(client, {
     const quarantineId = quarantined.rows[0].id;
     await client.query(
         `INSERT INTO vapi_usage_alerts (
-             company_id, kind, dedupe_key, details
-         ) VALUES ($1, $2, $3, $4::jsonb)
-         ON CONFLICT (dedupe_key) DO NOTHING`,
+             company_id, provider_call_id, kind, dedupe_key, details,
+             supplier_cost_at_risk, cost_basis, updated_at
+         ) VALUES (
+             $1, $2, $3, $4, $5::jsonb, $6::numeric,
+             CASE WHEN $6::numeric IS NULL THEN 'unknown' ELSE 'supplier' END,
+             now()
+         )
+         ON CONFLICT (dedupe_key) DO UPDATE
+         SET details = EXCLUDED.details,
+             supplier_cost_at_risk = EXCLUDED.supplier_cost_at_risk,
+             cost_basis = EXCLUDED.cost_basis,
+             updated_at = now()
+         WHERE vapi_usage_alerts.details IS DISTINCT FROM EXCLUDED.details
+            OR vapi_usage_alerts.supplier_cost_at_risk
+                IS DISTINCT FROM EXCLUDED.supplier_cost_at_risk`,
         [
             companyId,
+            providerCallId,
             alertKind,
             `${alertKind}:${companyId}:${credentialId}:${payloadHash}`,
             JSON.stringify({
@@ -410,6 +439,7 @@ async function quarantineProviderMessage(client, {
                 providerCallId,
                 claimedMessageType,
             }),
+            supplierCost,
         ],
     );
     return {
@@ -580,7 +610,7 @@ async function ingestServerMessageWithClient({
             credentialId: normalizedCredentialId,
             rawJson,
             error,
-            alertKind: 'provider_message_quarantined',
+            alertKind: 'quarantined',
         });
         return {
             correlated: false,
@@ -606,7 +636,7 @@ async function ingestServerMessageWithClient({
                 credentialId: normalizedCredentialId,
                 rawJson,
                 error: `correlation:${correlation.reason}`,
-                alertKind: 'usage_ingest_rejected',
+                alertKind: alertKindForCorrelation(correlation.reason),
             });
             return { ...correlation, parsed, quarantined: true, ...quarantine };
         }
@@ -682,6 +712,8 @@ module.exports = {
     hashEvidence,
     normalizeObservation,
     addDecimalStrings,
+    alertKindForCorrelation,
+    sanitizedSupplierCost,
     correlateCallWithClient,
     quarantineProviderMessage,
     ingestServerMessage,

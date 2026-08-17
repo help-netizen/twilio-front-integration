@@ -38,17 +38,14 @@ describe('VAPI-AGENCY-001 T4 provider read client', () => {
         });
     });
 
-    test('list projection discards phone/customer/transcript data and keeps cursor evidence only', async () => {
+    test('list projection discards PII and preserves optional supplier cost as an exact lexeme', async () => {
         const http = { get: jest.fn().mockResolvedValue({
             status: 200,
-            data: JSON.stringify([{
-                id: 'call-a',
-                createdAt: '2026-08-15T10:00:00.000Z',
-                updatedAt: '2026-08-15T10:01:00.000Z',
-                transcript: 'private',
-                customer: { number: '+15555550100' },
-                recordingUrl: 'https://private.invalid/a',
-            }]),
+            data: '[{"id":"call-a","createdAt":"2026-08-15T10:00:00.000Z",'
+                + '"updatedAt":"2026-08-15T10:01:00.000Z",'
+                + '"cost":0.056500000000000001,"transcript":"private",'
+                + '"customer":{"number":"+15555550100"},'
+                + '"recordingUrl":"https://private.invalid/a"}]',
         }) };
         const client = createVapiProviderClient({
             http,
@@ -63,6 +60,7 @@ describe('VAPI-AGENCY-001 T4 provider read client', () => {
             id: 'call-a',
             createdAt: '2026-08-15T10:00:00.000Z',
             updatedAt: '2026-08-15T10:01:00.000Z',
+            supplierCost: '0.056500000000000001',
         }]);
         expect(http.get).toHaveBeenCalledWith('/call', expect.objectContaining({
             params: {

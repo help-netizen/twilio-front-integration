@@ -28,6 +28,10 @@ const MIGRATION_270 = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '270_vapi_provider_message_quarantine.sql'),
     'utf8',
 );
+const MIGRATION_272 = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '272_vapi_loss_protection.sql'),
+    'utf8',
+);
 
 let pool;
 let client;
@@ -341,6 +345,7 @@ beforeAll(async () => {
     await client.query(MIGRATION_267);
     await client.query(MIGRATION_269);
     await client.query(MIGRATION_270);
+    await client.query(MIGRATION_272);
     process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'assistant-outbound-a';
     process.env.VAPI_LEAD_CALL_ASSISTANT_ID = 'assistant-lead-a';
     await seedBaseData();
@@ -743,7 +748,7 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
                     quarantine.delivery_count,
                     (SELECT count(*)::int FROM vapi_usage_alerts alert
                      WHERE alert.company_id = quarantine.company_id
-                       AND alert.kind = 'provider_message_quarantined') AS alert_count
+                       AND alert.kind = 'quarantined') AS alert_count
              FROM vapi_provider_message_quarantine quarantine
              WHERE quarantine.company_id = $1`,
             [COMPANY_A],

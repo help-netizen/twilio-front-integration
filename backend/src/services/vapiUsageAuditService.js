@@ -159,6 +159,7 @@ async function localIdentityRows(client, start, end, providerCallIds) {
     const result = await client.query(
         `SELECT session.id, session.company_id, session.vapi_call_id,
                 usage.state, usage.last_provider_updated_at,
+                usage.supplier_cost::text AS supplier_cost,
                 usage.vapi_call_session_id IS NOT NULL AS has_usage,
                 COALESCE(session.started_at, session.bound_at, session.admitted_at)
                     AS identity_at
@@ -228,20 +229,47 @@ async function enqueueRepairs(client, {
     return enqueued;
 }
 
-async function insertAuditAlert(client, { run, kind, count }) {
-    if (count === 0) return;
-    await client.query(
-        `INSERT INTO vapi_usage_alerts (
-             audit_run_id, kind, dedupe_key, details
-         ) VALUES ($1, $2, $3, $4::jsonb)
-         ON CONFLICT (dedupe_key) DO NOTHING`,
-        [
-            run.id,
-            kind,
-            `${kind}:${run.audit_date_key || String(run.audit_date)}`,
-            JSON.stringify({ count }),
-        ],
-    );
+async function insertAuditAlerts(client, { run, kind, rows, now }) {
+    for (const row of rows) {
+        const providerCallId = row.providerCallId;
+        const supplierCost = row.supplierCost || null;
+        const details = {
+            auditDate: run.audit_date_key || String(run.audit_date),
+            providerCallId,
+        };
+        await client.query(
+            `INSERT INTO vapi_usage_alerts (
+                 company_id, vapi_call_session_id, audit_run_id,
+                 provider_call_id, kind, dedupe_key, details,
+                 supplier_cost_at_risk, cost_basis, updated_at
+             ) VALUES (
+                 $1, $2, $3, $4, $5, $6, $7::jsonb,
+                 $8::numeric,
+                 CASE WHEN $8::numeric IS NULL THEN 'unknown' ELSE 'supplier' END,
+                 $9
+             )
+             ON CONFLICT (dedupe_key) DO UPDATE
+             SET audit_run_id = EXCLUDED.audit_run_id,
+                 details = EXCLUDED.details,
+                 supplier_cost_at_risk = EXCLUDED.supplier_cost_at_risk,
+                 cost_basis = EXCLUDED.cost_basis,
+                 updated_at = EXCLUDED.updated_at
+             WHERE vapi_usage_alerts.details IS DISTINCT FROM EXCLUDED.details
+                OR vapi_usage_alerts.supplier_cost_at_risk
+                    IS DISTINCT FROM EXCLUDED.supplier_cost_at_risk`,
+            [
+                row.companyId || null,
+                row.sessionId || null,
+                run.id,
+                providerCallId,
+                kind,
+                `${kind}:${providerCallId}`,
+                JSON.stringify(details),
+                supplierCost,
+                now,
+            ],
+        );
+    }
 }
 
 async function completeAuditWithClient({ run, providerResult, now = new Date() }, client) {
@@ -261,14 +289,14 @@ async function completeAuditWithClient({ run, providerResult, now = new Date() }
         .filter((id) => !localByProviderId.has(id));
     const windowStartMs = new Date(run.window_start).getTime();
     const windowEndMs = new Date(run.window_end).getTime();
-    const missingIds = localRows
+    const missingRows = localRows
         .filter((row) => {
             const identityMs = new Date(row.identity_at).getTime();
             return identityMs >= windowStartMs
                 && identityMs < windowEndMs
                 && !providerResult.calls.has(row.vapi_call_id);
-        })
-        .map((row) => row.vapi_call_id);
+        });
+    const missingIds = missingRows.map((row) => row.vapi_call_id);
     const stuck = await client.query(
         `SELECT count(*)::int AS count,
                 COALESCE(array_agg(vapi_call_session_id::text ORDER BY first_pending_at)
@@ -316,15 +344,25 @@ async function completeAuditWithClient({ run, providerResult, now = new Date() }
     if (updated.rows.length !== 1) {
         throw new VapiUsageAuditError('VAPI_AUDIT_CLAIM_LOST');
     }
-    await insertAuditAlert(client, {
+    await insertAuditAlerts(client, {
         run,
         kind: 'provider_orphan',
-        count: orphanIds.length,
+        rows: orphanIds.map((providerCallId) => ({
+            providerCallId,
+            supplierCost: providerResult.calls.get(providerCallId)?.supplierCost || null,
+        })),
+        now,
     });
-    await insertAuditAlert(client, {
+    await insertAuditAlerts(client, {
         run,
         kind: 'local_missing',
-        count: missingIds.length,
+        rows: missingRows.map((row) => ({
+            companyId: row.company_id,
+            sessionId: row.id,
+            providerCallId: row.vapi_call_id,
+            supplierCost: row.supplier_cost,
+        })),
+        now,
     });
     return updated.rows[0];
 }
@@ -341,13 +379,16 @@ async function failAuditWithClient({ run, error, now = new Date() }, client) {
     );
     await client.query(
         `INSERT INTO vapi_usage_alerts (
-             audit_run_id, kind, dedupe_key, details
-         ) VALUES ($1, 'audit_failed', $2, $3::jsonb)
-         ON CONFLICT (dedupe_key) DO NOTHING`,
+             audit_run_id, kind, dedupe_key, details, updated_at
+         ) VALUES ($1, 'quarantined', $2, $3::jsonb, $4)
+         ON CONFLICT (dedupe_key) DO UPDATE
+         SET details = EXCLUDED.details, updated_at = EXCLUDED.updated_at
+         WHERE vapi_usage_alerts.details IS DISTINCT FROM EXCLUDED.details`,
         [
             run.id,
-            `audit_failed:${run.audit_date_key || String(run.audit_date)}`,
-            JSON.stringify({ code }),
+            `quarantined:audit:${run.audit_date_key || String(run.audit_date)}`,
+            JSON.stringify({ code, source: 'provider_audit' }),
+            now,
         ],
     );
     return { status: 'failed', code };
