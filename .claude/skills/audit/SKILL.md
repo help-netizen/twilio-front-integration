@@ -38,6 +38,7 @@ This is a **user-facing** review of something that already exists. It is differe
 - Do not audit until the surface, flow, and capture environment are known.
 - Do not claim full accessibility compliance from screenshots alone — say what is visible and what still needs real assistive-tech / keyboard testing.
 - Help-center pages and web searches are **research**, not an audit. If the actual flow could not be accessed and captured, do not call it an audit.
+- **Know what the capture environment cannot exercise.** A component harness (`frontend/src/harness/*`) has no backend, so the *success* path of any server-dependent action (save, generate, send, pay) never runs there — what you see after triggering it is the loading or the **failure** path. Do not file a finding about post-success behaviour from a harness (e.g. "the field isn't cleared after generate" — it isn't, *because the call failed*); verify that on staging with a real backend, or mark it an explicit evidence limit. Read the success branch in the code before asserting a success-path bug.
 
 ## What to inspect
 
