@@ -498,7 +498,7 @@ export function InvoiceDetailPanel({
                                                 variant="ghost"
                                                 aria-label="More actions"
                                                 size="action"
-                                        className="w-11 shrink-0 justify-center p-0 md:w-auto md:px-3"
+                                        className="ml-auto w-11 shrink-0 justify-center p-0 md:ml-0 md:w-auto md:px-3"
                                                 style={{ color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
                                                 data-testid="invoice-more"
                                             >
