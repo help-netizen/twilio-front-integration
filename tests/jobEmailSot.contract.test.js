@@ -15,12 +15,17 @@ describe('JOB-EMAIL-SOT-001 contact-first job identity contract', () => {
         'backend/src/services/jobsService.js',
         'backend/src/db/scheduleQueries.js',
         'backend/src/db/syncQueries.js',
-        'backend/src/services/agentHandlers.js',
     ])('%s projects effective email/phone through a same-company contact join', relativePath => {
         const source = read(relativePath);
         expect(source).toContain(EFFECTIVE_EMAIL);
         expect(source).toContain(EFFECTIVE_PHONE);
         expect(source).toMatch(OWNED_CONTACT_JOIN);
+    });
+
+    test('agentHandlers does not maintain a second Job customer-identity projection', () => {
+        const source = read('backend/src/services/agentHandlers.js');
+        expect(source).not.toMatch(/j\.customer_(?:email|phone)/);
+        expect(source).not.toMatch(/FROM jobs j[\s\S]{0,500}JOIN contacts c/);
     });
 
     test.each([

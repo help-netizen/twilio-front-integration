@@ -437,9 +437,9 @@ beforeEach(() => {
 });
 
 describe('CHATGPT-CRM-MCP S3 real-PostgreSQL consent contract', () => {
-    databaseTest('send consent is independent from writes and reconciles 20 → 32 → 34', async () => {
+    databaseTest('send consent is independent from writes and reconciles 19 → 31 → 33', async () => {
         let resolved = await resolveA();
-        expect(await listVisible(resolved)).toHaveLength(20);
+        expect(await listVisible(resolved)).toHaveLength(19);
 
         await expect(marketplaceService.setChatgptMcpWrites(
             state.companyA,
@@ -451,7 +451,7 @@ describe('CHATGPT-CRM-MCP S3 real-PostgreSQL consent contract', () => {
             grant_version: 3,
         });
         resolved = await resolveA();
-        expect(await listVisible(resolved)).toHaveLength(32);
+        expect(await listVisible(resolved)).toHaveLength(31);
         expect(await listVisible(resolved)).not.toEqual(expect.arrayContaining(
             permissions.SEND_TOOL_NAMES
         ));
@@ -471,7 +471,7 @@ describe('CHATGPT-CRM-MCP S3 real-PostgreSQL consent contract', () => {
             grant_version: 4,
         });
         resolved = await resolveA();
-        expect(await listVisible(resolved)).toHaveLength(34);
+        expect(await listVisible(resolved)).toHaveLength(33);
 
         await expect(marketplaceService.setChatgptMcpSends(
             state.companyA,
@@ -483,7 +483,7 @@ describe('CHATGPT-CRM-MCP S3 real-PostgreSQL consent contract', () => {
             grant_version: 3,
         });
         resolved = await resolveA();
-        expect(await listVisible(resolved)).toHaveLength(32);
+        expect(await listVisible(resolved)).toHaveLength(31);
 
         await marketplaceService.setChatgptMcpSends(
             state.companyA,
@@ -496,7 +496,7 @@ describe('CHATGPT-CRM-MCP S3 real-PostgreSQL consent contract', () => {
             false
         );
         resolved = await resolveA();
-        expect(await listVisible(resolved)).toHaveLength(22);
+        expect(await listVisible(resolved)).toHaveLength(21);
         expect(await listVisible(resolved)).toEqual(expect.arrayContaining(
             permissions.SEND_TOOL_NAMES
         ));
@@ -512,7 +512,7 @@ describe('CHATGPT-CRM-MCP S3 real-PostgreSQL consent contract', () => {
             true
         );
         resolved = await resolveA();
-        expect(await listVisible(resolved)).toHaveLength(34);
+        expect(await listVisible(resolved)).toHaveLength(33);
     });
 });
 

@@ -46,6 +46,7 @@ const FOREIGN_PMIDS = Object.fromEntries(
 );
 
 let dbReady = false;
+let defaultCompanyCreated = false;
 let companyBCreated = false;
 let mailboxAId = null;
 let mailboxBId = null;
@@ -122,6 +123,7 @@ async function seedMessage({
     bodyHtml,
     fromEmail,
     fromName,
+    occurredAt = at,
 }) {
     const result = await db.query(
         `INSERT INTO email_messages
@@ -131,18 +133,26 @@ async function seedMessage({
              body_text, body_html, gmail_internal_at, occurred_at)
          VALUES
             ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12,
-             $13, $14, $15, $16, COALESCE($16, now()))
+             $13, $14, $15, $16, COALESCE($17, now()))
          RETURNING id`,
         [
             companyId, mailboxId, threadId, pmid, providerThreadId,
             messageIdHeader, direction, timelineId, onTimeline, fromEmail,
-            fromName, subject, snippet, bodyText, bodyHtml, at,
+            fromName, subject, snippet, bodyText, bodyHtml, at, occurredAt,
         ]
     );
     seededMessageIds[companyId].push(result.rows[0].id);
 }
 
-function row({ key, direction, header, timelineId = null, onTimeline = false, at = TIMES[key] }) {
+function row({
+    key,
+    direction,
+    header,
+    timelineId = null,
+    onTimeline = false,
+    at = TIMES[key],
+    occurredAt = at,
+}) {
     const inbound = direction === 'inbound';
     return {
         pmid: PMIDS[key],
@@ -157,6 +167,7 @@ function row({ key, direction, header, timelineId = null, onTimeline = false, at
         bodyHtml: `<p>${key} body html</p>`,
         fromEmail: inbound ? 'reply+fixture@messaging.yelp.com' : 'dispatch@example.com',
         fromName: inbound ? 'Kim L.' : 'Albusto Dispatch',
+        occurredAt,
     };
 }
 
@@ -174,6 +185,7 @@ async function seedCompanyARows() {
         row({
             key: 'NULL_TS', direction: 'outbound', header: `<${TAG}-null-ts@x>`,
             timelineId: timelineAId, onTimeline: true, at: null,
+            occurredAt: '2026-07-11T09:00:00.000Z',
         }),
     ];
     for (const message of t1Rows) {
@@ -221,6 +233,9 @@ async function seedForeignT1Clone() {
             timelineId: definition.linked ? foreignTimelineId : null,
             onTimeline: Boolean(definition.linked),
             at: definition.at === null ? null : TIMES[definition.key],
+            occurredAt: definition.at === null
+                ? '2026-07-11T09:00:00.000Z'
+                : TIMES[definition.key],
         });
         await seedMessage({
             companyId: COMPANY_B_ID,
@@ -249,6 +264,14 @@ beforeAll(async () => {
         dbReady = false;
         return;
     }
+
+    const defaultCompany = await db.query(
+        `INSERT INTO companies (id, name, slug)
+         VALUES ($1, 'Yelp Backfill Test Company A', $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [DEFAULT_COMPANY_ID, `ysb-company-a-${TAG.toLowerCase()}`]
+    );
+    defaultCompanyCreated = defaultCompany.rowCount === 1;
 
     const companyB = await db.query(
         `INSERT INTO companies (id, name, slug)
@@ -336,6 +359,15 @@ afterAll(async () => {
                     throw new Error(`cleanup deleted ${deleted.rowCount}/1 company-B rows`);
                 }
             }
+            if (defaultCompanyCreated) {
+                const deleted = await db.query(
+                    'DELETE FROM companies WHERE id = $1',
+                    [DEFAULT_COMPANY_ID]
+                );
+                if (deleted.rowCount !== 1) {
+                    throw new Error(`cleanup deleted ${deleted.rowCount}/1 default-company rows`);
+                }
+            }
         } catch (error) {
             cleanupError = error;
             console.warn('[yelpSendsBackfill.db] cleanup failed:', error.message);
@@ -371,9 +403,11 @@ describe('history SQL · real PostgreSQL', () => {
             'body_text',
             'snippet',
             'gmail_internal_at',
+            'occurred_at',
         ]);
         expect(rows.filter(item => item.provider_message_id === PMIDS.NULL_TS)).toHaveLength(1);
         expect(rows.at(-1).gmail_internal_at).toBeNull();
+        expect(rows.at(-1).occurred_at).toEqual(new Date('2026-07-11T09:00:00.000Z'));
         expect(rows.some(item => item.provider_message_id === PMIDS.D1)).toBe(false);
         expect(rows.some(item => Object.values(FOREIGN_PMIDS).includes(item.provider_message_id))).toBe(false);
 

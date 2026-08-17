@@ -30,6 +30,7 @@ const snapshotDir = path.join(os.tmpdir(), `yelp-cleanup-${TAG}`);
 
 let dbReady = false;
 let mailboxId = null, threadId = null, createdMailbox = false;
+let createdDefaultCompany = false;
 const junkContactIds = [];
 const seededPmids = [];
 
@@ -63,6 +64,12 @@ beforeAll(async () => {
         dbReady = false;
         return;
     }
+    const defaultCompany = await db.query(
+        `INSERT INTO companies (id, name, slug) VALUES ($1, 'TLC Default Test Co', $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [DEFAULT_COMPANY_ID, `tlc-default-${TAG}`]
+    );
+    createdDefaultCompany = defaultCompany.rowCount === 1;
     const existing = await db.query(`SELECT id FROM email_mailboxes WHERE company_id = $1 ORDER BY id LIMIT 1`, [DEFAULT_COMPANY_ID]);
     if (existing.rows[0]) { mailboxId = existing.rows[0].id; }
     else {
@@ -84,6 +91,7 @@ afterAll(async () => {
             }
             if (threadId) await db.query('DELETE FROM email_threads WHERE id = $1', [threadId]);
             if (createdMailbox && mailboxId) await db.query('DELETE FROM email_mailboxes WHERE id = $1', [mailboxId]);
+            if (createdDefaultCompany) await db.query('DELETE FROM companies WHERE id = $1', [DEFAULT_COMPANY_ID]);
             fs.rmSync(snapshotDir, { recursive: true, force: true });
         } catch (e) { console.warn('[yelpTimelineCleanup.db] cleanup failed:', e.message); }
     }

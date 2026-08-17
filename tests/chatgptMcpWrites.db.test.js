@@ -494,7 +494,7 @@ beforeAll(async () => {
 });
 
 describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => {
-    databaseTest('consent is owner-only, idempotent, and filters 20 → 32 → 20 tools', async () => {
+    databaseTest('consent is owner-only, idempotent, and filters 19 → 31 → 19 tools', async () => {
         let resolved = await resolveA();
         let response = await protocol.handleJsonRpc(protocolRequest(resolved), {
             jsonrpc: '2.0',
@@ -502,7 +502,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(20);
+        expect(response.result.tools).toHaveLength(19);
 
         await expect(marketplaceService.setChatgptMcpWrites(
             state.companyA,
@@ -560,7 +560,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(32);
+        expect(response.result.tools).toHaveLength(31);
         expect(response.result.tools.filter((tool) => tool.annotations.kind === 'write')).toHaveLength(12);
 
         await expect(setConsent(false)).resolves.toMatchObject({ enabled: false, grant_version: 2 });
@@ -577,7 +577,7 @@ describe('CHATGPT-CRM-MCP S2a real-PostgreSQL consent and race contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(20);
+        expect(response.result.tools).toHaveLength(19);
         await setConsent(true);
     });
 
@@ -819,7 +819,7 @@ describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(32);
+        expect(response.result.tools).toHaveLength(31);
         expect(response.result.tools.map((tool) => tool.name))
             .toEqual(expect.arrayContaining(s2bNames));
 
@@ -834,7 +834,7 @@ describe('CHATGPT-CRM-MCP S2b real-PostgreSQL financial write contract', () => {
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(32);
+        expect(response.result.tools).toHaveLength(31);
         expect(response.result.tools.map((tool) => tool.name))
             .toEqual(expect.arrayContaining(s2bNames));
     });
@@ -1084,7 +1084,7 @@ describe('CHATGPT-CRM-MCP S2c-b Estimate-to-Invoice conversion contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(32);
+        expect(response.result.tools).toHaveLength(31);
         expect(response.result.tools.map((tool) => tool.name)).toContain(TOOL_NAME);
 
         await expect(setConsent(true)).resolves.toMatchObject({
@@ -1098,7 +1098,7 @@ describe('CHATGPT-CRM-MCP S2c-b Estimate-to-Invoice conversion contract', () => 
             method: 'tools/list',
             params: {},
         });
-        expect(response.result.tools).toHaveLength(32);
+        expect(response.result.tools).toHaveLength(31);
         expect(response.result.tools.map((tool) => tool.name)).toContain(TOOL_NAME);
     });
 
@@ -1485,7 +1485,7 @@ describe('AVATARS-001 Phase B real-PostgreSQL parity and scope contract', () => 
         }
     });
 
-    databaseTest('34 tools × 4 roles: live tools/list and direct denied calls match the parity table', async () => {
+    databaseTest('33 tools × 4 roles: live tools/list and direct denied calls match the parity table', async () => {
         await marketplaceService.setChatgptMcpWrites(
             state.companyA,
             state.humanA.id,
@@ -1502,7 +1502,7 @@ describe('AVATARS-001 Phase B real-PostgreSQL parity and scope contract', () => 
             includeDispatcher: true,
             dispatcherOnly: true,
         });
-        expect(allTools).toHaveLength(34);
+        expect(allTools).toHaveLength(33);
 
         for (const role of ['tenant_admin', 'manager', 'dispatcher', 'provider']) {
             await db.query(

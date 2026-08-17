@@ -9,32 +9,33 @@ function readMigration(filename) {
     return fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'migrations', filename), 'utf8');
 }
 
+function readSeedStatements(migrationSql, marker = 'INSERT INTO marketplace_apps') {
+    const offset = migrationSql.indexOf(marker);
+    if (offset === -1) {
+        throw new Error(`Marketplace seed marker not found: ${marker}`);
+    }
+    return migrationSql.slice(offset);
+}
+
 async function ensureMarketplaceSchema(client = null) {
     if (schemaReady) return;
 
     if (client) {
         const query = queryFor(client);
         await query(`SELECT pg_advisory_xact_lock(hashtext('blanc_marketplace_schema'))`);
-        await query(`
-            CREATE OR REPLACE FUNCTION update_updated_at_column()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                NEW.updated_at = NOW();
-                RETURN NEW;
-            END;
-            $$ language 'plpgsql';
-        `);
-        await query(readMigration('083_create_marketplace_apps.sql'));
+        // Runtime schema ensure is catalog reconciliation, not structural
+        // migration. Replaying CREATE INDEX after this caller has changed rows
+        // can fail on PostgreSQL deferred trigger events and abort the business
+        // transaction. Deployment migrations own tables/indexes/triggers; here
+        // we replay only idempotent seed DML.
+        await query(readSeedStatements(readMigration('083_create_marketplace_apps.sql')));
         await query(readMigration('087_seed_mail_secretary_marketplace_app.sql'));
         await query(readMigration('088_seed_vapi_ai_marketplace_app.sql'));
-        // F018 Stripe Payments: connected accounts, sessions, webhook log + seed app.
-        await query(readMigration('113_create_stripe_connected_accounts.sql'));
-        await query(readMigration('114_create_stripe_payment_sessions.sql'));
-        await query(readMigration('115_create_stripe_webhook_events.sql'));
+        // F018 Stripe Payments catalog seed. Structural migrations 113-115 and
+        // 117 are intentionally not replayed from application transactions.
         await query(readMigration('116_seed_stripe_payments_marketplace_app.sql'));
         // SLOT-ENGINE-001 Phase 2: Smart Slot Engine app (gate-only, no credential).
         await query(readMigration('126_seed_smart_slot_engine_marketplace_app.sql'));
-        await query(readMigration('117_create_stripe_terminal_locations.sql'));
         // SEND-DOC-001: Google Email app + repoint mail-secretary's dependency_cta.
         // MUST run AFTER 087 (which re-seeds mail-secretary's old /settings/email path)
         // so this update wins on every schema-ensure, and so google-email self-heals.
@@ -72,9 +73,6 @@ async function ensureMarketplaceSchema(client = null) {
         // on the existing controlled-rollout env flag plus the company-scoped
         // connected-installation gate added by LEAD-INSTALL-GATE-001.
         await query(readMigration('203_seed_yelp_leads_marketplace_app.sql'));
-        // MARKETPLACE-RATINGS-001: ratings DDL plus the authoritative copy layer.
-        // Copy MUST replay after every older app seed and assistant repair.
-        await query(readMigration('204_create_app_ratings.sql'));
         // ASSISTANT-BOT-001: restore bot-facing descriptions after app seeds overwrite metadata.
         // MUST run AFTER every app seed above (it patches their metadata).
         await query(readMigration('173_seed_assistant_app_descriptions.sql'));
@@ -86,9 +84,9 @@ async function ensureMarketplaceSchema(client = null) {
         // installations for every existing company. The all-status NOT EXISTS
         // guard makes boot replay preserve a deliberate disconnect.
         await query(readMigration('212_seed_report_to_estimate_marketplace_app.sql'));
-        // LEAD-CHANNEL-ANALYTICS-001: derived Google Ads card + connection
-        // tables. Migration 214 is idempotent and owns its assistant metadata.
-        await query(readMigration('214_google_ads_connector.sql'));
+        // LEAD-CHANNEL-ANALYTICS-001: replay only the catalog row from the mixed
+        // DDL/seed migration. Connection tables remain migration-owned.
+        await query(readSeedStatements(readMigration('214_google_ads_connector.sql')));
         // VAPI-AGENCY-001 T5: old seeds above republish the legacy provider app;
         // replay its retirement last so no process boot can expose it again.
         await query(readMigration('276_retire_tenant_vapi_marketplace_app.sql'));

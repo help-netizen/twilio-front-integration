@@ -34,6 +34,7 @@ const TAG = `TLD-${Date.now()}`;
 const CONV = (s) => `CONV-${TAG}-${s}`;
 
 let dbReady = false;
+let createdDefaultCompany = false;
 const seededConvIds = [];
 const seededPmids = [];
 let mailboxId = null;
@@ -75,6 +76,12 @@ beforeAll(async () => {
         dbReady = false;
         return;
     }
+    const defaultCompany = await db.query(
+        `INSERT INTO companies (id, name, slug) VALUES ($1, 'TLD Default Test Co', $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [DEFAULT_COMPANY_ID, `tld-default-${TAG}`]
+    );
+    createdDefaultCompany = defaultCompany.rowCount === 1;
     // Second tenant for the cross-tenant assertion (FK: timelines.company_id → companies).
     await db.query(
         `INSERT INTO companies (id, name, slug) VALUES ($1, 'TLD Test Co B', $2)
@@ -118,6 +125,7 @@ afterAll(async () => {
             if (threadId) await db.query('DELETE FROM email_threads WHERE id = $1', [threadId]);
             if (createdMailbox && mailboxId) await db.query('DELETE FROM email_mailboxes WHERE id = $1', [mailboxId]);
             await db.query('DELETE FROM companies WHERE id = $1', [COMPANY_B]);
+            if (createdDefaultCompany) await db.query('DELETE FROM companies WHERE id = $1', [DEFAULT_COMPANY_ID]);
         } catch (e) {
             console.warn('[yelpTimelineResolve.db] cleanup failed:', e.message);
         }

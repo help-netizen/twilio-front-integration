@@ -34,6 +34,8 @@ const { convTask } = require('./yelpFixtures');
 
 const COMPANY = DEFAULT_COMPANY_ID;
 let dbReady = false;
+let createdDefaultCompany = false;
+let createdYelpInstallationId = null;
 const usedConvIds = [];
 const usedPmids = [];
 
@@ -63,7 +65,44 @@ beforeAll(async () => {
     } catch (e) {
         console.warn('\n[yelpConvoHandler.db] SKIPPED-NEEDS-DB —', e.message, '\n');
         dbReady = false;
+        return;
     }
+
+    const company = await db.query(
+        `INSERT INTO companies (id, name, slug)
+         VALUES ($1, 'Yelp Conversation Test Company', $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [COMPANY, `yelp-convo-${process.pid}-${Date.now()}`]
+    );
+    createdDefaultCompany = company.rowCount === 1;
+
+    const installation = await db.query(
+        `INSERT INTO marketplace_installations
+            (company_id, app_id, status, installed_at, metadata)
+         SELECT $1, app.id, 'connected', NOW(), '{"test_fixture":true}'::jsonb
+         FROM marketplace_apps app
+         WHERE app.app_key = 'yelp-leads'
+           AND NOT EXISTS (
+               SELECT 1
+               FROM marketplace_installations existing
+               WHERE existing.company_id = $1
+                 AND existing.app_id = app.id
+                 AND existing.status IN ('connected', 'provisioning_failed')
+           )
+         RETURNING id`,
+        [COMPANY]
+    );
+    createdYelpInstallationId = installation.rows[0]?.id || null;
+    const connected = await db.query(
+        `SELECT 1
+         FROM marketplace_installations installation
+         JOIN marketplace_apps app ON app.id = installation.app_id
+         WHERE installation.company_id = $1
+           AND app.app_key = 'yelp-leads'
+           AND installation.status = 'connected'`,
+        [COMPANY]
+    );
+    if (!connected.rows[0]) throw new Error('connected Yelp Leads fixture is required');
 });
 
 beforeEach(() => {
@@ -75,11 +114,29 @@ afterAll(async () => {
     if (dbReady) {
         try {
             if (usedPmids.length) {
-                await db.query('DELETE FROM tasks WHERE agent_type = $1 AND company_id = $2', ['yelp_convo', COMPANY]);
+                await db.query(
+                    `DELETE FROM tasks
+                     WHERE agent_type = 'yelp_convo'
+                       AND company_id = $1
+                       AND agent_input->>'inbound_provider_message_id' = ANY($2)`,
+                    [COMPANY, usedPmids]
+                );
                 await db.query('DELETE FROM yelp_lead_events WHERE provider_message_id = ANY($1)', [usedPmids]);
             }
             if (usedConvIds.length) {
-                await db.query('DELETE FROM yelp_conversations WHERE conversation_id = ANY($1)', [usedConvIds]);
+                await db.query(
+                    'DELETE FROM yelp_conversations WHERE company_id = $1 AND conversation_id = ANY($2)',
+                    [COMPANY, usedConvIds]
+                );
+            }
+            if (createdYelpInstallationId) {
+                await db.query(
+                    'DELETE FROM marketplace_installations WHERE id = $1 AND company_id = $2',
+                    [createdYelpInstallationId, COMPANY]
+                );
+            }
+            if (createdDefaultCompany) {
+                await db.query('DELETE FROM companies WHERE id = $1', [COMPANY]);
             }
         } catch (e) {
             console.warn('[yelpConvoHandler.db] cleanup failed:', e.message);

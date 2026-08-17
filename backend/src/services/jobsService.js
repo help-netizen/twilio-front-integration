@@ -1543,14 +1543,23 @@ function mergeNotes(localNotes, zbNotes) {
 // Notes
 // =============================================================================
 
-async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null, companyId) {
+async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null, companyId, client = null) {
     if (!companyId) {
         const err = new Error('addNote requires companyId');
         err.code = 'TENANT_CONTEXT_REQUIRED';
         err.httpStatus = 403;
         throw err;
     }
-    const job = await getJobById(jobId, companyId);
+    const executor = client?.query ? client : db;
+    const job = client?.query
+        ? (await executor.query(
+            `SELECT id, notes
+             FROM jobs
+             WHERE id = $1 AND company_id = $2
+             LIMIT 1`,
+            [jobId, companyId],
+        )).rows[0]
+        : await getJobById(jobId, companyId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
     const note = { id: noteId || randomUUID(), text, created: new Date().toISOString(), created_by: createdBy || null };
@@ -1567,7 +1576,7 @@ async function addNote(jobId, text, attachments = [], author = null, createdBy =
     const notes = [...(job.notes || []), note];
     const updateSql = 'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3';
     const updateParams = [JSON.stringify(notes), jobId, companyId];
-    await db.query(updateSql, updateParams);
+    await executor.query(updateSql, updateParams);
 
     return { notes };
 }

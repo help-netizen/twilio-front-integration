@@ -210,7 +210,7 @@ describe('jobsService.listJobs signed payment rollup', () => {
         });
 
         const sql = db.query.mock.calls[4][0];
-        expect(sql).toMatch(/SUM\(document_effect\) FILTER \(\s*WHERE effective_source IS DISTINCT FROM 'zenbooker'/);
+        expect(sql).toMatch(/SUM\(document_effect\) FILTER \(\s*WHERE NOT \(effective_source = 'zenbooker' AND invoice_id IS NOT NULL\)/);
         expect(sql).toMatch(/SUM\(paid_effect\) FILTER \(\s*WHERE effective_source IS DISTINCT FROM 'zenbooker'\s*OR invoice_id IS NULL/);
     });
 

@@ -25,6 +25,7 @@ const TAG = `TLP-${Date.now()}`;
 const CONV = (s) => `CONV-${TAG}-${s}`;
 
 let dbReady = false;
+let createdDefaultCompany = false;
 const seededConvIds = [];
 const seededPmids = [];
 const seededContactIds = [];
@@ -98,6 +99,12 @@ beforeAll(async () => {
         dbReady = false;
         return;
     }
+    const defaultCompany = await db.query(
+        `INSERT INTO companies (id, name, slug) VALUES ($1, 'TLP Default Test Co', $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [DEFAULT_COMPANY_ID, `tlp-default-${TAG}`]
+    );
+    createdDefaultCompany = defaultCompany.rowCount === 1;
     await db.query(
         `INSERT INTO companies (id, name, slug) VALUES ($1, 'TLP Test Co B', $2)
          ON CONFLICT (id) DO NOTHING`,
@@ -116,6 +123,7 @@ afterAll(async () => {
             for (const cid of Object.keys(threads)) await db.query('DELETE FROM email_threads WHERE id = $1', [threads[cid]]);
             for (const cid of Object.keys(mailboxes)) if (mailboxes[cid].created) await db.query('DELETE FROM email_mailboxes WHERE id = $1', [mailboxes[cid].id]);
             await db.query('DELETE FROM companies WHERE id = $1', [COMPANY_B]);
+            if (createdDefaultCompany) await db.query('DELETE FROM companies WHERE id = $1', [DEFAULT_COMPANY_ID]);
         } catch (e) {
             console.warn('[yelpTimelinePulse.db] cleanup failed:', e.message);
         }

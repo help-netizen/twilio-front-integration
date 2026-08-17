@@ -28,7 +28,6 @@ const READ_TOOL_PERMISSIONS = Object.freeze({
     'svc.get_estimate': ['estimates.view'],
     'svc.list_invoices': ['invoices.view'],
     'svc.get_invoice': ['invoices.view'],
-    'svc.list_payments': ['payments.view', 'financial_data.view'],
 });
 
 const READ_TOOL_NAMES = Object.freeze(Object.keys(READ_TOOL_PERMISSIONS));

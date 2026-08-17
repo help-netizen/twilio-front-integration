@@ -90,9 +90,17 @@ describe('updateBlancStatus query shape', () => {
             company_id: COMPANY,
         };
         const client = {
-            query: jest.fn()
-                .mockResolvedValueOnce({ rowCount: 1, rows: [] })
-                .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'event-1' }] }),
+            readyForQuery: 'T',
+            query: jest.fn(async (sql) => {
+                if (/UPDATE jobs/.test(sql)) return { rowCount: 1, rows: [] };
+                if (/INSERT INTO domain_events/.test(sql)) {
+                    return { rowCount: 1, rows: [{ id: 'event-1' }] };
+                }
+                if (/^(SAVEPOINT|RELEASE SAVEPOINT)/.test(sql)) {
+                    return { rowCount: null, rows: [] };
+                }
+                throw new Error(`Unexpected transaction query: ${sql}`);
+            }),
         };
 
         await jobsService.updateBlancStatus(5, 'On the way', COMPANY, null, {
@@ -101,10 +109,12 @@ describe('updateBlancStatus query shape', () => {
             resolvedTransition: { valid: true, targetState: 'On the way', event: 'TO_ON_THE_WAY' },
         });
 
-        expect(client.query).toHaveBeenCalledTimes(2);
+        expect(client.query).toHaveBeenCalledTimes(4);
         expect(client.query.mock.calls[0][0]).toContain('UPDATE jobs');
         expect(client.query.mock.calls[0][1]).toEqual(['On the way', false, 5, COMPANY]);
-        expect(client.query.mock.calls[1][0]).toContain('INSERT INTO domain_events');
+        expect(client.query.mock.calls[1][0]).toBe('SAVEPOINT event_bus_persist');
+        expect(client.query.mock.calls[2][0]).toContain('INSERT INTO domain_events');
+        expect(client.query.mock.calls[3][0]).toBe('RELEASE SAVEPOINT event_bus_persist');
         expect(db.query).not.toHaveBeenCalled();
     });
 });

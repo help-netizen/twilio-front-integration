@@ -53,9 +53,19 @@ async function emit(companyId, eventType, payload = {}, opts = {}) {
         client = null,
     } = opts;
     const query = client?.query ? client.query.bind(client) : db.query;
+    // node-postgres exposes I/T/E for idle/in-transaction/failed. Preserve the
+    // supported plain-client path: SAVEPOINT is legal only after BEGIN. Test
+    // doubles and transaction wrappers may not expose readyForQuery, so a
+    // supplied unknown client keeps the transaction-safe behavior.
+    const transactionClient = client && client.readyForQuery !== 'I';
 
     let event = null;
+    let savepointCreated = false;
     try {
+        if (transactionClient) {
+            await query('SAVEPOINT event_bus_persist');
+            savepointCreated = true;
+        }
         const { rows } = await query(
             `INSERT INTO domain_events
                 (company_id, aggregate_type, aggregate_id, event_type, event_data, actor_type, actor_id, idempotency_key)
@@ -66,7 +76,16 @@ async function emit(companyId, eventType, payload = {}, opts = {}) {
              JSON.stringify(payload), actorType, actorId, idempotencyKey]
         );
         event = rows[0] || null;
+        if (savepointCreated) await query('RELEASE SAVEPOINT event_bus_persist');
     } catch (err) {
+        if (savepointCreated) {
+            try {
+                await query('ROLLBACK TO SAVEPOINT event_bus_persist');
+                await query('RELEASE SAVEPOINT event_bus_persist');
+            } catch (recoveryError) {
+                console.error('[eventBus] failed to recover event savepoint:', recoveryError.message);
+            }
+        }
         console.error(`[eventBus] persist failed for ${eventType}:`, err.message);
         return null;
     }

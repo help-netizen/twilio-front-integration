@@ -1024,7 +1024,14 @@ async function sendDocument(context, args, client, documentType) {
             documentId,
             {
                 channel: args.channel,
-                recipient,
+                // This value is not tenant input: resolveDocumentRecipient
+                // selected it from the locked, company-owned Contact above.
+                // Pass it through the service's explicit override channel so
+                // a primary contact_emails row is not rejected merely because
+                // the legacy contacts.email projection has not caught up.
+                ...(documentType === 'estimate'
+                    ? { recipientOverride: recipient }
+                    : { recipient }),
                 message: args.message,
                 ...(documentType === 'invoice'
                     ? { includePaymentLink: args.include_payment_link !== false }

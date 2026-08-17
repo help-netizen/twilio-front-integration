@@ -88,9 +88,6 @@ function avatarBusinessPermissions(tool, args = null) {
         const permission = permissionByParent[args.parent_type];
         return permission ? { every: [permission], any: [] } : null;
     }
-    if (tool.name === 'svc.list_payments') {
-        return { every: [], any: ['payments.view', 'financial_data.view'] };
-    }
     const required = READ_TOOL_PERMISSIONS[tool.name]
         || WRITE_TOOL_PERMISSIONS[tool.name]
         || SEND_TOOL_PERMISSIONS[tool.name];

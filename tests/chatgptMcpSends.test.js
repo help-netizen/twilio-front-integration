@@ -120,28 +120,28 @@ describe('CHATGPT-CRM-MCP S3 send descriptors and consent gates', () => {
         }
     });
 
-    test('writes consent and write scope alone expose 32 tools, send consent plus send scope exposes 34', () => {
+    test('writes consent and write scope alone expose 31 tools, send consent plus send scope exposes 33', () => {
         const tools = registry.listTools({
             includeDispatcher: true,
             dispatcherOnly: true,
         });
-        expect(tools).toHaveLength(34);
+        expect(tools).toHaveLength(33);
         const internalGrants = [...permissions.S1_GRANTS, ...permissions.S2_WRITE_GRANTS];
         expect(authorization.filterTools(
             tools,
             internalGrants,
             [permissions.READ_SCOPE, permissions.WRITE_SCOPE, permissions.SEND_SCOPE]
-        )).toHaveLength(32);
+        )).toHaveLength(31);
         expect(authorization.filterTools(
             tools,
             [...internalGrants, ...permissions.S3_SEND_GRANTS],
             [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
-        )).toHaveLength(32);
+        )).toHaveLength(31);
         expect(authorization.filterTools(
             tools,
             [...internalGrants, ...permissions.S3_SEND_GRANTS],
             [permissions.READ_SCOPE, permissions.WRITE_SCOPE, permissions.SEND_SCOPE]
-        )).toHaveLength(34);
+        )).toHaveLength(33);
     });
 
     test.each([
@@ -177,7 +177,7 @@ describe('CHATGPT-CRM-MCP S3 canonical dispatch and recipient invariant', () => 
             41,
             {
                 channel: 'email',
-                recipient: 'primary@example.test',
+                recipientOverride: 'primary@example.test',
                 message: 'Please review.',
                 userEmail: CONTEXT.actorEmail,
                 noteActor: {

@@ -287,15 +287,13 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
                  VALUES ($1,$3,1,100,100), ($2,$4,1,200,200)`,
                 [invoiceA, invoiceB, `${sharedText} invoice item A`, `${sharedText} invoice item B`]
             );
-            const payments = await client.query(
+            await client.query(
                 `INSERT INTO payment_transactions (company_id,contact_id,invoice_id,job_id,transaction_type,payment_method,status,amount,currency)
                  VALUES ($1,$3,$5,$7,'payment','cash','completed',10,'USD'),
                         ($2,$4,$6,$8,'payment','cash','completed',20,'USD')
                  RETURNING id, company_id`,
                 [companyA, companyB, contactA, contactB, invoiceA, invoiceB, jobA, jobB]
             );
-            const paymentA = payments.rows.find((row) => row.company_id === companyA).id;
-            const paymentB = payments.rows.find((row) => row.company_id === companyB).id;
             await client.query(
                 `INSERT INTO tasks (company_id,title,description,status,created_by,job_id)
                  VALUES ($1,$3,$3,'open','user',$4), ($2,$3,$3,'open','user',$5)`,
@@ -464,10 +462,6 @@ describe('CHATGPT-CRM-MCP S1 real-PostgreSQL tenancy contract', () => {
                 }],
                 ['svc.get_invoice', { invoice_id: Number(invoiceA) }, (data) => {
                     expect(String(data.id)).toBe(String(invoiceA));
-                }],
-                ['svc.list_payments', { job_id: Number(jobA), limit: 20 }, (data) => {
-                    expect(data.results.map((row) => String(row.id))).toEqual([String(paymentA)]);
-                    expect(data.results.map((row) => String(row.id))).not.toContain(String(paymentB));
                 }],
             ];
             expect(ownCases.map(([name]) => name).sort()).toEqual(

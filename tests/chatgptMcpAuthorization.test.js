@@ -46,7 +46,6 @@ const EXPECTED_DISPATCHER_TITLES = Object.freeze({
     'svc.get_estimate': 'Open an estimate',
     'svc.list_invoices': 'List invoices',
     'svc.get_invoice': 'Open an invoice',
-    'svc.list_payments': 'List payments',
     'svc.list_calls': 'View recent calls',
     'svc.create_lead': 'Create a lead',
     'svc.update_lead': 'Edit a lead',
@@ -94,15 +93,15 @@ beforeEach(() => {
 });
 
 describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
-    test('all 34 dispatcher tools expose the exact human-readable protocol title, with no extras', () => {
+    test('all 33 dispatcher tools expose the exact human-readable protocol title, with no extras', () => {
         const tools = registry.listTools({
             includeDispatcher: true,
             dispatcherOnly: true,
         });
         const expectedNames = Object.keys(EXPECTED_DISPATCHER_TITLES).sort();
 
-        expect(expectedNames).toHaveLength(34);
-        expect(tools).toHaveLength(34);
+        expect(expectedNames).toHaveLength(33);
+        expect(tools).toHaveLength(33);
         expect(tools.map((tool) => tool.name).sort()).toEqual(expectedNames);
 
         for (const tool of tools) {
@@ -113,8 +112,8 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         }
     });
 
-    test('all 20 S1 reads require business permission plus their exact AI-only key', () => {
-        expect(permissions.READ_TOOL_NAMES).toHaveLength(20);
+    test('all 19 S1 reads require business permission plus their exact AI-only key', () => {
+        expect(permissions.READ_TOOL_NAMES).toHaveLength(19);
         for (const name of permissions.READ_TOOL_NAMES) {
             const tool = registry.getTool(name);
             expect(tool).toBeDefined();
@@ -128,7 +127,7 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         }
     });
 
-    test('all 12 consent-gated S2 writes remain a 32-tool visible tier inside the 34-tool registry', () => {
+    test('all 12 consent-gated S2 writes remain a 31-tool visible tier inside the 33-tool registry', () => {
         expect(permissions.WRITE_BUNDLE_VERSION).toBe(3);
         expect(permissions.WRITE_TOOL_NAMES).toHaveLength(12);
         expect(permissions.S1_GRANTS).not.toEqual(
@@ -150,7 +149,7 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
             expect(tool.frameworkWritePermission).toBeNull();
         }
         expect(registry.listTools({ includeDispatcher: true, dispatcherOnly: true }))
-            .toHaveLength(34);
+            .toHaveLength(33);
     });
 
     test('both S3 sends require their independent business grant, exact grant, and send scope', () => {
@@ -180,12 +179,12 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
             dispatcherTools,
             { ...LIVE_OWNER, writes_enabled: false, sends_enabled: false },
             [permissions.READ_SCOPE, permissions.WRITE_SCOPE]
-        )).toHaveLength(20);
+        )).toHaveLength(19);
         expect(authorization.filterAvatarTools(
             dispatcherTools,
             { ...LIVE_OWNER, writes_enabled: true, sends_enabled: false },
             [permissions.READ_SCOPE]
-        )).toHaveLength(32);
+        )).toHaveLength(31);
     });
 
     test('S1 business grants are view-only and task assignee discovery works without mutation grants', async () => {
@@ -329,10 +328,14 @@ describe('CHATGPT-CRM-MCP deny-by-default authorization', () => {
         );
     });
 
-    test('SAB-MCP-PAYMENTS-READ-ONLY: ledger discovery cannot expose payment mutations', () => {
-        expect(permissions.READ_TOOL_PERMISSIONS['svc.list_payments'])
-            .toEqual(['payments.view', 'financial_data.view']);
-        expect(registry.getTool('svc.list_payments')).toMatchObject({ kind: 'read' });
+    test('SAB-MCP-DEFERRED-PAYMENTS: the ChatGPT connector exposes no payment read or mutation', async () => {
+        expect(permissions.READ_TOOL_PERMISSIONS['svc.list_payments']).toBeUndefined();
+        expect(permissions.S1_GRANTS).not.toContain('mcp.tool.svc.list_payments');
+        expect(registry.listTools({ includeDispatcher: true, dispatcherOnly: true })
+            .map((tool) => tool.name)).not.toContain('svc.list_payments');
+        await expect(executor.execute(requestContext(), 'svc.list_payments', {}))
+            .rejects.toMatchObject({ mcpCode: 'access_denied' });
+        expect(readService.execute).not.toHaveBeenCalled();
         for (const name of [
             'svc.collect_invoice_saved_method',
             'svc.create_invoice_payment_link',

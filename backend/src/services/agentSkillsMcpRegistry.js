@@ -612,6 +612,9 @@ const DISPATCHER_READ_TOOLS = [
         { appRuntime: appRuntimeListInvoicesDescriptor() }
     ),
     dispatcherRead('svc.get_invoice', 'getInvoice', 'Get one company-owned Invoice, line items, and payment rollup.', strictObjectSchema({ invoice_id: integerSchema(1) }, ['invoice_id'])),
+    // APP-RUNTIME only. CHATGPT-CRM-MCP-001 defers the entire payment surface;
+    // omission from CHATGPT_S1_TOOL_NAMES keeps this descriptor undiscoverable
+    // and non-invocable through the bound ChatGPT connector.
     dispatcherAppRuntimeRead('svc.list_payments', 'listPayments', appRuntimeListPaymentsDescriptor()),
 ];
 

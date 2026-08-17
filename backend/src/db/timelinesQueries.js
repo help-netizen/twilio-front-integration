@@ -911,7 +911,7 @@ async function assignThread(timelineId, ownerUserId) {
     return tl.rows[0] || null;
 }
 
-async function createTask({ companyId, threadId, subjectType, subjectId, title, description, priority, dueAt, ownerUserId, createdBy, kind, agentType, agentInput, agentOutput, agentStatus }) {
+async function createTask({ companyId, threadId, subjectType, subjectId, title, description, priority, dueAt, ownerUserId, createdBy, kind, agentType, agentInput, agentOutput, agentStatus }, client = db) {
     const provenance = createdBy || 'user';
     // MAIL-AGENT-001: agent callers stamp the mig-100 agent columns (kind,
     // agent_type, agent_input/output, agent_status). User path passes none of
@@ -925,7 +925,7 @@ async function createTask({ companyId, threadId, subjectType, subjectId, title, 
     // upsert (we only ever update an existing AUTO-provenance open task).
     const AUTO = ['system', 'automation', 'agent'];
     if (AUTO.includes(provenance)) {
-        const existing = await db.query(
+        const existing = await client.query(
             `SELECT id FROM tasks
               WHERE thread_id = $1 AND status = 'open' AND created_by = ANY($2::text[])
               ORDER BY created_at ASC
@@ -933,7 +933,7 @@ async function createTask({ companyId, threadId, subjectType, subjectId, title, 
             [threadId, AUTO]
         );
         if (existing.rows[0]) {
-            const upd = await db.query(
+            const upd = await client.query(
                 `UPDATE tasks SET
                     title = $2,
                     description = $3,
@@ -957,7 +957,7 @@ async function createTask({ companyId, threadId, subjectType, subjectId, title, 
             return upd.rows[0];
         }
     }
-    const result = await db.query(
+    const result = await client.query(
         `INSERT INTO tasks (company_id, thread_id, subject_type, subject_id, title, description, priority, due_at, owner_user_id, created_by,
                             kind, agent_type, agent_input, agent_output, agent_status)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
@@ -977,10 +977,14 @@ async function createTask({ companyId, threadId, subjectType, subjectId, title, 
     // task leaves the count unchanged). Lazy require avoids a circular import;
     // best-effort — a broadcast failure never fails the task write.
     if (['user', 'agent'].includes(provenance)) {
-        try {
-            require('../services/tasksService').emitTaskChange(companyId);
-        } catch (err) {
-            console.warn('[timelinesQueries] task.changed emit failed:', err.message);
+        const emit = () => require('../services/tasksService').emitTaskChange(companyId);
+        if (typeof client.afterCommit === 'function') client.afterCommit(emit);
+        else {
+            try {
+                emit();
+            } catch (err) {
+                console.warn('[timelinesQueries] task.changed emit failed:', err.message);
+            }
         }
     }
     return result.rows[0];
