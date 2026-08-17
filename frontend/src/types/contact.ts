@@ -93,6 +93,7 @@ export type ContactLead = {
     job_source: string | null;
     lead_notes: string | null;
     serial_id: number;
+    lead_seq: number | null;   // LEAD-NUMBERING-001: per-company "Lead #"
     created_at: string;
 };
 

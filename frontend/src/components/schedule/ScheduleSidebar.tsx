@@ -60,7 +60,7 @@ const infoRow: React.CSSProperties = {
 function getDetailLink(item: ScheduleItem): string {
     switch (item.entity_type) {
         case 'job':  return `/jobs/by-id/${item.entity_id}`;
-        case 'lead': return `/leads/${item.entity_id}`;
+        case 'lead': return `/leads/by-id/${item.entity_id}`;
         default:     return '#';
     }
 }

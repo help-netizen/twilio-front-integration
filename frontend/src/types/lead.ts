@@ -6,6 +6,8 @@
 export type Lead = {
     UUID: string;
     SerialId?: number | null;
+    LeadSeq?: number | null;      // LEAD-NUMBERING-001: per-company "Lead #" (display + /leads/:seq)
+    PublicCode?: string | null;   // LEAD-NUMBERING-001: global durable code for /l/:code
     LeadDateTime?: string | null;
     LeadEndDateTime?: string | null;
     CreatedDate?: string | null;
@@ -202,7 +204,7 @@ export const DEFAULT_COLUMNS: TableColumn[] = [
     { id: 'jobSource', label: 'Source',   visible: true, order: 6, sortKey: 'JobSource' },
     { id: 'contact',   label: 'Contact',  visible: true, order: 7 },
     { id: 'created',   label: 'Created',  visible: true, order: 8, sortKey: 'CreatedDate' },
-    { id: 'serialId',  label: 'ID',       visible: true, order: 9, sortKey: 'SerialId' },
+    { id: 'serialId',  label: '#',        visible: true, order: 9, sortKey: 'LeadSeq' },
 ];
 
 export type LeadStatus =

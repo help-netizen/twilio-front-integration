@@ -144,6 +144,10 @@ function rowToLead(row) {
         ContactName: row.contact_name || null,
         // Flatten custom metadata as top-level keys for API convenience
         ...(row.metadata || {}),
+        // Identity and tenant fields must not be overridable by custom metadata.
+        LeadSeq: row.lead_seq ?? null,
+        PublicCode: row.public_code || null,
+        company_id: row.company_id,
     };
 }
 
@@ -242,6 +246,7 @@ const LEAD_LIST_SORTS = Object.freeze({
         projection: timestampCursorExpression('l.created_at'),
         type: 'timestamp',
     },
+    LeadSeq: { expression: 'l.lead_seq', projection: bigintCursorExpression('l.lead_seq'), type: 'bigint' },
     SerialId: { expression: 'l.serial_id', projection: bigintCursorExpression('l.serial_id'), type: 'bigint' },
 });
 
@@ -356,6 +361,7 @@ async function listLeads({
             OR l.company ILIKE ${searchParam}
             OR l.phone ILIKE ${searchParam}
             OR l.email ILIKE ${searchParam}
+            OR l.lead_seq::text ILIKE ${searchParam}
             OR l.serial_id::text ILIKE ${searchParam}
             OR EXISTS (
                 SELECT 1
@@ -414,7 +420,8 @@ async function listLeads({
     }
 
     const sql = `
-        SELECT l.*, c.full_name AS contact_name,
+        SELECT l.*, l.lead_seq AS lead_seq, l.public_code AS public_code,
+            c.full_name AS contact_name,
             ${sort.projection || sort.expression} AS __cursor_value,
             ${bigintCursorExpression('l.id')} AS __cursor_id
         FROM leads l
@@ -532,6 +539,61 @@ async function getLeadById(id, companyId = null) {
 }
 
 // =============================================================================
+// Resolve Lead URLs by per-company sequence or durable global code
+// =============================================================================
+async function getLeadBySeq(leadSeq, companyId, { client = null } = {}) {
+    if (!companyId) {
+        throw new LeadsServiceError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+    }
+
+    const queryable = client || db;
+    const { rows } = await queryable.query(
+        `SELECT l.*,
+            COALESCE(
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
+                FILTER (WHERE lta.id IS NOT NULL), '[]'
+            ) AS team
+         FROM leads l
+         LEFT JOIN lead_team_assignments lta
+           ON lta.lead_id = l.id
+          AND lta.company_id = l.company_id
+         WHERE l.company_id = $1 AND l.lead_seq = $2
+         GROUP BY l.id`,
+        [companyId, leadSeq]
+    );
+    if (rows.length === 0) {
+        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead #${leadSeq} not found`, 404);
+    }
+    return rowToLead(rows[0]);
+}
+
+/**
+ * Deliberately global resolver for durable /l/:code links. The route compares
+ * the returned company_id with the authenticated company before responding.
+ */
+async function getLeadByCode(publicCode, { client = null } = {}) {
+    const queryable = client || db;
+    const { rows } = await queryable.query(
+        `SELECT l.*,
+            COALESCE(
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
+                FILTER (WHERE lta.id IS NOT NULL), '[]'
+            ) AS team
+         FROM leads l
+         LEFT JOIN lead_team_assignments lta
+           ON lta.lead_id = l.id
+          AND lta.company_id = l.company_id
+         WHERE l.public_code = $1
+         GROUP BY l.id`,
+        [publicCode]
+    );
+    if (rows.length === 0) {
+        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${publicCode} not found`, 404);
+    }
+    return rowToLead(rows[0]);
+}
+
+// =============================================================================
 // Create Lead
 // =============================================================================
 async function mutateLeadWithActivity(activityActor, work, buildActivities) {
@@ -617,13 +679,15 @@ async function createLead(fields, companyId, {
             const { rows } = await client.query(
                 `INSERT INTO leads (${colNames.join(', ')})
                  VALUES (${placeholders.join(', ')})
-                 RETURNING uuid, serial_id, id`,
+                 RETURNING uuid, serial_id, id, lead_seq, public_code`,
                 values
             );
             insertedLeadId = rows[0].id;
             return {
                 UUID: rows[0].uuid,
                 SerialId: rows[0].serial_id,
+                LeadSeq: rows[0].lead_seq,
+                PublicCode: rows[0].public_code,
                 ClientId: String(rows[0].id),
                 link: null,
             };
@@ -755,7 +819,7 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
             const { rows } = await client.query(
                 `UPDATE leads SET ${setClauses.join(', ')}
                  WHERE ${conditions.join(' AND ')}
-                 RETURNING uuid, id`,
+                 RETURNING uuid, id, lead_seq, public_code`,
                 values
             );
             if (rows.length === 0) {
@@ -768,6 +832,8 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
 
             return {
                 UUID: rows[0].uuid,
+                LeadSeq: rows[0].lead_seq,
+                PublicCode: rows[0].public_code,
                 ClientId: String(rows[0].id),
                 link: null,
             };
@@ -1697,6 +1763,8 @@ module.exports = {
     countNewLeads,
     getLeadByUUID,
     getLeadById,
+    getLeadBySeq,
+    getLeadByCode,
     getLeadByPhone,
     getLeadByContact,
     getOpenLeadsByContact,

@@ -96,7 +96,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                     {lead.SerialId && (
                         <>
                             <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
-                            <LeadFinancialsTab leadId={lead.SerialId} />
+                            <LeadFinancialsTab leadId={Number(lead.ClientId)} />
                         </>
                     )}
                 </div>
@@ -129,7 +129,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                         {lead.SerialId && (
                             <>
                                 <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
-                                <LeadFinancialsTab leadId={lead.SerialId} />
+                                <LeadFinancialsTab leadId={Number(lead.ClientId)} />
                             </>
                         )}
                     </div>
@@ -158,7 +158,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
 
                         <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">
                             {lead.SerialId ? (
-                                <LeadFinancialsTab leadId={lead.SerialId} />
+                                <LeadFinancialsTab leadId={Number(lead.ClientId)} />
                             ) : (
                                 <div className="p-4 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Lead ID not available</div>
                             )}
@@ -196,7 +196,7 @@ function LeadHeader({ lead, contactName, onUpdateStatus, onUpdateSource }: {
                     style={{ color: 'var(--blanc-info)', letterSpacing: '0.12em' }}
                 >
                     Lead
-                    {lead.SerialId && <span className="font-mono">#{lead.SerialId}</span>}
+                    {(lead.LeadSeq ?? lead.SerialId) != null && <span className="font-mono">#{lead.LeadSeq ?? lead.SerialId}</span>}
                 </span>
             </div>
 

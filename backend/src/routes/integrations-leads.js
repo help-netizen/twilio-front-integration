@@ -144,6 +144,7 @@ router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) 
             success: true,
             lead_id: result.UUID,
             serial_id: result.SerialId,
+            lead_seq: result.LeadSeq,
             contact_id: contactResolution.contact_id,
             request_id: req.requestId,
         });

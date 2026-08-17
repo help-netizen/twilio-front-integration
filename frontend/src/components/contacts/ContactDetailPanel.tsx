@@ -169,7 +169,7 @@ function ActivitySection({ leads, contactId, onlyOpen, onOnlyOpenChange }: {
                         return (
                             <div
                                 key={lead.id}
-                                onClick={() => navigate(`/leads/${lead.id}`)}
+                                onClick={() => navigate(`/leads/by-id/${lead.id}`)}
                                 className="flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all hover:shadow-sm"
                                 style={{ border: '1px solid var(--blanc-line)', background: 'transparent' }}
                             >
@@ -179,7 +179,7 @@ function ActivitySection({ leads, contactId, onlyOpen, onOnlyOpenChange }: {
                                         <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full" style={{ background: hexToRgba(color, 0.1), color }}>
                                             {lead.status}
                                         </span>
-                                        <span className="text-[11px] font-mono" style={{ color: 'var(--blanc-ink-3)' }}>#{lead.serial_id}</span>
+                                        <span className="text-[11px] font-mono" style={{ color: 'var(--blanc-ink-3)' }}>#{lead.lead_seq ?? lead.serial_id}</span>
                                     </div>
                                     <div className="text-[12px] mt-1" style={{ color: 'var(--blanc-ink-3)' }}>
                                         {format(lead.created_at, { month: 'short', day: 'numeric', year: 'numeric' })}

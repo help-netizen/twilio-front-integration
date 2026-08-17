@@ -160,7 +160,7 @@ function markerRow() {
 beforeEach(() => {
     jest.clearAllMocks();
     mockResolveContact.mockResolvedValue({ contact_id: null, status: 'skipped' });
-    mockCreateLead.mockResolvedValue({ UUID: 'RL01', SerialId: 4242, ClientId: '77' });
+    mockCreateLead.mockResolvedValue({ UUID: 'RL01', SerialId: 4242, LeadSeq: 31, ClientId: '77' });
     mockEvaluateRelyLead.mockResolvedValue(acceptVerdict());
     mockQuery.mockResolvedValue({ rows: [] });
 });
@@ -185,6 +185,7 @@ describe('Rely integration ingest route', () => {
                 success: true,
                 lead_id: 'RL01',
                 serial_id: 4242,
+                lead_seq: 31,
                 contact_id: null,
                 request_id: 'req-rely-t3',
             });
@@ -252,6 +253,7 @@ describe('Rely integration ingest route', () => {
             success: true,
             lead_id: 'RL01',
             serial_id: 4242,
+            lead_seq: 31,
             contact_id: null,
             request_id: 'req-rely-t3',
         });

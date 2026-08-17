@@ -37,7 +37,7 @@ describe('notification lock-screen payload safety', () => {
                 category_label: entry.category_label,
                 deep_link_kind: 'job',
                 record_ref: { type: 'job', id: '42' },
-                url: '/jobs/42',
+                url: '/jobs/by-id/42',
             });
             const serialized = JSON.stringify(payload);
             for (const forbidden of [
@@ -104,7 +104,7 @@ describe('notification lock-screen payload safety', () => {
         })).toMatchObject({
             deep_link_kind: 'job',
             record_ref: { type: 'job', id: '42' },
-            url: '/jobs/42',
+            url: '/jobs/by-id/42',
         });
 
         for (const [recordType, recordId] of [
@@ -133,5 +133,30 @@ describe('notification lock-screen payload safety', () => {
         expect(rawLedger).not.toHaveProperty('record_ref');
         expect(rawLedger).not.toHaveProperty('url');
         expect(JSON.stringify(rawLedger)).not.toContain('private-payment-99');
+    });
+
+    test('lead deep links resolve numeric ids via by-id and uuids via by-uuid', () => {
+        // LEAD-NUMBERING-001: /leads/:seq is company-relative, so notification refs
+        // (a global id or the uuid) route through the redirect shims, never a bare number.
+        expect(buildNotificationPayload({
+            eventType: 'lead.created',
+            deliveryId: 'delivery-lead-id',
+            recordType: 'lead',
+            recordId: '42',
+        })).toMatchObject({
+            deep_link_kind: 'lead',
+            record_ref: { type: 'lead', id: '42' },
+            url: '/leads/by-id/42',
+        });
+        expect(buildNotificationPayload({
+            eventType: 'lead.created',
+            deliveryId: 'delivery-lead-uuid',
+            recordType: 'lead',
+            recordId: 'A1b2C3d4E5',
+        })).toMatchObject({
+            deep_link_kind: 'lead',
+            record_ref: { type: 'lead', id: 'A1b2C3d4E5' },
+            url: '/leads/by-uuid/A1b2C3d4E5',
+        });
     });
 });

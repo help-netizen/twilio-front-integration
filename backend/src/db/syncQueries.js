@@ -41,7 +41,7 @@ const SYNC_CHANGED_AT = 'GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated
 // Column list mirrors jobsService.getJobById's select so rowToSyncJob() below
 // can reuse the exact same mapping.
 const JOB_SELECT = `
-    SELECT j.*, l.serial_id AS lead_serial_id,
+    SELECT j.*, l.serial_id AS lead_serial_id, l.lead_seq AS lead_seq,
            COALESCE(c.full_name, j.customer_name) AS customer_name,
            COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
            COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email,
@@ -62,6 +62,7 @@ function rowToSyncJob(row) {
         id: row.id,
         lead_id: row.lead_id,
         lead_serial_id: row.lead_serial_id || null,
+        lead_seq: row.lead_seq ?? null,
         contact_id: row.contact_id,
         zenbooker_job_id: row.zenbooker_job_id,
 

@@ -90,6 +90,22 @@ export async function getLeadById(id: number): Promise<LeadDetailResponse> {
 }
 
 /**
+ * Get lead details by per-company sequence number (LEAD-NUMBERING-001).
+ * Company-scoped on the server: resolves the caller's own lead with that number.
+ */
+export async function getLeadBySeq(seq: number): Promise<LeadDetailResponse> {
+    return request<LeadDetailResponse>(`${API_BASE}/by-seq/${seq}`);
+}
+
+/**
+ * Get lead details by global public_code (LEAD-NUMBERING-001) — durable /l/:code links.
+ * Global lookup, tenant-guarded server-side (a code outside the caller's company 404s).
+ */
+export async function getLeadByCode(code: string): Promise<LeadDetailResponse> {
+    return request<LeadDetailResponse>(`${API_BASE}/by-code/${encodeURIComponent(code)}`);
+}
+
+/**
  * Create a new lead
  */
 export async function createLead(input: CreateLeadInput): Promise<LeadMutationResponse> {

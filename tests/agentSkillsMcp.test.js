@@ -446,6 +446,20 @@ describe('svc.* JSON-RPC protocol (ASK-MCP-13 / 14)', () => {
         }
     });
 
+    test('LEAD-NUMBERING-001: Lead output schemas keep serial_id and add lead_seq/public_code', () => {
+        const tools = registry.listTools({ includeDispatcher: true });
+        const listProperties = tools.find(tool => tool.name === 'svc.list_leads')
+            .appRuntime.outputSchema.properties.results.items.properties;
+        const detailProperties = tools.find(tool => tool.name === 'svc.get_lead')
+            .appRuntime.outputSchema.properties;
+
+        for (const properties of [listProperties, detailProperties]) {
+            expect(properties.serial_id).toBeDefined();
+            expect(properties.lead_seq.description).toBe('Per-company Lead # shown in the app.');
+            expect(properties.public_code.description).toBe('Durable global lead code for /l/:code links.');
+        }
+    });
+
     test('tools/call read over JSON-RPC returns structuredContent from the skill layer', async () => {
         agentSkills.runSkill.mockResolvedValue({ ok: true, appointments: [], speak: 'nothing scheduled' });
         const res = await request(makeApp())

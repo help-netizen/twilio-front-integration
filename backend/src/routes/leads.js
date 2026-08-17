@@ -210,6 +210,71 @@ router.get('/by-id/:id', requirePermission('leads.view'), async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/leads/by-seq/:seq — Resolve a company-scoped Lead number
+// MUST stay ABOVE /:uuid or Express matches it as a uuid.
+// =============================================================================
+router.get('/by-seq/:seq', requirePermission('leads.view'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json(errorResponse(
+                'TENANT_CONTEXT_REQUIRED',
+                'Company context is required',
+                reqId,
+            ));
+        }
+
+        const leadSeq = Number(req.params.seq);
+        if (!/^\d+$/.test(req.params.seq)
+            || !Number.isSafeInteger(leadSeq)
+            || leadSeq < 1
+            || leadSeq > 2147483647) {
+            return res.status(400).json(errorResponse(
+                'INVALID_ID',
+                'Lead sequence must be a positive integer',
+                reqId,
+            ));
+        }
+
+        const lead = await leadsService.getLeadBySeq(leadSeq, companyId);
+        res.json(successResponse({ lead }, reqId));
+    } catch (err) {
+        handleError(err, reqId, res);
+    }
+});
+
+// =============================================================================
+// GET /api/leads/by-code/:code — Resolve a durable global Lead code
+// MUST stay ABOVE /:uuid or Express matches it as a uuid.
+// =============================================================================
+router.get('/by-code/:code', requirePermission('leads.view'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json(errorResponse(
+                'TENANT_CONTEXT_REQUIRED',
+                'Company context is required',
+                reqId,
+            ));
+        }
+
+        const lead = await leadsService.getLeadByCode(req.params.code);
+        if (lead.company_id !== companyId) {
+            return res.status(404).json(errorResponse(
+                'LEAD_NOT_FOUND',
+                'Lead not found',
+                reqId,
+            ));
+        }
+        res.json(successResponse({ lead }, reqId));
+    } catch (err) {
+        handleError(err, reqId, res);
+    }
+});
+
+// =============================================================================
 // GET /api/leads/by-contact/:contactId — Find newest OPEN lead linked to a contact
 // EMAIL-LEAD-ORIGIN-001. MUST stay ABOVE /:uuid or Express matches it as a uuid.
 // =============================================================================

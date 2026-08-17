@@ -219,6 +219,8 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
             id: idBase + 200 + ordinal,
             uuid: syntheticUuid(normalizedSeed, `lead-${ordinal}`),
             serial_id: `L-${String(4300 + ordinal)}`,
+            lead_seq: ordinal,
+            public_code: `L${String(ordinal).padStart(4, '0')}`,
             company_id: companyId,
             contact_id: contact.id,
             status: plan.status,
@@ -561,6 +563,8 @@ function projectLeadSummary(lead) {
         id: lead.id,
         uuid: lead.uuid,
         serial_id: lead.serial_id,
+        lead_seq: lead.lead_seq,
+        public_code: lead.public_code,
         status: lead.status,
         source: lead.job_source ?? lead.source ?? null,
         job_source: lead.job_source ?? lead.source ?? null,
@@ -610,6 +614,7 @@ function projectListLeads(fixtures, args) {
             && Date.parse(lead.created_at) >= Date.parse(dateBounds.toExclusive)) return false;
         if (search && ![
             lead.uuid,
+            lead.lead_seq,
             lead.serial_id,
             `${lead.first_name || ''} ${lead.last_name || ''}`,
             lead.city,

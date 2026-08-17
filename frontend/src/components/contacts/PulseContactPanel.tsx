@@ -249,7 +249,7 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: j
                     {hasActivity && (
                         <div className="space-y-2">
                             {filteredLeads.map(lead => (
-                                <div key={`lead-${lead.id}`} onClick={() => navigate(`/leads/${lead.id}`)} className="p-3 rounded-xl cursor-pointer transition-all" style={{ border: '1px solid var(--blanc-line)' }} onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(104,95,80,0.3)')} onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}>
+                                <div key={`lead-${lead.id}`} onClick={() => navigate(`/leads/by-id/${lead.id}`)} className="p-3 rounded-xl cursor-pointer transition-all" style={{ border: '1px solid var(--blanc-line)' }} onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(104,95,80,0.3)')} onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}>
                                     <div className="flex items-center justify-between gap-2">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <TrendingUp className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />

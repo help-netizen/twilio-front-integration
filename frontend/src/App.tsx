@@ -71,6 +71,7 @@ import { EmailPage } from './pages/EmailPage';
 import ServiceTerritoriesPage from './pages/ServiceTerritoriesPage';
 import JobsPage from './pages/JobsPage';
 import { JobByIdRedirect, JobByCodeRedirect } from './pages/JobRedirect';
+import { LeadByIdRedirect, LeadByUuidRedirect, LeadByCodeRedirect } from './pages/LeadRedirect';
 import { SchedulePage } from './pages/SchedulePage';
 import EstimatesPage from './pages/EstimatesPage';
 import InvoicesPage from './pages/InvoicesPage';
@@ -140,6 +141,10 @@ function App() {
               <Route path="/calls/:callSid" element={<ProtectedRoute permissions={['messages.view_internal']}><ConversationPage /></ProtectedRoute>} />
               <Route path="/messages" element={<ProtectedRoute permissions={['messages.view_internal']}><MessagesPage /></ProtectedRoute>} />
               <Route path="/leads" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
+              {/* LEAD-NUMBERING-001: id/uuid/code redirect shims resolve to the canonical company-relative /leads/:seq. */}
+              <Route path="/leads/by-id/:id" element={<ProtectedRoute permissions={['leads.view']}><LeadByIdRedirect /></ProtectedRoute>} />
+              <Route path="/leads/by-uuid/:uuid" element={<ProtectedRoute permissions={['leads.view']}><LeadByUuidRedirect /></ProtectedRoute>} />
+              <Route path="/l/:code" element={<ProtectedRoute permissions={['leads.view']}><LeadByCodeRedirect /></ProtectedRoute>} />
               <Route path="/leads/:leadId" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
               <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               {/* JOB-NUMBERING-001: id/code redirect shims resolve to the canonical /jobs/:seq.

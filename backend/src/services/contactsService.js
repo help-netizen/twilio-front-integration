@@ -284,7 +284,7 @@ async function getContactLeads(contactId, companyId = null) {
     const sql = `
         SELECT l.id, l.uuid, l.status, l.sub_status, l.first_name, l.last_name,
                l.phone, l.email, l.job_type, l.job_source, l.lead_notes,
-               l.serial_id, l.created_at
+               l.serial_id, l.lead_seq, l.created_at
         FROM leads l
         WHERE ${conditions.join(' AND ')}
         ORDER BY l.created_at DESC

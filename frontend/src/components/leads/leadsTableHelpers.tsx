@@ -109,7 +109,7 @@ export function renderCell(columnId: string, lead: Lead, key: string, canViewSou
         case 'created':
             return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-3)' }} className="text-sm">{lead.CreatedDate ? format(new Date(lead.CreatedDate), 'MMM dd, yyyy') : null}</TableCell>;
         case 'serialId':
-            return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-3)' }} className="font-mono text-xs">{lead.SerialId}</TableCell>;
+            return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-3)' }} className="font-mono text-xs">{lead.LeadSeq ?? lead.SerialId}</TableCell>;
         case 'contact':
             return <TableCell key={key} style={cellStyle}>{lead.ContactName ? <span className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>{lead.ContactName}</span> : null}</TableCell>;
         default:

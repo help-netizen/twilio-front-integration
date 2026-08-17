@@ -1039,7 +1039,7 @@ function appRuntimeListLeadsDescriptor() {
             ),
             search: documentedSchema(
                 stringSchema(500),
-                'Case-insensitive text contained in the Lead UUID, serial ID, customer name, city, state, or source. Phone and email are not searched or returned by this list tool.'
+                'Case-insensitive text contained in the Lead UUID, per-company Lead #, legacy serial ID, customer name, city, state, or source. Phone and email are not searched or returned by this list tool.'
             ),
             limit: documentedSchema(
                 integerSchema(1, 100),
@@ -1456,6 +1456,8 @@ function leadSummaryOutputProperties() {
         id: outputField(['integer', 'string'], 'Albusto Lead ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
         uuid: outputField('string', 'Stable Lead UUID used by existing Albusto interfaces.'),
         serial_id: outputField(['integer', 'string'], 'Human-readable or numeric Lead serial ID.'),
+        lead_seq: nullableOutput('integer', 'Per-company Lead # shown in the app.'),
+        public_code: nullableOutput('string', 'Durable global lead code for /l/:code links.'),
         status: outputField('string', 'Current Lead workflow status.'),
         source: nullableOutput('string', 'Lead acquisition source, backed by `job_source`.'),
         job_source: nullableOutput('string', 'Stored Lead acquisition source; equal to `source`.'),

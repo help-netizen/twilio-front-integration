@@ -97,13 +97,14 @@ export function LeadsPage() {
     const loading = leadsList.isLoadingFirst;
 
     useEffect(() => {
-        if (!leadId) return; const numericId = Number(leadId); if (!numericId || isNaN(numericId)) return;
-        if (selectedLead?.ClientId === String(numericId)) return;
-        (async () => { try { const detail = await leadsApi.getLeadById(numericId); setSelectedLead(detail.data.lead); } catch (err) { console.warn('[LeadsPage] Failed to load lead from URL:', leadId, err); } })();
+        // LEAD-NUMBERING-001: /leads/:seq is the per-company lead number, resolved in company context.
+        if (!leadId) return; const seq = Number(leadId); if (!seq || isNaN(seq)) return;
+        if (selectedLead?.LeadSeq === seq) return;
+        (async () => { try { const detail = await leadsApi.getLeadBySeq(seq); setSelectedLead(detail.data.lead); } catch (err) { console.warn('[LeadsPage] Failed to load lead from URL:', leadId, err); } })();
     }, [leadId]);
 
     const handleFiltersChange = (nextFilters: Partial<LeadsListParams>) => setFilters(previous => ({ ...previous, ...nextFilters }));
-    const handleSelectLead = async (lead: Lead) => { const id = lead.SerialId || lead.ClientId; if (id) navigate(`/leads/${id}`, { replace: true }); try { const d = await leadsApi.getLeadByUUID(lead.UUID); setSelectedLead(d.data.lead); } catch { setSelectedLead(lead); } };
+    const handleSelectLead = async (lead: Lead) => { const seq = lead.LeadSeq; navigate(seq != null ? `/leads/${seq}` : `/leads/by-id/${lead.ClientId}`, { replace: true }); try { const d = await leadsApi.getLeadByUUID(lead.UUID); setSelectedLead(d.data.lead); } catch { setSelectedLead(lead); } };
     const handleSaveColumns = (nc: TableColumn[]) => { setColumns(nc); localStorage.setItem(STORAGE_KEY, JSON.stringify(nc)); };
 
     const actions = createLeadActions(leads, selectedLead, leadsList.reset, leadsList.updateItem, setSelectedLead, setEditingLead, setConvertingLead, setCreateDialogOpen);

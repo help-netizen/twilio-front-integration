@@ -44,6 +44,13 @@ describe('APP-DATA-001 Phase H production/sandbox projection parity', () => {
             !Object.prototype.hasOwnProperty.call(row, 'phone')
             && !Object.prototype.hasOwnProperty.call(row, 'email')
         ))).toBe(true);
+        expect(sandboxLeads.results.every(row => (
+            Number.isInteger(row.lead_seq)
+            && /^[0-9A-Za-z]{5}$/.test(row.public_code)
+            && Object.prototype.hasOwnProperty.call(row, 'serial_id')
+        ))).toBe(true);
+        expect(mockQuery.mock.calls[0][0]).toContain('l.lead_seq');
+        expect(mockQuery.mock.calls[0][0]).toContain('l.public_code');
 
         const selectedLead = fixtures.leads[0];
         mockQuery.mockResolvedValueOnce({
@@ -153,5 +160,20 @@ describe('APP-DATA-001 Phase H production/sandbox projection parity', () => {
                 '2026-08-04T04:00:00.000Z',
             ]));
         }
+    });
+
+    test('Lead search matches both the new per-company number and legacy serial_id', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+
+        await queries.listAppLeads('company-a', {
+            companyTimezone: 'America/New_York',
+            search: '31',
+            limit: 10,
+            offset: 0,
+        });
+
+        const [sql] = mockQuery.mock.calls[0];
+        expect(sql).toContain('l.lead_seq::text ILIKE');
+        expect(sql).toContain('l.serial_id::text ILIKE');
     });
 });

@@ -7,7 +7,9 @@ const PRE_CHANGE_GENERIC_TITLE = 'Assignment updated';
 
 const DEEP_LINKS = Object.freeze({
     job: id => `/jobs/by-id/${encodeURIComponent(id)}`,
-    lead: id => `/leads/${encodeURIComponent(id)}`,
+    lead: id => /^\d+$/.test(String(id))
+        ? `/leads/by-id/${encodeURIComponent(id)}`
+        : `/leads/by-uuid/${encodeURIComponent(id)}`,
     task: () => '/tasks',
     contact: id => `/pulse/contact/${encodeURIComponent(id)}`,
     timeline: id => `/pulse/timeline/${encodeURIComponent(id)}`,

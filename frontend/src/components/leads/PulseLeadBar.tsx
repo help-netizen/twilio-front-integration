@@ -24,7 +24,7 @@ export function PulseLeadBar({
             <div className="pulse-lead-bar-identity">
                 <p className="pulse-lead-bar-kicker">
                     Lead
-                    {lead.SerialId && <span className="font-mono"> #{lead.SerialId}</span>}
+                    {(lead.LeadSeq ?? lead.SerialId) != null && <span className="font-mono"> #{lead.LeadSeq ?? lead.SerialId}</span>}
                     {lead.JobType && <span className="pulse-lead-bar-repair-type">{lead.JobType}</span>}
                 </p>
                 <div className="pulse-lead-bar-name-row">

@@ -131,6 +131,7 @@ describe('syncQueries.getChangedJobs', () => {
         const [sql, params] = db.query.mock.calls[0];
         expect(sql).toContain('j.company_id = $1');
         expect(sql).toContain('j.assigned_provider_user_ids @> $2::jsonb');
+        expect(sql).toContain('l.serial_id AS lead_serial_id, l.lead_seq AS lead_seq');
         expect(sql).toContain('(GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated_at)), j.id) > ($3, $4)');
         expect(sql).toContain('ORDER BY GREATEST(j.updated_at, COALESCE(c.updated_at, j.updated_at)) ASC, j.id ASC');
         expect(sql).toContain('LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id');
@@ -208,6 +209,8 @@ describe('syncQueries.getChangedJobs', () => {
         db.query
             .mockResolvedValueOnce({ rows: [jobRow(25, '2026-07-01T00:00:00.000Z', {
                 customer_name: 'Live Contact Name',
+                lead_serial_id: 4700,
+                lead_seq: 31,
                 sync_changed_at: new Date('2026-07-03T12:00:00.000Z'),
             })] })
             .mockResolvedValueOnce({ rows: [] });
@@ -217,6 +220,8 @@ describe('syncQueries.getChangedJobs', () => {
         });
 
         expect(out.jobs[0].customer_name).toBe('Live Contact Name');
+        expect(out.jobs[0].lead_serial_id).toBe(4700);
+        expect(out.jobs[0].lead_seq).toBe(31);
         expect(out.jobs[0].updated_at).toBe('2026-07-01T00:00:00.000Z');
         expect(out.jobs[0]).not.toHaveProperty('sync_changed_at');
         expect(out.nextCursor).toBe('2026-07-03T12:00:00.000Z|25');

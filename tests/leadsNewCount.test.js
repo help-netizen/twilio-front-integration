@@ -3,9 +3,25 @@
  * DB + realtimeService are mocked; no live infra required.
  */
 
-jest.mock('../backend/src/db/connection', () => ({ query: jest.fn(), pool: { connect: jest.fn() } }));
+jest.mock('../backend/src/db/connection', () => {
+    const query = jest.fn();
+    return {
+        query,
+        getClient: jest.fn(async () => ({
+            query: (sql, params) => /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)
+                ? Promise.resolve({ rows: [] })
+                : query(sql, params),
+            release: jest.fn(),
+        })),
+        pool: { connect: jest.fn() },
+    };
+});
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
+jest.mock('../backend/src/services/leadContactActivityService', () => ({
+    logLeadContactActivity: jest.fn(async () => null),
+    systemActor: () => ({ id: null, type: 'system', label: 'Albusto', source: 'crm' }),
+}));
 
 const db = require('../backend/src/db/connection');
 const realtimeService = require('../backend/src/services/realtimeService');

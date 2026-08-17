@@ -213,6 +213,8 @@ function projectLeadSummary(row) {
         id: row.id,
         uuid: row.uuid,
         serial_id: row.serial_id,
+        lead_seq: row.lead_seq,
+        public_code: row.public_code,
         status: row.status,
         source: row.job_source ?? null,
         job_source: row.job_source ?? null,
@@ -257,6 +259,7 @@ async function listAppLeads(companyId, filters = {}) {
         params.push(`%${String(filters.search).trim()}%`);
         conditions.push(`(
             l.uuid ILIKE $${params.length}
+            OR l.lead_seq::text ILIKE $${params.length}
             OR l.serial_id::text ILIKE $${params.length}
             OR CONCAT_WS(' ', l.first_name, l.last_name) ILIKE $${params.length}
             OR l.city ILIKE $${params.length}
@@ -269,6 +272,8 @@ async function listAppLeads(companyId, filters = {}) {
         `SELECT l.id,
                 l.uuid,
                 l.serial_id,
+                l.lead_seq,
+                l.public_code,
                 l.status,
                 l.job_source,
                 l.first_name,
@@ -297,6 +302,8 @@ async function getAppLead(companyId, leadId) {
         `SELECT l.id,
                 l.uuid,
                 l.serial_id,
+                l.lead_seq,
+                l.public_code,
                 l.status,
                 l.job_source,
                 l.first_name,
