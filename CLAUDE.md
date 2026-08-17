@@ -77,3 +77,13 @@ Source of truth: `frontend/src/styles/design-system.css` (`--blanc-*` are intern
 - Entity colors: job #2f63d8 · lead #b26a1d · task/success #1b8b63 · danger #F0503F.
 - Radii: 10 / 16 / 22 / 28px. Fonts: IBM Plex Sans (body), Manrope (headings).
 - Eyebrow label: `.blanc-eyebrow` (11px, uppercase, 0.14em letter-spacing, `--blanc-ink-3`)
+
+### Visual QA & audit (check your frontend work)
+
+Two skills own visual quality. **Before** handing off any new or changed screen, panel (шторка), sheet, form, or component, run **`design-qa`** (`.claude/skills/design-qa`) — the source-vs-render gate. When the user asks to **audit / review / critique / assess** an existing flow, run **`audit`** (`.claude/skills/audit`). This discipline holds even when you don't formally invoke the skill:
+
+- **A screenshot is not QA by itself.** Put the source (mockup / a reference screen already in the app / this canon) and your render into **one comparison**, at the **same viewport, theme, and state**, then judge the visible differences. Don't judge a scaled screenshot — verify the capture is 1:1 at the intended size (`resize_window`).
+- **Check five surfaces every time**, even if only one was named: type (TYPE-CANON 32/20/15), spacing/rhythm (FORM-CANON), colour/tokens (`--blanc-*` only — no raw hex), asset quality, copy.
+- **Never fake a visible asset** with inline/hand-rolled SVG, CSS art, div/span shapes, emoji, or placeholder boxes — use a real asset measured to its slot (icon-library icons are fine).
+- **Inside the existing product, find the similar screen + the design system first** and build on it — don't reinvent a hero/palette/type/spacing that already exists.
+- Severity P0–P3; iterate (fix → re-capture the same state → compare) until no actionable P0/P1/P2 remains. Verdict is **passed** or **blocked** — never hand off a frontend change as done while a P0/P1/P2 stands.

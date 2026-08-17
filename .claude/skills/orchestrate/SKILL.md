@@ -47,6 +47,8 @@ Determine:
 2. **Areas affected:** backend, frontend, integrations (Twilio/Front/Zenbooker)
 3. **Summary:** 2-5 sentences describing the request
 
+**Not-a-pipeline check:** if the request is primarily to **audit / review / critique / assess an existing flow** (not build something), it is not a 9-agent job — run the **`audit`** skill instead and return its findings. When it asks to review *and then* fix/redesign, run `audit` first, then feed its findings into this pipeline. (The `design-qa` skill is invoked later, at 6-Review, as the visual gate for each frontend task — not here.)
+
 Print the summary and mode to the user before proceeding.
 
 ---
@@ -211,6 +213,7 @@ Per `gpt-implementer.md`:
 Per the review procedure in `gpt-implementer.md`:
 - `git status`/`git diff` review + independent build/test gates (exit codes).
 - Checklist priority: tenant scoping → correctness vs spec → security → design canon → test realness → scope.
+- **Frontend task → run the `design-qa` skill as the visual gate** before ACCEPT: source (spec mock / reference screen / canon) vs the rendered change in one comparison, five fidelity surfaces, correct viewport + theme. A standing P0/P1/P2 is a **FIX**, not an ACCEPT. (Non-visual tasks skip this.)
 - Verdict **ACCEPT** → mark task done in `Docs/tasks.md`, commit, next task.
 - Verdict **FIX** → `codex exec resume <SID>` with a numbered fix list. Max 3 fix rounds,
   then Claude finishes the remainder itself and notes why.

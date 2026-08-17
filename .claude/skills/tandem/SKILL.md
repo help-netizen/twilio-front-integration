@@ -196,6 +196,12 @@ Your per-task gate (cheap):
 
 Frontend changed → `npm run build` must pass (tsc -b, noUnusedLocals); verify the
 UX on the harness/preview and screenshot it for the owner when the surface is new.
+Then run the **`design-qa`** skill as the visual gate BEFORE you ACCEPT: source
+(owner mockup / a reference screen / the canon) vs your render in one comparison,
+five fidelity surfaces, at the right viewport + theme. A standing P0/P1/P2 keeps
+the task blocked — fix, re-capture the same state, compare again. (If the request
+was itself "review/audit our X" rather than a build, run **`audit`** first, then
+frame the tandem build around its findings.)
 
 **Session hygiene — close what you opened, IMMEDIATELY after the check (owner
 directive 2026-07-19; leaked sessions pile up and eat the Mac's RAM):**
