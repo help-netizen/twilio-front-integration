@@ -88,9 +88,20 @@ export class EstimateEditor {
     }
 
     async addDetailCustomItem(marker: string, unitPrice: string): Promise<void> {
+        // ESTIMATE-FOOTER-001 (2026-08-16): a draft shows one primary CTA (Send) plus
+        // Create invoice; every other action, Edit included, moved into the "More
+        // actions" menu. So open that menu, then pick Edit (testid estimate-edit) —
+        // the old top-level `button name="Edit"` no longer exists. The menu content is
+        // portaled to <body> (outside the dialog), so the item is page-scoped; only the
+        // trigger button lives inside detailPanel.
+        const editItem = this.page.getByTestId('estimate-edit');
         await expect(async () => {
             if (await this.itemSearch.isVisible()) return;
-            await this.detailPanel.getByRole('button', { name: 'Edit', exact: true }).dispatchEvent('click');
+            if (!(await editItem.isVisible())) {
+                await this.detailPanel.getByRole('button', { name: 'More actions' }).click();
+                await expect(editItem).toBeVisible({ timeout: 2000 });
+            }
+            await editItem.click();
             await expect(this.itemSearch).toBeVisible({ timeout: 2000 });
         }).toPass({ timeout: 20_000 });
         await this.itemSearch.fill(marker);
