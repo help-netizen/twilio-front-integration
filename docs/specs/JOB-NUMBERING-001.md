@@ -45,6 +45,24 @@ Albusto's own numbering. Owner decisions (this thread) are locked below.
 - Stored (not computed-on-read) with a `UNIQUE` index for fast `/j/:code` lookup and
   stability if the key ever rotates.
 
+### Key delivery invariant
+
+- Before migration 273 the deploy sets the stable value with `ALTER DATABASE`;
+  this protects raw `psql` and the old process during the migration→restart
+  window. Migration 273 can read that database setting even from an already-open
+  session.
+- After restart `backend/src/db/connection.js` passes the same value as PostgreSQL
+  startup option `app.job_code_feistel_key` on every physical pool connection.
+  Session value has priority; the migration-owned fingerprint rejects drift.
+- Missing/invalid application env is a degraded startup diagnostic, not a
+  process exception: telephony remains live and only `INSERT INTO jobs` fails
+  with an explicit key error.
+- Migration 273 stores a one-way key fingerprint. Same-key replay is a no-op;
+  different-key replay aborts before renaming jobs. Rotation preserves
+  `jobs.updated_at`.
+- The production value is never committed. Tests use an explicit non-production
+  fixture key and verify that the raw value is absent from the fingerprint table.
+
 ## Per-company counter
 - `company_job_counters (company_id UUID PRIMARY KEY, next_seq INT NOT NULL)`.
 - On create: `UPDATE company_job_counters SET next_seq = next_seq + 1
@@ -70,6 +88,11 @@ Albusto's own numbering. Owner decisions (this thread) are locked below.
 - Card / list / export show `job_seq`; email/SMS/receipt links use `/j/:code`.
 - Concurrency: two simultaneous creates in one company get distinct `job_seq`.
 - `public_code` is unguessable (no visible ordering across consecutive `id`s).
+- Production module load without `JOB_CODE_FEISTEL_KEY` succeeds and telephony
+  modules load; health is degraded and a job insert fails clearly. A connection
+  with the key reports the same GUC and can insert through the trigger.
+- Replaying migration 273 with the same key preserves code/timestamp; a different
+  key aborts and does not mutate any job.
 
 ## Split (tandem)
 - **Claude:** this spec, schema/migration shape, URL-resolution design, all frontend

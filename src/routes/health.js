@@ -7,11 +7,13 @@ const db = require('../../backend/src/db/connection');
  * Fly.dev calls this every 15s to know the process is alive.
  */
 router.get('/', (req, res) => {
+    const diagnostics = db.getRuntimeDiagnostics();
     res.json({
-        status: 'healthy',
+        status: diagnostics.jobNumbering.degraded ? 'degraded' : 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        environment: process.env.NODE_ENV || 'development'
+        environment: process.env.NODE_ENV || 'development',
+        diagnostics,
     });
 });
 
@@ -36,6 +38,7 @@ router.get('/ready', async (req, res) => {
     res.status(isReady ? 200 : 503).json({
         ready: isReady,
         checks,
+        diagnostics: db.getRuntimeDiagnostics(),
         timestamp: new Date().toISOString()
     });
 });
