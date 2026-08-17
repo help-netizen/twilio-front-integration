@@ -1,4 +1,5 @@
 const axios = require('axios');
+const vapiAssistantRegistry = require('./vapiAssistantRegistryService');
 
 // =============================================================================
 // Outbound Call Service — OUTBOUND-PARTS-CALL-001, Decision D (spec §C.3)
@@ -12,8 +13,9 @@ const axios = require('axios');
 // SAFE-FAIL: placeCall NEVER throws. It returns { ok:false, error } on any
 // failure (bad config, non-2xx, timeout, network) so the worker can record a
 // failed attempt and feed the retry loop without a try/catch at the call site.
-// All VAPI_* config is read from server env ONLY (OQ-3) — never client-provided,
-// never hardcoded. The Bearer token is never logged.
+// Provider transport secrets/caller number come from server env. Assistant
+// identity comes only from the company registry; there is no global env fallback.
+// The Bearer token is never logged.
 // =============================================================================
 
 // Request timeout for the VAPI /call POST. Placing a call is non-idempotent, so
@@ -76,15 +78,6 @@ async function placeCall({
     applianceType, applianceBrand, applianceProblem,
 } = {}) {
     const apiKey = process.env.VAPI_API_KEY;
-    // OUTBOUND-LEAD-CALL-001: the lead-booking scenario dials a DEDICATED
-    // assistant (clean first-contact prompt, no part-arrival script to drift
-    // into) when VAPI_LEAD_CALL_ASSISTANT_ID is set; every other scenario keeps
-    // the parts assistant. Falls back to the parts assistant if the lead id is
-    // unset, so a half-configured deploy still dials (parts prompt) rather than
-    // failing — but the two flows never share an assistant once it's set.
-    const assistantId = (scenario === 'lead_call' && process.env.VAPI_LEAD_CALL_ASSISTANT_ID)
-        ? process.env.VAPI_LEAD_CALL_ASSISTANT_ID
-        : process.env.VAPI_OUTBOUND_ASSISTANT_ID;
     const phoneNumberId = process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
     // Caller-ID source. Prefer a registered VAPI phone number (phoneNumberId).
     // Otherwise place via a TRANSIENT Twilio number (BYO creds): VAPI originates
@@ -98,14 +91,43 @@ async function placeCall({
 
     // Fail fast on missing config or number — never expose which secret is unset
     // beyond a coarse label, and never dial without a destination.
-    if (!apiKey || !assistantId || (!phoneNumberId && !hasTransient)) {
-        console.error('[outboundCallService] VAPI outbound config missing (assistant/caller-number/api key)');
+    if (!apiKey || (!phoneNumberId && !hasTransient)) {
+        console.error('[outboundCallService] VAPI outbound config missing (caller-number/api key)');
         return { ok: false, error: 'vapi_config_missing' };
     }
     if (!customerNumber) {
         console.error('[outboundCallService] placeCall called without customerNumber', { companyId, jobId });
         return { ok: false, error: 'missing_customer_number' };
     }
+
+    let assistantProfile;
+    try {
+        const purpose = vapiAssistantRegistry.purposeForOutboundScenario(scenario);
+        assistantProfile = await vapiAssistantRegistry.resolveActiveProfile({
+            companyId,
+            purpose,
+            environment: vapiAssistantRegistry.ENVIRONMENTS.PROD,
+        });
+        if (
+            assistantProfile.company_id !== companyId
+            || assistantProfile.purpose !== purpose
+            || assistantProfile.environment !== vapiAssistantRegistry.ENVIRONMENTS.PROD
+            || typeof assistantProfile.vapi_assistant_id !== 'string'
+            || assistantProfile.vapi_assistant_id.trim() === ''
+        ) {
+            throw new vapiAssistantRegistry.VapiAssistantRegistryError(
+                'VAPI_REGISTRY_PROFILE_SCOPE_MISMATCH',
+                409,
+            );
+        }
+    } catch (error) {
+        console.error('[outboundCallService] assistant registry refused placement', {
+            companyId,
+            code: error?.code || 'VAPI_REGISTRY_UNAVAILABLE',
+        });
+        return { ok: false, error: 'assistant_registry_unavailable' };
+    }
+    const assistantId = assistantProfile.vapi_assistant_id;
 
     const s = slot || {};
     const body = {

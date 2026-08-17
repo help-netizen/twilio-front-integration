@@ -18,6 +18,10 @@ let client;
 let credentialA;
 let credentialAOther;
 let credentialB;
+let toolsCredentialA;
+let statusCredentialA;
+let toolsCredentialB;
+let statusCredentialB;
 
 async function seedCompany(companyId, suffix) {
     await client.query(
@@ -28,24 +32,36 @@ async function seedCompany(companyId, suffix) {
     );
 }
 
-async function seedCredential(companyId, suffix) {
+async function seedCredential(
+    companyId,
+    suffix,
+    surface = 'vapi_assistant_request',
+    scope = 'vapi_assistant_request:invoke',
+) {
     const result = await client.query(
         `INSERT INTO api_integrations (
              client_name, key_id, secret_hash, scopes, company_id, machine_surface
-         ) VALUES ($1, $2, $3, $4::jsonb, $5, 'vapi_assistant_request')
+         ) VALUES ($1, $2, $3, $4::jsonb, $5, $6)
          RETURNING id`,
         [
-            `Vapi assistant request ${suffix}`,
-            `vapi_identity_${suffix}`,
-            `secret_hash_${suffix}`,
-            JSON.stringify(['vapi_assistant_request:invoke']),
+            `Vapi ${surface} ${suffix}`,
+            `vapi_identity_${surface}_${suffix}`,
+            `secret_hash_${surface}_${suffix}`,
+            JSON.stringify([scope]),
             companyId,
+            surface,
         ],
     );
     return String(result.rows[0].id);
 }
 
-async function seedRuntimeTuple(companyId, suffix, credentialId) {
+async function seedRuntimeTuple(
+    companyId,
+    suffix,
+    credentialId,
+    toolsCredentialId,
+    statusCredentialId,
+) {
     const connectionId = `vapi-identity-connection-${suffix}`;
     const profileId = `vapi-identity-profile-${suffix}`;
     const resourceId = `vapi-identity-resource-${suffix}`;
@@ -64,8 +80,13 @@ async function seedRuntimeTuple(companyId, suffix, credentialId) {
     await client.query(
         `INSERT INTO vapi_assistant_profiles (
              id, tenant_id, provider_connection_id, slug, purpose,
-             vapi_assistant_id, is_active, company_id, environment
-         ) VALUES ($1, $2, $3, $4, 'inbound_call', $5, true, $6, 'prod')`,
+             vapi_assistant_id, is_active, company_id, environment,
+             provider_account_key, status, tools_credential_id,
+             call_status_credential_id
+         ) VALUES (
+             $1, $2, $3, $4, 'inbound_call', $5, true, $6, 'prod',
+             'vapi:platform', 'active', $7, $8
+         )`,
         [
             profileId,
             `tenant-${suffix}`,
@@ -73,6 +94,8 @@ async function seedRuntimeTuple(companyId, suffix, credentialId) {
             `inbound-${suffix}`,
             `assistant-registry-${suffix}`,
             companyId,
+            toolsCredentialId,
+            statusCredentialId,
         ],
     );
     await client.query(
@@ -177,13 +200,40 @@ beforeAll(async () => {
     client = await pool.connect();
     await client.query('BEGIN');
     await client.query(MIGRATION);
+    // T5 columns are exercised here without running the ABC-specific bootstrap;
+    // the migration itself has a dedicated integration suite.
+    await client.query(`
+        ALTER TABLE vapi_assistant_profiles
+            ADD COLUMN IF NOT EXISTS provider_account_key TEXT NOT NULL DEFAULT 'vapi:platform',
+            ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active',
+            ADD COLUMN IF NOT EXISTS tools_credential_id BIGINT,
+            ADD COLUMN IF NOT EXISTS call_status_credential_id BIGINT;
+        ALTER TABLE vapi_tenant_resources
+            ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+    `);
     await seedCompany(COMPANY_A, 'a');
     await seedCompany(COMPANY_B, 'b');
     credentialA = await seedCredential(COMPANY_A, 'a');
     credentialAOther = await seedCredential(COMPANY_A, 'a_other');
     credentialB = await seedCredential(COMPANY_B, 'b');
-    await seedRuntimeTuple(COMPANY_A, 'a', credentialA);
-    await seedRuntimeTuple(COMPANY_B, 'b', credentialB);
+    toolsCredentialA = await seedCredential(
+        COMPANY_A, 'a_tools', 'vapi_tools', 'vapi_tools:invoke',
+    );
+    statusCredentialA = await seedCredential(
+        COMPANY_A, 'a_status', 'vapi_call_status', 'vapi_call_status:invoke',
+    );
+    toolsCredentialB = await seedCredential(
+        COMPANY_B, 'b_tools', 'vapi_tools', 'vapi_tools:invoke',
+    );
+    statusCredentialB = await seedCredential(
+        COMPANY_B, 'b_status', 'vapi_call_status', 'vapi_call_status:invoke',
+    );
+    await seedRuntimeTuple(
+        COMPANY_A, 'a', credentialA, toolsCredentialA, statusCredentialA,
+    );
+    await seedRuntimeTuple(
+        COMPANY_B, 'b', credentialB, toolsCredentialB, statusCredentialB,
+    );
     await seedExecution(COMPANY_A, 'a');
     await seedExecution(COMPANY_B, 'b');
 });

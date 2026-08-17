@@ -9,6 +9,7 @@ const {
     sanitizeVapiServerMessageJson,
     sanitizeVapiServerMessageCandidateJson,
 } = require('./vapiProviderContracts');
+const vapiAssistantRegistry = require('./vapiAssistantRegistryService');
 
 const PLATFORM_PROVIDER_ACCOUNT_KEY = 'vapi:platform';
 const STATUS_SURFACE = 'vapi_call_status';
@@ -163,23 +164,50 @@ function purposeForScenario(scenario) {
     return scenario === 'lead_call' ? 'outbound_lead_call' : 'outbound_parts_call';
 }
 
-function configuredOutboundAssistantId(purpose) {
-    return purpose === 'outbound_lead_call'
-        ? process.env.VAPI_LEAD_CALL_ASSISTANT_ID
-        : process.env.VAPI_OUTBOUND_ASSISTANT_ID;
-}
-
-function warnOutboundAssistantDrift({ companyId, providerCallId, purpose, assistantId }) {
-    const configured = configuredOutboundAssistantId(purpose);
+async function warnOutboundAssistantDrift({
+    client,
+    companyId,
+    providerCallId,
+    purpose,
+    assistantId,
+}) {
+    let configured = null;
+    let registryCode = null;
+    const savepoint = 'vapi_usage_registry_drift_check';
+    let savepointOpen = false;
+    try {
+        // This check is advisory for already-placed calls: a registry lookup
+        // must never poison the surrounding money-ingest transaction. PostgreSQL
+        // keeps a transaction aborted after a statement error even when JS catches
+        // it, so contain the lookup in a savepoint before logging and continuing.
+        await client.query(`SAVEPOINT ${savepoint}`);
+        savepointOpen = true;
+        const profile = await vapiAssistantRegistry.resolveActiveProfile({
+            companyId,
+            purpose,
+            environment: vapiAssistantRegistry.ENVIRONMENTS.PROD,
+            client,
+        });
+        configured = profile.vapi_assistant_id;
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        savepointOpen = false;
+    } catch (error) {
+        if (savepointOpen) {
+            await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+            await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+        }
+        registryCode = error?.code || 'VAPI_REGISTRY_UNAVAILABLE';
+    }
     if (configured === assistantId) return;
     console.warn(
-        '[vapiUsageIngest] transitional outbound assistant mismatch',
+        '[vapiUsageIngest] outbound assistant registry mismatch',
         {
             companyId,
             providerCallId,
             purpose,
             configured: configured || null,
             observed: assistantId,
+            registryCode,
         },
     );
 }
@@ -238,7 +266,8 @@ async function correlateCallWithClient({
         }
 
         if (session.direction === 'outbound') {
-            warnOutboundAssistantDrift({
+            await warnOutboundAssistantDrift({
+                client,
                 companyId,
                 providerCallId,
                 purpose: session.purpose,
@@ -273,7 +302,8 @@ async function correlateCallWithClient({
     if (!attempt) return { correlated: false, reason: 'attempt_not_found' };
 
     const purpose = purposeForScenario(attempt.scenario);
-    warnOutboundAssistantDrift({
+    await warnOutboundAssistantDrift({
+        client,
         companyId,
         providerCallId,
         purpose,

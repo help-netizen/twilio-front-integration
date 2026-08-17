@@ -6,7 +6,8 @@
  *
  * NO real HTTP ever leaves the process — `axios` is jest.mocked; we capture the
  * request the module would send and assert URL / Bearer header / body shape:
- *   { assistantId, phoneNumberId (from env), customer.number, assistantOverrides.variableValues }.
+ *   { assistantId (from registry), phoneNumberId, customer.number,
+ *     assistantOverrides.variableValues }.
  *
  * Also covers: safe-fail on non-2xx / thrown / missing config — placeCall NEVER
  * throws, always resolves `{ ok:false, error }` (spec §C.3, Decision D, OQ-3).
@@ -21,10 +22,35 @@ jest.mock('axios', () => ({
     create: jest.fn(() => ({ post: mockPost })),
 }));
 
+const PARTS_ASSISTANT_ID = 'assistant-registry-parts';
+const LEAD_ASSISTANT_ID = 'assistant-registry-lead';
+const mockResolveActiveProfile = jest.fn();
+jest.mock('../backend/src/services/vapiAssistantRegistryService', () => {
+    const PURPOSES = {
+        INBOUND_QUALIFICATION: 'inbound_call',
+        OUTBOUND_LEAD: 'outbound_lead_call',
+        OUTBOUND_PARTS: 'outbound_parts_call',
+    };
+    class VapiAssistantRegistryError extends Error {
+        constructor(code, status = 409) {
+            super(code);
+            this.code = code;
+            this.status = status;
+        }
+    }
+    return {
+        PURPOSES,
+        ENVIRONMENTS: { PROD: 'prod' },
+        VapiAssistantRegistryError,
+        purposeForOutboundScenario: jest.fn((scenario) => (
+            scenario === 'lead_call' ? PURPOSES.OUTBOUND_LEAD : PURPOSES.OUTBOUND_PARTS
+        )),
+        resolveActiveProfile: (...args) => mockResolveActiveProfile(...args),
+    };
+});
+
 const ENV_KEYS = [
     'VAPI_API_KEY',
-    'VAPI_OUTBOUND_ASSISTANT_ID',
-    'VAPI_LEAD_CALL_ASSISTANT_ID',
     'VAPI_OUTBOUND_PHONE_NUMBER_ID',
     'VAPI_OUTBOUND_TWILIO_NUMBER',
     'TWILIO_ACCOUNT_SID',
@@ -34,7 +60,6 @@ const savedEnv = {};
 
 function setEnv() {
     process.env.VAPI_API_KEY = 'sk_test_vapi_key';
-    process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'asst_outbound_123';
     process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID = 'pn_bostonmasters_999';
 }
 
@@ -71,6 +96,14 @@ beforeEach(() => {
     jest.clearAllMocks();
     jest.resetModules();
     setEnv();
+    mockResolveActiveProfile.mockImplementation(async ({ companyId, purpose, environment }) => ({
+        company_id: companyId,
+        purpose,
+        environment,
+        vapi_assistant_id: purpose === 'outbound_lead_call'
+            ? LEAD_ASSISTANT_ID
+            : PARTS_ASSISTANT_ID,
+    }));
     outboundCallService = require('../backend/src/services/outboundCallService');
 });
 
@@ -98,10 +131,10 @@ describe('TC-OPC-U08: outboundCallService.placeCall — VAPI request contract', 
             headers: { Authorization: 'Bearer sk_test_vapi_key' },
         });
 
-        // --- Body shape: assistantId + phoneNumberId from env, customer.number,
+        // --- Body shape: assistantId from registry, server caller id, customer.number,
         //     assistantOverrides.variableValues. ---
         expect(bodyArg).toMatchObject({
-            assistantId: 'asst_outbound_123',
+            assistantId: PARTS_ASSISTANT_ID,
             phoneNumberId: 'pn_bostonmasters_999',
             customer: { number: '+16175551212' },
             assistantOverrides: {
@@ -120,7 +153,7 @@ describe('TC-OPC-U08: outboundCallService.placeCall — VAPI request contract', 
 
         // --- phoneNumberId is the env value, not a literal. ---
         expect(bodyArg.phoneNumberId).toBe(process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID);
-        expect(bodyArg.assistantId).toBe(process.env.VAPI_OUTBOUND_ASSISTANT_ID);
+        expect(bodyArg.assistantId).toBe(PARTS_ASSISTANT_ID);
 
         // --- Returns the VAPI call.id for the caller (worker) to store. ---
         expect(out).toEqual({ ok: true, vapiCallId: 'vapi_call_x' });
@@ -369,31 +402,53 @@ describe('TC-OLC-031: placeCall — lead conditional spreads (parts wire body by
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OUTBOUND-LEAD-CALL-001 (fix): dedicated lead-booking assistant selection.
-// The lead scenario dials VAPI_LEAD_CALL_ASSISTANT_ID (a clean first-contact
-// assistant) instead of the shared parts assistant — eliminating scenario drift.
+// VAPI-AGENCY-001 T5: the server-owned scenario maps to an exact company
+// registry purpose. No global assistant fallback exists.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('placeCall — scenario picks the assistant (dedicated lead agent)', () => {
+describe('placeCall — fail-closed company assistant registry', () => {
     beforeEach(() => {
         mockPost.mockResolvedValue({ status: 201, data: { id: 'vapi_call' } });
     });
 
-    test('scenario=lead_call + VAPI_LEAD_CALL_ASSISTANT_ID set → dials the LEAD assistant', async () => {
-        process.env.VAPI_LEAD_CALL_ASSISTANT_ID = 'asst_lead_777';
+    test('lead scenario resolves the company outbound-lead purpose', async () => {
         await outboundCallService.placeCall({ ...CALL_ARGS, jobId: undefined, scenario: 'lead_call', leadUuid: 'LD-1' });
-        expect(mockPost.mock.calls[0][1].assistantId).toBe('asst_lead_777');
+        expect(mockResolveActiveProfile).toHaveBeenCalledWith({
+            companyId: CO,
+            purpose: 'outbound_lead_call',
+            environment: 'prod',
+        });
+        expect(mockPost.mock.calls[0][1].assistantId).toBe(LEAD_ASSISTANT_ID);
     });
 
-    test('scenario=lead_call but lead id UNSET → falls back to the parts assistant (half-configured deploy still dials)', async () => {
-        delete process.env.VAPI_LEAD_CALL_ASSISTANT_ID;
-        await outboundCallService.placeCall({ ...CALL_ARGS, jobId: undefined, scenario: 'lead_call', leadUuid: 'LD-1' });
-        expect(mockPost.mock.calls[0][1].assistantId).toBe('asst_outbound_123');
+    test('missing or inactive mapping refuses placement without a provider call', async () => {
+        mockResolveActiveProfile.mockRejectedValue(
+            Object.assign(new Error('unavailable'), { code: 'VAPI_REGISTRY_PROFILE_UNAVAILABLE' }),
+        );
+        const result = await outboundCallService.placeCall(CALL_ARGS);
+        expect(result).toEqual({ ok: false, error: 'assistant_registry_unavailable' });
+        expect(mockPost).not.toHaveBeenCalled();
     });
 
-    test('parts scenario → always the parts assistant even when the lead id is set', async () => {
-        process.env.VAPI_LEAD_CALL_ASSISTANT_ID = 'asst_lead_777';
-        await outboundCallService.placeCall(CALL_ARGS); // no scenario = parts
-        expect(mockPost.mock.calls[0][1].assistantId).toBe('asst_outbound_123');
+    test('foreign profile result is rejected without a provider call', async () => {
+        mockResolveActiveProfile.mockResolvedValue({
+            company_id: '00000000-0000-4000-8000-00000000000b',
+            purpose: 'outbound_parts_call',
+            environment: 'prod',
+            vapi_assistant_id: 'foreign-assistant',
+        });
+        const result = await outboundCallService.placeCall(CALL_ARGS);
+        expect(result).toEqual({ ok: false, error: 'assistant_registry_unavailable' });
+        expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    test('parts scenario resolves only the company outbound-parts purpose', async () => {
+        await outboundCallService.placeCall(CALL_ARGS);
+        expect(mockResolveActiveProfile).toHaveBeenCalledWith({
+            companyId: CO,
+            purpose: 'outbound_parts_call',
+            environment: 'prod',
+        });
+        expect(mockPost.mock.calls[0][1].assistantId).toBe(PARTS_ASSISTANT_ID);
     });
 });

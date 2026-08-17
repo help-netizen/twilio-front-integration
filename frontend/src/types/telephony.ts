@@ -23,7 +23,7 @@ export const NODE_KIND_META: Record<CallFlowNodeKind, NodeKindMeta> = {
     hangup: { label: 'Hang Up', color: '#6b7280', icon: '📵' },
     play_audio: { label: 'Play Audio', color: '#ec4899', icon: '🔊' },
     collect_input: { label: 'Collect Input', color: '#14b8a6', icon: '⌨️' },
-    vapi_agent: { label: 'VAPI AI Agent', color: '#7c3aed', icon: '🤖' },
+    vapi_agent: { label: 'AI Agent', color: '#7c3aed', icon: '🤖' },
     final: { label: 'Final', color: '#9ca3af', icon: '⏹' },
 };
 

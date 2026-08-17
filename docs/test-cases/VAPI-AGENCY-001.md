@@ -64,6 +64,9 @@ Delivery plan: `docs/specs/VAPI-AGENCY-001-TASKS.md`
 | REG-05 | P0 | Provider readback assistant/tools/SIP отличается hash | `drifted`, gate deny, alert; tenant не может override | drift test |
 | REG-06 | P0 | Tools и call-status credentials одинаковы/expired/revoked | Readiness deny; callbacks deny according to credential state | credential separation |
 | REG-07 | P2 | Provision/dry-run logging | Ни platform key, ни webhook secret/token не встречается в output/log | secret ratchet |
+| REG-08 | P0 | First-run ABC migration получает existing connection/resource/credentials и три assistant env ids | Ровно три active `(company,purpose,prod)` profile; inbound resource bound; reservation создаёт token. Любой отсутствующий/невалидный/неоднозначный input abort-ит всю migration | `vapiAssistantRegistryMigration` |
+| REG-09 | P0 | Assistant id A повторно вставляется для B при разных/пустых `provider_org_id` | Global unique violation; provider namespace нельзя фрагментировать per-company полем | registry migration collision |
+| REG-10 | P0 | Tenant node передаёт foreign `sip_uri`, profile/resource/assistant id, purpose/env и overrides | Reservation получает hardcoded product purpose/env; wire SIP только из exact company registry. Legacy-canary fallback также читает только company/inbound/prod resource | `SAB-VAPI-NODE-SIP` |
 | CAP-01 | P0 | N параллельных admissions A при cap K | Ровно K leases admitted, остальные fallback/queued; никогда K+1 | `SAB-VAPI-CONCURRENCY` |
 | CAP-02 | P0 | A и B одновременно упираются в global cap G | Всего admitted ≤ G и каждый ≤ tenant cap; нет starvation bypass | global+tenant stress |
 | CAP-03 | P0 | Outbound denied by cap | Остаётся queued; POST spy = 0; attempt count unchanged | outbound cap behavior |
@@ -159,9 +162,11 @@ AI-ног, потому что это единица supplier cost; UI може�
 | MIG-02 | P1 | Rollback и повторный forward | Schema/data contract восстановим согласно approved rollout stage; без silent money loss |
 | MIG-03 | P0 | Два legacy attempts дают неоднозначный Vapi/company match | Exception report; ни session bind, ни charge не выдуман |
 | MIG-04 | P1 | Однозначный ABC outbound attempt | Session/provider identity backfilled ровно один раз |
-| RET-01 | P0 | Source/import/route scan после T5 | Нет org provisioner/script, tenant key API/settings, global assistant env fallback |
+| RET-01 | P0 | Source/import/route scan после T5 | Нет org provisioner/script, tenant key API/settings и runtime global assistant env fallback; env ids допустимы только в migration bootstrap/docs/tests |
 | RET-02 | P0 | Попытка вызвать старый tenant `/api/vapi` route | 404/410 по rollout contract; provider state unchanged; ключ не принимается |
 | RET-03 | P1 | Existing ABC call после cutover | Идёт только registry path; legacy fallback spy не вызывается |
+| RET-04 | P1 | ABC `legacy_canary` reservation временно недоступна | Сохранённый incident fallback набирает только exact company/inbound/prod SIP без token; для обычного/non-ABC rollout тот же путь закрыт | `callFlowRuntime.vapi` hotfix regression |
+| RET-05 | P0 | Старый Marketplace seed проигрывается при boot | Финальный retirement seed снова ставит legacy provider app `disabled`; tenant catalog/installations/direct management его не выдают | registry migration + marketplace query tests |
 | ROLL-01 | P0 | Checklist второго tenant имеет один failed item | Enable transaction abort; tenant остаётся ready/provisioning, runtime closed |
 | ROLL-02 | P1 | Полный checklist + canary, затем suspend | Сначала controlled calls; после suspend новые закрыты/fallback, audit actor/time сохранены |
 

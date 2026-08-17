@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { withTransaction } = require('./transactionService');
+const vapiAssistantRegistry = require('./vapiAssistantRegistryService');
 
 const DEFAULT_TOKEN_TTL_SECONDS = 300;
 const TOKEN_HEADER = 'x-albusto-call-token';
@@ -110,47 +111,19 @@ async function reserveInboundSessionWithClient({
         throw new VapiIdentityError('VAPI_IDENTITY_FLOW_SCOPE_MISMATCH', 409);
     }
 
-    const tuple = await client.query(
-        `SELECT
-             resource.id AS tenant_resource_id,
-             resource.sip_uri,
-             resource.provider_connection_id,
-             resource.server_credential_id AS assistant_request_credential_id,
-             profile.id AS assistant_profile_id,
-             profile.vapi_assistant_id AS expected_vapi_assistant_id
-         FROM vapi_tenant_resources resource
-         JOIN provider_connections connection
-           ON connection.id = resource.provider_connection_id
-          AND connection.company_id = resource.company_id
-          AND connection.provider = 'vapi'
-          AND connection.status = 'active'
-         JOIN vapi_assistant_profiles profile
-           ON profile.id = resource.assistant_profile_id
-          AND profile.company_id = resource.company_id
-          AND profile.provider_connection_id = resource.provider_connection_id
-          AND profile.is_active = true
-          AND profile.purpose = resource.purpose
-          AND profile.environment = resource.environment
-         JOIN api_integrations credential
-           ON credential.id = resource.server_credential_id
-          AND credential.company_id = resource.company_id
-          AND credential.machine_surface = 'vapi_assistant_request'
-          AND credential.revoked_at IS NULL
-          AND (credential.expires_at IS NULL OR credential.expires_at > now())
-          AND credential.scopes ? 'vapi_assistant_request:invoke'
-         WHERE resource.company_id = $1
-           AND resource.environment = $2
-           AND resource.purpose = $3
-           AND resource.is_active = true
-           AND NULLIF(BTRIM(resource.sip_uri), '') IS NOT NULL
-           AND NULLIF(BTRIM(profile.vapi_assistant_id), '') IS NOT NULL
-         ORDER BY resource.id
-         LIMIT 2
-         FOR SHARE OF resource, connection, profile, credential`,
-        [normalizedCompanyId, normalizedEnvironment, normalizedPurpose],
-    );
-    if (tuple.rows.length !== 1) {
-        throw new VapiIdentityError('VAPI_IDENTITY_TUPLE_UNAVAILABLE', 409);
+    let selected;
+    try {
+        selected = await vapiAssistantRegistry.resolveInboundTuple({
+            companyId: normalizedCompanyId,
+            purpose: normalizedPurpose,
+            environment: normalizedEnvironment,
+            client,
+        });
+    } catch (error) {
+        if (error instanceof vapiAssistantRegistry.VapiAssistantRegistryError) {
+            throw new VapiIdentityError('VAPI_IDENTITY_TUPLE_UNAVAILABLE', 409);
+        }
+        throw error;
     }
 
     await client.query(
@@ -197,7 +170,6 @@ async function reserveInboundSessionWithClient({
     const token = generateToken();
     const tokenHash = hashToken(token);
     const ttlSeconds = tokenTtlSeconds();
-    const selected = tuple.rows[0];
     const inserted = await client.query(
         `INSERT INTO vapi_call_sessions (
              company_id,

@@ -192,10 +192,13 @@ export function IntegrationsPage() {
     };
 
     const { data: apps = [], isLoading: marketplaceLoading } = useQuery({ queryKey: ['marketplace-apps'], queryFn: fetchMarketplaceApps });
+    // Voice execution is platform-managed. Until its provider-neutral product
+    // editor exists, the legacy provider app is not a tenant marketplace surface.
+    const tenantApps = apps.filter(app => app.app_key !== 'vapi-ai');
     // The app whose detail panel is open — resolved from the live list so it stays
     // fresh across install/disconnect refetches.
     const [detailAppKey, setDetailAppKey] = useState<string | null>(null);
-    const detailApp = detailAppKey ? apps.find(a => a.app_key === detailAppKey) ?? null : null;
+    const detailApp = detailAppKey ? tenantApps.find(a => a.app_key === detailAppKey) ?? null : null;
     const { data: mailbox } = useQuery({ queryKey: ['email-mailbox-settings'], queryFn: getMailboxSettings });
     const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: fetchIntegrations });
 
@@ -244,11 +247,7 @@ export function IntegrationsPage() {
                 <p className="mb-2.5 text-sm text-[var(--blanc-warning)]">{app.installation.provisioning_error}</p>
             )}
             <div className="flex flex-wrap items-center gap-2">
-                {app.app_key === 'vapi-ai' ? (
-                    <Button size="sm" variant={app.installation?.status === 'connected' ? 'outline' : 'default'} onClick={() => navigate('/settings/integrations/vapi-ai')}>
-                        {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
-                    </Button>
-                ) : app.app_key === 'stripe-payments' ? (
+                {app.app_key === 'stripe-payments' ? (
                     <Button size="sm" variant={app.installation?.status === 'connected' ? 'outline' : 'default'} onClick={() => navigate('/settings/integrations/stripe-payments')}>
                         {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? 'Manage' : 'Configure'}
                     </Button>
@@ -317,14 +316,14 @@ export function IntegrationsPage() {
                 <TabsContent value="marketplace" className="mt-0">
                     {marketplaceLoading ? (
                         <div className="text-center text-[var(--blanc-ink-2)] py-12">Loading apps…</div>
-                    ) : apps.length === 0 ? (
+                    ) : tenantApps.length === 0 ? (
                         <div className="text-center py-12 border border-[var(--blanc-line)] rounded-xl">
                             <Store className="h-12 w-12 text-[var(--blanc-ink-3)] mx-auto mb-4" />
                             <p className="text-[var(--blanc-ink-2)]">No marketplace apps are published yet</p>
                         </div>
                     ) : (
                         <MarketplaceGrid
-                            apps={apps}
+                            apps={tenantApps}
                             onOpen={app => setDetailAppKey(app.app_key)}
                         />
                     )}

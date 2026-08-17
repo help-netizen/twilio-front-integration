@@ -89,6 +89,9 @@ async function ensureMarketplaceSchema(client = null) {
         // LEAD-CHANNEL-ANALYTICS-001: derived Google Ads card + connection
         // tables. Migration 214 is idempotent and owns its assistant metadata.
         await query(readMigration('214_google_ads_connector.sql'));
+        // VAPI-AGENCY-001 T5: old seeds above republish the legacy provider app;
+        // replay its retirement last so no process boot can expose it again.
+        await query(readMigration('274_retire_tenant_vapi_marketplace_app.sql'));
         return;
     }
 
@@ -368,6 +371,7 @@ async function listInstallations(companyId, includeInactive = false, client = nu
          JOIN marketplace_apps a ON a.id = i.app_id
          LEFT JOIN api_integrations ai ON ai.id = i.api_integration_id
          WHERE i.company_id = $1
+           AND a.status = 'published'
          ${inactiveWhere}
          ORDER BY i.created_at DESC`,
         [companyId]
@@ -395,7 +399,8 @@ async function getInstallationById(companyId, installationId, client = null) {
          JOIN marketplace_apps a ON a.id = i.app_id
          LEFT JOIN api_integrations ai ON ai.id = i.api_integration_id
          WHERE i.company_id = $1
-           AND i.id = $2`,
+           AND i.id = $2
+           AND a.status = 'published'`,
         [companyId, installationId]
     );
     return rows[0] || null;

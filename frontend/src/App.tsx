@@ -41,7 +41,6 @@ import WelcomePage from './pages/WelcomePage';
 import { MessagesPage } from './pages/MessagesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import CompanySettingsPage from './pages/CompanySettingsPage';
-import VapiSettingsPage from './pages/VapiSettingsPage';
 import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
 import { ReportToEstimateSettingsPage } from './pages/ReportToEstimateSettingsPage';
 import MailSecretarySettingsPage from './pages/MailSecretarySettingsPage';
@@ -212,7 +211,6 @@ function App() {
                 <Route path="/settings/telephony/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
                 <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
                 <Route path="/settings/app-studio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><AppStudioPage /></ProtectedRoute>} />
-                <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/mail-secretary" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><MailSecretarySettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/outbound-lead-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundLeadCallerSettingsPage /></ProtectedRoute>} />
                 <Route path="/settings/integrations/outbound-parts-caller" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><OutboundPartsCallerSettingsPage /></ProtectedRoute>} />

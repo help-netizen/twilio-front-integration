@@ -231,14 +231,18 @@ describe('MARKETPLACE-RATINGS-001 migrations 204/205 · prod-shaped PostgreSQL',
         ]));
     });
 
-    databaseTest('205 is the last boot replay and applies authoritative copy/pricing idempotently', async () => {
+    databaseTest('205 copy is followed by the provider-app retirement replay', async () => {
         const assistant = MARKETPLACE_QUERY_SOURCE.indexOf(
             "readMigration('173_seed_assistant_app_descriptions.sql')"
         );
         const copy = MARKETPLACE_QUERY_SOURCE.indexOf(
             "readMigration('205_marketplace_human_copy_pricing.sql')"
         );
+        const retirement = MARKETPLACE_QUERY_SOURCE.indexOf(
+            "readMigration('274_retire_tenant_vapi_marketplace_app.sql')"
+        );
         expect(copy).toBeGreaterThan(assistant);
+        expect(retirement).toBeGreaterThan(copy);
 
         await client.query(FORWARD_205);
         await client.query(FORWARD_205);
@@ -259,6 +263,10 @@ describe('MARKETPLACE-RATINGS-001 migrations 204/205 · prod-shaped PostgreSQL',
                 text: pricingText,
             });
         }
+        const retired = await client.query(
+            `SELECT status FROM marketplace_apps WHERE app_key = 'vapi-ai'`
+        );
+        expect(retired.rows).toEqual([{ status: 'disabled' }]);
     });
 
     databaseTest('rollback 205 removes only pricing and an outer rollback restores catalog state', async () => {
@@ -293,7 +301,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyA,
             state.userA,
-            'vapi-ai',
+            'mail-secretary',
             5,
             'Works for our evening calls.',
             { moderateCommentImpl: async () => ({ allow: true }) }
@@ -301,13 +309,13 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyB,
             state.userB,
-            'vapi-ai',
+            'mail-secretary',
             3,
             'Useful for our other branch.',
             { moderateCommentImpl: async () => ({ allow: true }) }
         );
 
-        await expect(ratingsService.getAggregate('vapi-ai')).resolves.toEqual({
+        await expect(ratingsService.getAggregate('mail-secretary')).resolves.toEqual({
             avg_rating: 4,
             rating_count: 2,
         });
@@ -315,7 +323,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
             state.companyA,
             client
         );
-        expect(catalog.find(app => app.app_key === 'vapi-ai')).toMatchObject({
+        expect(catalog.find(app => app.app_key === 'mail-secretary')).toMatchObject({
             avg_rating: '4.00',
             rating_count: 2,
         });
@@ -323,12 +331,12 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyB,
             state.userB,
-            'vapi-ai',
+            'mail-secretary',
             1,
             'Edited review requiring policy review.',
             { moderateCommentImpl: async () => ({ allow: false, reason: 'Manual check.' }) }
         );
-        await expect(ratingsService.getAggregate('vapi-ai')).resolves.toEqual({
+        await expect(ratingsService.getAggregate('mail-secretary')).resolves.toEqual({
             avg_rating: 5,
             rating_count: 1,
         });
@@ -336,12 +344,12 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         const visibleA = await ratingsService.getPublicReviews(
             state.companyA,
             state.userA,
-            'vapi-ai'
+            'mail-secretary'
         );
         const visibleB = await ratingsService.getPublicReviews(
             state.companyB,
             state.userB,
-            'vapi-ai'
+            'mail-secretary'
         );
         expect(visibleA).toHaveLength(1);
         expect(visibleA[0]).toMatchObject({ status: 'posted', is_mine: true });
@@ -355,7 +363,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyA,
             state.userA,
-            'vapi-ai',
+            'mail-secretary',
             5,
             'Initial clean review.',
             { moderateCommentImpl: async () => ({ allow: true }) }
@@ -363,7 +371,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyA,
             state.userA,
-            'vapi-ai',
+            'mail-secretary',
             2,
             'Edited clean review.',
             { moderateCommentImpl: async () => ({ allow: true }) }
@@ -371,7 +379,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         const count = await client.query(
             `SELECT COUNT(*)::INTEGER AS count, MIN(stars)::INTEGER AS stars
              FROM app_ratings
-             WHERE app_key = 'vapi-ai'
+             WHERE app_key = 'mail-secretary'
                AND user_id = $1`,
             [state.userA]
         );
@@ -382,7 +390,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyB,
             state.userB,
-            'vapi-ai',
+            'mail-secretary',
             4,
             'Tenant B review.',
             { moderateCommentImpl: async () => ({ allow: true }) }
@@ -390,19 +398,19 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         const before = await client.query(
             `SELECT row_to_json(rating)::TEXT AS snapshot
              FROM app_ratings rating
-             WHERE app_key = 'vapi-ai'
+             WHERE app_key = 'mail-secretary'
                AND user_id = $1`,
             [state.userB]
         );
 
         await expect(
-            ratingsService.deleteMyReview(state.companyA, state.userB, 'vapi-ai')
+            ratingsService.deleteMyReview(state.companyA, state.userB, 'mail-secretary')
         ).rejects.toMatchObject({ code: 'REVIEWER_CONTEXT_INVALID' });
 
         const after = await client.query(
             `SELECT row_to_json(rating)::TEXT AS snapshot
              FROM app_ratings rating
-             WHERE app_key = 'vapi-ai'
+             WHERE app_key = 'mail-secretary'
                AND user_id = $1`,
             [state.userB]
         );
@@ -413,7 +421,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyA,
             state.userA,
-            'vapi-ai',
+            'mail-secretary',
             2,
             'Tenant A posted review.',
             { moderateCommentImpl: async () => ({ allow: true }) }
@@ -421,7 +429,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyB,
             state.userB,
-            'vapi-ai',
+            'mail-secretary',
             1,
             'Tenant B pending review.',
             { moderateCommentImpl: async () => ({ allow: false, reason: 'Manual check.' }) }
@@ -433,7 +441,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         });
         expect(queue.reviews).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                app_key: 'vapi-ai',
+                app_key: 'mail-secretary',
                 reviewer_first_name: 'Boris',
                 company_name: 'Ratings Tenant B',
             }),
@@ -442,7 +450,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         const pending = await client.query(
             `SELECT id
              FROM app_ratings
-             WHERE app_key = 'vapi-ai'
+             WHERE app_key = 'mail-secretary'
                AND user_id = $1`,
             [state.userB]
         );
@@ -458,7 +466,7 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
             moderated_by: state.superAdmin,
         });
 
-        await expect(ratingsService.getAggregate('vapi-ai')).resolves.toEqual({
+        await expect(ratingsService.getAggregate('mail-secretary')).resolves.toEqual({
             avg_rating: 1.5,
             rating_count: 2,
         });
@@ -480,14 +488,14 @@ describe('MARKETPLACE-RATINGS-001 real-DB tenancy and moderation contract', () =
         await ratingsService.submitReview(
             state.companyA,
             state.userA,
-            'vapi-ai',
+            'mail-secretary',
             5,
             null
         );
         const row = await client.query(
             `SELECT id
              FROM app_ratings
-             WHERE app_key = 'vapi-ai'
+             WHERE app_key = 'mail-secretary'
              LIMIT 1`
         );
         await expect(

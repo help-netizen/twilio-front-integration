@@ -401,13 +401,11 @@ function appendSipQuery(sipUri, query) {
 // Where to send the caller when the identity reservation cannot be made. Pre-dates
 // the reservation and stays as the answer-the-phone path: the resource row carries
 // the SIP address on its own, independently of the assistant registry.
-async function resolveVapiSipUriFallback(node, companyId) {
-    const cfg = node.config || {};
+async function resolveVapiSipUriFallback(companyId) {
     if (!companyId) return null;
     // Deliberately NOT node.config.sip_uri. Flow nodes are tenant-editable, so honouring
     // an address from there would let a tenant aim the dial at another tenant's assistant
     // in the shared Vapi org — the hole T2 closed. Only the server-owned resource row counts.
-    const environment = String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod');
     try {
         const result = await db.query(
             `SELECT NULLIF(BTRIM(r.sip_uri), '') AS sip_uri
@@ -415,14 +413,20 @@ async function resolveVapiSipUriFallback(node, companyId) {
              JOIN provider_connections pc
                ON pc.id = r.provider_connection_id
               AND pc.company_id = r.company_id
+             JOIN vapi_tenant_voice_configs voice_config
+               ON voice_config.company_id = r.company_id
+              AND voice_config.environment = r.environment
+              AND voice_config.rollout_state = 'legacy_canary'
              WHERE r.company_id = $1
                AND r.is_active = true
+               AND r.purpose = 'inbound_call'
+               AND r.environment = 'prod'
                AND pc.provider = 'vapi'
                AND pc.status = 'active'
                AND NULLIF(BTRIM(r.sip_uri), '') IS NOT NULL
-             ORDER BY CASE WHEN r.environment = $2 THEN 0 ELSE 1 END, r.created_at DESC
+             ORDER BY r.created_at DESC
              LIMIT 1`,
-            [companyId, environment],
+            [companyId],
         );
         return result.rows[0]?.sip_uri || null;
     } catch (err) {
@@ -440,8 +444,9 @@ async function renderVapiNode({ execution, node, context, traceId }) {
             twilioParentCallSid: execution.call_sid,
             flowExecutionId: execution.id,
             flowNodeId: node.id,
-            purpose: String(cfg.purpose || 'inbound_call'),
-            environment: String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod'),
+            // Purpose/environment are platform policy, never flow-node config.
+            purpose: 'inbound_call',
+            environment: 'prod',
         });
     } catch (error) {
         // Losing the identity means we cannot attribute this call's cost. That is an
@@ -453,7 +458,7 @@ async function renderVapiNode({ execution, node, context, traceId }) {
             '[CallFlowRuntime] Vapi reservation refused, dialling unattributed:',
             error.code || 'unknown',
         );
-        const fallbackSipUri = await resolveVapiSipUriFallback(node, execution.company_id);
+        const fallbackSipUri = await resolveVapiSipUriFallback(execution.company_id);
         if (!fallbackSipUri) {
             // No SIP address at all is the genuine "AI is not configured" case.
             return followFailureEdge({

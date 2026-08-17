@@ -67,7 +67,7 @@ export const TERMINAL_KINDS = new Set<CallFlowNodeKind>(['voicemail', 'hangup'])
 /** Whether a node kind is disabled in the palette */
 export const DISABLED_KINDS = new Set<CallFlowNodeKind>(['collect_input', 'menu']);
 
-/** Locked/out-of-scope kinds — none currently (vapi_agent unlocked when VAPI is connected) */
+/** Locked/out-of-scope kinds — none currently. */
 export const LOCKED_KINDS = new Set<CallFlowNodeKind>();
 
 /** Palette display order (enabled first, disabled/conditional last) */
@@ -76,6 +76,6 @@ export const PALETTE_ORDER: CallFlowNodeKind[] = [
     'greeting', 'queue', 'branch', 'transfer', 'voicemail', 'hangup', 'play_audio',
     // Disabled (not yet implemented)
     'collect_input', 'menu',
-    // Conditional: shown only when VAPI is connected (filtered in CallFlowBuilderPage)
+    // Platform-managed AI nodes are not tenant-addable until the product editor exists.
     'vapi_agent',
 ];

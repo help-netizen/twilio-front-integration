@@ -32,7 +32,6 @@ const APPS: MarketplaceApp[] = [
     app({ app_key: 'stripe-payments', name: 'Stripe Payments', provider_name: 'Stripe', category: 'payments', avg_rating: 4.9, rating_count: 210, metadata: { pricing: { paid: false, label: 'Free', text: 'Free to install — standard Stripe processing fees apply.' } } }),
     app({ app_key: 'yelp-leads', name: 'Yelp Leads', category: 'lead_generation', avg_rating: 4.5, rating_count: 11 }),
     app({ app_key: 'lead-generator', name: 'Website Leads', category: 'lead_generation', avg_rating: 4.6, rating_count: 78, installation: { id: 3, status: 'connected', installed_at: null, provisioning_error: null, last_used_at: null } }),
-    app({ app_key: 'vapi-ai', name: 'AI Receptionist', provider_name: 'Blanc Labs', category: 'telephony', avg_rating: 4.4, rating_count: 40 }),
     app({ app_key: 'smart-slot-engine', name: 'Smart Scheduling', category: 'scheduling', avg_rating: 4.7, rating_count: 92 }),
     app({ app_key: 'inspector', name: 'Job Watchdog', category: 'ai', avg_rating: 0, rating_count: 0 }),
 ];

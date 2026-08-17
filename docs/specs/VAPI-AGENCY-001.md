@@ -86,7 +86,7 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
 сохраняет клиентский Vapi API key; `:271-379` позволяет tenant CRUD ресурсов и
 профилей. Эти поверхности подлежат удалению в T5.
 
-## 2.2 Реализованный delta T1/T2/T3/T4
+## 2.2 Реализованный delta T1/T2/T3/T4/T5
 
 - Flow runtime создаёт durable session/reservation и одноразовый opaque token до
   `<Dial><Sip>`; SIP получает только token, прямые SIP/resource/assistant overrides
@@ -95,17 +95,21 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   `POST /api/vapi/call-status/assistant-request`. Company берётся из отдельного
   machine credential, а сохранённый assistant возвращается только после exact bind
   token + company + credential + resource tuple + `message.call.id`.
-- Legacy prototype больше не строит transient assistant, но окончательно удаляется
-  вместе со старыми конфигами в T5.
-- На production на момент T2 есть один legacy SIP resource и нет строк registry
-  profile. Поэтому runtime cutover не выкатывается раньше operator provisioning
-  ABC profile/resource/assistant-request credential и provider readback; иначе
-  fail-closed ветка корректно отправит входящие в обычный fallback.
+- Legacy prototype больше не строит transient assistant; tenant CRUD/API/UI,
+  org provisioner и CLI удалены в T5. Защищённый mount пустого tombstone-router
+  снимается отдельным shell patch из `src/server.js`.
+- На production до T5 был один legacy SIP resource и не было строк registry
+  profile. Registry migration теперь атомарно требует существующие ABC
+  connection/resource и три раздельных machine credentials, получает три полных
+  assistant id из deployment environment и abort-ится при пропуске, конфликте
+  либо неоднозначности. После успешного применения ABC имеет три active tuple:
+  inbound qualification, outbound lead и outbound parts.
 - T3 требует exact raw body до JSON parsing для денег, но денежный ingest не
   является предусловием outbound FSM/timeline: attempt коррелируется отдельно по
   company credential + локальной строке. До T5 outbound usage создаётся из
-  `outbound_call_attempts` без обязательного registry profile; assistant env
-  drift даёт operational warning, не потерю supplier cost. Коррелированный EoC
+  `outbound_call_attempts` без обязательного registry profile; после T5 registry
+  drift даёт operational warning, не потерю supplier cost уже совершённого
+  звонка. Коррелированный EoC
   записывается как append-only observation и обновляет единую provisional
   projection. Identity/correlation rejection сохраняется в отдельном
   company-scoped quarantine с allowlisted sanitized evidence и alert; неизвестные
@@ -123,6 +127,17 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   сохраняет orphan/missing/stuck counters и ставит repair в company-scoped
   очередь. Через 24 часа без стабильности создаётся idempotent platform alert и
   состояние `stale_pending`; молчаливой финализации нет.
+- Runtime-выбор нового исходящего assistant идёт только через exact
+  `(company,purpose,prod)` active registry tuple; global assistant env fallback
+  удалён. Inbound reservation использует тот же registry, company-owned resource
+  и три typed credentials. Узкий production-инцидентный fallback сохранён только
+  для platform-owned `legacy_canary`: он может набрать закреплённый company SIP
+  без token, но не принимает tenant SIP/purpose/environment/profile и не
+  доступен обычному или второму tenant rollout.
+- Legacy Marketplace row переведён в `disabled` replay-safe seed: старые seeds не
+  могут снова опубликовать его при старте. Tenant API больше не выдаёт скрытые
+  installations, Vapi settings route/UI отсутствуют, а client key,
+  `base_config_json` и plaintext resource secret запрещены DB constraints.
 
 ## 3. Закрытые решения — дословно
 
@@ -180,12 +195,12 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
 
 ## 4.1 Untrusted Vapi input inventory
 
-T5 обязан закрыть либо сделать evidence-only каждый внешний путь, способный
-сегодня влиять на provider call:
+T5 закрыл либо сделал evidence-only каждый внешний путь, способный влиять на
+provider call:
 
 | Вход | Опасные поля/поведение | Требуемый контракт |
 |---|---|---|
-| Call Flow Vapi node config | прямой `sip_uri`, `vapi_resource_id`, `provider_connection_id`, environment | Flow хранит только server-defined purpose/policy ref; runtime разрешает registry tuple той же company и не принимает direct SIP/provider ids |
+| Call Flow Vapi node config | прямой `sip_uri`, `vapi_resource_id`, `provider_connection_id`, profile/assistant id, purpose, environment | Runtime игнорирует эти поля и разрешает только server-owned `inbound_call/prod` registry tuple той же company; legacy-canary fallback также читает только exact company resource |
 | Tenant Vapi routes/UI | `api_key`, `base_config_json`, `vapi_assistant_id`, SIP/server URL | Поверхность удаляется; только platform provisioning из template |
 | SIP query/custom headers | `company-id`, profile, group/flow/node, caller data | Никакой header не авторизует tenant/assistant; только opaque one-time session token, credential и stored resource binding |
 | `assistant-request` body | `call.id`, assistant profile/overrides, customer, destination | `call.id` — evidence для exact bind; assistant/resource уже server-selected. Unknown/mismatch fail closed, transient assistant запрещён |
@@ -236,9 +251,10 @@ production gate остаётся закрыт.
 | `provider_generation`, `provider_updated_at`, `last_verified_at` | readback/drift evidence |
 | `created_at`, `updated_at` | аудит |
 
-Должно существовать не более одной активной записи на `(company_id, purpose,
-environment)` и не более одного владельца `(provider_account_key,
-vapi_assistant_id)`.
+Существует ровно одно пространство имён платформенного аккаунта: business key
+`(company_id, purpose, environment)` уникален, а непустой `vapi_assistant_id`
+глобально уникален независимо от любых per-company `provider_org_id`. Константный
+`provider_account_key='vapi:platform'` дополнительно закрыт CHECK constraint.
 
 #### `vapi_tenant_resources` (существующая, расширяется)
 
@@ -254,8 +270,9 @@ vapi_assistant_id)`.
 База и сервис запрещают ссылку ресурса компании A на профиль/credential компании
 B. `tools`, `call_status` и resource `assistant_request` используют разные
 `api_integrations.machine_surface`; их secret hashes не совпадают. Migration 264
-даёт подложку, новая registry migration расширяет разрешённые surface values и
-same-company constraints.
+даёт подложку, identity schema разрешает `vapi_call_status` и
+`vapi_assistant_request`, а registry migration требует и связывает раздельные
+active credentials через same-company constraints.
 
 ### 5.2 Идентичность и supplier usage
 
@@ -665,7 +682,7 @@ T1 фиксирует живые provider fixtures до выбора адапт�
 
 ## 10. Что удаляется и что мигрирует
 
-### Удаляется при реализации
+### Удалено в T5
 
 - `backend/src/services/vapiOrgProvisioningService.js`;
 - `backend/scripts/provision-vapi-tenant.js`;
@@ -675,15 +692,28 @@ T1 фиксирует живые provider fixtures до выбора адапт�
   `frontend/src/services/vapiApi.ts`, а также tenant routes из
   `backend/src/routes/vapi.js`, которые позволяют вводить Vapi API key, создавать
   org/assistant/phone resources или видеть provider metadata;
-- legacy environment-driven assistant selection
-  (`VAPI_LEAD_CALL_ASSISTANT_ID`, `VAPI_OUTBOUND_ASSISTANT_ID`) после перевода ABC
-  и worker/runtime на реестр;
+- runtime environment-driven assistant selection. Deployment значения
+  `VAPI_INBOUND_ASSISTANT_ID`, `VAPI_LEAD_CALL_ASSISTANT_ID` и
+  `VAPI_OUTBOUND_ASSISTANT_ID` читаются только однократно migration bootstrap для
+  доказуемого ABC backfill; ни outbound placement, ни usage ingestion не выбирают
+  по ним assistant;
 - клиентский Vapi API key в `provider_connections` и любой API, который его
   принимает/возвращает. Платформенный ключ существует только в deployment secret
   store и никогда не сохраняется в tenant DB.
 
-Эти компоненты не остаются отключённым fallback: их наличие создаёт второй путь,
-обходящий registry, gate и platform-key ownership.
+Org provisioner, CLI, CRUD и global assistant fallback не оставлены «на всякий
+случай»: их наличие создавало бы второй путь в обход registry, gate и
+platform-key ownership. Сохранённый incident fallback — не этот путь: он
+platform-only, ограничен `legacy_canary`, exact company/purpose/prod resource и не
+возвращает assistant без token.
+
+Первый запуск migration 273 выполняется прямым `psql` с `ON_ERROR_STOP=1` и
+`PGOPTIONS`, которые однозначно отображают три deployment env в
+`app.vapi_*_assistant_id`. Репозиторный `apply_migrations.js` для этого cutover не
+используется: он исторически проглатывает SQL-ошибки и не может доказать abort.
+Пустое, невалидное, конфликтующее или неоднозначное значение останавливает всю
+migration; повторный запуск уже выводит IDs из заполненного registry и не требует
+env.
 
 ### Мигрирует
 
@@ -708,6 +738,18 @@ T1 фиксирует живые provider fixtures до выбора адапт�
 реализуема и противоречит принятой модели единого supplier contract.
 
 ## 11. API-контракты без UI-дизайна
+
+### Контракт данных будущей настройки AI-ассистента
+
+T5 не создаёт замену удалённому экрану и не определяет route/layout. Будущему
+provider-neutral экрану backend должен дать только product identity/purpose,
+пользовательское имя, product-level readiness/availability, revision для
+optimistic concurrency и allowlisted business settings/capabilities, которые
+будут отдельно утверждены продуктом. Он не должен получать или принимать Vapi,
+org/account id, assistant/profile/resource id, SIP URI, environment, template,
+server URL/credential, supplier cost, provider status/readback либо
+`assistantOverrides`. Любое изменение бизнес-настроек проходит server-owned
+template/provisioning contract, а не merge provider JSON.
 
 ### Tenant projection
 
@@ -790,6 +832,8 @@ platform route/permission и всегда требует явного target com
 
 | surface (route/worker/webhook/SSE/aggregate) | scoped by | key used | permission | roles ✓/✗ | blast-radius risk |
 |---|---|---|---|---|---|
+| retired tenant `/api/vapi/*` management | route absent; no scope/query occurs | none | none | все tenant/platform roles ✗ (404) | оставленный CRUD принял бы чужой assistant/SIP/key |
+| tenant Marketplace catalog/installations | authenticated tenant company | published app + company installation | existing marketplace read/manage permissions | обычные marketplace роли; retired provider app ✗ | старый seed мог снова раскрыть provider branding/install action |
 | `GET /api/billing/voice-usage` | `req.companyFilter?.company_id` | company + subscription period | `tenant.company.manage` | tenant admin/custom-with-permission ✓; manager/dispatcher/provider/custom-without ✗ | unscoped aggregate reveals other tenants' calls/money |
 | platform usage read | authenticated platform actor + explicit target company | target company + session/period | `platform.companies.view` | platform super_admin ✓; tenant/unscoped roles ✗ | provider ids and supplier economics leak |
 | platform provision/enable/rotate/repair | authenticated platform actor + explicit target company | company + purpose + environment | `platform.companies.manage` | platform super_admin ✓; tenant/unscoped roles ✗ | wrong assistant/secret can receive another tenant's calls |
@@ -831,11 +875,12 @@ platform route/permission и всегда требует явного target com
 | T4 reconcile/audit | reconcile, audit, provider client, scheduler, migration + затронутые T3/provider/rules siblings | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js tests/vapiProviderClient.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiUsageReconcileMigration.test.js tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js tests/outboundLeadCallSmsCancel.test.js tests/repairAdvisorEvents.test.js tests/rulesEngine.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 13 suites / 160 tests. Включает missing-EoC repair, createdAt+updatedAt audit, exact decimals, leases, T-foreign, no-wallet и scheduler registration. Targeted `tenantSafetyLint` R-natural-key: PASS. |
 | Phase-1 adversarial fixes | независимый FSM, registry-less outbound ingest, identity quarantine, cached tokens, missed-day audit | команда T3/T4 с `tests/vapiProviderMessageQuarantineMigration.test.js` и webhook/provider siblings | PASS; целевой combined run 11 suites / 147 tests; targeted tenant safety 1/1; migration 270 forward×2/rollback/restore через real `psql` PASS |
 | Loss protection: digest + fallback cost | `tests/vapiUsageAlertDelivery.test.js`, `tests/vapiFallbackRating.test.js`, `tests/vapiLossProtectionMigration.test.js`, scheduler/provider/T3/T4 regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageAlertDelivery.test.js tests/vapiFallbackRating.test.js tests/vapiLossProtectionMigration.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiProviderClient.test.js tests/vapiUsageIngest.test.js tests/vapiUsageAuditRepair.test.js tests/vapiUsageReconcile.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; combined 9 suites / 96 tests, включая 12 новых digest/fallback/migration кейсов; targeted tenant SQL sanitizer — 0 нарушений |
-| Registry/provisioning/tools/routes | new registry suites + current Vapi regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAgencyProvisioning.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/services/callFlowRuntime.vapi.test.js --runInBand --forceExit` | PENDING |
+| T5 registry/surface retirement | registry/migration/identity/routes/tools + inbound/outbound/usage regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryMigration.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/outboundCallService.test.js tests/services/callFlowRuntime.vapi.test.js tests/routes/vapiTenantIsolation.test.js tests/vapiUsageIngest.test.js tests/machineCredentialService.test.js tests/vapiCallStatusWebhook.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/routes/vapi-tools.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 14 suites / 303 tests. Реальный autocommit `psql`: forward 273→274, повтор без env, rollback 274→273, restore — PASS; 3 ABC profiles/resource binding/key erasure/retired app проверены |
+| T7 provisioning/readback | `tests/vapiAgencyProvisioning.test.js` + registry/provider siblings | команда определяется в T7 | PENDING |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
 | Forward/rollback migrations | real disposable PostgreSQL migration suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js tests/vapiUsageIngestMigration.test.js tests/vapiUsageReconcileMigration.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; migration 269 repeat/rollback suite green и реальный autocommit `psql -v ON_ERROR_STOP=1 -f` forward 266→267→269 / rollback 269→267→266 green |
-| Tenant settings removal | frontend build/tests | `npm --prefix frontend run build` then `npm --prefix frontend test` | PENDING |
+| Tenant settings removal | frontend build/tests | `unset NODE_USE_SYSTEM_CA; npm --prefix frontend run build` then `unset NODE_USE_SYSTEM_CA; npm --prefix frontend test -- --run` | build PASS. Full Vitest: 86 files / 510 tests PASS; 6 files / 7 pre-existing non-T5 ratchet failures (Integrations legacy browser contract, type scale, schedule header, settings analytics/nav, company-time ledger) |
 | Full backend regression | all Jest suites | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runInBand --forceExit` | PENDING |
 
 Database integration suites используют disposable PostgreSQL и реальный migration
@@ -855,7 +900,9 @@ forward/rollback migration filenames добавляются в ledger после
 | `SAB-VAPI-IDENTITY-CREDENTIAL` | отключить сравнение callback credential с credential session/resource | `vapiCallIdentity` wrong same-company credential quarantine | RED как требуется: foreign credential получил `ok:true`; после восстановления suite green |
 | `SAB-VAPI-CALL-ID-GLOBAL` | вернуть unique `(provider_account_key,vapi_call_id)` | `vapiCallIdentity` DB rejects one id across fragmented account labels | RED как требуется: duplicate row с другим account label вставился; после восстановления suite green |
 | `SAB-VAPI-BIND-RETRY` | отключить ранний same-call idempotent return | `vapiCallIdentity` duplicate-after-profile-drift | RED как требуется: retry карантинил связанную session; после восстановления suite green |
-| `SAB-VAPI-ASSISTANT` | разрешить assistant lookup только по provider id/env | `vapiAssistantRegistry` cross-tenant collision | PENDING |
+| `SAB-VAPI-REGISTRY-COMPANY` | убрать `company_id=$1` из запроса registry profile | `vapiAssistantRegistry` T-own query/company predicate | RED как требуется: exact company predicate исчез; после восстановления suite green |
+| `SAB-VAPI-REGISTRY-FALLBACK` | при missing/foreign profile вернуть global assistant и продолжить `POST /call` | `outboundCallService` missing/foreign mapping no-provider-call | RED как требуется: оба deny case сделали provider POST и вернули success; после восстановления suite green |
+| `SAB-VAPI-NODE-SIP` | предпочесть tenant `node.config.sip_uri` company resource | `callFlowRuntime.vapi` malicious node config + no-resource fallback | RED как требуется: foreign SIP попал в TwiML и bypass-нул fallback; после восстановления suite green |
 | `SAB-VAPI-WEBHOOK-CREDENTIAL` | доверять `companyId` body вместо credential | `vapiCallStatusWebhook` wrong-company credential | PENDING |
 | `SAB-VAPI-EOC-COMPANY` | ослабить сверку company status credential перед session lookup | `vapiUsageIngest` credential B + local session A | RED как требуется: ожидаемый semantic 403 исчез, запрос дошёл до same-company FK и упал 23503; после восстановления тест green |
 | `SAB-VAPI-EOC-IDEMPOTENCY` | добавить random nonce в deterministic sanitized-payload hash | concurrent + sequential duplicate EoC test | RED как требуется: обе concurrent delivery вернули `observationCreated:true`; после восстановления тест green |

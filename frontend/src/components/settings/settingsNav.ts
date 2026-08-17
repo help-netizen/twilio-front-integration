@@ -164,7 +164,6 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
                 permissions: ['tenant.telephony.manage'], inSectionLinks: PHONE_SYSTEM_LINKS,
             },
             { id: 'phone-setup', label: 'Phone setup', to: '/settings/integrations/telephony-twilio', permissions: ['tenant.integrations.manage'] },
-            { id: 'ai-phone-agent', label: 'AI phone agent', to: '/settings/integrations/vapi-ai', permissions: ['tenant.integrations.manage'] },
             { id: 'email-assistant', label: 'Email assistant', to: '/settings/integrations/mail-secretary', permissions: ['tenant.integrations.manage'] },
             { id: 'outbound-lead-caller', label: 'Outbound lead caller', to: '/settings/integrations/outbound-lead-caller', permissions: ['tenant.integrations.manage'] },
             { id: 'outbound-parts-caller', label: 'Outbound parts caller', to: '/settings/integrations/outbound-parts-caller', permissions: ['tenant.integrations.manage'] },

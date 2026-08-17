@@ -378,7 +378,7 @@ async function processLeadAttempt(attempt) {
     const applianceProblem = ctx.applianceProblem ? ctx.applianceProblem.slice(0, 120) : undefined;
 
     // The greeting is owned by the DEDICATED lead-booking VAPI assistant (its
-    // own static firstMessage + prompt — see VAPI_LEAD_CALL_ASSISTANT_ID). We no
+    // own static firstMessage + prompt — selected by the company registry). We no
     // longer compose a per-call firstMessage from the company profile name: that
     // pulled the legal name ("… LLC") and, on the shared parts assistant, let the
     // model drift into the part-arrival script. The dedicated assistant carries

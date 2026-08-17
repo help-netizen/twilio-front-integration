@@ -1,0 +1,146 @@
+'use strict';
+
+const mockQuery = jest.fn();
+jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
+
+const registry = require('../backend/src/services/vapiAssistantRegistryService');
+
+const COMPANY_A = '00000000-0000-4000-8000-00000000000a';
+const COMPANY_B = '00000000-0000-4000-8000-00000000000b';
+
+function profile(overrides = {}) {
+    return {
+        assistant_profile_id: 'profile-a',
+        company_id: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+        environment: 'prod',
+        vapi_assistant_id: 'assistant-a',
+        provider_connection_id: 'connection-a',
+        provider_account_key: 'vapi:platform',
+        tools_credential_id: '11',
+        call_status_credential_id: '12',
+        ...overrides,
+    };
+}
+
+function inbound(overrides = {}) {
+    return {
+        tenant_resource_id: 'resource-a',
+        company_id: COMPANY_A,
+        purpose: registry.PURPOSES.INBOUND_QUALIFICATION,
+        environment: 'prod',
+        sip_uri: 'sip:a@sip.vapi.ai',
+        provider_connection_id: 'connection-a',
+        assistant_request_credential_id: '13',
+        assistant_profile_id: 'profile-inbound-a',
+        expected_vapi_assistant_id: 'assistant-inbound-a',
+        ...overrides,
+    };
+}
+
+beforeEach(() => {
+    jest.clearAllMocks();
+});
+
+test('T-own resolves one active profile through company, purpose and environment', async () => {
+    mockQuery.mockResolvedValue({ rows: [profile()] });
+
+    await expect(registry.resolveActiveProfile({
+        companyId: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+        environment: 'prod',
+    })).resolves.toMatchObject({
+        company_id: COMPANY_A,
+        vapi_assistant_id: 'assistant-a',
+    });
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('WHERE profile.company_id = $1');
+    expect(sql).toContain('profile.purpose = $2');
+    expect(sql).toContain('profile.environment = $3');
+    expect(sql).toContain("profile.status = 'active'");
+    expect(sql).toContain("tools_credential.machine_surface = 'vapi_tools'");
+    expect(sql).toContain("status_credential.machine_surface = 'vapi_call_status'");
+    expect(params).toEqual([
+        COMPANY_A,
+        registry.PURPOSES.OUTBOUND_PARTS,
+        'prod',
+        'vapi:platform',
+    ]);
+});
+
+test('T-foreign/T-blast rejects a row outside the requested company even if provider id matches', async () => {
+    mockQuery.mockResolvedValue({ rows: [profile({ company_id: COMPANY_B })] });
+
+    await expect(registry.resolveActiveProfile({
+        companyId: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+    })).rejects.toMatchObject({
+        code: 'VAPI_REGISTRY_PROFILE_SCOPE_MISMATCH',
+    });
+});
+
+test.each([
+    ['missing', []],
+    ['inactive/filter miss', []],
+    ['ambiguous', [profile(), profile({ assistant_profile_id: 'profile-a-2' })]],
+])('%s mapping fails closed', async (_label, rows) => {
+    mockQuery.mockResolvedValue({ rows });
+    await expect(registry.resolveActiveProfile({
+        companyId: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+    })).rejects.toMatchObject({ code: 'VAPI_REGISTRY_PROFILE_UNAVAILABLE' });
+});
+
+test('inbound tuple requires company-owned assistant, resource, and three typed credentials', async () => {
+    mockQuery.mockResolvedValue({ rows: [inbound()] });
+
+    await expect(registry.resolveInboundTuple({
+        companyId: COMPANY_A,
+    })).resolves.toMatchObject({
+        company_id: COMPANY_A,
+        tenant_resource_id: 'resource-a',
+        expected_vapi_assistant_id: 'assistant-inbound-a',
+    });
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('WHERE resource.company_id = $1');
+    expect(sql).toContain("assistant_request_credential.machine_surface = 'vapi_assistant_request'");
+    expect(sql).toContain("tools_credential.machine_surface = 'vapi_tools'");
+    expect(sql).toContain("status_credential.machine_surface = 'vapi_call_status'");
+    expect(params[0]).toBe(COMPANY_A);
+});
+
+test.each([
+    ['missing/inactive', []],
+    ['ambiguous', [inbound(), inbound({ tenant_resource_id: 'resource-a-2' })]],
+])('inbound %s tuple fails closed', async (_label, rows) => {
+    mockQuery.mockResolvedValue({ rows });
+
+    await expect(registry.resolveInboundTuple({
+        companyId: COMPANY_A,
+    })).rejects.toMatchObject({ code: 'VAPI_REGISTRY_INBOUND_TUPLE_UNAVAILABLE' });
+});
+
+test('inbound rejects a foreign tuple even if its SIP and assistant ids look valid', async () => {
+    mockQuery.mockResolvedValue({ rows: [inbound({ company_id: COMPANY_B })] });
+
+    await expect(registry.resolveInboundTuple({
+        companyId: COMPANY_A,
+    })).rejects.toMatchObject({ code: 'VAPI_REGISTRY_INBOUND_SCOPE_MISMATCH' });
+});
+
+test.each([
+    [undefined, registry.PURPOSES.OUTBOUND_PARTS],
+    ['parts_visit', registry.PURPOSES.OUTBOUND_PARTS],
+    ['lead_call', registry.PURPOSES.OUTBOUND_LEAD],
+])('server scenario %p maps to purpose %s', (scenario, purpose) => {
+    expect(registry.purposeForOutboundScenario(scenario)).toBe(purpose);
+});
+
+test('unknown external scenario cannot select a profile', () => {
+    expect(() => registry.purposeForOutboundScenario('outbound_lead_call'))
+        .toThrow(expect.objectContaining({
+            code: 'VAPI_REGISTRY_OUTBOUND_SCENARIO_UNSUPPORTED',
+        }));
+});

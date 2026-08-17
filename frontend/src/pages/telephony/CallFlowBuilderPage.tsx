@@ -9,8 +9,6 @@ import {
 import '@xyflow/react/dist/style.css';
 import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Trash2, X, Plus, Lock } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
-import { vapiApi } from '../../services/vapiApi';
-import { fetchMarketplaceApps } from '../../services/marketplaceApi';
 import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition, type TelephonyTargetGroupOption, type TelephonyTargetUserOption } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
 import { createSkeletonFlow } from '../../utils/skeletonFlow';
@@ -383,7 +381,6 @@ export default function CallFlowBuilderPage() {
     const navigate = useNavigate();
     const [flow, setFlow] = useState<CallFlow | null>(null);
     const [loading, setLoading] = useState(true);
-    const [vapiConnected, setVapiConnected] = useState<boolean | null>(null);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<FlowNodeData>>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const hiddenNodesRef = useRef<Node<FlowNodeData>[]>([]);
@@ -398,22 +395,6 @@ export default function CallFlowBuilderPage() {
     const pendingLayoutRef = useRef(false);
 
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes as any, edges, setNodes as any, setEdges as any);
-
-    // Check VAPI readiness for node gating.
-    useEffect(() => {
-        Promise.all([
-            vapiApi.getConnections(),
-            vapiApi.getResources(),
-            fetchMarketplaceApps(),
-        ])
-            .then(([conns, resources, apps]) => {
-                const hasConnection = conns.some(c => c.status === 'active');
-                const hasResource = resources.some(r => r.is_active && String(r.sip_uri || '').trim());
-                const hasInstallation = apps.some(a => a.app_key === 'vapi-ai' && a.installation?.status === 'connected');
-                setVapiConnected(hasConnection && hasResource && hasInstallation);
-            })
-            .catch(() => setVapiConnected(false));
-    }, []);
 
     // Load flow (no versioning — single graph per flow)
     useEffect(() => {
@@ -499,12 +480,12 @@ export default function CallFlowBuilderPage() {
         const id = `n-${Date.now()}`;
 
         if (kind === 'vapi_agent') {
-            // ── Vapi Agent: create node with correct SCXML event transitions
+            // ── AI Agent: create node with internal runtime transitions
             const newNode: Node<FlowNodeData> = {
                 id, type: 'flowNode', position: { x: insertTarget.midX - 90, y: insertTarget.midY },
                 data: {
                     // Assistant behavior (greeting, prompt, voice, tools, max duration)
-                    // is configured in VAPI — not per-node. Routing defaults are
+                    // is platform-managed — not per-node. Routing defaults are
                     // baked into the backend runtime (completed → end, failure → edge).
                     label: 'AI Agent', kind, provider: 'vapi', config: {}
                 },
@@ -612,9 +593,9 @@ export default function CallFlowBuilderPage() {
     const getNodeLabel = (id: string) => (nodes as any[]).find((n: any) => n.id === id)?.data?.label || id;
 
 
-    // Palette: ordered, with disabled/locked states. vapi_agent gated behind active VAPI connection.
+    // Provider-backed AI nodes are hidden until the product-level editor exists.
     const paletteKinds = PALETTE_ORDER
-        .filter(k => k !== 'vapi_agent' || vapiConnected === true)
+        .filter(k => k !== 'vapi_agent')
         .map(k => [k, NODE_KIND_META[k]] as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']]);
 
     if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><div style={{ width: 32, height: 32, border: '3px solid var(--blanc-line)', borderTopColor: 'var(--blanc-accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /></div>;
@@ -739,12 +720,12 @@ export default function CallFlowBuilderPage() {
                                     </div>
                                 );
                             })()}
-                            {/* ── Vapi Agent Inspector ── */}
+                            {/* ── AI Agent Inspector ── */}
                             {selectedNode.data?.kind === 'vapi_agent' && (
                                 <div style={{ marginTop: 8, padding: '12px 14px', background: 'var(--blanc-accent-soft)', border: '1px solid var(--blanc-accent-soft)', borderRadius: 8, fontSize: 12, color: 'var(--blanc-ink-1)', lineHeight: 1.55 }}>
-                                    This node hands the call to your <strong>VAPI assistant</strong>.
+                                    This node hands the call to your <strong>AI assistant</strong>.
                                     The greeting, prompt, voice, tools, and max call duration are
-                                    configured in VAPI — not here.
+                                    managed by Albusto — not here.
                                     <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--blanc-line)' }}>
                                         <strong>Routing:</strong> when the assistant finishes, the call ends.
                                         If the assistant can&apos;t be reached (failure or timeout), the call

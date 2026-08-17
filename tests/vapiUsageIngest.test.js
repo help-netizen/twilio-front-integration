@@ -10,8 +10,6 @@ const ingestService = require('../backend/src/services/vapiUsageIngestService');
 const COMPANY_A = randomUUID();
 const COMPANY_B = randomUUID();
 const TAG = `${Date.now()}-${process.pid}`;
-const ORIGINAL_OUTBOUND_ASSISTANT_ID = process.env.VAPI_OUTBOUND_ASSISTANT_ID;
-const ORIGINAL_LEAD_ASSISTANT_ID = process.env.VAPI_LEAD_CALL_ASSISTANT_ID;
 const MIGRATION_266 = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '266_vapi_call_identity_and_usage.sql'),
     'utf8',
@@ -38,6 +36,8 @@ let client;
 let statusCredentialA;
 let statusCredentialB;
 let assistantRequestCredentialA;
+let toolsCredentialA;
+let toolsCredentialB;
 let jobA;
 let jobB;
 
@@ -168,13 +168,26 @@ async function seedConnection(companyId, suffix) {
     return connectionId;
 }
 
-async function seedProfile(companyId, connectionId, suffix, purpose, assistantId) {
+async function seedProfile(
+    companyId,
+    connectionId,
+    suffix,
+    purpose,
+    assistantId,
+    toolsCredentialId,
+    callStatusCredentialId,
+) {
     const profileId = `vapi-ingest-profile-${suffix}-${TAG}`;
     await client.query(
         `INSERT INTO vapi_assistant_profiles (
              id, tenant_id, provider_connection_id, slug, purpose,
-             vapi_assistant_id, is_active, company_id, environment
-         ) VALUES ($1, $2, $3, $4, $5, $6, true, $7, 'prod')`,
+             vapi_assistant_id, is_active, company_id, environment,
+             provider_account_key, status, tools_credential_id,
+             call_status_credential_id
+         ) VALUES (
+             $1, $2, $3, $4, $5, $6, true, $7, 'prod',
+             'vapi:platform', 'active', $8, $9
+         )`,
         [
             profileId,
             `tenant-${suffix}-${TAG}`,
@@ -183,6 +196,8 @@ async function seedProfile(companyId, connectionId, suffix, purpose, assistantId
             purpose,
             assistantId,
             companyId,
+            toolsCredentialId,
+            callStatusCredentialId,
         ],
     );
     return { connectionId, profileId };
@@ -219,6 +234,18 @@ async function seedBaseData() {
         'vapi_assistant_request:invoke',
         'assistant-a',
     );
+    toolsCredentialA = await seedCredential(
+        COMPANY_A,
+        'vapi_tools',
+        'vapi_tools:invoke',
+        'tools-a',
+    );
+    toolsCredentialB = await seedCredential(
+        COMPANY_B,
+        'vapi_tools',
+        'vapi_tools:invoke',
+        'tools-b',
+    );
 
     const connectionA = await seedConnection(COMPANY_A, 'a');
     const connectionB = await seedConnection(COMPANY_B, 'b');
@@ -228,6 +255,8 @@ async function seedBaseData() {
         'inbound-a',
         'inbound_call',
         'assistant-inbound-a',
+        toolsCredentialA,
+        statusCredentialA,
     );
     await seedProfile(
         COMPANY_A,
@@ -235,6 +264,8 @@ async function seedBaseData() {
         'outbound-a',
         'outbound_parts_call',
         'assistant-outbound-a',
+        toolsCredentialA,
+        statusCredentialA,
     );
     await seedProfile(
         COMPANY_B,
@@ -242,6 +273,8 @@ async function seedBaseData() {
         'outbound-b',
         'outbound_parts_call',
         'assistant-outbound-b',
+        toolsCredentialB,
+        statusCredentialB,
     );
     await client.query(
         `INSERT INTO vapi_tenant_resources (
@@ -346,8 +379,17 @@ beforeAll(async () => {
     await client.query(MIGRATION_269);
     await client.query(MIGRATION_270);
     await client.query(MIGRATION_272);
-    process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'assistant-outbound-a';
-    process.env.VAPI_LEAD_CALL_ASSISTANT_ID = 'assistant-lead-a';
+    // T5 registry columns without the ABC-only production bootstrap. That
+    // bootstrap is covered by vapiAssistantRegistryMigration.test.js.
+    await client.query(`
+        ALTER TABLE vapi_assistant_profiles
+            ADD COLUMN IF NOT EXISTS provider_account_key TEXT NOT NULL DEFAULT 'vapi:platform',
+            ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active',
+            ADD COLUMN IF NOT EXISTS tools_credential_id BIGINT,
+            ADD COLUMN IF NOT EXISTS call_status_credential_id BIGINT;
+        ALTER TABLE vapi_tenant_resources
+            ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+    `);
     await seedBaseData();
 });
 
@@ -361,16 +403,6 @@ afterAll(async () => {
         client.release();
     }
     if (pool) await pool.end();
-    if (ORIGINAL_OUTBOUND_ASSISTANT_ID === undefined) {
-        delete process.env.VAPI_OUTBOUND_ASSISTANT_ID;
-    } else {
-        process.env.VAPI_OUTBOUND_ASSISTANT_ID = ORIGINAL_OUTBOUND_ASSISTANT_ID;
-    }
-    if (ORIGINAL_LEAD_ASSISTANT_ID === undefined) {
-        delete process.env.VAPI_LEAD_CALL_ASSISTANT_ID;
-    } else {
-        process.env.VAPI_LEAD_CALL_ASSISTANT_ID = ORIGINAL_LEAD_ASSISTANT_ID;
-    }
 });
 
 describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
@@ -514,7 +546,6 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
             );
             expect(registry.rows).toEqual([{ count: 0 }]);
 
-            process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'assistant-outbound-b';
             const result = await ingest({
                 companyId: COMPANY_B,
                 credentialId: statusCredentialB,
@@ -549,11 +580,10 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
         } finally {
             await client.query('ROLLBACK TO SAVEPOINT empty_outbound_registry');
             await client.query('RELEASE SAVEPOINT empty_outbound_registry');
-            process.env.VAPI_OUTBOUND_ASSISTANT_ID = 'assistant-outbound-a';
         }
     });
 
-    test('transitional outbound assistant env mismatch alerts but preserves supplier usage', async () => {
+    test('outbound assistant registry mismatch alerts but preserves supplier usage', async () => {
         const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
         try {
             const result = await ingest({
@@ -570,7 +600,7 @@ describe('VAPI-AGENCY-001 T3 provisional supplier usage ingest', () => {
                 validationState: 'accepted',
             });
             expect(warn).toHaveBeenCalledWith(
-                '[vapiUsageIngest] transitional outbound assistant mismatch',
+                '[vapiUsageIngest] outbound assistant registry mismatch',
                 expect.objectContaining({
                     companyId: COMPANY_A,
                     providerCallId: 'provider-outbound-a',
