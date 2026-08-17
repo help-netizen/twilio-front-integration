@@ -175,15 +175,22 @@ Owner-controlled operational step после schema apply (сначала dry-ru
 **Цель.** Перевести оба outbound пути на company registry/session и не создавать
 дубли при сетевой неопределённости.
 
-**Критерии приёмки.** Session существует до `POST /call`; payload построен только
+**Критерии приёмки.** Session существует до `POST /call`; assistant выбирается
+по company/purpose/env profile, caller — по company outbound resource; runtime
+assistant/phone env и lead→parts fallback отсутствуют. Payload построен только
 из registry/template; response id атомарно bind-ится к session и attempt. Gate/
 limit оставляет queued без provider call/attempt increment. Timeout после send
-переходит в repairable `provider_pending`, повторный POST заблокирован. Cancellation
+переходит в repairable `provider_pending`, повторный POST заблокирован; audit
+repair использует только server-owned call metadata session UUID + pinned
+assistant. `subscriptionLimits` сохраняется как telemetry и не допускает call.
+Cancellation
 и callbacks сохраняют tenant predicates. Старые attempts читаются до завершения
 backfill, но не становятся альтернативной identity.
 
 **Проверка.**
-`NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/outboundLeadCallWebhook.test.js tests/outboundCancelTenantIsolation.test.js tests/vapiCallIdentity.test.js --runInBand --forceExit`
+`node backend/scripts/bootstrap-vapi-outbound-resource.js --company-id <uuid>`
+`node backend/scripts/bootstrap-vapi-outbound-resource.js --company-id <uuid> --apply`
+`unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/outboundCallService.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/outboundLeadCallWebhook.test.js tests/outboundCancelTenantIsolation.test.js tests/vapiAssistantRegistry.test.js tests/vapiOutboundBootstrap.test.js tests/vapiOutboundIdentity.test.js tests/vapiProviderClient.test.js tests/vapiUsageAuditRepair.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"`
 
 **Зависимости:** T5. **Размер/оценка:** M, 3–4 дня. Раздувают два outbound
 семейства и отсутствие безопасного retry после ambiguous network timeout.
@@ -315,6 +322,16 @@ readiness false, очищает legacy provider data и идемпотентно
 installation lookup больше не открывают эту поверхность. Matching rollback
 републикует только catalog row и не восстанавливает удалённые
 routes/UI/credentials.
+
+### `vapi_outbound_registry_sessions`
+
+Расширяет platform-only resources типами registered Vapi caller и transient
+Twilio caller, добавляет global active caller uniqueness и same-company
+session→profile/resource FK. В session сохраняет только diagnostic
+`subscriptionLimits`/placement clock, в audit run — число восстановленных
+outbound identities. Миграция data-neutral: caller resources создаются только
+dry-run-by-default `bootstrap-vapi-outbound-resource.js` с обязательным
+`--company-id`.
 
 ### `vapi_concurrency_leases`
 

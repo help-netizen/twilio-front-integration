@@ -8,6 +8,7 @@ const {
 
 const DEFAULT_BASE_URL = 'https://api.vapi.ai';
 const MAX_LIST_LIMIT = 1000;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class VapiProviderClientError extends Error {
     constructor(code, options = {}) {
@@ -92,6 +93,15 @@ function sanitizeListedCalls(rawJson) {
                 });
             }
         }
+        const albustoCallSessionId = typeof call.metadata?.albustoCallSessionId === 'string'
+            && UUID_RE.test(call.metadata.albustoCallSessionId)
+            ? call.metadata.albustoCallSessionId
+            : null;
+        const assistantId = typeof call.assistantId === 'string'
+            && call.assistantId.trim() !== ''
+            && call.assistantId.length <= 128
+            ? call.assistantId.trim()
+            : null;
         return {
             id: call.id,
             createdAt: requireTimestamp(
@@ -103,6 +113,8 @@ function sanitizeListedCalls(rawJson) {
                 `VAPI_LIST_CALL_UPDATED_AT_REQUIRED_${index}`,
             ),
             supplierCost,
+            ...(albustoCallSessionId ? { albustoCallSessionId } : {}),
+            ...(assistantId ? { assistantId } : {}),
         };
     });
 }

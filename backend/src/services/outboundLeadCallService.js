@@ -390,6 +390,7 @@ async function processLeadAttempt(attempt) {
     const outboundCallService = require('./outboundCallService');
     const result = await outboundCallService.placeCall({
         companyId,
+        attemptId: attempt.id,
         scenario: 'lead_call',
         leadUuid: attempt.lead_uuid,
         contactId: attempt.contact_id || undefined,
@@ -404,24 +405,25 @@ async function processLeadAttempt(attempt) {
     });
 
     if (result.ok) {
-        await db.query(
-            `UPDATE outbound_call_attempts
-             SET vapi_call_id = $2, slot_json = $3, updated_at = now()
-             WHERE id = $1`,
-            [attempt.id, result.vapiCallId, JSON.stringify(topSlot)]
-        );
         try {
             const vapiCallTimelineService = require('./vapiCallTimelineService');
             await vapiCallTimelineService.recordPlacement({
                 attempt,
                 vapiCallId: result.vapiCallId,
                 dialedNumber: attempt.phone,
-                callerId: process.env.VAPI_OUTBOUND_TWILIO_NUMBER || process.env.OUTBOUND_CALLER_ID || null,
+                callerId: result.callerId || null,
             });
         } catch (err) {
             console.warn('[outboundLeadCall] timeline placement mirror failed:', err.message);
         }
         console.log(`[outboundLeadCall] dialed attempt=${attempt.id} lead=${attempt.lead_uuid} vapi=${result.vapiCallId}`);
+    } else if (result.providerPending) {
+        console.error('[VAPI_OUTBOUND_ALERT] lead placement awaiting repair', {
+            companyId,
+            attemptId: attempt.id,
+            sessionId: result.sessionId || null,
+            providerCallId: result.providerCallId || null,
+        });
     } else {
         await scheduleLeadRetryOrExhaust(attempt, result.error || 'place_call_failed', 'failed');
     }

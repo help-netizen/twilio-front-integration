@@ -44,6 +44,9 @@ describe('VAPI-AGENCY-001 T4 provider read client', () => {
             data: '[{"id":"call-a","createdAt":"2026-08-15T10:00:00.000Z",'
                 + '"updatedAt":"2026-08-15T10:01:00.000Z",'
                 + '"cost":0.056500000000000001,"transcript":"private",'
+                + '"assistantId":"assistant-registry-a",'
+                + '"metadata":{"albustoCallSessionId":"10000000-0000-4000-8000-000000000001",'
+                + '"private":"discard-me"},'
                 + '"customer":{"number":"+15555550100"},'
                 + '"recordingUrl":"https://private.invalid/a"}]',
         }) };
@@ -61,6 +64,8 @@ describe('VAPI-AGENCY-001 T4 provider read client', () => {
             createdAt: '2026-08-15T10:00:00.000Z',
             updatedAt: '2026-08-15T10:01:00.000Z',
             supplierCost: '0.056500000000000001',
+            albustoCallSessionId: '10000000-0000-4000-8000-000000000001',
+            assistantId: 'assistant-registry-a',
         }]);
         expect(http.get).toHaveBeenCalledWith('/call', expect.objectContaining({
             params: {

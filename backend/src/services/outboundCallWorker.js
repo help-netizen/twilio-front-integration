@@ -287,6 +287,7 @@ async function processAttempt(attempt) {
     // --- Place the call (safe-fail: placeCall resolves, never rejects). ---
     const result = await outboundCallService.placeCall({
         companyId,
+        attemptId: attempt.id,
         jobId,
         contactId: attempt.contact_id,
         customerName: job.customer_name,
@@ -295,35 +296,34 @@ async function processAttempt(attempt) {
     });
 
     if (result && result.ok) {
-        // Placed. Store the VAPI call id for webhook correlation; the row stays
-        // 'dialing' until the end-of-call webhook (T14) classifies the outcome.
-        await db.query(
-            `UPDATE outbound_call_attempts
-             SET vapi_call_id = $2, updated_at = now()
-             WHERE id = $1`,
-            [attempt.id, result.vapiCallId]
-        );
-
         // OUTBOUND-CALL-TIMELINE-001 (CT-04, spec S1): mirror the placed call
         // into the customer's Pulse timeline as a live "Ringing" row (softphone
-        // model). Ordered AFTER the vapi_call_id stamp above (the source of truth
-        // for retry correlation). NON-FATAL: a timeline write must NEVER fail the
+        // model). Ordered AFTER placeCall's atomic session+attempt bind.
+        // NON-FATAL: a timeline write must NEVER fail the
         // dial or re-classify the attempt — the call is already placed and this
         // row is only a best-effort mirror (finalize self-heals it if skipped).
         // dialedNumber mirrors the exact number handed to placeCall as
-        // customerNumber; callerId is the transient Twilio business line.
+        // customerNumber; callerId is the company registry resource.
         try {
             await vapiCallTimelineService.recordPlacement({
                 attempt,
                 vapiCallId: result.vapiCallId,
                 dialedNumber: attempt.phone || job.customer_phone,
-                callerId: process.env.VAPI_OUTBOUND_TWILIO_NUMBER
-                    || process.env.OUTBOUND_CALLER_ID
-                    || null,
+                callerId: result.callerId || null,
             });
         } catch (err) {
             console.warn('[outboundCallWorker] recordPlacement failed (non-fatal):', err.message);
         }
+        return;
+    }
+
+    if (result && result.providerPending) {
+        console.error('[VAPI_OUTBOUND_ALERT] parts placement awaiting repair', {
+            companyId,
+            attemptId: attempt.id,
+            sessionId: result.sessionId || null,
+            providerCallId: result.providerCallId || null,
+        });
         return;
     }
 

@@ -66,6 +66,377 @@ function identityAlert(code, details) {
     console.error('[VAPI_IDENTITY_ALERT]', safe);
 }
 
+function normalizeAttemptId(value) {
+    const normalized = assertNonEmpty(
+        String(value ?? ''),
+        'VAPI_IDENTITY_OUTBOUND_ATTEMPT_REQUIRED',
+        32,
+    );
+    if (!/^\d+$/.test(normalized) || normalized === '0') {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_ATTEMPT_INVALID', 400);
+    }
+    return normalized;
+}
+
+function sanitizeSubscriptionLimits(value, depth = 0) {
+    if (value === undefined || value === null) return null;
+    if (depth > 3) return undefined;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    if (typeof value === 'string') {
+        return /^-?\d+(?:\.\d+)?$/.test(value) && value.length <= 40
+            ? value
+            : undefined;
+    }
+    if (Array.isArray(value)) {
+        if (value.length > 32) return undefined;
+        const items = value
+            .map((item) => sanitizeSubscriptionLimits(item, depth + 1))
+            .filter((item) => item !== undefined);
+        return items;
+    }
+    if (typeof value !== 'object') return undefined;
+    const entries = Object.entries(value);
+    if (entries.length > 64) return undefined;
+    const sanitized = {};
+    for (const [key, item] of entries) {
+        if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) continue;
+        const normalized = sanitizeSubscriptionLimits(item, depth + 1);
+        if (normalized !== undefined) sanitized[key] = normalized;
+    }
+    return sanitized;
+}
+
+async function reserveOutboundSessionWithClient({
+    companyId,
+    outboundCallAttemptId,
+    environment = 'prod',
+}, client) {
+    const normalizedCompanyId = assertNonEmpty(
+        companyId,
+        'VAPI_IDENTITY_COMPANY_REQUIRED',
+        64,
+    );
+    const attemptId = normalizeAttemptId(outboundCallAttemptId);
+    const normalizedEnvironment = assertNonEmpty(
+        environment,
+        'VAPI_IDENTITY_ENVIRONMENT_REQUIRED',
+        32,
+    );
+
+    await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`,
+        [normalizedCompanyId, attemptId],
+    );
+    const attemptResult = await client.query(
+        `SELECT id, company_id, scenario, status, vapi_call_id
+         FROM outbound_call_attempts
+         WHERE id = $1
+           AND company_id = $2
+         LIMIT 2
+         FOR UPDATE`,
+        [attemptId, normalizedCompanyId],
+    );
+    if (attemptResult.rows.length !== 1) {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_ATTEMPT_SCOPE_MISMATCH', 409);
+    }
+    const attempt = attemptResult.rows[0];
+    if (attempt.status !== 'dialing') {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_ATTEMPT_NOT_DIALING', 409);
+    }
+    const purpose = vapiAssistantRegistry.purposeForOutboundScenario(attempt.scenario);
+
+    const existingResult = await client.query(
+        `SELECT id, company_id, state, vapi_call_id, expected_vapi_assistant_id
+         FROM vapi_call_sessions
+         WHERE company_id = $1
+           AND direction = 'outbound'
+           AND outbound_call_attempt_id = $2
+         LIMIT 2
+         FOR UPDATE`,
+        [normalizedCompanyId, attemptId],
+    );
+    if (existingResult.rows.length > 1) {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_SESSION_AMBIGUOUS', 409);
+    }
+    if (existingResult.rows.length === 1) {
+        const existing = existingResult.rows[0];
+        if (existing.vapi_call_id && attempt.vapi_call_id === existing.vapi_call_id) {
+            return {
+                sessionId: String(existing.id),
+                companyId: existing.company_id,
+                providerCallId: existing.vapi_call_id,
+                assistantId: existing.expected_vapi_assistant_id,
+                alreadyBound: true,
+            };
+        }
+        if (existing.state === 'provider_pending' && !existing.vapi_call_id) {
+            return {
+                sessionId: String(existing.id),
+                companyId: existing.company_id,
+                providerPending: true,
+            };
+        }
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_SESSION_TERMINAL', 409);
+    }
+    if (attempt.vapi_call_id) {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_ATTEMPT_ALREADY_BOUND', 409);
+    }
+
+    let selected;
+    try {
+        selected = await vapiAssistantRegistry.resolveOutboundTuple({
+            companyId: normalizedCompanyId,
+            purpose,
+            environment: normalizedEnvironment,
+            client,
+        });
+    } catch (error) {
+        if (error instanceof vapiAssistantRegistry.VapiAssistantRegistryError) {
+            throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_TUPLE_UNAVAILABLE', 409);
+        }
+        throw error;
+    }
+
+    const inserted = await client.query(
+        `INSERT INTO vapi_call_sessions (
+             company_id,
+             direction,
+             purpose,
+             environment,
+             provider_connection_id,
+             assistant_profile_id,
+             tenant_resource_id,
+             provider_account_key,
+             expected_vapi_assistant_id,
+             outbound_call_attempt_id,
+             state
+         ) VALUES (
+             $1, 'outbound', $2, $3, $4, $5, $6, $7, $8, $9, 'provider_pending'
+         )
+         RETURNING id, company_id, admitted_at`,
+        [
+            normalizedCompanyId,
+            purpose,
+            normalizedEnvironment,
+            selected.provider_connection_id,
+            selected.assistant_profile_id,
+            selected.tenant_resource_id,
+            PLATFORM_PROVIDER_ACCOUNT_KEY,
+            selected.expected_vapi_assistant_id,
+            attemptId,
+        ],
+    );
+    return {
+        sessionId: String(inserted.rows[0].id),
+        companyId: inserted.rows[0].company_id,
+        admittedAt: inserted.rows[0].admitted_at,
+        purpose,
+        assistantId: selected.expected_vapi_assistant_id,
+        resourceType: selected.resource_type,
+        phoneNumberId: selected.vapi_phone_number_id || null,
+        twilioPhoneNumber: selected.twilio_phone_number || null,
+    };
+}
+
+async function reserveOutboundSession(input) {
+    try {
+        return await withTransaction((client) => reserveOutboundSessionWithClient(input, client));
+    } catch (error) {
+        identityAlert(error?.code || 'VAPI_IDENTITY_OUTBOUND_RESERVATION_FAILED', {
+            companyId: input.companyId,
+            sessionId: null,
+            providerCallId: null,
+        });
+        throw error;
+    }
+}
+
+async function bindOutboundPlacementWithClient({
+    companyId,
+    sessionId,
+    outboundCallAttemptId,
+    providerCallId,
+    subscriptionLimits,
+    slotJson,
+}, client) {
+    const normalizedCompanyId = assertNonEmpty(
+        companyId,
+        'VAPI_IDENTITY_COMPANY_REQUIRED',
+        64,
+    );
+    const normalizedSessionId = assertNonEmpty(
+        sessionId,
+        'VAPI_IDENTITY_SESSION_REQUIRED',
+        64,
+    );
+    const attemptId = normalizeAttemptId(outboundCallAttemptId);
+    const normalizedProviderCallId = assertNonEmpty(
+        providerCallId,
+        'VAPI_IDENTITY_PROVIDER_CALL_REQUIRED',
+        128,
+    );
+    const limits = sanitizeSubscriptionLimits(subscriptionLimits);
+
+    const sessionResult = await client.query(
+        `SELECT id, company_id, purpose, state, vapi_call_id,
+                outbound_call_attempt_id, expected_vapi_assistant_id
+         FROM vapi_call_sessions
+         WHERE id = $1
+           AND company_id = $2
+           AND direction = 'outbound'
+           AND outbound_call_attempt_id = $3
+         LIMIT 2
+         FOR UPDATE`,
+        [normalizedSessionId, normalizedCompanyId, attemptId],
+    );
+    if (sessionResult.rows.length !== 1) {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_SESSION_SCOPE_MISMATCH', 409);
+    }
+    const session = sessionResult.rows[0];
+
+    const attemptResult = await client.query(
+        `SELECT id, company_id, scenario, status, vapi_call_id
+         FROM outbound_call_attempts
+         WHERE id = $1
+           AND company_id = $2
+         LIMIT 2
+         FOR UPDATE`,
+        [attemptId, normalizedCompanyId],
+    );
+    if (attemptResult.rows.length !== 1) {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_ATTEMPT_SCOPE_MISMATCH', 409);
+    }
+    const attempt = attemptResult.rows[0];
+    if (vapiAssistantRegistry.purposeForOutboundScenario(attempt.scenario) !== session.purpose) {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_PURPOSE_DRIFT', 409);
+    }
+
+    if (session.vapi_call_id || attempt.vapi_call_id) {
+        if (
+            session.vapi_call_id === normalizedProviderCallId
+            && attempt.vapi_call_id === normalizedProviderCallId
+        ) {
+            return {
+                ok: true,
+                idempotent: true,
+                sessionId: String(session.id),
+                companyId: session.company_id,
+                providerCallId: normalizedProviderCallId,
+            };
+        }
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_PROVIDER_RESPONSE_CONFLICT', 409);
+    }
+    if (session.state !== 'provider_pending' || attempt.status !== 'dialing') {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_BIND_STATE_INVALID', 409);
+    }
+
+    await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+        [normalizedProviderCallId],
+    );
+    const collision = await client.query(
+        `SELECT session.id, session.company_id
+         FROM vapi_call_sessions session
+         WHERE session.vapi_call_id = $1
+           AND session.id <> $2
+         UNION ALL
+         SELECT '00000000-0000-0000-0000-000000000000'::uuid, attempt.company_id
+         FROM outbound_call_attempts attempt
+         WHERE attempt.vapi_call_id = $1
+           AND attempt.id <> $3
+         LIMIT 2`,
+        [normalizedProviderCallId, normalizedSessionId, attemptId],
+    );
+    if (collision.rows.length > 0) {
+        throw new VapiIdentityError('VAPI_IDENTITY_PROVIDER_CALL_COLLISION', 409);
+    }
+
+    const slotValue = slotJson === undefined ? null : JSON.stringify(slotJson);
+    const limitsValue = limits === null || limits === undefined
+        ? null
+        : JSON.stringify(limits);
+    const boundSession = await client.query(
+        `UPDATE vapi_call_sessions
+         SET vapi_call_id = $3,
+             bind_source = 'post_call_response',
+             bound_at = now(),
+             state = 'active',
+             provider_subscription_limits = COALESCE($4::jsonb, provider_subscription_limits),
+             provider_placement_observed_at = now()
+         WHERE id = $1
+           AND company_id = $2
+           AND state = 'provider_pending'
+           AND vapi_call_id IS NULL
+         RETURNING id`,
+        [normalizedSessionId, normalizedCompanyId, normalizedProviderCallId, limitsValue],
+    );
+    const boundAttempt = await client.query(
+        `UPDATE outbound_call_attempts
+         SET vapi_call_id = $3,
+             slot_json = COALESCE($4::jsonb, slot_json),
+             updated_at = now()
+         WHERE id = $1
+           AND company_id = $2
+           AND status = 'dialing'
+           AND vapi_call_id IS NULL
+         RETURNING id`,
+        [attemptId, normalizedCompanyId, normalizedProviderCallId, slotValue],
+    );
+    if (boundSession.rows.length !== 1 || boundAttempt.rows.length !== 1) {
+        throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_ATOMIC_BIND_FAILED', 409);
+    }
+    return {
+        ok: true,
+        idempotent: false,
+        sessionId: String(session.id),
+        companyId: session.company_id,
+        providerCallId: normalizedProviderCallId,
+    };
+}
+
+async function bindOutboundPlacement(input) {
+    try {
+        return await withTransaction((client) => bindOutboundPlacementWithClient(input, client));
+    } catch (error) {
+        identityAlert(error?.code || 'VAPI_IDENTITY_OUTBOUND_BIND_FAILED', {
+            companyId: input.companyId,
+            sessionId: input.sessionId,
+            providerCallId: input.providerCallId,
+        });
+        throw error;
+    }
+}
+
+async function quarantineOutboundReservationWithClient({
+    companyId,
+    sessionId,
+    outboundCallAttemptId,
+    reason,
+}, client) {
+    const normalizedCompanyId = assertNonEmpty(companyId, 'VAPI_IDENTITY_COMPANY_REQUIRED', 64);
+    const normalizedSessionId = assertNonEmpty(sessionId, 'VAPI_IDENTITY_SESSION_REQUIRED', 64);
+    const attemptId = normalizeAttemptId(outboundCallAttemptId);
+    const normalizedReason = assertNonEmpty(reason, 'VAPI_IDENTITY_QUARANTINE_REASON_REQUIRED', 120);
+    await client.query(
+        `UPDATE vapi_call_sessions
+         SET state = 'quarantined',
+             quarantine_reason = $4,
+             quarantined_at = now()
+         WHERE id = $1
+           AND company_id = $2
+           AND outbound_call_attempt_id = $3
+           AND direction = 'outbound'
+           AND state = 'provider_pending'
+           AND vapi_call_id IS NULL`,
+        [normalizedSessionId, normalizedCompanyId, attemptId, normalizedReason],
+    );
+}
+
+async function quarantineOutboundReservation(input) {
+    return withTransaction((client) => quarantineOutboundReservationWithClient(input, client));
+}
+
 async function reserveInboundSessionWithClient({
     companyId,
     twilioParentCallSid,
@@ -428,4 +799,11 @@ module.exports = {
     reserveInboundSessionWithClient,
     bindInboundCall,
     bindInboundCallWithClient,
+    sanitizeSubscriptionLimits,
+    reserveOutboundSession,
+    reserveOutboundSessionWithClient,
+    bindOutboundPlacement,
+    bindOutboundPlacementWithClient,
+    quarantineOutboundReservation,
+    quarantineOutboundReservationWithClient,
 };

@@ -11,6 +11,9 @@ const PURPOSES = Object.freeze({
     OUTBOUND_LEAD: 'outbound_lead_call',
     OUTBOUND_PARTS: 'outbound_parts_call',
 });
+const RESOURCE_PURPOSES = Object.freeze({
+    OUTBOUND_CALLER: 'outbound_call',
+});
 
 class VapiAssistantRegistryError extends Error {
     constructor(code, status = 409) {
@@ -215,6 +218,103 @@ async function resolveInboundTuple({
     return selected;
 }
 
+async function resolveOutboundTuple({
+    companyId,
+    purpose,
+    environment = ENVIRONMENTS.PROD,
+    client = null,
+}) {
+    const normalizedCompanyId = requireString(companyId, 'VAPI_REGISTRY_COMPANY_REQUIRED', 64);
+    const normalizedPurpose = assertKnownPurpose(purpose);
+    const normalizedEnvironment = assertKnownEnvironment(environment);
+    if (![PURPOSES.OUTBOUND_LEAD, PURPOSES.OUTBOUND_PARTS].includes(normalizedPurpose)) {
+        throw new VapiAssistantRegistryError('VAPI_REGISTRY_OUTBOUND_PURPOSE_REQUIRED', 400);
+    }
+    const query = queryFor(client);
+    const result = await query(
+        `SELECT
+             profile.id AS assistant_profile_id,
+             profile.company_id,
+             profile.purpose,
+             profile.environment,
+             profile.vapi_assistant_id AS expected_vapi_assistant_id,
+             profile.provider_connection_id,
+             profile.provider_account_key,
+             resource.id AS tenant_resource_id,
+             resource.resource_type,
+             resource.vapi_phone_number_id,
+             resource.twilio_phone_number
+         FROM vapi_assistant_profiles profile
+         JOIN provider_connections connection
+           ON connection.id = profile.provider_connection_id
+          AND connection.company_id = profile.company_id
+          AND connection.provider = 'vapi'
+          AND connection.environment = profile.environment
+          AND connection.status = 'active'
+         JOIN vapi_tenant_resources resource
+           ON resource.company_id = profile.company_id
+          AND resource.provider_connection_id = profile.provider_connection_id
+          AND resource.environment = profile.environment
+          AND resource.purpose = $5
+          AND resource.status = 'active'
+          AND resource.is_active = true
+          AND (
+              (resource.resource_type = 'vapi_phone_number'
+               AND NULLIF(BTRIM(resource.vapi_phone_number_id), '') IS NOT NULL
+               AND resource.twilio_phone_number IS NULL)
+              OR
+              (resource.resource_type = 'transient_twilio'
+               AND NULLIF(BTRIM(resource.twilio_phone_number), '') IS NOT NULL
+               AND resource.vapi_phone_number_id IS NULL)
+          )
+         JOIN api_integrations tools_credential
+           ON tools_credential.id = profile.tools_credential_id
+          AND tools_credential.company_id = profile.company_id
+          AND tools_credential.machine_surface = 'vapi_tools'
+          AND tools_credential.revoked_at IS NULL
+          AND (tools_credential.expires_at IS NULL OR tools_credential.expires_at > now())
+          AND tools_credential.scopes ? 'vapi_tools:invoke'
+         JOIN api_integrations status_credential
+           ON status_credential.id = profile.call_status_credential_id
+          AND status_credential.company_id = profile.company_id
+          AND status_credential.machine_surface = 'vapi_call_status'
+          AND status_credential.revoked_at IS NULL
+          AND (status_credential.expires_at IS NULL OR status_credential.expires_at > now())
+          AND status_credential.scopes ? 'vapi_call_status:invoke'
+         WHERE profile.company_id = $1
+           AND profile.purpose = $2
+           AND profile.environment = $3
+           AND profile.provider_account_key = $4
+           AND profile.status = 'active'
+           AND profile.is_active = true
+           AND NULLIF(BTRIM(profile.vapi_assistant_id), '') IS NOT NULL
+         ORDER BY profile.id, resource.id
+         LIMIT 2
+         FOR SHARE OF profile, resource, connection, tools_credential, status_credential`,
+        [
+            normalizedCompanyId,
+            normalizedPurpose,
+            normalizedEnvironment,
+            PLATFORM_PROVIDER_ACCOUNT_KEY,
+            RESOURCE_PURPOSES.OUTBOUND_CALLER,
+        ],
+    );
+    if (result.rows.length !== 1) {
+        throw new VapiAssistantRegistryError('VAPI_REGISTRY_OUTBOUND_TUPLE_UNAVAILABLE', 409);
+    }
+    const selected = result.rows[0];
+    if (
+        selected.company_id !== normalizedCompanyId
+        || selected.purpose !== normalizedPurpose
+        || selected.environment !== normalizedEnvironment
+        || selected.provider_account_key !== PLATFORM_PROVIDER_ACCOUNT_KEY
+        || !['vapi_phone_number', 'transient_twilio'].includes(selected.resource_type)
+    ) {
+        throw new VapiAssistantRegistryError('VAPI_REGISTRY_OUTBOUND_SCOPE_MISMATCH', 409);
+    }
+    return selected;
+}
+
 function purposeForOutboundScenario(scenario) {
     if (scenario === undefined || scenario === null || scenario === 'parts_visit') {
         return PURPOSES.OUTBOUND_PARTS;
@@ -227,8 +327,10 @@ module.exports = {
     PLATFORM_PROVIDER_ACCOUNT_KEY,
     ENVIRONMENTS,
     PURPOSES,
+    RESOURCE_PURPOSES,
     VapiAssistantRegistryError,
     resolveActiveProfile,
     resolveInboundTuple,
+    resolveOutboundTuple,
     purposeForOutboundScenario,
 };

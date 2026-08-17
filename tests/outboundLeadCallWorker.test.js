@@ -370,6 +370,7 @@ describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
         const arg = outboundCallService.placeCall.mock.calls[0][0];
         expect(arg).toEqual({
             companyId: CO,
+            attemptId: 700,
             scenario: 'lead_call',
             leadUuid: 'LD-1',
             contactId: 501,
@@ -388,10 +389,8 @@ describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
         // in a per-call override built from the (legal) company profile name.
         expect(arg).not.toHaveProperty('firstMessage');
 
-        // ok:true → correlation stamp + slot audit + Pulse mirror
-        const stamp = updates(/SET vapi_call_id = \$2, slot_json = \$3/);
-        expect(stamp).toHaveLength(1);
-        expect(stamp[0][1]).toEqual([700, 'vapi_lead_1', JSON.stringify(TOP_SLOT)]);
+        // placeCall has already atomically bound session + attempt + slot.
+        expect(updates(/SET vapi_call_id/)).toHaveLength(0);
         expect(vapiCallTimeline.recordPlacement).toHaveBeenCalledWith(expect.objectContaining({
             vapiCallId: 'vapi_lead_1',
             dialedNumber: '+16175551234',
@@ -427,10 +426,10 @@ describe('TC-OLC-024: happy dial — placeCall contract snapshot', () => {
     it('recordPlacement throw does NOT reclassify the attempt (stays dialing)', async () => {
         vapiCallTimeline.recordPlacement.mockRejectedValue(new Error('timeline down'));
         await svc.processLeadAttempt(mkLeadAttempt());
-        // no terminate/ladder writes beyond the correlation stamp
+        // no terminate/ladder writes; the durable bind belongs to placeCall
         expect(terminateCalls()).toHaveLength(0);
         expect(ladderInserts()).toHaveLength(0);
-        expect(updates(/SET vapi_call_id/)).toHaveLength(1);
+        expect(updates(/SET vapi_call_id/)).toHaveLength(0);
     });
 });
 
@@ -449,6 +448,19 @@ describe('TC-OLC-025: placement failure → ladder', () => {
         outboundCallService.placeCall.mockResolvedValue({ ok: false });
         await svc.processLeadAttempt(mkLeadAttempt());
         expect(terminateCalls().some(([, p]) => p[2] === 'place_call_failed')).toBe(true);
+    });
+
+    it('provider_pending leaves attempt dialing and does not enqueue a duplicate call', async () => {
+        outboundCallService.placeCall.mockResolvedValue({
+            ok: false,
+            error: 'provider_bind_pending',
+            providerPending: true,
+            sessionId: 'session-pending',
+        });
+        await svc.processLeadAttempt(mkLeadAttempt());
+        expect(terminateCalls()).toHaveLength(0);
+        expect(ladderInserts()).toHaveLength(0);
+        expect(vapiCallTimeline.recordPlacement).not.toHaveBeenCalled();
     });
 });
 

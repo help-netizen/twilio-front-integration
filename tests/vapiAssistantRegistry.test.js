@@ -38,6 +38,23 @@ function inbound(overrides = {}) {
     };
 }
 
+function outbound(overrides = {}) {
+    return {
+        assistant_profile_id: 'profile-a',
+        company_id: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+        environment: 'prod',
+        expected_vapi_assistant_id: 'assistant-a',
+        provider_connection_id: 'connection-a',
+        provider_account_key: 'vapi:platform',
+        tenant_resource_id: 'outbound-resource-a',
+        resource_type: 'vapi_phone_number',
+        vapi_phone_number_id: 'phone-a',
+        twilio_phone_number: null,
+        ...overrides,
+    };
+}
+
 beforeEach(() => {
     jest.clearAllMocks();
 });
@@ -128,6 +145,50 @@ test('inbound rejects a foreign tuple even if its SIP and assistant ids look val
     await expect(registry.resolveInboundTuple({
         companyId: COMPANY_A,
     })).rejects.toMatchObject({ code: 'VAPI_REGISTRY_INBOUND_SCOPE_MISMATCH' });
+});
+
+test('outbound tuple resolves assistant and caller through the same company scope', async () => {
+    mockQuery.mockResolvedValue({ rows: [outbound()] });
+
+    await expect(registry.resolveOutboundTuple({
+        companyId: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+    })).resolves.toMatchObject({
+        company_id: COMPANY_A,
+        expected_vapi_assistant_id: 'assistant-a',
+        vapi_phone_number_id: 'phone-a',
+    });
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('WHERE profile.company_id = $1');
+    expect(sql).toContain('resource.company_id = profile.company_id');
+    expect(sql).toContain('resource.purpose = $5');
+    expect(params).toEqual([
+        COMPANY_A,
+        registry.PURPOSES.OUTBOUND_PARTS,
+        'prod',
+        'vapi:platform',
+        'outbound_call',
+    ]);
+});
+
+test.each([
+    ['missing/inactive', []],
+    ['ambiguous', [outbound(), outbound({ tenant_resource_id: 'outbound-resource-a2' })]],
+])('outbound %s tuple fails closed', async (_label, rows) => {
+    mockQuery.mockResolvedValue({ rows });
+    await expect(registry.resolveOutboundTuple({
+        companyId: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+    })).rejects.toMatchObject({ code: 'VAPI_REGISTRY_OUTBOUND_TUPLE_UNAVAILABLE' });
+});
+
+test('outbound rejects a foreign assistant/number tuple even when provider ids look valid', async () => {
+    mockQuery.mockResolvedValue({ rows: [outbound({ company_id: COMPANY_B })] });
+    await expect(registry.resolveOutboundTuple({
+        companyId: COMPANY_A,
+        purpose: registry.PURPOSES.OUTBOUND_PARTS,
+    })).rejects.toMatchObject({ code: 'VAPI_REGISTRY_OUTBOUND_SCOPE_MISMATCH' });
 });
 
 test.each([

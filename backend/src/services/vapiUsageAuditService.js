@@ -3,6 +3,7 @@
 const { randomUUID } = require('crypto');
 const { withTransaction } = require('./transactionService');
 const providerClient = require('./vapiProviderClient');
+const vapiCallIdentity = require('./vapiCallIdentityService');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const AUDIT_LEASE_MS = 30 * 60 * 1000;
@@ -272,12 +273,70 @@ async function insertAuditAlerts(client, { run, kind, rows, now }) {
     }
 }
 
+async function repairPendingOutboundIdentities(client, providerCalls) {
+    let repaired = 0;
+    for (const call of providerCalls.values()) {
+        if (!call.albustoCallSessionId || !call.assistantId) continue;
+        const candidate = await client.query(
+            // tenant-safety-allow R-natural-key: platform audit starts from the
+            // server-generated session UUID stored in provider metadata; company
+            // is derived only from that globally unique local row, never provider input.
+            `SELECT id, company_id, outbound_call_attempt_id,
+                    expected_vapi_assistant_id, state, vapi_call_id
+             FROM vapi_call_sessions
+             WHERE id = $1
+               AND direction = 'outbound'
+             LIMIT 2
+             FOR UPDATE`,
+            [call.albustoCallSessionId],
+        );
+        if (candidate.rows.length !== 1) continue;
+        const session = candidate.rows[0];
+        if (
+            session.state !== 'provider_pending'
+            || session.vapi_call_id
+            || !session.outbound_call_attempt_id
+            || session.expected_vapi_assistant_id !== call.assistantId
+        ) {
+            continue;
+        }
+        await client.query('SAVEPOINT vapi_outbound_identity_repair');
+        try {
+            await vapiCallIdentity.bindOutboundPlacementWithClient({
+                companyId: session.company_id,
+                sessionId: String(session.id),
+                outboundCallAttemptId: String(session.outbound_call_attempt_id),
+                providerCallId: call.id,
+            }, client);
+            await client.query('RELEASE SAVEPOINT vapi_outbound_identity_repair');
+            repaired += 1;
+        } catch (error) {
+            await client.query('ROLLBACK TO SAVEPOINT vapi_outbound_identity_repair');
+            await client.query('RELEASE SAVEPOINT vapi_outbound_identity_repair');
+            console.error('[VAPI_OUTBOUND_ALERT] audit could not repair pending identity', {
+                sessionId: String(session.id),
+                providerCallId: call.id,
+                code: error?.code || 'VAPI_OUTBOUND_AUDIT_REPAIR_FAILED',
+            });
+        }
+    }
+    return repaired;
+}
+
 async function completeAuditWithClient({ run, providerResult, now = new Date() }, client) {
     const updatedCalls = providerResult.updatedCalls || providerResult.calls;
+    const providerCalls = new Map(providerResult.calls);
+    for (const [id, call] of updatedCalls) {
+        providerCalls.set(id, { ...(providerCalls.get(id) || {}), ...call });
+    }
     const allProviderIds = new Set([
         ...providerResult.calls.keys(),
         ...updatedCalls.keys(),
     ]);
+    const outboundIdentityRepaired = await repairPendingOutboundIdentities(
+        client,
+        providerCalls,
+    );
     const localRows = await localIdentityRows(
         client,
         run.window_start,
@@ -329,16 +388,19 @@ async function completeAuditWithClient({ run, providerResult, now = new Date() }
          SET status = 'succeeded', pages_scanned = $3,
              provider_calls_scanned = $4, orphan_count = $5,
              missing_count = $6, stuck_count = $7,
-             repair_enqueued_count = $8, sample_evidence = $9::jsonb,
+             repair_enqueued_count = $8,
+             outbound_identity_repaired_count = $9,
+             sample_evidence = $10::jsonb,
              claim_token = NULL, lease_expires_at = NULL,
-             finished_at = $10, last_error = NULL
+             finished_at = $11, last_error = NULL
          WHERE id = $1
            AND claim_token = $2
          RETURNING *`,
         [
             run.id, run.claim_token, providerResult.pages,
             allProviderIds.size, orphanIds.length, missingIds.length,
-            stuck.rows[0].count, repairEnqueued, JSON.stringify(samples), now,
+            stuck.rows[0].count, repairEnqueued, outboundIdentityRepaired,
+            JSON.stringify(samples), now,
         ],
     );
     if (updated.rows.length !== 1) {
@@ -451,6 +513,7 @@ module.exports = {
     assertDescendingPage,
     claimAuditRunWithClient,
     fetchProviderWindow,
+    repairPendingOutboundIdentities,
     completeAuditWithClient,
     failAuditWithClient,
     runNightlyAudit,

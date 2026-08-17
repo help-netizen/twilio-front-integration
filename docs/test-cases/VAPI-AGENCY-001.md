@@ -38,8 +38,8 @@ Delivery plan: `docs/specs/VAPI-AGENCY-001-TASKS.md`
 | ID-09 | P0 | Twilio child status приходит раньше/после Vapi callback | `answered_by='ai'` может обновиться, но Vapi id не создаётся из Twilio evidence | timeline permutation |
 | ID-10 | P0 | EoC приходит до успешного `assistant-request` bind | Никакого поиска по Twilio SID/company/body/assistant; T3 сохраняет raw evidence только после подтверждения живой формы и применяет тот же exact token/session contract | EoC raw-capture case T3 |
 | ID-11 | P0 | `assistant-request` без token либо с двумя различными token values | Reject; handler не возвращает assistant; эвристического bind нет | assistant-request token fail-closed |
-| ID-12 | P0 | Outbound worker A создаёт call | Session/lease существуют до POST; response id атомарно в session и attempt | outbound identity |
-| ID-13 | P1 | POST мог уйти, ответ timeout | Session `provider_pending`; job не делает второй POST до repair | ambiguous POST test |
+| ID-12 | P0 | Outbound worker A создаёт call | Session существует до POST; assistant/caller только из A registry; response id, lead slot и telemetry атомарно в session+attempt | `vapiOutboundIdentity`, outbound workers |
+| ID-13 | P1 | POST мог уйти, ответ timeout/no-id либо bind упал | Session `provider_pending`; job не делает второй POST; audit repair принимает только server-owned session metadata + pinned assistant | ambiguous POST/metadata repair tests |
 | ID-14 | P0 | В request/tool/public payload переданы `assistantId`, `assistantOverrides`, model, voice, tools, destination, server URL/credential | Поля rejected; provider payload содержит только server-owned template | `SAB-VAPI-OVERRIDE` |
 | ID-15 | P0 | Tool webhook A пытается обратиться к entity F | 404; A/F entities and audit unchanged | tools T-foreign/R-matrix |
 | ID-16 | P0 | Tenant JWT используется на machine webhook либо status credential на tools surface | Deny; surface credentials не взаимозаменяемы | `SAB-VAPI-WEBHOOK-CREDENTIAL` |
@@ -67,6 +67,8 @@ Delivery plan: `docs/specs/VAPI-AGENCY-001-TASKS.md`
 | REG-08 | P0 | Operational bootstrap CLI получает `--company-id`, existing connection/resource и три assistant env ids | Dry-run не пишет; apply создаёт ровно три active `(company,purpose,prod)` profile и связывает inbound resource; повтор no-op. Отсутствующий/невалидный/conflicting input отклоняет CLI, не schema migration | `vapiAssistantRegistryBootstrap`, `vapiAssistantRegistryMigration` |
 | REG-09 | P0 | Assistant id A повторно вставляется для B при разных/пустых `provider_org_id` | Global unique violation; provider namespace нельзя фрагментировать per-company полем | registry migration collision |
 | REG-10 | P0 | Tenant node передаёт foreign `sip_uri`, profile/resource/assistant id, purpose/env и overrides | Reservation получает hardcoded product purpose/env; wire SIP только из exact company registry. Legacy-canary fallback также читает только company/inbound/prod resource | `SAB-VAPI-NODE-SIP` |
+| REG-11 | P0 | Runtime env содержит foreign assistant id/phone id/phone number | Provider payload сохраняет pinned A assistant+caller; env values отсутствуют на wire | `SAB-VAPI-OUTBOUND-ENV-SOURCE` |
+| REG-12 | P1 | Outbound caller operational CLI dry-run/apply для A | Обязательный company; обе outbound profiles exact; один generic resource; dry-run 0 writes, apply idempotent; caller B conflict rejected | `vapiOutboundBootstrap` |
 | CAP-01 | P0 | N параллельных admissions A при cap K | Ровно K leases admitted, остальные fallback/queued; никогда K+1 | `SAB-VAPI-CONCURRENCY` |
 | CAP-02 | P0 | A и B одновременно упираются в global cap G | Всего admitted ≤ G и каждый ≤ tenant cap; нет starvation bypass | global+tenant stress |
 | CAP-03 | P0 | Outbound denied by cap | Остаётся queued; POST spy = 0; attempt count unchanged | outbound cap behavior |
@@ -164,6 +166,7 @@ AI-ног, потому что это единица supplier cost; UI може�
 | MIG-04 | P1 | Однозначный ABC outbound attempt | Session/provider identity backfilled ровно один раз |
 | MIG-05 | P0 | Fresh environment без Vapi rows и без session settings | Schema-only migration 275 в настоящем autocommit проходит дважды и создаёт 0 data rows; runtime selector закрыт |
 | MIG-06 | P0 | Prod-like legacy connection/resource/credentials | Migration 275 проходит дважды и не меняет данные; CLI dry-run byte-unchanged, apply связывает profiles/resource/credentials, повтор idempotent; inbound reservation доступна |
+| MIG-07 | P1 | Migration 277 на empty и prod-like registry | Только schema/constraints/telemetry; 0 caller rows; repeat idempotent; rollback/forward сохраняют legacy attempts/calls |
 | RET-01 | P0 | Source/import/route scan после T5 | Нет org provisioner/script, tenant key API/settings и runtime global assistant env fallback; env ids допустимы только в operational bootstrap/docs/tests |
 | RET-02 | P0 | Попытка вызвать старый tenant `/api/vapi` route | 404/410 по rollout contract; provider state unchanged; ключ не принимается |
 | RET-03 | P1 | Existing ABC call после cutover | Идёт только registry path; legacy fallback spy не вызывается |

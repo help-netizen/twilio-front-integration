@@ -14,6 +14,7 @@ const MIGRATION_FILES = [
     '267_vapi_provisional_usage_ingest.sql',
     '269_vapi_usage_reconcile_and_finalization.sql',
     '272_vapi_loss_protection.sql',
+    '277_vapi_outbound_registry_sessions.sql',
 ];
 
 let pool;

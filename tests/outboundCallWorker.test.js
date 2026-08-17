@@ -179,7 +179,7 @@ describe('TC-OPC-U09: tick — claims only due pending rows with FOR UPDATE SKIP
         expect(sql).toMatch(/FOR UPDATE SKIP LOCKED/i);
     });
 
-    test('claimed in-hours row → placeCall dialed + vapi_call_id stored', async () => {
+    test('claimed in-hours row → placeCall owns the durable session+attempt bind', async () => {
         const attempt = mkAttempt();
         // 1) claim UPDATE returns the row.
         mockQuery.mockResolvedValueOnce({ rows: [attempt] });
@@ -189,21 +189,19 @@ describe('TC-OPC-U09: tick — claims only due pending rows with FOR UPDATE SKIP
         mockQuery.mockResolvedValueOnce({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
         // placeCall ok
         outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_call_ok' });
-        // store vapi_call_id UPDATE
-        mockQuery.mockResolvedValueOnce({ rows: [] });
-
         const claimed = await worker.tick();
         expect(claimed).toBe(1);
 
         expect(outboundCallService.placeCall).toHaveBeenCalledTimes(1);
         expect(outboundCallService.placeCall).toHaveBeenCalledWith(
-            expect.objectContaining({ companyId: CO, jobId: 50, customerNumber: '+16175551212' }),
+            expect.objectContaining({
+                companyId: CO,
+                attemptId: 900,
+                jobId: 50,
+                customerNumber: '+16175551212',
+            }),
         );
-        // The vapi_call_id store UPDATE was issued.
-        const storeCall = mockQuery.mock.calls.find(
-            (c) => /vapi_call_id = \$2/i.test(c[0]) && c[1] && c[1][1] === 'vapi_call_ok',
-        );
-        expect(storeCall).toBeTruthy();
+        expect(mockQuery.mock.calls.some((c) => /vapi_call_id\s*=/.test(c[0]))).toBe(false);
     });
 });
 
@@ -617,25 +615,23 @@ describe('CT-04: recordPlacement placement mirror (non-fatal timeline row)', () 
             .toBe(DIALABLE_JOB.customer_phone);
     });
 
-    test('callerId comes from VAPI_OUTBOUND_TWILIO_NUMBER env (business line)', async () => {
-        const prev = process.env.VAPI_OUTBOUND_TWILIO_NUMBER;
-        process.env.VAPI_OUTBOUND_TWILIO_NUMBER = '+16175006181';
-        try {
-            jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
-            mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
-            outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_ok' });
+    test('callerId comes from the company-bound placement result, not env', async () => {
+        process.env.VAPI_OUTBOUND_TWILIO_NUMBER = '+16179999999';
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({
+            ok: true,
+            vapiCallId: 'vapi_ok',
+            callerId: '+16175006181',
+        });
 
-            await worker.processAttempt(mkAttempt());
+        await worker.processAttempt(mkAttempt());
 
-            expect(vapiCallTimeline.recordPlacement.mock.calls[0][0].callerId).toBe('+16175006181');
-        } finally {
-            if (prev === undefined) delete process.env.VAPI_OUTBOUND_TWILIO_NUMBER;
-            else process.env.VAPI_OUTBOUND_TWILIO_NUMBER = prev;
-        }
+        expect(vapiCallTimeline.recordPlacement.mock.calls[0][0].callerId).toBe('+16175006181');
     });
 
-    // KEY non-fatal guarantee: a recordPlacement throw must NOT fail processAttempt,
-    // the vapi_call_id stamp still stands, and the dial is NOT re-classified into
+    // KEY non-fatal guarantee: a recordPlacement throw must NOT fail processAttempt;
+    // the earlier atomic bind stands, and the dial is NOT re-classified into
     // the failed/retry path. (Negative control: delete the try/catch around
     // recordPlacement in outboundCallWorker.js and this test goes red — the
     // rejection propagates out of processAttempt.)
@@ -650,11 +646,9 @@ describe('CT-04: recordPlacement placement mirror (non-fatal timeline row)', () 
         // Does not throw / reject — the guard swallows the timeline failure.
         await expect(worker.processAttempt(attempt)).resolves.toBeUndefined();
 
-        // vapi_call_id was still stamped (it happens BEFORE the hook, unchanged).
-        const storeCall = mockQuery.mock.calls.find(
-            (c) => /vapi_call_id = \$2/i.test(c[0]) && c[1] && c[1][1] === 'vapi_ok',
-        );
-        expect(storeCall).toBeTruthy();
+        // The durable bind already happened inside placeCall; the worker never
+        // performs a second, divergent vapi_call_id write.
+        expect(mockQuery.mock.calls.some((c) => /vapi_call_id\s*=/.test(c[0]))).toBe(false);
         // The placed dial was NOT flipped to failed nor a retry enqueued.
         const failFlip = mockQuery.mock.calls.find((c) => /SET status = 'failed', reason = \$2/i.test(c[0]));
         expect(failFlip).toBeFalsy();
@@ -671,5 +665,24 @@ describe('CT-04: recordPlacement placement mirror (non-fatal timeline row)', () 
         await worker.processAttempt(mkAttempt({ attempt_no: 1 }));
 
         expect(vapiCallTimeline.recordPlacement).not.toHaveBeenCalled();
+    });
+
+    test('provider_pending keeps the claimed attempt dialing and never schedules a duplicate POST', async () => {
+        jobsService.getJobById.mockResolvedValue(DIALABLE_JOB);
+        mockQuery.mockResolvedValue({ rows: [{ group_id: 'g1', timezone: 'America/New_York' }] });
+        outboundCallService.placeCall.mockResolvedValue({
+            ok: false,
+            error: 'provider_bind_pending',
+            providerPending: true,
+            sessionId: 'session-pending',
+        });
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await worker.processAttempt(mkAttempt());
+
+        expect(mockQuery.mock.calls.some((c) => /SET status = 'failed'/.test(c[0]))).toBe(false);
+        expect(mockQuery.mock.calls.some((c) => /INSERT INTO outbound_call_attempts/.test(c[0]))).toBe(false);
+        expect(vapiCallTimeline.recordPlacement).not.toHaveBeenCalled();
+        errorSpy.mockRestore();
     });
 });

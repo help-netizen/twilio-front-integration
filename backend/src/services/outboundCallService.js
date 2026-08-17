@@ -1,5 +1,5 @@
 const axios = require('axios');
-const vapiAssistantRegistry = require('./vapiAssistantRegistryService');
+const vapiCallIdentity = require('./vapiCallIdentityService');
 
 // =============================================================================
 // Outbound Call Service — OUTBOUND-PARTS-CALL-001, Decision D (spec §C.3)
@@ -10,16 +10,16 @@ const vapiAssistantRegistry = require('./vapiAssistantRegistryService');
 // scheduling context. Finance is intentionally NOT preloaded here: estimate or
 // invoice amounts are fetched on demand through the authorized in-call skills.
 //
-// SAFE-FAIL: placeCall NEVER throws. It returns { ok:false, error } on any
-// failure (bad config, non-2xx, timeout, network) so the worker can record a
-// failed attempt and feed the retry loop without a try/catch at the call site.
-// Provider transport secrets/caller number come from server env. Assistant
-// identity comes only from the company registry; there is no global env fallback.
+// SAFE-FAIL: placeCall NEVER throws. A local session is reserved before the
+// provider request. Definite provider rejection may feed the retry loop;
+// ambiguous transport/bind outcomes stay provider_pending and MUST NOT POST
+// again. Assistant and caller identity come only from the company registry.
+// Provider transport secrets remain server-only.
 // The Bearer token is never logged.
 // =============================================================================
 
-// Request timeout for the VAPI /call POST. Placing a call is non-idempotent, so
-// keep this bounded; the worker treats a timeout as a failed attempt (retryable).
+// Request timeout for the VAPI /call POST. Placing a call is non-idempotent;
+// timeout/network uncertainty is therefore provider_pending, never retryable.
 const VAPI_CALL_TIMEOUT_MS = Number(process.env.VAPI_CALL_TIMEOUT_MS) || 15000;
 
 const VAPI_CALL_URL = 'https://api.vapi.ai/call';
@@ -43,6 +43,7 @@ function getClient() {
  *
  * @param {Object}  args
  * @param {string}  args.companyId      Owning company (flows from job.company_id).
+ * @param {number}  args.attemptId      Company-bound outbound attempt identity.
  * @param {string}  args.jobId          Job the completion visit belongs to.
  * @param {string}  args.contactId      Bound (known) contact for the call.
  * @param {string}  args.customerName   Customer display name (greeting).
@@ -73,26 +74,13 @@ function getClient() {
  * @returns {Promise<{ok:true, vapiCallId:string} | {ok:false, error:string}>}
  */
 async function placeCall({
-    companyId, jobId, contactId, customerName, customerNumber, slot,
+    companyId, attemptId, jobId, contactId, customerName, customerNumber, slot,
     scenario, leadUuid, zip, problemDescription, source, firstMessage,
     applianceType, applianceBrand, applianceProblem,
 } = {}) {
     const apiKey = process.env.VAPI_API_KEY;
-    const phoneNumberId = process.env.VAPI_OUTBOUND_PHONE_NUMBER_ID;
-    // Caller-ID source. Prefer a registered VAPI phone number (phoneNumberId).
-    // Otherwise place via a TRANSIENT Twilio number (BYO creds): VAPI originates
-    // the outbound leg through Twilio from our own business line WITHOUT importing
-    // the number into VAPI — so that number's inbound Twilio webhook (which routes
-    // customer calls to the CRM) is never rewritten/hijacked.
-    const twilioNumber = process.env.VAPI_OUTBOUND_TWILIO_NUMBER;
-    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-    const hasTransient = twilioNumber && twilioSid && twilioToken;
-
-    // Fail fast on missing config or number — never expose which secret is unset
-    // beyond a coarse label, and never dial without a destination.
-    if (!apiKey || (!phoneNumberId && !hasTransient)) {
-        console.error('[outboundCallService] VAPI outbound config missing (caller-number/api key)');
+    if (!apiKey) {
+        console.error('[VAPI_OUTBOUND_ALERT] platform API credential missing', { companyId });
         return { ok: false, error: 'vapi_config_missing' };
     }
     if (!customerNumber) {
@@ -100,39 +88,87 @@ async function placeCall({
         return { ok: false, error: 'missing_customer_number' };
     }
 
-    let assistantProfile;
+    let reservation;
     try {
-        const purpose = vapiAssistantRegistry.purposeForOutboundScenario(scenario);
-        assistantProfile = await vapiAssistantRegistry.resolveActiveProfile({
+        reservation = await vapiCallIdentity.reserveOutboundSession({
             companyId,
-            purpose,
-            environment: vapiAssistantRegistry.ENVIRONMENTS.PROD,
+            outboundCallAttemptId: attemptId,
+            environment: 'prod',
         });
-        if (
-            assistantProfile.company_id !== companyId
-            || assistantProfile.purpose !== purpose
-            || assistantProfile.environment !== vapiAssistantRegistry.ENVIRONMENTS.PROD
-            || typeof assistantProfile.vapi_assistant_id !== 'string'
-            || assistantProfile.vapi_assistant_id.trim() === ''
-        ) {
-            throw new vapiAssistantRegistry.VapiAssistantRegistryError(
-                'VAPI_REGISTRY_PROFILE_SCOPE_MISMATCH',
-                409,
-            );
-        }
     } catch (error) {
-        console.error('[outboundCallService] assistant registry refused placement', {
+        console.error('[VAPI_OUTBOUND_ALERT] registry/session refused placement', {
             companyId,
-            code: error?.code || 'VAPI_REGISTRY_UNAVAILABLE',
+            attemptId,
+            code: error?.code || 'VAPI_OUTBOUND_RESERVATION_FAILED',
         });
-        return { ok: false, error: 'assistant_registry_unavailable' };
+        return { ok: false, error: 'outbound_registry_unavailable' };
     }
-    const assistantId = assistantProfile.vapi_assistant_id;
+    if (reservation.alreadyBound) {
+        return {
+            ok: true,
+            vapiCallId: reservation.providerCallId,
+            sessionId: reservation.sessionId,
+            idempotent: true,
+            callerId: null,
+        };
+    }
+    if (reservation.providerPending) {
+        console.error('[VAPI_OUTBOUND_ALERT] provider placement already pending', {
+            companyId,
+            attemptId,
+            sessionId: reservation.sessionId,
+        });
+        return {
+            ok: false,
+            error: 'provider_pending',
+            providerPending: true,
+            sessionId: reservation.sessionId,
+        };
+    }
+
+    const assistantId = reservation.assistantId;
+    const isLeadCall = reservation.purpose === 'outbound_lead_call';
+    const phoneNumberId = reservation.resourceType === 'vapi_phone_number'
+        ? reservation.phoneNumberId
+        : null;
+    const twilioNumber = reservation.resourceType === 'transient_twilio'
+        ? reservation.twilioPhoneNumber
+        : null;
+    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+    const callerShapeValid = (phoneNumberId && !twilioNumber)
+        || (twilioNumber && twilioSid && twilioToken && !phoneNumberId);
+    if (!assistantId || !callerShapeValid) {
+        console.error('[VAPI_OUTBOUND_ALERT] reserved outbound tuple is not executable', {
+            companyId,
+            attemptId,
+            sessionId: reservation.sessionId,
+            resourceType: reservation.resourceType || null,
+        });
+        await vapiCallIdentity.quarantineOutboundReservation({
+            companyId,
+            sessionId: reservation.sessionId,
+            outboundCallAttemptId: attemptId,
+            reason: 'outbound_transport_config_missing',
+        }).catch((error) => {
+            console.error('[VAPI_OUTBOUND_ALERT] reservation quarantine failed', {
+                companyId,
+                attemptId,
+                code: error?.code || error?.message,
+            });
+        });
+        return { ok: false, error: 'vapi_config_missing' };
+    }
 
     const s = slot || {};
     const body = {
         assistantId,
-        // Registered number wins; else transient Twilio caller-ID (no VAPI import).
+        // Vapi persists call metadata and returns it from call reads/lists. This
+        // server-owned UUID is the only repair key for an ambiguous POST; it is
+        // not tenant input and is not exposed to the assistant prompt.
+        metadata: { albustoCallSessionId: reservation.sessionId },
+        // Registry selects exactly one company-owned caller resource. Runtime
+        // environment variables cannot select either assistant or caller number.
         // VAPI transient Twilio caller-ID: the inline phoneNumber object uses
         // `twilioPhoneNumber` (E.164) — NOT `provider`/`number`. Sending provider/number
         // gets a 400 ("property provider/number should not exist"; twilioPhoneNumber
@@ -171,7 +207,7 @@ async function placeCall({
                 // OUTBOUND-LEAD-CALL-001 — absent keys keep the parts body
                 // byte-identical. Discriminator naming (exact, per architecture):
                 // DB column value 'lead_call'; PROMPT variable 'lead_booking'.
-                ...(scenario === 'lead_call' ? { scenario: 'lead_booking' } : {}),
+                ...(isLeadCall ? { scenario: 'lead_booking' } : {}),
                 ...(leadUuid ? { leadUuid } : {}),
                 ...(zip ? { zip } : {}),
                 ...(problemDescription ? { problemDescription } : {}),
@@ -195,17 +231,86 @@ async function placeCall({
         });
         const vapiCallId = resp && resp.data && resp.data.id;
         if (!vapiCallId) {
-            console.error('[outboundCallService] VAPI /call returned no call id', { companyId, jobId });
-            return { ok: false, error: 'no_call_id' };
+            console.error('[VAPI_OUTBOUND_ALERT] VAPI /call returned no call id; outcome pending', {
+                companyId,
+                attemptId,
+                sessionId: reservation.sessionId,
+            });
+            return {
+                ok: false,
+                error: 'no_call_id',
+                providerPending: true,
+                sessionId: reservation.sessionId,
+            };
         }
-        return { ok: true, vapiCallId };
+        try {
+            await vapiCallIdentity.bindOutboundPlacement({
+                companyId,
+                sessionId: reservation.sessionId,
+                outboundCallAttemptId: attemptId,
+                providerCallId: vapiCallId,
+                subscriptionLimits: resp.data.subscriptionLimits,
+                slotJson: isLeadCall ? slot : undefined,
+            });
+        } catch (error) {
+            console.error('[VAPI_OUTBOUND_ALERT] provider call placed but atomic bind failed', {
+                companyId,
+                attemptId,
+                sessionId: reservation.sessionId,
+                providerCallId: vapiCallId,
+                code: error?.code || 'VAPI_OUTBOUND_BIND_FAILED',
+            });
+            return {
+                ok: false,
+                error: 'provider_bind_pending',
+                providerPending: true,
+                sessionId: reservation.sessionId,
+                providerCallId: vapiCallId,
+            };
+        }
+        return {
+            ok: true,
+            vapiCallId,
+            sessionId: reservation.sessionId,
+            callerId: twilioNumber || null,
+        };
     } catch (err) {
         // Never let the Bearer token or full config leak into logs. axios error
         // for a non-2xx carries err.response.status; timeouts/network carry code.
         const status = err && err.response && err.response.status;
         const code = err && err.code;
         const error = status ? `vapi_http_${status}` : (code || 'vapi_request_failed');
-        console.error('[outboundCallService] placeCall failed', { companyId, jobId, status, code });
+        if (!status) {
+            console.error('[VAPI_OUTBOUND_ALERT] VAPI placement outcome unknown', {
+                companyId,
+                attemptId,
+                sessionId: reservation.sessionId,
+                code,
+            });
+            return {
+                ok: false,
+                error,
+                providerPending: true,
+                sessionId: reservation.sessionId,
+            };
+        }
+        console.error('[outboundCallService] placeCall rejected', {
+            companyId,
+            attemptId,
+            status,
+        });
+        await vapiCallIdentity.quarantineOutboundReservation({
+            companyId,
+            sessionId: reservation.sessionId,
+            outboundCallAttemptId: attemptId,
+            reason: `provider_http_${status}`,
+        }).catch((quarantineError) => {
+            console.error('[VAPI_OUTBOUND_ALERT] reservation quarantine failed', {
+                companyId,
+                attemptId,
+                code: quarantineError?.code || quarantineError?.message,
+            });
+        });
         return { ok: false, error };
     }
 }
