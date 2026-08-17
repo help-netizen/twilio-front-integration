@@ -122,6 +122,7 @@ export type LeadMutationResponse = {
         link?: string;
         message?: string;
         job_id?: number;
+        job_seq?: number | null;
         zenbooker_job_id?: string;
         zb_warning?: string | null;
         contact_resolution?: {

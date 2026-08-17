@@ -230,6 +230,13 @@ router.get('/by-seq/:seq', requirePermission('jobs.view'), async (req, res) => {
 router.get('/by-code/:code', requirePermission('jobs.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: 'Company context is required',
+                code: 'TENANT_CONTEXT_REQUIRED',
+            });
+        }
         const resolvedJob = await jobsService.getJobByCode(req.params.code);
         if (!resolvedJob) return res.status(404).json({ ok: false, error: 'Job not found' });
 
@@ -256,6 +263,13 @@ router.get('/by-code/:code', requirePermission('jobs.view'), async (req, res) =>
 router.get('/:id', requirePermission('jobs.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: 'Company context is required',
+                code: 'TENANT_CONTEXT_REQUIRED',
+            });
+        }
         const job = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
         res.json({ ok: true, data: job });

@@ -89,3 +89,18 @@ test('standalone job receipt has a payment summary and no invented invoice lines
     expect(receipt.html).not.toContain('Invoice total');
     expect(receipt.html).not.toContain('<thead>');
 });
+
+test('standalone job receipt prefers job_seq over the legacy number and internal id', () => {
+    const receipt = buildPaymentReceiptEmail({
+        context: context({
+            job_seq: 171,
+            job_number: 'ZB-9',
+            receipt_job_id: 9,
+        }),
+        brand: { name: 'Repair Co' },
+    });
+
+    expect(receipt.html).toContain('>Payment for job</td>');
+    expect(receipt.html).toContain('>#171</td>');
+    expect(receipt.html).not.toContain('#ZB-9');
+});

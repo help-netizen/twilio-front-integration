@@ -63,6 +63,7 @@ export interface Invoice {
     contact_phone?: string | null;
     lead_serial_id?: number | string | null;
     job_number?: string | null;
+    job_seq?: number | null;
 }
 
 export type HydratedInvoice = Invoice & {

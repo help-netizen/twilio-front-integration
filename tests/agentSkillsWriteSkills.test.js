@@ -242,13 +242,23 @@ describe('cancelAppointment (L2 write, retention-gated) — G5 / AR-5', () => {
 });
 
 describe('ZB-DECOUPLE-001 MCP compatibility contract', () => {
-    test('ChatGPT Job schemas retain the four Zenbooker compatibility fields', () => {
+    test('ChatGPT Job schemas expose native identifiers and retain legacy compatibility fields', () => {
         const listJobProperties = agentSkillsMcpRegistry.getTool('svc.list_jobs')
             .outputSchema.properties.results.items.properties;
         const getJobProperties = agentSkillsMcpRegistry.getTool('svc.get_job')
             .outputSchema.properties;
 
         for (const properties of [listJobProperties, getJobProperties]) {
+            expect(properties.job_seq).toMatchObject({
+                type: ['integer', 'null'],
+                description: 'Per-company Job # shown in the app.',
+            });
+            expect(properties.public_code).toMatchObject({
+                type: ['string', 'null'],
+                description: 'Durable global job code for /j/:code links.',
+            });
+            expect(properties.job_number.description)
+                .toBe('Legacy Zenbooker number; null for native jobs.');
             expect(properties.zenbooker_job_id.type).toEqual(['string', 'null']);
             expect(properties.zb_status.type).toEqual(['string', 'null']);
             expect(properties.zb_rescheduled.type).toBe('boolean');

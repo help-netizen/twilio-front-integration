@@ -68,6 +68,14 @@ beforeEach(() => {
 });
 
 describe('Tasks route-only page contract', () => {
+    test('job parent labels use job_seq before legacy job_number and id', async () => {
+        await tasksQueries.listTasksPage(COMPANY, { limit: 50 });
+
+        const dataSql = mockQuery.mock.calls.find(([sql]) => /SELECT page_base\.\*/i.test(sql))[0];
+        expect(dataSql).toContain("'Job #' || COALESCE(j.job_seq::text, NULLIF(j.job_number,''), j.id::text)");
+        expect(dataSql).not.toContain("'Job #' || j.id");
+    });
+
     test('manager gets cursor pagination while non-manager rows and total share owner scope', async () => {
         const managerResponse = await request(appFor()).get('/api/tasks');
         expect(managerResponse.status).toBe(200);

@@ -89,7 +89,7 @@ function mockClaimExistingJob(existingJob) {
     mockClient.query.mockImplementation(async (sql) => {
         const text = String(sql);
         if (/SELECT \*\s+FROM leads[\s\S]+FOR UPDATE/i.test(text)) return { rows: [currentLeadRow] };
-        if (/SELECT id, contact_id, zenbooker_job_id\s+FROM jobs/i.test(text)) return { rows: [existingJob] };
+        if (/SELECT id, contact_id, zenbooker_job_id, job_seq, public_code\s+FROM jobs/i.test(text)) return { rows: [existingJob] };
         if (/SELECT id\s+FROM jobs/i.test(text)) return { rows: [{ id: existingJob.id }] };
         if (/UPDATE leads/i.test(text)) {
             return { rows: [{ id: currentLeadRow.id, uuid: currentLeadRow.uuid, status: 'Converted', converted_to_job: true }] };
@@ -98,12 +98,14 @@ function mockClaimExistingJob(existingJob) {
     });
 }
 
-function mockClaimNewJob(jobId = 1131) {
+function mockClaimNewJob(jobId = 1131, jobSeq = 171, publicCode = 'aB3xZ') {
     mockClient.query.mockImplementation(async (sql) => {
         const text = String(sql);
         if (/SELECT \*\s+FROM leads[\s\S]+FOR UPDATE/i.test(text)) return { rows: [currentLeadRow] };
-        if (/SELECT id, contact_id, zenbooker_job_id\s+FROM jobs/i.test(text)) return { rows: [] };
-        if (/INSERT INTO jobs/i.test(text)) return { rows: [{ id: jobId }] };
+        if (/SELECT id, contact_id, zenbooker_job_id, job_seq, public_code\s+FROM jobs/i.test(text)) return { rows: [] };
+        if (/INSERT INTO jobs/i.test(text)) {
+            return { rows: [{ id: jobId, job_seq: jobSeq, public_code: publicCode }] };
+        }
         if (/SELECT id\s+FROM jobs/i.test(text)) return { rows: [{ id: jobId }] };
         if (/UPDATE leads/i.test(text)) {
             return { rows: [{ id: currentLeadRow.id, uuid: currentLeadRow.uuid, status: 'Converted', converted_to_job: true }] };
@@ -226,7 +228,13 @@ describe('leadsService.convertLead idempotency', () => {
     });
 
     it('reuses an existing local job when retrying a conversion', async () => {
-        mockClaimExistingJob({ id: 1131, contact_id: 123, zenbooker_job_id: null });
+        mockClaimExistingJob({
+            id: 1131,
+            contact_id: 123,
+            zenbooker_job_id: null,
+            job_seq: 171,
+            public_code: 'aB3xZ',
+        });
 
         const result = await leadsService.convertLead('ABC123', {
             zb_job_payload: {
@@ -237,8 +245,10 @@ describe('leadsService.convertLead idempotency', () => {
 
         expect(result).toMatchObject({
             job_id: 1131,
+            job_seq: 171,
+            public_code: 'aB3xZ',
             zenbooker_job_id: null,
-            link: '/jobs/1131',
+            link: '/jobs/by-id/1131',
         });
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO jobs'))).toBe(false);
         expect(mockClient.query.mock.calls.some(([sql]) => /FROM leads[\s\S]+FOR UPDATE/.test(String(sql)))).toBe(true);
@@ -246,7 +256,13 @@ describe('leadsService.convertLead idempotency', () => {
     });
 
     it('returns an already linked local job with its historical provenance', async () => {
-        mockClaimExistingJob({ id: 1131, contact_id: 123, zenbooker_job_id: 'zb-existing' });
+        mockClaimExistingJob({
+            id: 1131,
+            contact_id: 123,
+            zenbooker_job_id: 'zb-existing',
+            job_seq: 171,
+            public_code: 'aB3xZ',
+        });
 
         const result = await leadsService.convertLead('ABC123', {
             zb_job_payload: {
@@ -257,8 +273,10 @@ describe('leadsService.convertLead idempotency', () => {
 
         expect(result).toMatchObject({
             job_id: 1131,
+            job_seq: 171,
+            public_code: 'aB3xZ',
             zenbooker_job_id: 'zb-existing',
-            link: '/jobs/1131',
+            link: '/jobs/by-id/1131',
         });
         expect(mockClient.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO jobs'))).toBe(false);
     });

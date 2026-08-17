@@ -178,7 +178,9 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
             zb_status: closed || plan.status === 'Visit completed' ? 'complete' : 'scheduled',
             zb_rescheduled: false,
             zb_canceled: plan.status === 'Canceled',
-            job_number: `NAC-${String(1200 + ordinal)}`,
+            job_number: null,
+            job_seq: 1200 + ordinal,
+            public_code: `S${String(ordinal).padStart(4, '0')}`,
             service_name: service.name,
             start_date: startDate,
             end_date: addHours(startDate, 2),
@@ -390,6 +392,8 @@ function projectListJobs(fixtures, args) {
             && Date.parse(job.start_date) >= Date.parse(dateBounds.toExclusive)) return false;
         if (search && ![
             job.job_number,
+            job.job_seq,
+            job.public_code,
             job.service_name,
             job.customer_name,
             job.customer_phone,

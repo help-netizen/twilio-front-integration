@@ -112,6 +112,9 @@ beforeEach(() => {
     job = {
         id: 50,
         company_id: COMPANY_A,
+        job_number: null,
+        job_seq: 171,
+        public_code: 'aB3xZ',
         blanc_status: 'Submitted',
         zb_status: 'scheduled',
         zb_canceled: false,
@@ -206,6 +209,9 @@ test('same-company FSM status transition keeps its behavior and logs the CRM act
         'job.status_changed',
         expect.objectContaining({
             job_id: 50,
+            job_number: null,
+            job_seq: 171,
+            public_code: 'aB3xZ',
             record_refs: [{ type: 'job', id: 50 }],
             from: 'Submitted',
             to: 'On the way',

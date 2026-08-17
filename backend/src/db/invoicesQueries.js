@@ -134,6 +134,7 @@ async function listInvoices(companyId, filters = {}) {
                COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS contact_name,
                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone,
+               j.job_seq AS job_seq,
                l.serial_id AS lead_serial_id,
                COUNT(*) OVER() AS _total
         FROM invoices i
@@ -172,6 +173,7 @@ async function getInvoiceById(companyId, id, client = null) {
                 COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email,
                 COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone,
                 j.job_number AS job_number,
+                j.job_seq AS job_seq,
                 j.address AS service_address,
                 j.start_date AS service_date,
                 l.serial_id AS lead_serial_id

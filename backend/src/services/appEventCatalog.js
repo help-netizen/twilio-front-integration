@@ -20,7 +20,9 @@ const APP_EVENT_CATALOG = Object.freeze([
         description: 'A job moved from one workflow status to another.',
         payload_schema: Object.freeze({
             job_id: 'record id',
-            job_number: 'display number or null',
+            job_number: 'legacy Zenbooker number or null',
+            job_seq: 'per-company display number or null',
+            public_code: 'durable global job code or null',
             old_status: 'previous status or null',
             new_status: 'current status',
         }),

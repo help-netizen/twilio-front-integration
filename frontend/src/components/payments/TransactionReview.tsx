@@ -130,7 +130,7 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
 
     const isCard = Boolean(tx?.stripe_payment_id) || (tx?.external_source === 'stripe');
     const voided = tx ? isVoidedPayment(tx) : false;
-    const jobLabel = tx?.job_id != null ? `#JOB-${tx.job_id}` : tx?.invoice_number ? `#${tx.invoice_number}` : null;
+    const jobLabel = tx?.job_id != null ? `#JOB-${tx.job_seq ?? tx.job_id}` : tx?.invoice_number ? `#${tx.invoice_number}` : null;
 
     const sendReceipt = async () => {
         const to = email.trim();

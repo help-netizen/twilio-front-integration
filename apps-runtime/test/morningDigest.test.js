@@ -26,7 +26,7 @@ describe('APP-RUN-001 morning digest reference app', () => {
                             scheduled_start: '2026-07-31T09:00:00-04:00',
                             status: 'scheduled',
                         },
-                        { id: 12, service_name: 'Tune-up' },
+                        { id: 12, job_seq: 171, job_number: 'ZB-12' },
                     ],
                 });
             }
@@ -51,7 +51,7 @@ describe('APP-RUN-001 morning digest reference app', () => {
             'Morning digest for 2026-07-31',
             'Jobs today: 2',
             '- 09:00 — AC repair (scheduled)',
-            '- Tune-up',
+            '- 171',
             'Open tasks: 1',
             '- Call customer (due 2026-07-31)',
         ].join('\n'));

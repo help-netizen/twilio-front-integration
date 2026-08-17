@@ -31,7 +31,7 @@ const rowLabel = { ...LEVEL_TWO_QUIET, width: `${LEVEL_TWO_LABEL_WIDTH}px`, flex
 
 export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job: LocalJob | null }) {
     const navigate = useNavigate();
-    const jobNumber = job?.job_number || detail.job_number;
+    const jobNumber = job?.job_seq ?? job?.job_number ?? detail.job_seq ?? detail.job_number;
     const service = job?.service_name || detail.job_type;
     const status = job?.blanc_status || detail.status;
     const tags = job?.tags || [];

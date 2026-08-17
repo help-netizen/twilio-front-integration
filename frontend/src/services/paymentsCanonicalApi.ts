@@ -17,6 +17,7 @@ export interface PaymentTransaction {
     estimate_id: number | null;
     invoice_id: number | null;
     job_id: number | null;
+    job_seq?: number | null;
     transaction_type: 'payment' | 'refund' | 'adjustment';
     payment_method:
         | 'credit_card'

@@ -20,7 +20,7 @@ function clockTime(value) {
 function jobLine(job) {
     const title = firstText(
         job,
-        ['service_name', 'title', 'customer_name', 'name', 'job_number'],
+        ['service_name', 'title', 'customer_name', 'name', 'job_seq', 'job_number'],
         `Job ${job?.id ?? ''}`.trim()
     );
     const time = clockTime(

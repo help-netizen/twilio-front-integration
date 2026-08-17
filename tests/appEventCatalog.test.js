@@ -44,6 +44,25 @@ describe('APP-DATA-001 Phase F app event catalog', () => {
         })).toEqual({ lead_id: 41, serial_id: 'L-41', source: 'Referral' });
     });
 
+    test('job status events retain native identifiers and the legacy number', () => {
+        expect(projectAppEventPayload('job.status_changed', {
+            job_id: 71,
+            job_number: null,
+            job_seq: 171,
+            public_code: 'aB3xZ',
+            old_status: 'Submitted',
+            new_status: 'On the way',
+            record_refs: [{ type: 'job', id: 71 }],
+        })).toEqual({
+            job_id: 71,
+            job_number: null,
+            job_seq: 171,
+            public_code: 'aB3xZ',
+            old_status: 'Submitted',
+            new_status: 'On the way',
+        });
+    });
+
     test('synthetic events use the catalog and enforce the 8 KiB payload boundary', () => {
         expect(validateSyntheticEvent({
             type: 'invoice.sent',

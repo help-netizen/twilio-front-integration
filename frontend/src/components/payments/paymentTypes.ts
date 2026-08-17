@@ -3,6 +3,7 @@
 export interface PaymentRow {
     id: number;
     job_number: string;
+    job_seq?: number | null;
     client: string;
     job_type: string;
     status: string;

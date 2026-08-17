@@ -20,6 +20,7 @@ describe('canonical transaction action projection', () => {
                 id: 71,
                 external_source: 'stripe',
                 payment_method: 'credit_card',
+                job_seq: 171,
                 stripe_payment_id: 'ch_71',
                 stripe_livemode: false,
                 _total: '1',
@@ -36,6 +37,7 @@ describe('canonical transaction action projection', () => {
                 id: 71,
                 external_source: 'stripe',
                 payment_method: 'credit_card',
+                job_seq: 171,
                 stripe_payment_id: 'ch_71',
                 stripe_livemode: false,
             }],
@@ -47,6 +49,8 @@ describe('canonical transaction action projection', () => {
         expect(sql).toContain('END AS stripe_livemode');
         expect(sql).toContain('s.company_id = t.company_id');
         expect(sql).toContain('stripe_account.company_id = t.company_id');
+        expect(sql).toContain('j.job_seq');
+        expect(sql).toContain('j.company_id = t.company_id');
         expect(sql).toContain('t.company_id = $1');
         expect(params[0]).toBe(COMPANY);
     });

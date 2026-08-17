@@ -166,9 +166,15 @@ async function listTransactions(companyId, filters = {}) {
     params.push(offset);
 
     const sql = `
-        SELECT t.*, ${STRIPE_TRANSACTION_COLUMNS}, COUNT(*) OVER() AS _total
+        SELECT t.*, j.job_seq, ${STRIPE_TRANSACTION_COLUMNS}, COUNT(*) OVER() AS _total
         FROM payment_transactions t
         ${STRIPE_TRANSACTION_JOINS}
+        LEFT JOIN invoices i
+          ON i.id = t.invoice_id
+         AND i.company_id = t.company_id
+        LEFT JOIN jobs j
+          ON j.id = COALESCE(t.job_id, stripe_session.job_id, i.job_id)
+         AND j.company_id = t.company_id
         WHERE ${where}
         ORDER BY t.created_at DESC
         LIMIT $${limitIdx} OFFSET $${offsetIdx}
@@ -228,6 +234,7 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
                 job_invoice.id AS job_invoice_id,
                 COALESCE(i.invoice_number, job_invoice.invoice_number) AS invoice_number,
                 j.job_number,
+                j.job_seq,
                 j.service_name,
                 COALESCE(NULLIF(j.territory, ''), NULLIF(j.city, ''))
                     AS territory,

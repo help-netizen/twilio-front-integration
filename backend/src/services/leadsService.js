@@ -1013,7 +1013,7 @@ async function claimLocalJobForConversion({
             leadUpdates,
             createOrReuseJob: async ({ client, lead }) => {
                 const { rows: existingJobs } = await client.query(
-                    `SELECT id, contact_id, zenbooker_job_id
+                    `SELECT id, contact_id, zenbooker_job_id, job_seq, public_code
                      FROM jobs
                      WHERE lead_id = $1 AND company_id = $2
                      ORDER BY id ASC
@@ -1023,6 +1023,8 @@ async function claimLocalJobForConversion({
                 );
 
                 let localJobId;
+                let localJobSeq;
+                let localJobPublicCode;
                 let localJobCreated = false;
                 let existingZenbookerJobId = null;
                 let activeZenbookerJobId = zenbookerJobId || null;
@@ -1030,6 +1032,8 @@ async function claimLocalJobForConversion({
                 if (existingJobs.length > 0) {
                     const existingJob = existingJobs[0];
                     localJobId = existingJob.id;
+                    localJobSeq = existingJob.job_seq;
+                    localJobPublicCode = existingJob.public_code;
                     existingZenbookerJobId = existingJob.zenbooker_job_id || null;
                     activeZenbookerJobId = existingZenbookerJobId || activeZenbookerJobId;
 
@@ -1065,7 +1069,7 @@ async function claimLocalJobForConversion({
                             job_type, job_source, description, metadata, comments,
                             start_date, end_date, assigned_techs, assigned_provider_user_ids
 ) VALUES ($1, $2, $3, 'Submitted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb)
-                        RETURNING id
+                        RETURNING id, job_seq, public_code
                     `, [
                         lead.id,
                         contactId,
@@ -1087,11 +1091,15 @@ async function claimLocalJobForConversion({
                         assignedProviderUserIds,
                     ]);
                     localJobId = jobRow.id;
+                    localJobSeq = jobRow.job_seq;
+                    localJobPublicCode = jobRow.public_code;
                     localJobCreated = true;
                 }
 
                 return {
                     jobId: localJobId,
+                    jobSeq: localJobSeq,
+                    publicCode: localJobPublicCode,
                     jobCreated: localJobCreated,
                     jobStatus: 'Submitted',
                     zenbookerJobId: activeZenbookerJobId,
@@ -1106,6 +1114,8 @@ async function claimLocalJobForConversion({
 
         return {
             localJobId: conversion.jobId,
+            localJobSeq: conversion.jobSeq,
+            localJobPublicCode: conversion.publicCode,
             localJobCreated: conversion.jobCreated,
             zenbookerJobId: conversion.zenbookerJobId,
             existingZenbookerJobId: conversion.existingZenbookerJobId,
@@ -1287,6 +1297,8 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
     });
 
     const localJobId = claimedJob.localJobId;
+    const localJobSeq = claimedJob.localJobSeq;
+    const localJobPublicCode = claimedJob.localJobPublicCode;
     const localJobCreated = claimedJob.localJobCreated;
     zenbookerJobId = claimedJob.zenbookerJobId;
 
@@ -1410,6 +1422,8 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         UUID: lead.UUID,
         ClientId: String(leadRow.id),
         job_id: localJobId,
+        job_seq: localJobSeq,
+        public_code: localJobPublicCode,
         zenbooker_job_id: zenbookerJobId,
         zb_warning: null,
         link: `/jobs/by-id/${localJobId}`,

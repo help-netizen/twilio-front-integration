@@ -114,7 +114,10 @@ async function getScheduleItems(opts) {
                 'job' AS entity_type,
                 j.id AS entity_id,
                 j.job_seq AS job_seq,
-                COALESCE(j.service_name, 'Job #' || j.job_number) AS title,
+                COALESCE(
+                    NULLIF(j.service_name, ''),
+                    'Job #' || COALESCE(j.job_seq::text, NULLIF(j.job_number, ''), j.id::text)
+                ) AS title,
                 COALESCE(c.full_name, j.customer_name) AS subtitle,
                 j.blanc_status AS status,
                 j.start_date AS start_at,

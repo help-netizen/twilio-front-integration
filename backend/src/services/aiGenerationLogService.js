@@ -99,7 +99,8 @@ function mdEscape(text) {
 function renderEntry(row) {
     const when = new Date(row.created_at).toISOString().replace('T', ' ').slice(0, 16);
     const who = row.user_name || row.user_email || row.crm_user_id || 'unknown user';
-    const job = row.job_id ? ` · job #${row.job_id}` : '';
+    const jobNumber = row.job_seq ?? row.job_id;
+    const job = jobNumber ? ` · job #${jobNumber}` : '';
     const lines = Array.isArray(row.line_items) ? row.line_items : [];
     const orderList = Array.isArray(row.order_list) ? row.order_list : [];
 
@@ -171,9 +172,11 @@ function renderEntry(row) {
 
 async function renderMarkdown(companyId) {
     const { rows } = await db.query(
-        `SELECT g.*, u.full_name AS user_name, u.email AS user_email
+        `SELECT g.*, u.full_name AS user_name, u.email AS user_email,
+                j.job_seq
            FROM ai_generation_log g
            LEFT JOIN crm_users u ON u.id = g.crm_user_id
+           LEFT JOIN jobs j ON j.id = g.job_id AND j.company_id = g.company_id
           WHERE g.company_id = $1
           ORDER BY g.created_at ASC, g.id ASC`,
         [companyId]

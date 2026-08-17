@@ -145,7 +145,8 @@ async function getContactHistory(companyId, contactId, limit = 50) {
             [companyId, contactId, pageLimit]
         ),
         db.query(
-            `SELECT j.id, j.job_number, j.blanc_status AS status, j.service_name,
+            `SELECT j.id, j.job_number, j.job_seq, j.public_code,
+                    j.blanc_status AS status, j.service_name,
                     j.start_date, j.notes, j.created_at, j.updated_at
              FROM jobs j
              JOIN contacts c

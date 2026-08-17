@@ -25,6 +25,7 @@ test('DETAIL-TENANT-CUT: detail query scopes the transaction and every operator 
     expect(sql).toContain('voider_membership.company_id = t.company_id');
     expect(sql).toContain('i.company_id = t.company_id');
     expect(sql).toContain('j.company_id = t.company_id');
+    expect(sql).toContain('j.job_seq');
     expect(sql).toContain('c.company_id = t.company_id');
     expect(params).toEqual([COMPANY_A, 71]);
 });

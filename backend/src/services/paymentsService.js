@@ -116,6 +116,7 @@ function publicTransactionDetail(context, receiptHistory) {
         receipt_job_id: receiptJobId,
         receipt_invoice_id: receiptInvoiceId,
         job_number: _jobNumber,
+        job_seq: _jobSeq,
         service_name: _serviceName,
         company_timezone: _companyTimezone,
         ...detail
@@ -124,6 +125,7 @@ function publicTransactionDetail(context, receiptHistory) {
     return {
         ...detail,
         job_id: receiptJobId || context.job_id || null,
+        job_seq: context.job_seq ?? null,
         invoice_id: receiptInvoiceId || context.invoice_id || null,
         brand: context.brand || null,
         last4: context.last4 || null,

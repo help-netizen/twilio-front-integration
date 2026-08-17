@@ -474,7 +474,7 @@ async function createManualJob(companyId, input = {}, activityActor = null) {
  *
  * @param {string} companyId  — ONLY from req.companyFilter (never req.companyId)
  * @param {Object} input
- * @returns {Promise<{ job_id:number, zenbooker_job_id:string|null, zb_warning:string|null }>}
+ * @returns {Promise<{ job_id:number, job_seq:number, public_code:string, zenbooker_job_id:string|null, zb_warning:string|null }>}
  */
 async function createDirectJob(companyId, input = {}, activityActor = null) {
     if (!companyId) {
@@ -825,8 +825,16 @@ async function searchJobsForPicker({ companyId, search, limit = 20, providerScop
         idx++;
         const searchParam = `$${idx}`;
         params.push(`%${normalizedSearch}%`);
+        let jobSeqClause = '';
+        if (/^\d+$/.test(normalizedSearch)) {
+            idx++;
+            jobSeqClause = `OR j.job_seq::text = $${idx}`;
+            params.push(normalizedSearch);
+        }
         conditions.push(`(
             j.job_number ILIKE ${searchParam}
+            OR j.public_code ILIKE ${searchParam}
+            ${jobSeqClause}
             OR COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) ILIKE ${searchParam}
             OR COALESCE(j.address, '') ILIKE ${searchParam}
             OR COALESCE(j.service_name, '') ILIKE ${searchParam}
@@ -846,6 +854,7 @@ async function searchJobsForPicker({ companyId, search, limit = 20, providerScop
     const { rows } = await db.query(
         `SELECT j.id,
                 j.job_number,
+                j.job_seq,
                 COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) AS customer_name,
                 j.address,
                 j.service_name,
@@ -865,6 +874,7 @@ async function searchJobsForPicker({ companyId, search, limit = 20, providerScop
         results: rows.map(row => ({
             id: row.id,
             job_number: row.job_number || null,
+            job_seq: row.job_seq ?? null,
             customer_name: row.customer_name || null,
             address: row.address || null,
             service_name: row.service_name || null,
@@ -991,17 +1001,19 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
     }
     if (normalizedSearch) {
         idx++;
+        const fuzzySearchParam = `$${idx}`;
         const searchClauses = [
-            `j.job_number ILIKE $${idx}`,
-            `j.service_name ILIKE $${idx}`,
-            `COALESCE(c.full_name, j.customer_name) ILIKE $${idx}`,
-            `COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) ILIKE $${idx}`,
-            `COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) ILIKE $${idx}`,
-            `j.address ILIKE $${idx}`,
+            `j.job_number ILIKE ${fuzzySearchParam}`,
+            `j.public_code ILIKE ${fuzzySearchParam}`,
+            `j.service_name ILIKE ${fuzzySearchParam}`,
+            `COALESCE(c.full_name, j.customer_name) ILIKE ${fuzzySearchParam}`,
+            `COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) ILIKE ${fuzzySearchParam}`,
+            `COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) ILIKE ${fuzzySearchParam}`,
+            `j.address ILIKE ${fuzzySearchParam}`,
             `EXISTS (
                 SELECT 1 FROM job_tag_assignments jta2
                 JOIN job_tags t2 ON t2.id = jta2.tag_id
-                WHERE jta2.job_id = j.id AND t2.name ILIKE $${idx}
+                WHERE jta2.job_id = j.id AND t2.name ILIKE ${fuzzySearchParam}
             )`,
             `EXISTS (
                 SELECT 1
@@ -1009,12 +1021,17 @@ async function listJobs({ blancStatus, zbCanceled, search, offset, limit = 50, c
                 WHERE lcf.company_id = j.company_id
                   AND lcf.is_searchable = true
                   AND lcf.is_system = false
-                  AND COALESCE(j.metadata ->> lcf.api_name, '') ILIKE $${idx}
+                  AND COALESCE(j.metadata ->> lcf.api_name, '') ILIKE ${fuzzySearchParam}
             )`,
         ];
 
-        conditions.push(`(${searchClauses.join(' OR\n            ')})`);
         params.push(`%${normalizedSearch}%`);
+        if (/^\d+$/.test(normalizedSearch)) {
+            idx++;
+            searchClauses.unshift(`j.job_seq::text = $${idx}`);
+            params.push(normalizedSearch);
+        }
+        conditions.push(`(${searchClauses.join(' OR\n            ')})`);
     }
     if (contactId) {
         idx++; conditions.push(`j.contact_id = $${idx}`); params.push(contactId);
@@ -1305,6 +1322,8 @@ function emitJobDomainEvent(companyId, eventType, jobId, payload, activityActor 
     const statusPayload = eventType === 'job.status_changed'
         ? {
             job_number: payload.job_number || null,
+            job_seq: payload.job_seq ?? null,
+            public_code: payload.public_code || null,
             old_status: payload.old_status ?? payload.from ?? null,
             new_status: payload.new_status ?? payload.to ?? null,
         }
@@ -1390,6 +1409,8 @@ async function updateBlancStatus(jobId, newStatus, companyId, activityActor = nu
 
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
         job_number: job.job_number,
+        job_seq: job.job_seq,
+        public_code: job.public_code,
         from: job.blanc_status,
         to: newStatus,
     }, activityActor, client);
@@ -1586,6 +1607,8 @@ async function cancelJob(jobId, companyId, activityActor = null) {
     );
     await emitJobDomainEvent(companyId, 'job.status_changed', jobId, {
         job_number: job.job_number,
+        job_seq: job.job_seq,
+        public_code: job.public_code,
         from: job.blanc_status,
         to: 'Canceled',
     }, activityActor);

@@ -157,6 +157,8 @@ async function getEstimateById(companyId, id, client = null) {
                     CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_phone, '') END
                 ) AS contact_phone,
                 j.job_number AS job_number,
+                j.job_seq AS job_seq,
+                j.public_code AS public_code,
                 j.address AS service_address,
                 COALESCE(
                     NULLIF(CONCAT_WS(', ',

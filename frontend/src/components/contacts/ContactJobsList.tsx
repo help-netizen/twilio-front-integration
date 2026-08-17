@@ -56,8 +56,8 @@ export function JobsList({ contactId }: { contactId: number }) {
                                 <span className="text-[13px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
                                     {job.service_name || 'Job'}
                                 </span>
-                                {job.job_number && (
-                                    <span className="text-[11px] font-mono" style={{ color: 'var(--blanc-ink-3)' }}>#{job.job_number}</span>
+                                {(job.job_seq ?? job.job_number) && (
+                                    <span className="text-[11px] font-mono" style={{ color: 'var(--blanc-ink-3)' }}>#{job.job_seq ?? job.job_number}</span>
                                 )}
                                 <span
                                     className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full"

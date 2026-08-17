@@ -29,6 +29,7 @@ test('authenticated invoice detail ignores a stale stored balance and remains co
         rows: [{
             id: 1528,
             company_id: COMPANY_A,
+            job_seq: 171,
             total: '100.00',
             amount_paid: '30.00',
             balance_due: '100.00',
@@ -38,12 +39,14 @@ test('authenticated invoice detail ignores a stale stored balance and remains co
     const invoice = await invoicesQueries.getInvoiceById(COMPANY_A, 1528);
 
     expect(invoice.balance_due).toBe('70.00');
+    expect(invoice.job_seq).toBe(171);
     const [sql, params] = db.query.mock.calls[0];
     expect(sql).toContain('WHERE i.id = $1 AND i.company_id = $2');
     expect(sql).toContain("COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS contact_email");
     expect(sql).toContain("COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS contact_phone");
     expect(sql).toContain('ON c.id = COALESCE(j.contact_id, i.contact_id)');
     expect(sql).toContain('AND c.company_id = i.company_id');
+    expect(sql).toContain('j.job_seq AS job_seq');
     expect(params).toEqual([1528, COMPANY_A]);
 });
 
@@ -52,6 +55,7 @@ test('invoice list surfaces normalize every row without changing the tenant filt
         rows: [{
             id: 1528,
             company_id: COMPANY_A,
+            job_seq: 171,
             total: '100.00',
             amount_paid: '30.00',
             balance_due: '100.00',
@@ -63,13 +67,14 @@ test('invoice list surfaces normalize every row without changing the tenant filt
 
     expect(result).toMatchObject({
         total: 1,
-        rows: [expect.objectContaining({ id: 1528, balance_due: '70.00' })],
+        rows: [expect.objectContaining({ id: 1528, job_seq: 171, balance_due: '70.00' })],
     });
     const [sql, params] = db.query.mock.calls[0];
     expect(sql).toContain('i.company_id = $1');
     expect(params[0]).toBe(COMPANY_A);
     expect(sql).toContain('ON c.id = COALESCE(j.contact_id, i.contact_id)');
     expect(sql).toContain('c.company_id = i.company_id');
+    expect(sql).toContain('j.job_seq AS job_seq');
 });
 
 test('mobile unpaid filter stays tenant-scoped and uses the requested offset', async () => {

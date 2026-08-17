@@ -79,4 +79,12 @@ describe('getScheduleItems parameter binding', () => {
         expect(sql).toContain('j.job_seq AS job_seq');
         expect(sql.match(/NULL::int AS job_seq/g)).toHaveLength(2);
     });
+
+    test('job titles use job_seq with legacy and id fallbacks when service name is absent', async () => {
+        await scheduleQueries.getScheduleItems({ companyId: 'company-1' });
+
+        const sql = unifiedEntries()[0].sql;
+        expect(sql).toContain("'Job #' || COALESCE(j.job_seq::text, NULLIF(j.job_number, ''), j.id::text)");
+        expect(sql).not.toContain("'Job #' || j.job_number");
+    });
 });

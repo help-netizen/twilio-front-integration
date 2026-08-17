@@ -837,7 +837,7 @@ router.post('/:uuid/convert', requirePermission('leads.convert'), async (req, re
             userActor(crmActorId)
         );
         eventService.logEvent(req.companyFilter?.company_id, 'lead', result.ClientId, 'converted',
-            { job_id: result.job_id, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
+            { job_id: result.job_id, job_seq: result.job_seq, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);

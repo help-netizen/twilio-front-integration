@@ -50,7 +50,10 @@ function describeEvent(eventType, data) {
         case 'rescheduled': return 'Rescheduled';
         case 'marked_lost': return 'Marked as Lost';
         case 'reactivated': return 'Reactivated';
-        case 'converted': return data.job_id ? `Converted to Job #${data.job_id}` : 'Converted to Job';
+        case 'converted': {
+            const jobNumber = data.job_seq ?? data.job_id;
+            return jobNumber ? `Converted to Job #${jobNumber}` : 'Converted to Job';
+        }
         case 'team_assigned': return `Assigned: ${data.user_name || 'team member'}`;
         case 'team_unassigned': return `Unassigned: ${data.user_name || 'team member'}`;
         case 'tags_changed': return 'Tags updated';

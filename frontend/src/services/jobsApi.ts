@@ -237,6 +237,7 @@ export interface CreateJobBody {
 
 export interface CreateJobResult {
     job_id: number;
+    job_seq?: number | null;
     zenbooker_job_id?: string;
     zb_warning?: string;
 }

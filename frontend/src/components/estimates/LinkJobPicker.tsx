@@ -16,6 +16,7 @@ import { authedFetch } from '../../services/apiClient';
 interface PickerJob {
     id: number;
     job_number: string | null;
+    job_seq?: number | null;
     customer_name: string | null;
     address: string | null;
     service_name: string | null;
@@ -114,7 +115,7 @@ export function LinkJobPicker({
                                 >
                                     <span className="blanc-l2 block" style={{ fontWeight: 600 }}>
                                         {job.customer_name || 'No customer'}
-                                        {job.job_number ? ` · #${job.job_number}` : ''}
+                                        {(job.job_seq ?? job.job_number) ? ` · #${job.job_seq ?? job.job_number}` : ''}
                                     </span>
                                     <span className="blanc-l2 blanc-l2-quiet block">
                                         {[job.service_name, job.address].filter(Boolean).join(' · ') || 'No details'}

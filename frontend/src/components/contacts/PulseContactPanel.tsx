@@ -275,8 +275,8 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, jobs: j
                                                 <div className="min-w-0">
                                                     <div className="text-sm font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{job.service_name || 'Job'}</div>
                                                     <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
-                                                        {job.job_number && `#${job.job_number}`}
-                                                        {date && (job.job_number ? ` · ${date}` : date)}
+                                                        {(job.job_seq ?? job.job_number) && `#${job.job_seq ?? job.job_number}`}
+                                                        {date && ((job.job_seq ?? job.job_number) ? ` · ${date}` : date)}
                                                     </div>
                                                 </div>
                                             </div>

@@ -126,6 +126,21 @@ describe('Jobs fail-closed tenant and route contract', () => {
         pickerSpy.mockRestore();
     });
 
+    test.each([
+        ['/:id', '/123', 'getJobById'],
+        ['/by-code/:code', '/by-code/aB3xZ', 'getJobByCode'],
+    ])('%s requires company context before resolving a job', async (_label, path, resolverName) => {
+        const resolver = jest.spyOn(jobsService, resolverName);
+
+        const response = await request(appFor(null)).get(path);
+
+        expect(response.status).toBe(403);
+        expect(response.body.code).toBe('TENANT_CONTEXT_REQUIRED');
+        expect(resolver).not.toHaveBeenCalled();
+        expect(db.query).not.toHaveBeenCalled();
+        resolver.mockRestore();
+    });
+
     test('service requires company context before SQL', async () => {
         await expect(jobsService.listJobs()).rejects.toMatchObject({
             code: 'TENANT_CONTEXT_REQUIRED',
@@ -180,10 +195,11 @@ describe('Job picker projection', () => {
         expect(db.query).not.toHaveBeenCalled();
     });
 
-    test('one company-scoped query searches number, customer, address, and service with a narrow shape', async () => {
+    test('one company-scoped query searches identifiers, customer, address, and service with a narrow shape', async () => {
         db.query.mockResolvedValueOnce({ rows: [{
             id: 71,
             job_number: 'J-71',
+            job_seq: 171,
             customer_name: 'Jane Customer',
             address: '71 Main St',
             service_name: 'Repair',
@@ -205,6 +221,8 @@ describe('Job picker projection', () => {
         expect(sql).toContain('j.company_id = $1');
         expect(sql).toContain('j.assigned_provider_user_ids @> $2::jsonb');
         expect(sql).toContain('j.job_number ILIKE $3');
+        expect(sql).toContain('j.public_code ILIKE $3');
+        expect(sql).toContain('j.job_seq');
         expect(sql).toContain("COALESCE(NULLIF(c.full_name, ''), NULLIF(j.customer_name, '')) ILIKE $3");
         expect(sql).toContain("COALESCE(j.address, '') ILIKE $3");
         expect(sql).toContain("COALESCE(j.service_name, '') ILIKE $3");
@@ -221,12 +239,29 @@ describe('Job picker projection', () => {
         expect(result).toEqual({ results: [{
             id: 71,
             job_number: 'J-71',
+            job_seq: 171,
             customer_name: 'Jane Customer',
             address: '71 Main St',
             service_name: 'Repair',
             start_date: '2026-07-18T15:00:00.000Z',
             status: 'Submitted',
         }] });
+    });
+
+    test('numeric picker search matches job_seq exactly while public codes stay fuzzy-searchable', async () => {
+        db.query.mockResolvedValueOnce({ rows: [] });
+
+        await jobsService.searchJobsForPicker({
+            companyId: COMPANY,
+            search: '171',
+            limit: 12,
+        });
+
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain('j.job_number ILIKE $2');
+        expect(sql).toContain('j.public_code ILIKE $2');
+        expect(sql).toContain('j.job_seq::text = $3');
+        expect(params).toEqual([COMPANY, '%171%', '171', '171', 12]);
     });
 
     test('assigned-only without a resolved crm user fails closed to zero rows', async () => {
@@ -269,6 +304,18 @@ describe('Jobs complete predicates, security, and facets', () => {
             expect(params.slice(0, 2)).toEqual([COMPANY, '%secret-value%']);
         }
         expect(db.query.mock.calls.some(([sql]) => /SELECT api_name FROM lead_custom_fields/i.test(sql))).toBe(false);
+    });
+
+    test('numeric list search matches job_seq exactly and public_code fuzzily', async () => {
+        await jobsService.listJobs({ companyId: COMPANY, search: '171' });
+
+        expect(db.query).toHaveBeenCalledTimes(2);
+        for (const [sql, params] of db.query.mock.calls) {
+            expect(sql).toContain('j.job_number ILIKE $2');
+            expect(sql).toContain('j.public_code ILIKE $2');
+            expect(sql).toContain('j.job_seq::text = $3');
+            expect(params.slice(0, 3)).toEqual([COMPANY, '%171%', '171']);
+        }
     });
 
     test('row total and provider facet share all predicates except the exact selected provider', async () => {

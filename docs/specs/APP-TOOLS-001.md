@@ -29,7 +29,7 @@ Required live permission: `jobs.view`.
 | Parameter | Required | Type / values | Default | Meaning |
 |---|:---:|---|---|---|
 | `status` | no | string ("Submitted", "Waiting for parts", "Part arrived", "Follow Up with Client", "Visit completed", "Job is Done", "Rescheduled", "Canceled", "On the way") | omitted | Exact Albusto Job workflow status to include. Omit to include every status. Returned Job rows expose this value as `blanc_status`; they do not contain a `status` field. |
-| `search` | no | string | omitted | Case-insensitive text contained in the Job number, service name, customer name, customer phone, address, tag name, or searchable custom metadata. Omit for no text filter. |
+| `search` | no | string | omitted | Case-insensitive text matching the Job # (`job_seq`), legacy number, public code, service name, customer name, customer phone, address, tag name, or searchable custom metadata. Omit for no text filter. |
 | `start_date` | no | string, date | omitted | Inclusive lower bound on Job `start_date`, formatted `YYYY-MM-DD`. The boundary is midnight at the start of that calendar date in the owning company timezone. Missing or invalid company timezone configuration falls back to UTC. Omit for no lower bound. |
 | `end_date` | no | string, date | omitted | Inclusive upper calendar date for Job `start_date`, formatted `YYYY-MM-DD`. The full day is included by using the following calendar date's midnight in the owning company timezone as an exclusive bound. Missing or invalid company timezone configuration falls back to UTC. Omit for no upper bound. |
 | `only_open` | no | boolean | `false` | When true, excludes `Job is Done` and `Canceled`. Defaults to false; it does not mean "scheduled today" and does not replace date filters. |
@@ -52,7 +52,9 @@ A page of visible Jobs and pagination metadata.
 | `results[].zb_status` | string \| null | Current provider substatus, when available. |
 | `results[].zb_rescheduled` | boolean | Whether the provider marks the Job as rescheduled. |
 | `results[].zb_canceled` | boolean | Whether the provider marks the Job as canceled. |
-| `results[].job_number` | string \| null | Human-readable Job number. |
+| `results[].job_number` | string \| null | Legacy Zenbooker number; null for native jobs. |
+| `results[].job_seq` | integer \| null | Per-company Job # shown in the app. |
+| `results[].public_code` | string \| null | Durable global job code for /j/:code links. |
 | `results[].service_name` | string \| null | Service name. |
 | `results[].start_date` | string \| null, date-time | Scheduled start timestamp in ISO 8601 format. |
 | `results[].end_date` | string \| null, date-time | Scheduled end timestamp in ISO 8601 format. |
@@ -164,7 +166,9 @@ One visible Job object. It has `blanc_status` and intentionally has no `status` 
 | `zb_status` | string \| null | Current provider substatus, when available. |
 | `zb_rescheduled` | boolean | Whether the provider marks the Job as rescheduled. |
 | `zb_canceled` | boolean | Whether the provider marks the Job as canceled. |
-| `job_number` | string \| null | Human-readable Job number. |
+| `job_number` | string \| null | Legacy Zenbooker number; null for native jobs. |
+| `job_seq` | integer \| null | Per-company Job # shown in the app. |
+| `public_code` | string \| null | Durable global job code for /j/:code links. |
 | `service_name` | string \| null | Service name. |
 | `start_date` | string \| null, date-time | Scheduled start timestamp in ISO 8601 format. |
 | `end_date` | string \| null, date-time | Scheduled end timestamp in ISO 8601 format. |

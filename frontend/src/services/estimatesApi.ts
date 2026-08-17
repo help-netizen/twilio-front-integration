@@ -81,6 +81,7 @@ export interface Estimate {
     billing_address?: string | null;
     service_address?: string | null;
     job_number?: string | null;
+    job_seq?: number | null;
     invoice_id?: number | null;
     invoice_number?: string | null;
 }

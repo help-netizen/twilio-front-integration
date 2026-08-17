@@ -65,12 +65,21 @@ describe('APP-SANDBOX-001 synthetic fixture graph', () => {
             job.company_id === fixtures.company.id
             && contactIds.has(job.contact_id)
             && leadIds.has(job.lead_id)
+            && job.job_number === null
+            && Number.isInteger(job.job_seq)
+            && /^[0-9A-Za-z]{5}$/.test(job.public_code)
             && Date.parse(job.created_at) >= Date.parse(
                 fixtures.leads.find(lead => lead.id === job.lead_id).converted_at
             )
             && Date.parse(job.end_date) > Date.parse(job.start_date)
             && Date.parse(job.updated_at) >= Date.parse(job.created_at)
         ))).toBe(true);
+        expect(projectSandboxTool(fixtures, 'svc.list_jobs', {
+            search: String(fixtures.jobs[0].job_seq),
+        }).results).toContainEqual(expect.objectContaining({ id: fixtures.jobs[0].id }));
+        expect(projectSandboxTool(fixtures, 'svc.list_jobs', {
+            search: fixtures.jobs[0].public_code,
+        }).results).toContainEqual(expect.objectContaining({ id: fixtures.jobs[0].id }));
         expect(fixtures.tasks.every(task => (
             task.company_id === fixtures.company.id
             && (task.parent_type === 'job' || task.parent_type === 'lead')

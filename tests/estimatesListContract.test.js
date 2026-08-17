@@ -79,3 +79,30 @@ describe('estimate list row contract', () => {
         expect(sql).toContain("CASE WHEN e.contact_id IS NULL THEN NULLIF(j.customer_phone, '') END");
     });
 });
+
+describe('estimate detail job identifier contract', () => {
+    test('returns job_seq and public_code from the company-scoped Job join', async () => {
+        mockQuery.mockResolvedValueOnce({
+            rows: [{
+                id: 42,
+                company_id: COMPANY_ID,
+                job_id: 71,
+                job_number: null,
+                job_seq: 171,
+                public_code: 'aB3xZ',
+            }],
+        });
+
+        await expect(estimatesQueries.getEstimateById(COMPANY_ID, 42)).resolves.toMatchObject({
+            job_id: 71,
+            job_number: null,
+            job_seq: 171,
+            public_code: 'aB3xZ',
+        });
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toContain('j.job_seq AS job_seq');
+        expect(sql).toContain('j.public_code AS public_code');
+        expect(sql).toContain('j.company_id = e.company_id');
+        expect(params).toEqual([42, COMPANY_ID]);
+    });
+});

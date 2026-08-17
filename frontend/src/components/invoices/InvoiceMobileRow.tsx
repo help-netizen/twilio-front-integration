@@ -67,7 +67,7 @@ export function InvoiceMobileRow({ invoice, onOpen }: Props) {
     const balance = Number(invoice.balance_due) || 0;
     const total = Number(invoice.total) || 0;
     const showTotal = balance > 0 && total > 0 && balance !== total;
-    const jobLabel = invoice.job_id ? `Job #${invoice.job_number || invoice.job_id}` : '';
+    const jobLabel = invoice.job_id ? `Job #${invoice.job_seq ?? invoice.job_number ?? invoice.job_id}` : '';
     const customerJob = [invoice.contact_name || invoice.title || 'Customer not linked', jobLabel]
         .filter(Boolean)
         .join(' · ');

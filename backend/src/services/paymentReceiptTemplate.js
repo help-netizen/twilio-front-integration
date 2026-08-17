@@ -103,7 +103,10 @@ function renderInvoiceSummary(invoice, currency) {
 }
 
 function renderStandaloneSummary(context, currency) {
-    const jobLabel = context.job_number ? `#${context.job_number}` : context.receipt_job_id || context.job_id;
+    const jobNumber = context.job_seq ?? context.job_number;
+    const jobLabel = jobNumber != null && jobNumber !== ''
+        ? `#${jobNumber}`
+        : context.receipt_job_id || context.job_id;
     return `<h2 style="margin:32px 0 12px;color:#101828;font-size:14px;letter-spacing:.08em;text-transform:uppercase">Payment summary</h2>`
         + `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #eaecf0;border-radius:8px">`
         + `${jobLabel ? totalRow('Payment for job', jobLabel) : ''}`

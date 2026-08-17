@@ -254,7 +254,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                 });
             } else {
                 toast.success('Job created', {
-                    description: data.zenbooker_job_id ? `Zenbooker Job: ${data.zenbooker_job_id}` : `Local Job #${data.job_id}`,
+                    description: data.zenbooker_job_id ? `Zenbooker Job: ${data.zenbooker_job_id}` : `Local Job #${data.job_seq ?? data.job_id}`,
                     duration: 10000,
                 });
             }

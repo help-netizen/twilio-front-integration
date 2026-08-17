@@ -55,7 +55,7 @@ const PARENT_TYPE_EXPRESSION = `CASE
 END`;
 
 const PARENT_LABEL_EXPRESSION = `CASE
-    WHEN t.job_id      IS NOT NULL THEN COALESCE(NULLIF(j.service_name,''), NULLIF(j.customer_name,''), 'Job #' || j.id)
+    WHEN t.job_id      IS NOT NULL THEN COALESCE(NULLIF(j.service_name,''), NULLIF(j.customer_name,''), 'Job #' || COALESCE(j.job_seq::text, NULLIF(j.job_number,''), j.id::text))
     WHEN t.lead_id     IS NOT NULL THEN COALESCE(NULLIF(TRIM(CONCAT_WS(' ', l.first_name, l.last_name)),''), NULLIF(l.company,''), 'Lead')
     WHEN t.estimate_id IS NOT NULL THEN COALESCE(NULLIF(e.estimate_number,''), 'Estimate')
     WHEN t.invoice_id  IS NOT NULL THEN COALESCE(NULLIF(iv.invoice_number,''), 'Invoice')

@@ -316,7 +316,7 @@ const DISPATCHER_READ_TOOLS = [
             ),
             search: documentedSchema(
                 stringSchema(),
-                'Case-insensitive text contained in the Job number, service name, customer name, customer phone, address, tag name, or searchable custom metadata. Omit for no text filter.'
+                'Case-insensitive text matching the Job # (`job_seq`), legacy number, public code, service name, customer name, customer phone, address, tag name, or searchable custom metadata. Omit for no text filter.'
             ),
             start_date: documentedSchema(
                 dateSchema(),
@@ -1278,7 +1278,9 @@ function jobOutputProperties({ includeBalances = false } = {}) {
         zb_status: nullableOutput('string', 'Current provider substatus, when available.'),
         zb_rescheduled: outputField('boolean', 'Whether the provider marks the Job as rescheduled.'),
         zb_canceled: outputField('boolean', 'Whether the provider marks the Job as canceled.'),
-        job_number: nullableOutput('string', 'Human-readable Job number.'),
+        job_number: nullableOutput('string', 'Legacy Zenbooker number; null for native jobs.'),
+        job_seq: nullableOutput('integer', 'Per-company Job # shown in the app.'),
+        public_code: nullableOutput('string', 'Durable global job code for /j/:code links.'),
         service_name: nullableOutput('string', 'Service name.'),
         start_date: nullableOutput('string', 'Scheduled start timestamp in ISO 8601 format.', { format: 'date-time' }),
         end_date: nullableOutput('string', 'Scheduled end timestamp in ISO 8601 format.', { format: 'date-time' }),
