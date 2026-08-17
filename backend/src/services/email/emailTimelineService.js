@@ -23,6 +23,12 @@ const queries = require('../../db/queries');
 const db = require('../../db/connection');
 const realtimeService = require('../realtimeService');
 const { projectEmailTimelineItem } = require('./emailTimelineItem');
+// EMAIL-PLAINTEXT-SEND-002: the Pulse composer is a plain <textarea>, so `body` is
+// PLAIN TEXT. Give the seam a generated HTML part (newlines → <br>, blank lines →
+// paragraphs) plus the verbatim text/plain part — otherwise the recipient gets the raw
+// text dropped into text/html and every paragraph collapses into one wall. Mirrors the
+// routes/email.js fix (d66d1110), which never covered this timeline path.
+const { plainTextToHtml } = require('./plainTextEmailBody');
 const eventBus = require('../eventBus');
 
 const SENT_DRAFT_LABELS = new Set(['SENT', 'DRAFT']);
@@ -698,7 +704,8 @@ async function sendForContact(companyId, contactId, { body, toEmail, userId, use
         if (threadId != null) {
             sendResult = await provider.sendMessage(companyId, {
                 to: toEmail,
-                body,
+                body: plainTextToHtml(body),
+                textBody: body,
                 providerThreadId: threadId,
                 userId,
                 userEmail,
@@ -714,7 +721,8 @@ async function sendForContact(companyId, contactId, { body, toEmail, userId, use
             sendResult = await provider.sendMessage(companyId, {
                 to: toEmail,
                 subject: `Message from ${companyName}`,
-                body,
+                body: plainTextToHtml(body),
+                textBody: body,
                 userId,
                 userEmail,
             });

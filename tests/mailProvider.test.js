@@ -109,6 +109,26 @@ describe('GmailProvider.sendMessage (TC-ET-039)', () => {
         expect(out).toEqual({ provider_message_id: 'm2', provider_thread_id: 't2' });
     });
 
+    it('forwards textBody (the plain-text alternative) on BOTH branches — EMAIL-PLAINTEXT-SEND-002', async () => {
+        // Regression guard: the Pulse composer is plain text, so sendForContact hands the
+        // seam an HTML `body` (newlines → <br>) PLUS a verbatim `textBody`. GmailProvider
+        // must forward textBody so buildMimeMessage emits the [text/plain, text/html]
+        // pair — dropping it puts the raw text into text/html and collapses every
+        // paragraph into one wall (the bug this locks out).
+        emailService.replyToThread.mockResolvedValue({ provider_message_id: 'm', provider_thread_id: 't' });
+        emailService.sendEmail.mockResolvedValue({ provider_message_id: 'm', provider_thread_id: 't' });
+
+        await p.sendMessage(COMPANY, { to: 'a@b.com', body: 'line1<br>line2', textBody: 'line1\nline2', providerThreadId: 't1' });
+        expect(emailService.replyToThread).toHaveBeenCalledWith(
+            COMPANY, 't1', expect.objectContaining({ body: 'line1<br>line2', textBody: 'line1\nline2' })
+        );
+
+        await p.sendMessage(COMPANY, { to: 'a@b.com', subject: 'Message from Acme', body: 'line1<br>line2', textBody: 'line1\nline2' });
+        expect(emailService.sendEmail).toHaveBeenCalledWith(
+            COMPANY, expect.objectContaining({ body: 'line1<br>line2', textBody: 'line1\nline2' })
+        );
+    });
+
     it('inReplyTo (without providerThreadId) also takes the reply branch', async () => {
         emailService.replyToThread.mockResolvedValue({ provider_message_id: 'm3', provider_thread_id: 't3' });
         await p.sendMessage(COMPANY, { to: 'a@b.com', body: 'hi', inReplyTo: '<msg@id>' });

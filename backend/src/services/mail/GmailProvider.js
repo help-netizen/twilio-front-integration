@@ -180,12 +180,13 @@ class GmailProvider extends MailProvider {
      * authed route. v1 sends no `files`.
      * @inheritdoc
      */
-    async sendMessage(companyId, { to, subject, body, inReplyTo, references, providerThreadId, userId, userEmail } = {}) {
+    async sendMessage(companyId, { to, subject, body, textBody, inReplyTo, references, providerThreadId, userId, userEmail } = {}) {
         if (providerThreadId || inReplyTo) {
             const res = await emailService.replyToThread(companyId, providerThreadId, {
                 to,
                 subject,
                 body,
+                textBody,
                 userId,
                 userEmail,
             });
@@ -199,6 +200,7 @@ class GmailProvider extends MailProvider {
             to,
             subject,
             body,
+            textBody,
             userId,
             userEmail,
         });

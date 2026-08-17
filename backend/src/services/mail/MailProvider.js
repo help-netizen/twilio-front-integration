@@ -118,7 +118,9 @@ class MailProvider {
      * @param {Object} opts
      * @param {string|string[]} opts.to
      * @param {string} [opts.subject]
-     * @param {string} opts.body
+     * @param {string} opts.body                 The HTML body (text/html part).
+     * @param {string} [opts.textBody]           Plain-text alternative; when present a
+     *                                           text/plain part is sent alongside the HTML.
      * @param {string} [opts.inReplyTo]
      * @param {string} [opts.references]
      * @param {string} [opts.providerThreadId]  Local thread id of the contact's most-recent thread.
