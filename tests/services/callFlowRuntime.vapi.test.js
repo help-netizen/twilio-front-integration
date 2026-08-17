@@ -204,7 +204,41 @@ describe('advance() — VAPI-AGENCY-001 durable inbound reservation', () => {
         expect(twiml).not.toContain('CA_parent_shared');
     });
 
-    test('reservation refusal follows the configured ordinary fallback without Sip', async () => {
+    // Paid for in production on 2026-08-17: the owner rang the office and heard the
+    // voicemail branch. A missing assistant-registry row refused the reservation and
+    // the caller was dropped onto the failure edge. Not being able to attribute a
+    // call's cost must never stop us answering the phone.
+    test('reservation refusal still dials the assistant, unattributed', async () => {
+        mockReserveInboundSession.mockRejectedValue(
+            Object.assign(new Error('tuple unavailable'), {
+                code: 'VAPI_IDENTITY_TUPLE_UNAVAILABLE',
+            }),
+        );
+        const wired = mockQuery.getMockImplementation();
+        mockQuery.mockImplementation(async (sql, params) => (
+            String(sql).includes('vapi_tenant_resources')
+                ? { rows: [{ sip_uri: 'sip:tenant-a@sip.vapi.ai' }] }
+                : wired(sql, params)
+        ));
+
+        const twiml = await advance(
+            'CA_parent_shared',
+            'node.completed',
+            'trace-a',
+            '00000000-0000-4000-8000-00000000000a',
+        );
+
+        expect(twiml).toContain('<Sip');
+        expect(twiml).toContain('sip:tenant-a@sip.vapi.ai');
+        expect(twiml).not.toContain('SAFE_FALLBACK');
+        // Unattributed means no correlation token on the wire — assistant-request
+        // refuses an absent token, so the call cannot borrow another company's session.
+        expect(twiml).not.toContain('x-albusto-call-token');
+        // ...and the address is dialled clean, not with a dangling '?'.
+        expect(twiml).toContain('>sip:tenant-a@sip.vapi.ai</Sip>');
+    });
+
+    test('reservation refusal with no SIP resource at all falls back to voicemail', async () => {
         mockReserveInboundSession.mockRejectedValue(
             Object.assign(new Error('tuple unavailable'), {
                 code: 'VAPI_IDENTITY_TUPLE_UNAVAILABLE',

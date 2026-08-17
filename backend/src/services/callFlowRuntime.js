@@ -391,13 +391,49 @@ async function renderTransferNode({ execution, node, context, traceId }) {
 const VAPI_MAX_DURATION_SECONDS = 900;
 
 function appendSipQuery(sipUri, query) {
+    // An unattributed call carries no token, and a bare trailing '?' is not a SIP URI
+    // Twilio will dial — return the address untouched.
+    if (!query) return escapeXml(sipUri);
     const separator = String(sipUri).includes('?') ? '&amp;' : '?';
     return `${escapeXml(sipUri)}${separator}${query}`;
 }
 
+// Where to send the caller when the identity reservation cannot be made. Pre-dates
+// the reservation and stays as the answer-the-phone path: the resource row carries
+// the SIP address on its own, independently of the assistant registry.
+async function resolveVapiSipUriFallback(node, companyId) {
+    const cfg = node.config || {};
+    if (!companyId) return null;
+    // Deliberately NOT node.config.sip_uri. Flow nodes are tenant-editable, so honouring
+    // an address from there would let a tenant aim the dial at another tenant's assistant
+    // in the shared Vapi org — the hole T2 closed. Only the server-owned resource row counts.
+    const environment = String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod');
+    try {
+        const result = await db.query(
+            `SELECT NULLIF(BTRIM(r.sip_uri), '') AS sip_uri
+             FROM vapi_tenant_resources r
+             JOIN provider_connections pc
+               ON pc.id = r.provider_connection_id
+              AND pc.company_id = r.company_id
+             WHERE r.company_id = $1
+               AND r.is_active = true
+               AND pc.provider = 'vapi'
+               AND pc.status = 'active'
+               AND NULLIF(BTRIM(r.sip_uri), '') IS NOT NULL
+             ORDER BY CASE WHEN r.environment = $2 THEN 0 ELSE 1 END, r.created_at DESC
+             LIMIT 1`,
+            [companyId, environment],
+        );
+        return result.rows[0]?.sip_uri || null;
+    } catch (err) {
+        console.error('[CallFlowRuntime] SIP fallback lookup failed:', err.message);
+        return null;
+    }
+}
+
 async function renderVapiNode({ execution, node, context, traceId }) {
     const cfg = node.config || {};
-    let reservation;
+    let reservation = null;
     try {
         reservation = await vapiCallIdentityService.reserveInboundSession({
             companyId: execution.company_id,
@@ -408,24 +444,42 @@ async function renderVapiNode({ execution, node, context, traceId }) {
             environment: String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod'),
         });
     } catch (error) {
-        console.error('[CallFlowRuntime] Vapi reservation refused:', error.code || 'unknown');
-        return followFailureEdge({
-            execution,
-            node,
-            context,
-            traceId,
-            events: ['vapi.no_target', 'vapi.failed', 'vapi.timeout', null],
-            fallbackTwiml: () => buildHangupTwiml('AI agent is not configured.'),
-        });
+        // Losing the identity means we cannot attribute this call's cost. That is an
+        // accounting problem and it is loud — but it is NOT a reason to stop answering
+        // the phone. A refused reservation used to drop the caller onto the failure
+        // edge, which plays voicemail: a customer calling the office heard "our team
+        // is currently assisting other customers" because a registry row was missing.
+        console.error(
+            '[CallFlowRuntime] Vapi reservation refused, dialling unattributed:',
+            error.code || 'unknown',
+        );
+        const fallbackSipUri = await resolveVapiSipUriFallback(node, execution.company_id);
+        if (!fallbackSipUri) {
+            // No SIP address at all is the genuine "AI is not configured" case.
+            return followFailureEdge({
+                execution,
+                node,
+                context,
+                traceId,
+                events: ['vapi.no_target', 'vapi.failed', 'vapi.timeout', null],
+                fallbackTwiml: () => buildHangupTwiml('AI agent is not configured.'),
+            });
+        }
+        reservation = { sipUri: fallbackSipUri, correlationToken: null };
     }
     // vapiNode=1 → the dial-action handler maps the real DialCallStatus to a
     // vapi.* event: completed ends the call, failure/timeout follows the edge.
     const actionUrl = `${context.baseUrl}/webhooks/twilio/voice-dial-action?vapiNode=1`;
     const statusCallbackUrl = `${context.baseUrl}/webhooks/twilio/voice-status`;
     const recordingStatusUrl = `${context.baseUrl}/webhooks/twilio/recording-status`;
-    const query = new URLSearchParams({
-        [vapiCallIdentityService.TOKEN_HEADER]: reservation.correlationToken,
-    }).toString().replace(/&/g, '&amp;');
+    // No token when the reservation was refused: the call still goes through, it just
+    // arrives without an identity to bind to. assistant-request refuses an absent or
+    // unknown token, so an unattributed call can never borrow another company's session.
+    const query = reservation.correlationToken
+        ? new URLSearchParams({
+            [vapiCallIdentityService.TOKEN_HEADER]: reservation.correlationToken,
+        }).toString().replace(/&/g, '&amp;')
+        : '';
     return xmlResponse(`
     <Dial action="${actionUrl}"
           method="POST"
