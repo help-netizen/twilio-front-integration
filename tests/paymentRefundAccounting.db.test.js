@@ -131,7 +131,10 @@ describe('refund accounting uses gross payment minus completed refund offsets', 
     test.each([
         ['partial', () => partial, 30, 70, -70],
         ['full', () => full, 100, 0, 0],
-        ['Zenbooker partial', () => zenbooker, 30, 70, 0],
+        // Standalone Zenbooker money settles documents like any other (corrected
+        // 2026-08-16): $100 paid less a $30 refund nets $70, and that $70 now
+        // reduces Due instead of leaving the customer owing the full amount.
+        ['Zenbooker partial', () => zenbooker, 30, 70, -70],
     ])('%s refund has the correct Job Paid/Due', async (
         _label,
         getFixture,

@@ -5,6 +5,7 @@
 
 const db = require('../db/connection');
 const { logFinancialActivity } = require('./financialActivityService');
+const { applyInvoiceAllocations } = require('../db/documentPaymentQueries');
 const {
     createCursorFingerprint,
     encodeCursor,
@@ -190,6 +191,70 @@ const PAYMENT_LEDGER_ROWS_SQL = `
     ) custom_fields ON true
     WHERE t.company_id = $1
 `;
+
+
+/**
+ * The ledger's invoice figures, derived like every other invoice surface.
+ *
+ * `PAYMENT_LEDGER_ROWS_SQL` reads `i.amount_paid` / `i.balance_due` straight off
+ * the table. Those columns are LEGACY: money belongs to the job and an invoice
+ * derives its paid amount from that job's payment pool (documentPaymentQueries),
+ * which `invoicesQueries` applies on every read. The ledger was the one surface
+ * that skipped it, so a fully-settled invoice still reported its original
+ * balance — payment 46348 paid invoice 49 in full and the card read
+ * "Paid $0.00 · Due $1,665.81"; the list painted the same debt in red.
+ *
+ * Rather than duplicate the allocator in SQL, run the rows through the very
+ * same function. One definition, so the surfaces cannot disagree again.
+ */
+async function withDerivedInvoiceFigures(companyId, rows, client = null) {
+    const list = Array.isArray(rows) ? rows : [];
+    const invoices = [];
+    const seen = new Set();
+    for (const row of list) {
+        const invoiceId = row?.canonical_invoice_id;
+        const jobId = row?.canonical_job_id;
+        if (invoiceId == null || jobId == null || seen.has(String(invoiceId))) continue;
+        seen.add(String(invoiceId));
+        invoices.push({
+            id: invoiceId,
+            job_id: jobId,
+            total: row.invoice_total,
+            amount_paid: row.invoice_amount_paid,
+            balance_due: row.invoice_amount_due,
+            status: row.invoice_status,
+        });
+    }
+    if (invoices.length === 0) return list;
+
+    const allocated = await applyInvoiceAllocations(companyId, invoices, client);
+    const byId = new Map(allocated.map(invoice => [String(invoice.id), invoice]));
+
+    return list.map(row => {
+        const derived = row?.canonical_invoice_id != null
+            ? byId.get(String(row.canonical_invoice_id))
+            : null;
+        if (!derived) return row;
+        const amountPaid = String(derived.amount_paid);
+        const amountDue = String(derived.balance_due);
+        return {
+            ...row,
+            invoice_status: derived.status,
+            invoice_amount_paid: amountPaid,
+            invoice_amount_due: amountDue,
+            invoice_paid_in_full: Number(derived.balance_due) <= 0,
+            invoice_detail: row.invoice_detail
+                ? {
+                    ...row.invoice_detail,
+                    status: derived.status,
+                    amount_paid: amountPaid,
+                    amount_due: amountDue,
+                    paid_in_full: Number(derived.balance_due) <= 0,
+                }
+                : row.invoice_detail,
+        };
+    });
+}
 
 const PAYMENT_LIST_SORTS = Object.freeze({
     payment_date: { expression: 'p.payment_date', type: 'timestamp', nullable: true },
@@ -478,6 +543,7 @@ async function listPayments(companyId, {
             invoice_amount_due: row.invoice_amount_due || null,
         };
     });
+    const derivedRows = await withDerivedInvoiceFigures(companyId, rows);
     const lastPageRow = pageRows.at(-1);
     const cursorValues = lastPageRow
         ? [
@@ -497,14 +563,14 @@ async function listPayments(companyId, {
         : null;
 
     return {
-        rows,
+        rows: derivedRows,
         total,
         aggregates,
         facets,
         pagination: {
             mode,
             limit: pageLimit,
-            returned: rows.length,
+            returned: derivedRows.length,
             has_more: hasMore,
             next_cursor: nextCursor,
             total,
@@ -612,6 +678,9 @@ async function getPaymentDetail(companyId, paymentId) {
         [companyId, paymentId]
     );
     if (result.rows.length === 0) return null;
+    // Same derivation as the list: the card must not read the legacy columns.
+    const [derived] = await withDerivedInvoiceFigures(companyId, result.rows);
+    result.rows[0] = derived || result.rows[0];
 
     const r = result.rows[0];
     const detailMetadata = Object.fromEntries(Object.entries(r.metadata || {}).map(([key, value]) => [

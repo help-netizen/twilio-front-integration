@@ -348,7 +348,7 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         expect((await rawInvoice(companyA, draft.id)).status).toBe('draft');
     });
 
-    test('keeps linked Zenbooker behavior and excludes standalone ZB money from document Due', async () => {
+    test('keeps linked Zenbooker money out of the pool, and lets standalone ZB money settle documents', async () => {
         const job = await createJob();
         const invoice = await createInvoice({ jobId: job.id, label: 'zenbooker', total: 100 });
         await client.query(
@@ -360,11 +360,19 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         await createPayment({ jobId: job.id, invoiceId: invoice.id, amount: 40, source: 'zenbooker' });
         await createPayment({ jobId: job.id, amount: 20, source: 'zenbooker' });
 
+        // 40 legacy (the linked ZB payment, already materialized) + 20 allocated
+        // from the pool (the standalone one) = 60 of the 100 settled.
         expect(money(await invoicesQueries.getInvoiceById(companyA, invoice.id, client)))
-            .toEqual({ amount_paid: 40, balance_due: 60, status: 'partial', allocated: 0 });
+            .toEqual({ amount_paid: 60, balance_due: 40, status: 'partial', allocated: 20 });
+        // The $40 LINKED ZB payment stays out of the pool — it is already inside
+        // the invoice's legacy amount_paid, and counting it again would settle
+        // the same money twice. The $20 STANDALONE one is nowhere else, so it
+        // reduces what is owed. The old contract dropped both, which is why real
+        // Zenbooker money ($288,840 across 1403 payments, none of them linked)
+        // never reached a document (corrected 2026-08-16).
         const [rollup] = await listJobPaymentRollups(companyA, [job.id], client);
         expect(Number(rollup.total_paid)).toBe(60);
-        expect(Number(rollup.total_due)).toBe(60);
+        expect(Number(rollup.total_due)).toBe(40);
     });
 
     test('derives estimate paid/due from the native Job pool while preserving legacy/ZB deposit money', async () => {
@@ -384,8 +392,10 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
             estimate.id,
             client
         );
-        expect(Number(serialized.deposit_paid)).toBe(95);
-        expect(Number(serialized.balance_due)).toBe(105);
+        // 20 legacy deposit + 75 stripe + 30 standalone Zenbooker: the ZB payment
+        // carries no invoice, so it is real money the estimate must reflect.
+        expect(Number(serialized.deposit_paid)).toBe(125);
+        expect(Number(serialized.balance_due)).toBe(75);
     });
 
     test('T-foreign/T-blast: another tenant pool cannot affect or reveal its invoice', async () => {

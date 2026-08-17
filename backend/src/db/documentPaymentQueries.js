@@ -128,9 +128,17 @@ async function getInvoiceAllocations(companyId, jobIds, client = null) {
     const { rows } = await query(`
         WITH ${LEDGER_EFFECTS_CTE},
         native_pool AS (
+            -- Zenbooker money leaves the pool ONLY when it is already
+            -- materialized on an invoice (invoice_id set), because then it is
+            -- inside legacy_paid and counting it here would settle it twice.
+            -- The filter used to drop every ZB row: in production not one of the
+            -- 1403 completed ZB payments ($288,840) carries an invoice_id, and
+            -- no invoice carries amount_paid without a linked payment — so real
+            -- money never reached any document and jobs showed debts they did
+            -- not have (measured 2026-08-16).
             SELECT job_id,
                    GREATEST(COALESCE(SUM(document_effect) FILTER (
-                       WHERE effective_source IS DISTINCT FROM 'zenbooker'
+                       WHERE NOT (effective_source = 'zenbooker' AND invoice_id IS NOT NULL)
                    ), 0), 0) AS pool_amount
             FROM ledger_effects
             GROUP BY job_id
@@ -197,7 +205,7 @@ async function getJobPaymentPools(companyId, jobIds, client = null) {
         WITH ${LEDGER_EFFECTS_CTE}
         SELECT job_id,
                GREATEST(COALESCE(SUM(document_effect) FILTER (
-                   WHERE effective_source IS DISTINCT FROM 'zenbooker'
+                   WHERE NOT (effective_source = 'zenbooker' AND invoice_id IS NOT NULL)
                ), 0), 0) AS native_pool,
                COALESCE(SUM(paid_effect) FILTER (
                    WHERE effective_source IS DISTINCT FROM 'zenbooker'
