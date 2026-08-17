@@ -204,8 +204,55 @@ router.get('/picker', requirePermission('jobs.view'), async (req, res) => {
     }
 });
 
-// ─── Get Job by ID ───────────────────────────────────────────────────────────
+// ─── Resolve Job URLs ─────────────────────────────────────────────────────────
 
+// Literal URL resolvers must stay above /:id so Express does not swallow them.
+router.get('/by-seq/:seq', requirePermission('jobs.view'), async (req, res) => {
+    try {
+        const seq = Number(req.params.seq);
+        if (!/^\d+$/.test(req.params.seq)
+            || !Number.isSafeInteger(seq)
+            || seq < 1
+            || seq > 2147483647) {
+            return res.status(400).json({ ok: false, error: 'seq must be a positive integer' });
+        }
+
+        const companyId = req.companyFilter?.company_id || null;
+        const job = await jobsService.getJobBySeq(companyId, seq, getProviderScope(req));
+        if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+        res.json({ ok: true, data: job });
+    } catch (err) {
+        console.error('[Jobs API] Get by seq error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+router.get('/by-code/:code', requirePermission('jobs.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        const resolvedJob = await jobsService.getJobByCode(req.params.code);
+        if (!resolvedJob) return res.status(404).json({ ok: false, error: 'Job not found' });
+
+        const hasCrossCompanyAccess = req.user?.is_super_admin === true
+            || req.authz?.platform_role === 'super_admin';
+        if (resolvedJob.company_id !== companyId && !hasCrossCompanyAccess) {
+            return res.status(404).json({ ok: false, error: 'Job not found' });
+        }
+
+        const job = await jobsService.getJobById(
+            resolvedJob.id,
+            hasCrossCompanyAccess ? resolvedJob.company_id : companyId,
+            getProviderScope(req)
+        );
+        if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+        res.json({ ok: true, data: job });
+    } catch (err) {
+        console.error('[Jobs API] Get by code error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// ─── Get Job by ID ───────────────────────────────────────────────────────────
 router.get('/:id', requirePermission('jobs.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;

@@ -39,6 +39,7 @@ const eventServiceMock = require('../backend/src/services/eventService');
 const { getProviderScope } = require('../backend/src/middleware/providerScope');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
+const COMPANY_B = '00000000-0000-0000-0000-00000000000b';
 const PROVIDER_USER = '11111111-1111-1111-1111-111111111111';
 
 beforeEach(() => {
@@ -170,13 +171,13 @@ function request(app, method, path, body = null, extraHeaders = {}) {
     });
 }
 
-function appWithAuthz({ permissions = [], scopes = {}, userId = PROVIDER_USER } = {}) {
+function appWithAuthz({ permissions = [], scopes = {}, userId = PROVIDER_USER, companyId = COMPANY_A } = {}) {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
         req.user = { sub: 'kc-sub', email: 'p@x.com', crmUser: { id: userId } };
         req.authz = { scope: 'tenant', permissions, scopes, membership: { role_key: 'provider' } };
-        req.companyFilter = { company_id: COMPANY_A };
+        req.companyFilter = { company_id: companyId };
         next();
     });
     app.use('/', require('../backend/src/routes/jobs'));
@@ -352,5 +353,161 @@ describe('GET /api/jobs/:id route contract', () => {
             'user',
             'kc-sub'
         );
+    });
+});
+
+describe('GET /api/jobs URL resolution routes', () => {
+    const job = {
+        id: 700,
+        company_id: COMPANY_A,
+        job_seq: 31,
+        public_code: 'aB3xZ',
+        blanc_status: 'Submitted',
+        assigned_techs: [],
+        notes: [],
+        tags: [{ id: 9, name: 'Priority' }],
+    };
+
+    it('GET /by-seq/:seq returns the owning company job with provider scope', async () => {
+        const resolver = jest.spyOn(jobsService, 'getJobBySeq').mockResolvedValue(job);
+
+        try {
+            const res = await request(
+                appWithAuthz({
+                    permissions: ['jobs.view'],
+                    scopes: { job_visibility: 'assigned_only' },
+                }),
+                'GET',
+                '/by-seq/31'
+            );
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ ok: true, data: job });
+            expect(resolver).toHaveBeenCalledWith(
+                COMPANY_A,
+                31,
+                { assignedOnly: true, userId: PROVIDER_USER }
+            );
+        } finally {
+            resolver.mockRestore();
+        }
+    });
+
+    it('GET /by-seq/:seq returns 404 when the sequence is not in the caller company', async () => {
+        const resolver = jest.spyOn(jobsService, 'getJobBySeq')
+            .mockImplementation(async companyId => (companyId === COMPANY_A ? job : null));
+
+        try {
+            const res = await request(
+                appWithAuthz({
+                    permissions: ['jobs.view'],
+                    scopes: { job_visibility: 'all' },
+                    companyId: COMPANY_B,
+                }),
+                'GET',
+                '/by-seq/31'
+            );
+
+            expect(res.status).toBe(404);
+            expect(resolver).toHaveBeenCalledWith(
+                COMPANY_B,
+                31,
+                { assignedOnly: false, userId: null }
+            );
+        } finally {
+            resolver.mockRestore();
+        }
+    });
+
+    it('GET /by-code/:code returns the owning company job with the same scoped DTO as /:id', async () => {
+        const codeResolver = jest.spyOn(jobsService, 'getJobByCode').mockResolvedValue({
+            id: job.id,
+            company_id: job.company_id,
+            job_seq: job.job_seq,
+            public_code: job.public_code,
+        });
+        const idResolver = jest.spyOn(jobsService, 'getJobById').mockResolvedValue(job);
+
+        try {
+            const res = await request(
+                appWithAuthz({
+                    permissions: ['jobs.view'],
+                    scopes: { job_visibility: 'assigned_only' },
+                }),
+                'GET',
+                '/by-code/aB3xZ'
+            );
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ ok: true, data: job });
+            expect(codeResolver).toHaveBeenCalledWith('aB3xZ');
+            expect(idResolver).toHaveBeenCalledWith(
+                job.id,
+                COMPANY_A,
+                { assignedOnly: true, userId: PROVIDER_USER }
+            );
+        } finally {
+            codeResolver.mockRestore();
+            idResolver.mockRestore();
+        }
+    });
+
+    it('GET /by-code/:code returns 404 before scoped hydration for another company job', async () => {
+        const codeResolver = jest.spyOn(jobsService, 'getJobByCode').mockResolvedValue(job);
+        const idResolver = jest.spyOn(jobsService, 'getJobById');
+
+        try {
+            const res = await request(
+                appWithAuthz({
+                    permissions: ['jobs.view'],
+                    scopes: { job_visibility: 'all' },
+                    companyId: COMPANY_B,
+                }),
+                'GET',
+                '/by-code/aB3xZ'
+            );
+
+            expect(res.status).toBe(404);
+            expect(res.body).toEqual({ ok: false, error: 'Job not found' });
+            expect(idResolver).not.toHaveBeenCalled();
+        } finally {
+            codeResolver.mockRestore();
+            idResolver.mockRestore();
+        }
+    });
+
+    it.each(['0', '-1', '1.5', 'abc', '2147483648', '9007199254740992'])(
+        'GET /by-seq/%s returns 400 without resolving a job',
+        async invalidSeq => {
+            const resolver = jest.spyOn(jobsService, 'getJobBySeq');
+
+            try {
+                const res = await request(
+                    appWithAuthz({ permissions: ['jobs.view'] }),
+                    'GET',
+                    `/by-seq/${invalidSeq}`
+                );
+
+                expect(res.status).toBe(400);
+                expect(resolver).not.toHaveBeenCalled();
+            } finally {
+                resolver.mockRestore();
+            }
+        }
+    );
+
+    it.each([
+        ['/by-seq/31', 'getJobBySeq'],
+        ['/by-code/aB3xZ', 'getJobByCode'],
+    ])('requires jobs.view for %s', async (path, resolverName) => {
+        const resolver = jest.spyOn(jobsService, resolverName);
+
+        try {
+            const res = await request(appWithAuthz({ permissions: [] }), 'GET', path);
+            expect(res.status).toBe(403);
+            expect(resolver).not.toHaveBeenCalled();
+        } finally {
+            resolver.mockRestore();
+        }
     });
 });
