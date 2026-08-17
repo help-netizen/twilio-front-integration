@@ -465,7 +465,7 @@ export function InvoiceDetailPanel({
                             of the same row. The stacked bars it replaces cost three rows
                             of screen before the document even started. */}
                         {!editing && (primaryAction || secondaryAction || menuActions.length > 0) ? (
-                            <div className="mt-4 flex items-center gap-2">
+                            <div className="mt-4 flex items-center gap-1.5 md:gap-2">
                                 {primaryAction && (
                                     <Button
                                         type="button"
@@ -474,8 +474,8 @@ export function InvoiceDetailPanel({
                                         onClick={primaryAction.onClick}
                                         data-testid={primaryAction.testid}
                                     >
-                                        <span className="hidden md:inline-flex">{primaryAction.icon}</span>
-                                        <span className="md:ml-1.5">{primaryAction.label}</span>
+                                        {primaryAction.icon}
+                                        <span className="ml-1.5">{primaryAction.label}</span>
                                     </Button>
                                 )}
                                 {secondaryAction && (
@@ -487,8 +487,8 @@ export function InvoiceDetailPanel({
                                         onClick={secondaryAction.onClick}
                                         data-testid={secondaryAction.testid}
                                     >
-                                        <span className="hidden md:inline-flex">{secondaryAction.icon}</span>
-                                        <span className="md:ml-1.5">{secondaryAction.label}</span>
+                                        {secondaryAction.icon}
+                                        <span className="ml-1.5">{secondaryAction.label}</span>
                                     </Button>
                                 )}
                                 {menuActions.length > 0 && (
@@ -502,7 +502,7 @@ export function InvoiceDetailPanel({
                                                 variant="ghost"
                                                 aria-label="More actions"
                                                 size="action"
-                                        className="w-11 shrink-0 justify-center p-0 md:w-auto md:px-3"
+                                        className="w-10 shrink-0 justify-center p-0 md:w-auto md:px-3"
                                                 style={{ color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
                                                 data-testid="invoice-more"
                                             >
