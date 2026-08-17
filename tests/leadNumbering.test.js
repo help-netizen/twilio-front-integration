@@ -193,8 +193,11 @@ describe('LEAD-NUMBERING-001 service resolvers', () => {
             expect(sql).toContain('l.lead_seq::text ILIKE');
             expect(sql).toContain('l.serial_id::text ILIKE');
         }
-        expect(listSql).toContain('l.lead_seq AS lead_seq');
-        expect(listSql).toContain('l.public_code AS public_code');
+        // l.* already projects lead_seq + public_code (both are leads columns), so the list
+        // DTO carries them via rowToLead (row.lead_seq / row.public_code) without redundant
+        // explicit aliases — and this keeps the exact SELECT shape the rely_filter list
+        // contract (relyLeadIngest) also asserts. The DTO round-trip is covered separately below.
+        expect(listSql).toContain('SELECT l.*, c.full_name AS contact_name');
         expect(listSql).toContain('ORDER BY l.lead_seq ASC');
     });
 

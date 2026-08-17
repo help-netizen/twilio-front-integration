@@ -420,8 +420,7 @@ async function listLeads({
     }
 
     const sql = `
-        SELECT l.*, l.lead_seq AS lead_seq, l.public_code AS public_code,
-            c.full_name AS contact_name,
+        SELECT l.*, c.full_name AS contact_name,
             ${sort.projection || sort.expression} AS __cursor_value,
             ${bigintCursorExpression('l.id')} AS __cursor_id
         FROM leads l
