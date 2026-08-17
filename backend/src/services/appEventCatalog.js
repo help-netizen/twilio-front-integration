@@ -10,6 +10,7 @@ const APP_EVENT_CATALOG = Object.freeze([
         payload_schema: Object.freeze({
             estimate_id: 'record id',
             estimate_number: 'display number or null',
+            public_code: 'durable global estimate code or null',
             job_id: 'related job id or null',
             contact_id: 'related contact id or null',
             order_list_count: 'number of order-list entries',
@@ -52,6 +53,7 @@ const APP_EVENT_CATALOG = Object.freeze([
         payload_schema: Object.freeze({
             invoice_id: 'record id',
             invoice_number: 'display number or null',
+            public_code: 'durable global invoice code or null',
             job_id: 'related job id or null',
             total: 'invoice total',
         }),

@@ -11,6 +11,7 @@ const mockTxClient = { query: jest.fn() };
 const mockEstimatesService = {
     listEstimates: jest.fn(),
     getEstimate: jest.fn(),
+    getEstimateByCode: jest.fn(),
     createEstimate: jest.fn(),
     updateEstimate: jest.fn(),
     archiveEstimate: jest.fn(),
@@ -94,6 +95,7 @@ function invoke(app, method, path) {
 
 const PERMISSIONED_ROUTES = [
     ['GET', '/api/estimates', 'estimates.view'],
+    ['GET', '/api/estimates/by-code/E3a9Z', 'estimates.view'],
     ['POST', '/api/estimates', 'estimates.create'],
     ['POST', '/api/estimates/ai-draft', 'estimates.create'],
     ['GET', '/api/estimates/ai-generation-log.md', 'estimates.view'],

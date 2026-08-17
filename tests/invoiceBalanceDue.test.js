@@ -108,5 +108,24 @@ test('public-token invoice reads also normalize the balance for PDF/public consu
     const invoice = await invoicesQueries.getInvoiceByPublicToken('opaque-token');
 
     expect(invoice.balance_due).toBe('70.00');
-    expect(db.query.mock.calls[0][0]).toContain('c.company_id = i.company_id');
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('c.company_id = i.company_id');
+    expect(sql).toContain('i.public_token_expires_at > NOW()');
+    expect(sql).toContain('i.status = ANY($2::text[])');
+    expect(params).toEqual([
+        'opaque-token',
+        ['sent', 'viewed', 'partial', 'paid', 'overdue'],
+    ]);
+});
+
+test('invoice token rotation is company-scoped and sets expiry from the database clock', async () => {
+    db.query.mockResolvedValueOnce({ rows: [] });
+
+    await invoicesQueries.setPublicToken(1528, COMPANY_A, 'rotated-token', null, 18);
+
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('public_token = $3');
+    expect(sql).toContain("public_token_expires_at = NOW() + ($4::integer * INTERVAL '1 month')");
+    expect(sql).toContain('id = $1 AND company_id = $2');
+    expect(params).toEqual([1528, COMPANY_A, 'rotated-token', 18]);
 });

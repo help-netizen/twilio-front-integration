@@ -81,7 +81,7 @@ describe('estimate list row contract', () => {
 });
 
 describe('estimate detail job identifier contract', () => {
-    test('returns job_seq and public_code from the company-scoped Job join', async () => {
+    test('returns estimate public_code without overwriting it with the joined Job code', async () => {
         mockQuery.mockResolvedValueOnce({
             rows: [{
                 id: 42,
@@ -89,7 +89,8 @@ describe('estimate detail job identifier contract', () => {
                 job_id: 71,
                 job_number: null,
                 job_seq: 171,
-                public_code: 'aB3xZ',
+                public_code: 'eS3xZ',
+                job_public_code: 'aB3xZ',
             }],
         });
 
@@ -97,11 +98,12 @@ describe('estimate detail job identifier contract', () => {
             job_id: 71,
             job_number: null,
             job_seq: 171,
-            public_code: 'aB3xZ',
+            public_code: 'eS3xZ',
+            job_public_code: 'aB3xZ',
         });
         const [sql, params] = mockQuery.mock.calls[0];
         expect(sql).toContain('j.job_seq AS job_seq');
-        expect(sql).toContain('j.public_code AS public_code');
+        expect(sql).toContain('j.public_code AS job_public_code');
         expect(sql).toContain('j.company_id = e.company_id');
         expect(params).toEqual([42, COMPANY_ID]);
     });

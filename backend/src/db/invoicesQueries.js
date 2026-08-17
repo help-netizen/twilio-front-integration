@@ -192,39 +192,79 @@ async function getInvoiceById(companyId, id, client = null) {
     return allocated;
 }
 
+/** Deliberately global resolver for a durable invoice public_code. */
+async function getInvoiceByCode(publicCode, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT i.id, i.company_id, i.public_code, i.invoice_number
+         FROM invoices i
+         WHERE i.public_code = $1`,
+        [publicCode]
+    );
+    return rows[0] || null;
+}
+
 /**
  * Compute the next per-(job|lead) invoice sequence number.
  * Mirrors `nextEstimateSequence` from estimatesQueries.
  */
-function invoiceNumberPrefix({ leadSerialId, jobId }) {
-    if (leadSerialId) return `INVOICE L-${leadSerialId}-`;
-    if (jobId) return `INVOICE J-${jobId}-`;
+function invoiceNumberPrefix({ leadSeq, jobSeq }) {
+    if (jobSeq) return `INVOICE ${jobSeq}-`;
+    if (leadSeq) return `INVOICE L${leadSeq}-`;
     return 'INVOICE ';
 }
 
-async function nextInvoiceSequence(companyId, { leadSerialId, jobId }, client = null) {
+function legacyInvoiceNumberPrefix({ legacyLeadSerialId, legacyJobId }) {
+    if (legacyLeadSerialId) return `INVOICE L-${legacyLeadSerialId}-`;
+    if (legacyJobId) return `INVOICE J-${legacyJobId}-`;
+    return 'INVOICE ';
+}
+
+async function nextInvoiceSequence(
+    companyId,
+    {
+        leadSeq = null,
+        jobSeq = null,
+        legacyLeadSerialId = null,
+        legacyJobId = null,
+        leadId = null,
+        jobId = null,
+    },
+    client = null
+) {
     const query = queryFor(client);
-    // Unique within the exact invoice-number namespace (mirrors EST-DUP-001). The number is keyed
-    // on a lead serial / lead id / job id — id spaces that can numerically overlap — so counting by
-    // job_id/lead_id let two different entities mint the SAME number and violate the unique index.
-    // Count by the number PREFIX itself, taking the max trailing sequence (robust to voided/deleted
-    // rows, unlike a plain COUNT which reuses a number after a gap).
+    const newPrefix = invoiceNumberPrefix({ leadSeq, jobSeq });
+    const legacyPrefix = legacyInvoiceNumberPrefix({ legacyLeadSerialId, legacyJobId });
+    // Count every new-format number in the exact namespace, plus only the
+    // matching parent's old-format rows. Copied conversion numbers therefore
+    // reserve their suffix before a later standalone invoice is created.
     const { rows } = await query(
         `SELECT COALESCE(MAX(CAST(substring(invoice_number FROM '[0-9]+$') AS INTEGER)), 0) + 1 AS next_sequence
          FROM invoices
-         WHERE company_id = $1 AND invoice_number LIKE $2`,
-        [companyId, `${invoiceNumberPrefix({ leadSerialId, jobId })}%`]
+         WHERE company_id = $1
+           AND (
+                invoice_number LIKE $2
+                OR (
+                    invoice_number LIKE $3
+                    AND (
+                        ($4::BIGINT IS NOT NULL AND job_id = $4)
+                        OR ($5::BIGINT IS NOT NULL AND lead_id = $5 AND job_id IS NULL)
+                        OR ($4::BIGINT IS NULL AND $5::BIGINT IS NULL
+                            AND job_id IS NULL AND lead_id IS NULL)
+                    )
+                )
+           )`,
+        [companyId, `${newPrefix}%`, `${legacyPrefix}%`, jobId, leadId]
     );
     return parseInt(rows[0]?.next_sequence || '1', 10);
 }
 
 /**
- * Format an invoice number that mirrors the estimate scheme (`INVOICE L-{leadSerialId}-{seq}`).
- * Falls back to a job-id-based label when no lead serial is available. The prefix here MUST match
- * nextInvoiceSequence's LIKE prefix so the sequence stays unique within it.
+ * Format an invoice number from a per-company Lead or Job sequence. The prefix
+ * here MUST match nextInvoiceSequence's LIKE prefix.
  */
-function buildInvoiceNumber({ leadSerialId, jobId, sequence }) {
-    return `${invoiceNumberPrefix({ leadSerialId, jobId })}${sequence}`;
+function buildInvoiceNumber({ leadSeq, jobSeq, sequence }) {
+    return `${invoiceNumberPrefix({ leadSeq, jobSeq })}${sequence}`;
 }
 
 /**
@@ -842,7 +882,7 @@ async function listEvents(invoiceId) {
 // Exports
 // =============================================================================
 
-/** Look up an invoice strictly by its public_token (no company scoping — the token IS the auth). */
+/** Look up a customer-visible invoice by its unexpired bearer public_token. */
 async function getInvoiceByPublicToken(publicToken, client = null) {
     if (!publicToken) return null;
     const query = queryFor(client);
@@ -860,8 +900,10 @@ async function getInvoiceByPublicToken(publicToken, client = null) {
           AND c.company_id = i.company_id
          LEFT JOIN leads l ON l.id = i.lead_id AND l.company_id = i.company_id
          WHERE i.public_token = $1
+           AND i.public_token_expires_at > NOW()
+           AND i.status = ANY($2::text[])
          LIMIT 1`,
-        [publicToken]
+        [publicToken, ['sent', 'viewed', 'partial', 'paid', 'overdue']]
     );
     const invoice = withCalculatedBalance(rows[0] || null);
     if (!invoice) return null;
@@ -873,14 +915,23 @@ async function getInvoiceByPublicToken(publicToken, client = null) {
     return allocated;
 }
 
-/** Persist a public_token on the invoice (idempotent — caller checks if one already exists first). */
-async function setPublicToken(invoiceId, companyId, token, client = null) {
+/** Persist a public_token with a database-clock expiry. */
+async function setPublicToken(
+    invoiceId,
+    companyId,
+    token,
+    client = null,
+    lifetimeMonths = 18
+) {
     const query = queryFor(client);
     const { rows } = await query(
-        `UPDATE invoices SET public_token = $3, updated_at = NOW()
+        `UPDATE invoices
+         SET public_token = $3,
+             public_token_expires_at = NOW() + ($4::integer * INTERVAL '1 month'),
+             updated_at = NOW()
          WHERE id = $1 AND company_id = $2
          RETURNING *`,
-        [invoiceId, companyId, token]
+        [invoiceId, companyId, token, lifetimeMonths]
     );
     return rows[0] || null;
 }
@@ -890,6 +941,7 @@ module.exports = {
     withCalculatedBalance,
     listInvoices,
     getInvoiceById,
+    getInvoiceByCode,
     getInvoiceByPublicToken,
     setPublicToken,
     createInvoice,

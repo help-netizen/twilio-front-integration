@@ -1,14 +1,4 @@
-/**
- * EST-DUP-001 — the estimate number is "ESTIMATE L-<leadSerialId>-<seq>", where leadSerialId is
- * derived from a lead serial, a lead id, or a job id (fallback). Those id spaces can numerically
- * collide (job #383221: an estimate "L-1528-1" already existed from job id 1528 with no lead, and
- * a new estimate for a lead whose SERIAL is 1528 minted the same "L-1528-1"). The sequence was
- * counted by lead_id/job_id, so it never saw the colliding row → duplicate number →
- * uq_estimates_number_company violation → the save failed silently (buttons flicker, nothing saves).
- *
- * Fix: count the sequence by the number PREFIX itself, so it is unique across whatever produced the
- * key, and buildEstimateNumber shares that exact prefix.
- */
+'use strict';
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 
@@ -25,42 +15,71 @@ function mockClient(nextSequence = 1) {
     };
 }
 
-describe('nextEstimateSequence (EST-DUP-001)', () => {
-    test('counts by the estimate-number prefix, not lead_id/job_id', async () => {
-        const client = mockClient(2);
-        const seq = await estimatesQueries.nextEstimateSequence('co', { leadSerialId: 1528 }, client);
+describe('per-company Estimate number sequencing', () => {
+    test('parent context queries project the per-company job and lead sequences', async () => {
+        const client = mockClient();
+        await estimatesQueries.getJobContext('co', 519, client);
+        await estimatesQueries.getLeadContext('co', 73, client);
 
-        expect(seq).toBe(2);
-        expect(client.calls).toHaveLength(1);
-        expect(client.calls[0].sql).toContain('estimate_number LIKE $2');
-        expect(client.calls[0].sql).not.toContain('job_id = $2');
-        expect(client.calls[0].sql).not.toContain('lead_id = $2');
-        expect(client.calls[0].params).toEqual(['co', 'ESTIMATE L-1528-%']);
+        expect(client.calls[0].sql).toContain('j.job_seq');
+        expect(client.calls[0].sql).toContain('l.lead_seq AS lead_seq');
+        expect(client.calls[1].sql).toContain('serial_id, lead_seq');
     });
 
-    test('the LIKE pattern is exactly buildEstimateNumber’s prefix + % (collision guard)', async () => {
-        const client = mockClient(3);
-        await estimatesQueries.nextEstimateSequence('co', { leadSerialId: 53 }, client);
+    test('lead documents use lead_seq and seed from that lead’s old global-serial prefix', async () => {
+        const client = mockClient(6);
+        const seq = await estimatesQueries.nextEstimateSequence('co', {
+            leadSeq: 31,
+            legacyLeadSerialId: 1528,
+            leadId: 73,
+        }, client);
 
-        const likeParam = client.calls[0].params[1];
-        const number = estimatesQueries.buildEstimateNumber({ leadSerialId: 53, sequence: 1 });
-        expect(likeParam).toBe('ESTIMATE L-53-%');
-        // Any minted number for this key must be captured by the sequence's LIKE prefix.
-        expect(number.startsWith(likeParam.slice(0, -1))).toBe(true);
+        expect(seq).toBe(6);
+        expect(client.calls[0].params).toEqual([
+            'co', 'ESTIMATE L31-%', 'ESTIMATE L-1528-%', null, 73,
+        ]);
+        expect(client.calls[0].sql).toContain('lead_id = $5 AND job_id IS NULL');
     });
 
-    test('buildEstimateNumber keeps the L-<serial>-<seq> shape', () => {
-        expect(estimatesQueries.buildEstimateNumber({ leadSerialId: 1528, sequence: 2 })).toBe('ESTIMATE L-1528-2');
-        expect(estimatesQueries.buildEstimateNumber({ leadSerialId: 53, sequence: 1 })).toBe('ESTIMATE L-53-1');
-    });
-
-    test('standalone estimates use one company-scoped L-0 namespace', async () => {
+    test('job documents use bare job_seq and seed from that job’s legacy prefix', async () => {
         const client = mockClient(4);
-        const seq = await estimatesQueries.nextEstimateSequence('co', { leadSerialId: null }, client);
+        await estimatesQueries.nextEstimateSequence('co', {
+            jobSeq: 53,
+            legacyLeadSerialId: 700,
+            jobId: 519,
+        }, client);
 
-        expect(seq).toBe(4);
-        expect(client.calls[0].params).toEqual(['co', 'ESTIMATE L-0-%']);
-        expect(estimatesQueries.buildEstimateNumber({ leadSerialId: null, sequence: seq }))
-            .toBe('ESTIMATE L-0-4');
+        expect(client.calls[0].params).toEqual([
+            'co', 'ESTIMATE 53-%', 'ESTIMATE L-700-%', 519, null,
+        ]);
+        expect(client.calls[0].sql).toContain('job_id = $4');
+    });
+
+    test('the build prefix exactly matches the new LIKE prefix', async () => {
+        const client = mockClient(3);
+        await estimatesQueries.nextEstimateSequence('co', {
+            leadSeq: 12,
+            legacyLeadSerialId: 99,
+            leadId: 8,
+        }, client);
+
+        const likePrefix = client.calls[0].params[1].slice(0, -1);
+        expect(estimatesQueries.buildEstimateNumber({ leadSeq: 12, sequence: 3 }))
+            .toBe('ESTIMATE L12-3');
+        expect(estimatesQueries.buildEstimateNumber({ jobSeq: 45, sequence: 2 }))
+            .toBe('ESTIMATE 45-2');
+        expect(estimatesQueries.buildEstimateNumber({ leadSeq: 12, sequence: 1 })
+            .startsWith(likePrefix)).toBe(true);
+    });
+
+    test('standalone estimates retain one company-scoped fallback namespace', async () => {
+        const client = mockClient(4);
+        const seq = await estimatesQueries.nextEstimateSequence('co', {}, client);
+
+        expect(client.calls[0].params).toEqual([
+            'co', 'ESTIMATE L0-%', 'ESTIMATE L-0-%', null, null,
+        ]);
+        expect(estimatesQueries.buildEstimateNumber({ sequence: seq }))
+            .toBe('ESTIMATE L0-4');
     });
 });

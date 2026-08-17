@@ -68,6 +68,33 @@ router.get('/', requirePermission('estimates.view'), async (req, res) => {
     }
 });
 
+// GET /api/estimates/by-code/:code — Resolve a durable global Estimate code.
+// Literal route must stay above /:id.
+router.get('/by-code/:code', requirePermission('estimates.view'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!companyId) {
+            return res.status(403).json({
+                error: { code: 'TENANT_CONTEXT_REQUIRED', message: 'Company context is required' },
+            });
+        }
+        const resolved = await estimatesService.getEstimateByCode(req.params.code);
+        if (!resolved || resolved.company_id !== companyId) {
+            return res.status(404).json({
+                error: { code: 'NOT_FOUND', message: 'Estimate not found' },
+            });
+        }
+        const estimate = await estimatesService.getEstimate(companyId, resolved.id);
+        res.json({ estimate });
+    } catch (err) {
+        console.error('[Estimates] GET /by-code/:code error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
+    }
+});
+
 // POST /api/estimates — Create estimate
 router.post('/', requirePermission('estimates.create'), async (req, res) => {
     try {

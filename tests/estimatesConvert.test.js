@@ -203,6 +203,7 @@ describe('estimatesService.convertToInvoice', () => {
         expect(mockCreateInvoice).toHaveBeenCalledWith(COMPANY_ID, expect.objectContaining({
             contact_id: 7,
             estimate_id: EST_ID,
+            invoice_number: 'INVOICE 519-1',
             title: 'ESTIMATE 519-1',
             order_list: [{
                 part_number: 'P-42',
@@ -217,16 +218,30 @@ describe('estimatesService.convertToInvoice', () => {
             already_converted: false,
             marked_approved: false,
         });
-        // The optional enrichment blocks (template due-date, invoice number) are
-        // savepoint-protected so their failure can never poison the transaction.
+        // Only optional template enrichment needs a savepoint; conversion copies
+        // the source estimate number directly.
         expect(mockTxQuery.mock.calls.map(([sql]) => sql)).toEqual([
             'BEGIN',
             'SAVEPOINT conversion_due_date',
             'RELEASE SAVEPOINT conversion_due_date',
-            'SAVEPOINT conversion_invoice_number',
-            'RELEASE SAVEPOINT conversion_invoice_number',
             'COMMIT',
         ]);
+    });
+
+    it('preserves the visible document number across Estimate to Invoice conversion', async () => {
+        mockGetEstimateById.mockResolvedValue(makeEstimate({
+            estimate_number: 'ESTIMATE L1234-2',
+        }));
+        mockGetEstimateItems.mockResolvedValue([]);
+
+        await convertToInvoice(COMPANY_ID, USER_ID, EST_ID);
+
+        expect(mockCreateInvoice).toHaveBeenCalledWith(
+            COMPANY_ID,
+            expect.objectContaining({ invoice_number: 'INVOICE L1234-2' }),
+            mockClient
+        );
+        expect(mockNextInvoiceSequence).not.toHaveBeenCalled();
     });
 
     it('TC-S4T1-02: logs events on both estimate and invoice', async () => {

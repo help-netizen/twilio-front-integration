@@ -23,7 +23,9 @@ const mockQueries = {
     getLeadContext: jest.fn(),
     getContactContext: jest.fn(),
     nextEstimateSequence: jest.fn(),
-    buildEstimateNumber: jest.fn(({ leadSerialId, sequence }) => `ESTIMATE L-${leadSerialId || '0'}-${sequence}`),
+    buildEstimateNumber: jest.fn(({ leadSeq, jobSeq, sequence }) => (
+        jobSeq ? `ESTIMATE ${jobSeq}-${sequence}` : `ESTIMATE L${leadSeq || '0'}-${sequence}`
+    )),
     createEstimate: jest.fn(),
     updateEstimate: jest.fn(),
     archiveEstimate: jest.fn(),
@@ -63,7 +65,7 @@ function estimate(overrides = {}) {
     return {
         id: EST_ID,
         company_id: COMPANY_ID,
-        estimate_number: 'ESTIMATE L-18-1',
+        estimate_number: 'ESTIMATE 88-1',
         status: 'draft',
         archived_at: null,
         approved_snapshot: null,
@@ -103,8 +105,15 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         mockEmit.mockResolvedValue({ id: 1 });
     });
 
-    it('creates a job estimate with ESTIMATE L-{leadNumber}-1 and default item rules', async () => {
-        mockQueries.getJobContext.mockResolvedValue({ id: 519, job_number: '519', lead_id: 18, contact_id: 9 });
+    it('creates a job estimate with the bare per-company job sequence', async () => {
+        mockQueries.getJobContext.mockResolvedValue({
+            id: 519,
+            job_number: '519',
+            job_seq: 88,
+            lead_id: 18,
+            lead_serial_id: 700,
+            contact_id: 9,
+        });
         mockQueries.nextEstimateSequence.mockResolvedValue(1);
         mockQueries.createEstimate.mockResolvedValue({ id: EST_ID });
         mockQueries.getEstimateById.mockResolvedValue(estimate());
@@ -115,8 +124,13 @@ describe('estimatesService PF002-R2 lifecycle', () => {
             items: [{ name: 'Labor', unit_price: 95 }],
         });
 
+        expect(mockQueries.nextEstimateSequence).toHaveBeenCalledWith(
+            COMPANY_ID,
+            { jobSeq: 88, legacyLeadSerialId: 700, jobId: 519 },
+            null
+        );
         expect(mockQueries.createEstimate).toHaveBeenCalledWith(COMPANY_ID, expect.objectContaining({
-            estimate_number: 'ESTIMATE L-18-1',
+            estimate_number: 'ESTIMATE 88-1',
             estimate_sequence: 1,
             contact_id: 9,
             lead_id: 18,
@@ -127,11 +141,11 @@ describe('estimatesService PF002-R2 lifecycle', () => {
         ], null);
     });
 
-    it('creates a standalone estimate in the company-scoped L-0 number namespace', async () => {
+    it('creates a standalone estimate in the company-scoped L0 number namespace', async () => {
         mockQueries.nextEstimateSequence.mockResolvedValue(4);
         mockQueries.createEstimate.mockResolvedValue({ id: EST_ID });
         mockQueries.getEstimateById.mockResolvedValue(estimate({
-            estimate_number: 'ESTIMATE L-0-4',
+            estimate_number: 'ESTIMATE L0-4',
         }));
         mockQueries.getEstimateItems.mockResolvedValue([item()]);
 
@@ -141,7 +155,7 @@ describe('estimatesService PF002-R2 lifecycle', () => {
 
         expect(mockQueries.nextEstimateSequence).toHaveBeenCalledWith(
             COMPANY_ID,
-            { leadSerialId: null },
+            {},
             null
         );
         expect(mockQueries.createEstimate).toHaveBeenCalledWith(
@@ -150,7 +164,7 @@ describe('estimatesService PF002-R2 lifecycle', () => {
                 contact_id: null,
                 lead_id: null,
                 job_id: null,
-                estimate_number: 'ESTIMATE L-0-4',
+                estimate_number: 'ESTIMATE L0-4',
                 estimate_sequence: 4,
                 created_by: USER_ID,
             }),
@@ -182,7 +196,12 @@ describe('estimatesService PF002-R2 lifecycle', () => {
     });
 
     it('allows saving summary-only draft but blocks send/approve without items', async () => {
-        mockQueries.getLeadContext.mockResolvedValue({ id: 12, serial_id: 700, contact_id: 5 });
+        mockQueries.getLeadContext.mockResolvedValue({
+            id: 12,
+            serial_id: 700,
+            lead_seq: 31,
+            contact_id: 5,
+        });
         mockQueries.nextEstimateSequence.mockResolvedValue(1);
         mockQueries.createEstimate.mockResolvedValue({ id: EST_ID });
         mockQueries.getEstimateById.mockResolvedValue(estimate({ summary: 'Findings...' }));
@@ -192,6 +211,16 @@ describe('estimatesService PF002-R2 lifecycle', () => {
             lead_id: 12,
             summary: 'Findings...',
         })).resolves.toMatchObject({ id: EST_ID });
+        expect(mockQueries.nextEstimateSequence).toHaveBeenCalledWith(
+            COMPANY_ID,
+            { leadSeq: 31, legacyLeadSerialId: 700, leadId: 12 },
+            null
+        );
+        expect(mockQueries.createEstimate).toHaveBeenCalledWith(
+            COMPANY_ID,
+            expect.objectContaining({ estimate_number: 'ESTIMATE L31-1' }),
+            null
+        );
 
         await expect(service.sendEstimate(COMPANY_ID, USER_ID, EST_ID, { channel: 'email' }))
             .rejects.toMatchObject({ code: 'VALIDATION', message: 'В эстимейте нет items' });
@@ -227,7 +256,7 @@ describe('estimatesService PF002-R2 lifecycle', () => {
             'estimate.approved',
             expect.objectContaining({
                 estimate_id: EST_ID,
-                estimate_number: 'ESTIMATE L-18-1',
+                estimate_number: 'ESTIMATE 88-1',
                 job_id: null,
                 contact_id: null,
                 order_list_count: 0,

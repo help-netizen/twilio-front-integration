@@ -266,6 +266,22 @@ describe('ZB-DECOUPLE-001 MCP compatibility contract', () => {
         }
     });
 
+    test('financial summary schemas expose durable public codes with display numbers', () => {
+        const invoice = agentSkillsMcpRegistry.getTool('svc.list_invoices')
+            .appRuntime.outputSchema.properties.results.items.properties;
+        const estimateList = agentSkillsMcpRegistry.getTool('svc.list_estimates')
+            .outputSchema.properties.results.items.properties;
+        const estimateDetail = agentSkillsMcpRegistry.getTool('svc.get_estimate')
+            .outputSchema.properties;
+
+        expect(invoice.public_code.description)
+            .toBe('Durable global Invoice code for /invoices/:code links.');
+        for (const properties of [estimateList, estimateDetail]) {
+            expect(properties.public_code.description)
+                .toBe('Durable global Estimate code for /estimates/:code links.');
+        }
+    });
+
     test('appointment MCP tools retain names, schemas, skill mapping, and permissions', () => {
         const reschedule = agentSkillsMcpRegistry.getTool('svc.reschedule_appointment');
         const cancel = agentSkillsMcpRegistry.getTool('svc.cancel_appointment');

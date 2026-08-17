@@ -1507,6 +1507,7 @@ function getLeadOutputSchema() {
 function invoiceSummaryOutputProperties() {
     return {
         id: outputField(['integer', 'string'], 'Albusto Invoice ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        public_code: nullableOutput('string', 'Durable global Invoice code for /invoices/:code links.'),
         invoice_number: outputField('string', 'Human-readable Invoice number.'),
         status: outputField('string', 'Current Invoice status.'),
         total: outputField(['string', 'number'], 'Invoice total.'),
@@ -1574,6 +1575,7 @@ function addNoteOutputSchema() {
 function estimateSummaryOutputProperties() {
     return {
         id: outputField(['integer', 'string'], 'Albusto Estimate ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        public_code: nullableOutput('string', 'Durable global Estimate code for /estimates/:code links.'),
         estimate_number: outputField('string', 'Human-readable Estimate number.'),
         status: outputField('string', 'Current Estimate status.', {
             enum: APP_RUNTIME_ESTIMATE_STATUSES,

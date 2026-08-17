@@ -75,6 +75,33 @@ router.get('/', requirePermission('invoices.view'), async (req, res) => {
     }
 });
 
+// GET /api/invoices/by-code/:code — Resolve a durable global Invoice code.
+// Literal route must stay above /:id.
+router.get('/by-code/:code', requirePermission('invoices.view'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!companyId) {
+            return res.status(403).json({
+                error: { code: 'TENANT_CONTEXT_REQUIRED', message: 'Company context is required' },
+            });
+        }
+        const resolved = await invoicesService.getInvoiceByCode(req.params.code);
+        if (!resolved || resolved.company_id !== companyId) {
+            return res.status(404).json({
+                error: { code: 'NOT_FOUND', message: 'Invoice not found' },
+            });
+        }
+        const invoice = await invoicesService.getInvoice(companyId, resolved.id);
+        res.json({ invoice });
+    } catch (err) {
+        console.error('[Invoices] GET /by-code/:code error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
+    }
+});
+
 // POST /api/invoices — Create invoice
 router.post('/', requirePermission('invoices.create'), async (req, res) => {
     try {

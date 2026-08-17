@@ -338,6 +338,7 @@ async function getAppLead(companyId, leadId) {
 function projectInvoiceSummary(row) {
     return {
         id: row.id,
+        public_code: row.public_code ?? null,
         invoice_number: row.invoice_number,
         status: row.status,
         total: row.total,
@@ -379,6 +380,7 @@ async function listAppInvoices(companyId, filters = {}) {
     params.push(limit, offset);
     const { rows } = await db.query(
         `SELECT i.id,
+                i.public_code,
                 i.invoice_number,
                 i.status,
                 i.total,
@@ -462,6 +464,7 @@ async function listAppPayments(companyId, filters = {}) {
 function projectEstimateSummary(row) {
     return {
         id: row.id,
+        public_code: row.public_code ?? null,
         estimate_number: row.estimate_number,
         status: row.status,
         subtotal: row.subtotal,
@@ -524,6 +527,7 @@ async function listEstimates(companyId, filters = {}) {
     params.push(limit, offset);
     const { rows } = await db.query(
         `SELECT e.id,
+                e.public_code,
                 e.estimate_number,
                 e.status,
                 e.subtotal,
@@ -567,6 +571,7 @@ async function getEstimate(companyId, estimateId) {
     requireCompanyId(companyId);
     const { rows } = await db.query(
         `SELECT e.id,
+                e.public_code,
                 e.estimate_number,
                 e.status,
                 e.subtotal,

@@ -63,6 +63,27 @@ describe('APP-DATA-001 Phase F app event catalog', () => {
         });
     });
 
+    test('financial events retain durable codes alongside ids and display numbers', () => {
+        expect(projectAppEventPayload('estimate.approved', {
+            estimate_id: 41,
+            estimate_number: 'ESTIMATE L31-2',
+            public_code: 'E3a9Z',
+        })).toMatchObject({
+            estimate_id: 41,
+            estimate_number: 'ESTIMATE L31-2',
+            public_code: 'E3a9Z',
+        });
+        expect(projectAppEventPayload('invoice.sent', {
+            invoice_id: 51,
+            invoice_number: 'INVOICE L31-2',
+            public_code: 'I7b2Q',
+        })).toMatchObject({
+            invoice_id: 51,
+            invoice_number: 'INVOICE L31-2',
+            public_code: 'I7b2Q',
+        });
+    });
+
     test('synthetic events use the catalog and enforce the 8 KiB payload boundary', () => {
         expect(validateSyntheticEvent({
             type: 'invoice.sent',

@@ -50,6 +50,7 @@ const WORKFLOW_CONTROLLED_UPDATE_FIELDS = new Set([
     'created_at',
     'updated_at',
 ]);
+const PUBLIC_LINK_LIFETIME_MONTHS = 18;
 
 // =============================================================================
 // Invoice CRUD
@@ -72,6 +73,11 @@ async function getInvoice(companyId, id, client = null) {
     }
     const items = await invoicesQueries.getInvoiceItems(companyId, id, client);
     return { ...invoice, items };
+}
+
+/** Global public-code resolver; routes establish tenant ownership before hydration. */
+async function getInvoiceByCode(publicCode, { client = null } = {}) {
+    return invoicesQueries.getInvoiceByCode(publicCode, client);
 }
 
 async function validateLinkedEntities(companyId, data = {}, client = null) {
@@ -173,38 +179,41 @@ async function createInvoice(companyId, userId, data, client = null, activityAct
         } catch { /* swallow — fall back to NULL due_date */ }
     }
 
-    // Generate an estimate-style invoice number (`INVOICE L-{leadSerialId}-{seq}`)
-    // when the caller didn't supply one. Sequence is per (job_id|lead_id).
+    // Generate a per-company parent number when the caller did not supply one.
     if (!resolved.invoice_number) {
         try {
-            let leadSerialId = null;
-            let jobIdForNum = resolved.job_id || null;
+            let numberContext = {};
             if (resolved.job_id) {
                 const job = await estimatesQueries.getJobContext(
                     companyId,
                     resolved.job_id,
                     client
                 );
-                leadSerialId = job?.lead_serial_id || job?.lead_id || null;
-                jobIdForNum = job?.id || jobIdForNum;
+                numberContext = {
+                    jobSeq: job?.job_seq || null,
+                    legacyLeadSerialId: job?.lead_serial_id || job?.lead_id || null,
+                    legacyJobId: job?.id || resolved.job_id,
+                    jobId: job?.id || resolved.job_id,
+                };
             } else if (resolved.lead_id) {
                 const lead = await estimatesQueries.getLeadContext(
                     companyId,
                     resolved.lead_id,
                     client
                 );
-                leadSerialId = lead?.serial_id || lead?.id || null;
+                numberContext = {
+                    leadSeq: lead?.lead_seq || null,
+                    legacyLeadSerialId: lead?.serial_id || lead?.id || null,
+                    leadId: lead?.id || resolved.lead_id,
+                };
             }
             const sequence = await invoicesQueries.nextInvoiceSequence(
                 companyId,
-                // Same key as buildInvoiceNumber below, so the sequence is unique within this
-                // number's prefix namespace.
-                { leadSerialId, jobId: jobIdForNum },
+                numberContext,
                 client
             );
             resolved.invoice_number = invoicesQueries.buildInvoiceNumber({
-                leadSerialId,
-                jobId: jobIdForNum,
+                ...numberContext,
                 sequence,
             });
         } catch { /* fall through — let createInvoice pick the legacy date-based number */ }
@@ -574,8 +583,15 @@ async function sendInvoice(
     try {
         // Branded pay page link, derived from the token ensurePublicLink mints
         // (ensurePublicLink itself returns the /i/<token> PDF redirect — we want /pay).
-        // Idempotent: ensurePublicLink never re-mints. Omitted when includePaymentLink === false.
-        const { token } = await ensurePublicLink(companyId, id, client, activityActor);
+        // Every resend rotates the bearer credential. A failed transactional
+        // dispatch rolls the rotation back with the rest of the send.
+        const { token } = await ensurePublicLink(
+            companyId,
+            id,
+            client,
+            activityActor,
+            { rotate: true }
+        );
         const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
         const payPath = `/pay/${token}`;
         const payUrl = base ? `${base}${payPath}` : payPath;
@@ -719,6 +735,7 @@ async function sendInvoice(
     await eventBus.emit(companyId, 'invoice.sent', {
         invoice_id: updated.id,
         invoice_number: updated.invoice_number || null,
+        public_code: updated.public_code || null,
         job_id: updated.job_id || null,
         total: Number(updated.total),
         record_refs: [{ type: 'invoice', id: updated.id }],
@@ -1038,6 +1055,7 @@ async function getPayments(companyId, id) {
 module.exports = {
     listInvoices,
     getInvoice,
+    getInvoiceByCode,
     createInvoice,
     updateInvoice,
     deleteInvoice,
@@ -1060,21 +1078,43 @@ module.exports = {
 };
 
 /**
- * Return (creating if necessary) a public link for the invoice. Idempotent —
- * subsequent calls return the same token + URL.
+ * Return a public link for the invoice. Plain lookups reuse a live token; sends
+ * rotate it so previously forwarded bearer URLs stop resolving.
  */
-async function ensurePublicLink(companyId, id, client = null, activityActor = null) {
+async function ensurePublicLink(
+    companyId,
+    id,
+    client = null,
+    activityActor = null,
+    { rotate = false } = {}
+) {
     const invoice = await invoicesQueries.getInvoiceById(companyId, id, client);
     if (!invoice) throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
 
     let token = invoice.public_token;
-    if (!token) {
+    const expiresAt = invoice.public_token_expires_at
+        ? new Date(invoice.public_token_expires_at).getTime()
+        : NaN;
+    const hasLiveToken = !!token && Number.isFinite(expiresAt) && expiresAt > Date.now();
+    if (rotate || !hasLiveToken) {
         // 8 bytes of entropy → 11 url-safe chars. 2^64 keyspace is plenty for unguessability.
         token = crypto.randomBytes(8).toString('base64url');
         if (client) {
-            await invoicesQueries.setPublicToken(invoice.id, companyId, token, client);
+            await invoicesQueries.setPublicToken(
+                invoice.id,
+                companyId,
+                token,
+                client,
+                PUBLIC_LINK_LIFETIME_MONTHS
+            );
         } else {
-            await invoicesQueries.setPublicToken(invoice.id, companyId, token);
+            await invoicesQueries.setPublicToken(
+                invoice.id,
+                companyId,
+                token,
+                null,
+                PUBLIC_LINK_LIFETIME_MONTHS
+            );
         }
         if (activityActor) {
             await logFinancialActivity({

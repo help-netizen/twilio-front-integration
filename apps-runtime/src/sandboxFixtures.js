@@ -270,6 +270,7 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
         return {
             id: idBase + 700 + ordinal,
             company_id: companyId,
+            public_code: `E${String(ordinal).padStart(4, '0')}`,
             estimate_number: `EST-${String(8100 + ordinal)}`,
             status: plan.status,
             subtotal: money(subtotal),
@@ -300,6 +301,7 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
         return {
             id: idBase + 500 + index + 1,
             company_id: companyId,
+            public_code: `I${String(index + 1).padStart(4, '0')}`,
             job_id: job.id,
             contact_id: job.contact_id,
             invoice_number: `INV-${String(7100 + index + 1)}`,
@@ -490,6 +492,7 @@ function projectListTasks(fixtures, args) {
 function projectEstimateSummary(estimate) {
     return {
         id: estimate.id,
+        public_code: estimate.public_code ?? null,
         estimate_number: estimate.estimate_number,
         status: estimate.status,
         subtotal: estimate.subtotal,
@@ -651,6 +654,7 @@ function projectGetLead(fixtures, args) {
 function projectInvoiceSummary(invoice) {
     return {
         id: invoice.id,
+        public_code: invoice.public_code ?? null,
         invoice_number: invoice.invoice_number,
         status: invoice.status,
         total: invoice.total,

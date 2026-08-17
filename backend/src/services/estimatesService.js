@@ -279,6 +279,11 @@ async function getEstimate(companyId, id, client = null) {
     return { ...estimate, items };
 }
 
+/** Global public-code resolver; routes establish tenant ownership before hydration. */
+async function getEstimateByCode(publicCode, { client = null } = {}) {
+    return estimatesQueries.getEstimateByCode(publicCode, client);
+}
+
 async function validateLinkedEntities(companyId, data = {}, client = null) {
     if (data.contact_id != null) {
         const contact = await estimatesQueries.getContactContext(companyId, data.contact_id, client);
@@ -313,9 +318,11 @@ async function resolveContext(companyId, data = {}, client = null) {
 
         const sequence = await estimatesQueries.nextEstimateSequence(
             companyId,
-            // Same key as buildEstimateNumber below, so the sequence is unique within this
-            // number's "ESTIMATE L-<leadSerial>-" namespace.
-            { leadSerialId: job.lead_serial_id || job.lead_id || job.id },
+            {
+                jobSeq: job.job_seq,
+                legacyLeadSerialId: job.lead_serial_id || job.lead_id || job.id,
+                jobId: job.id,
+            },
             client
         );
         return {
@@ -324,7 +331,7 @@ async function resolveContext(companyId, data = {}, client = null) {
             job_id: job.id,
             estimate_sequence: sequence,
             estimate_number: estimatesQueries.buildEstimateNumber({
-                leadSerialId: job.lead_serial_id || job.lead_id || job.id,
+                jobSeq: job.job_seq,
                 sequence,
             }),
         };
@@ -335,7 +342,11 @@ async function resolveContext(companyId, data = {}, client = null) {
 
         const sequence = await estimatesQueries.nextEstimateSequence(
             companyId,
-            { leadSerialId: lead.serial_id || lead.id },
+            {
+                leadSeq: lead.lead_seq,
+                legacyLeadSerialId: lead.serial_id || lead.id,
+                leadId: lead.id,
+            },
             client
         );
         return {
@@ -344,7 +355,7 @@ async function resolveContext(companyId, data = {}, client = null) {
             job_id: null,
             estimate_sequence: sequence,
             estimate_number: estimatesQueries.buildEstimateNumber({
-                leadSerialId: lead.serial_id || lead.id,
+                leadSeq: lead.lead_seq,
                 sequence,
             }),
         };
@@ -352,7 +363,7 @@ async function resolveContext(companyId, data = {}, client = null) {
 
     const sequence = await estimatesQueries.nextEstimateSequence(
         companyId,
-        { leadSerialId: null },
+        {},
         client
     );
     return {
@@ -361,7 +372,6 @@ async function resolveContext(companyId, data = {}, client = null) {
         job_id: null,
         estimate_sequence: sequence,
         estimate_number: estimatesQueries.buildEstimateNumber({
-            leadSerialId: null,
             sequence,
         }),
     };
@@ -1049,6 +1059,7 @@ async function approveEstimate(
     await eventBus.emit(companyId, 'estimate.approved', {
         estimate_id: updated.id,
         estimate_number: updated.estimate_number || null,
+        public_code: updated.public_code || null,
         job_id: updated.job_id || null,
         contact_id: updated.contact_id || null,
         order_list_count: Array.isArray(updated.order_list) ? updated.order_list.length : 0,
@@ -1158,7 +1169,11 @@ async function linkJob(companyId, userId, id, jobId, client = null, activityActo
 
     const sequence = await estimatesQueries.nextEstimateSequence(
         companyId,
-        { leadSerialId: job.lead_serial_id || job.lead_id || job.id },
+        {
+            jobSeq: job.job_seq,
+            legacyLeadSerialId: job.lead_serial_id || job.lead_id || job.id,
+            jobId: job.id,
+        },
         client,
     );
     const updated = await estimatesQueries.updateEstimate(id, companyId, {
@@ -1166,7 +1181,7 @@ async function linkJob(companyId, userId, id, jobId, client = null, activityActo
         lead_id: estimate.lead_id || job.lead_id || null,
         contact_id: estimate.contact_id || job.contact_id || null,
         estimate_sequence: sequence,
-        estimate_number: estimatesQueries.buildEstimateNumber({ leadSerialId: job.lead_serial_id || job.lead_id || job.id, sequence }),
+        estimate_number: estimatesQueries.buildEstimateNumber({ jobSeq: job.job_seq, sequence }),
         status: estimate.status === 'draft' ? undefined : 'draft',
         updated_by: userId,
     }, client);
@@ -1290,6 +1305,7 @@ async function convertToInvoiceInTransaction(
         await eventBus.emit(companyId, 'estimate.approved', {
             estimate_id: conversionEstimate.id,
             estimate_number: conversionEstimate.estimate_number || null,
+            public_code: conversionEstimate.public_code || null,
             job_id: conversionEstimate.job_id || null,
             contact_id: conversionEstimate.contact_id || null,
             order_list_count: Array.isArray(conversionEstimate.order_list)
@@ -1331,34 +1347,10 @@ async function convertToInvoiceInTransaction(
         await client.query('ROLLBACK TO SAVEPOINT conversion_due_date'); // fall back to NULL
     }
 
-    // Build an estimate-style invoice number — `INVOICE L-{leadSerialId}-{seq}`.
-    let invoiceNumber = null;
-    await client.query('SAVEPOINT conversion_invoice_number');
-    try {
-        let leadSerialId = null;
-        let jobIdForNum = estimate.job_id || null;
-        if (estimate.job_id) {
-            const job = await estimatesQueries.getJobContext(companyId, estimate.job_id, client);
-            leadSerialId = job?.lead_serial_id || job?.lead_id || estimate.lead_id || null;
-            jobIdForNum = job?.id || jobIdForNum;
-        } else if (estimate.lead_id) {
-            const lead = await estimatesQueries.getLeadContext(companyId, estimate.lead_id, client);
-            leadSerialId = lead?.serial_id || lead?.id || null;
-        }
-        const sequence = await invoicesQueries.nextInvoiceSequence(companyId, {
-            leadSerialId,
-            jobId: jobIdForNum,
-        }, client);
-        invoiceNumber = invoicesQueries.buildInvoiceNumber({
-            leadSerialId,
-            jobId: jobIdForNum,
-            sequence,
-        });
-        await client.query('RELEASE SAVEPOINT conversion_invoice_number');
-    } catch {
-        // leave null → createInvoice falls back to the legacy date scheme
-        await client.query('ROLLBACK TO SAVEPOINT conversion_invoice_number');
-    }
+    // Conversion preserves the visible estimate number. Only the stored
+    // document-type word changes so the invoice remains distinguishable in its
+    // own table while rendering the same customer-facing number.
+    const invoiceNumber = `INVOICE ${shortDocNumber(estimate.estimate_number)}`;
 
     const invoice = await invoicesQueries.createInvoice(companyId, {
         contact_id: estimate.contact_id,
@@ -1937,6 +1929,7 @@ async function generatePdfByPublicToken(publicToken, { recordView = false, clien
 module.exports = {
     listEstimates,
     getEstimate,
+    getEstimateByCode,
     createEstimate,
     updateEstimate,
     archiveEstimate,

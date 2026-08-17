@@ -11,7 +11,9 @@ const mockEstimateQueries = {
     getLeadContext: jest.fn(),
     getContactContext: jest.fn(),
     nextEstimateSequence: jest.fn(),
-    buildEstimateNumber: jest.fn(({ leadSerialId, sequence }) => `ESTIMATE L-${leadSerialId}-${sequence}`),
+    buildEstimateNumber: jest.fn(({ leadSeq, jobSeq, sequence }) => (
+        jobSeq ? `ESTIMATE ${jobSeq}-${sequence}` : `ESTIMATE L${leadSeq || 0}-${sequence}`
+    )),
     createEstimate: jest.fn(),
     updateEstimate: jest.fn(),
     replaceEstimateItems: jest.fn(),
@@ -68,6 +70,7 @@ beforeEach(() => {
     storedEstimate = null;
     mockEstimateQueries.getJobContext.mockResolvedValue({
         id: 12,
+        job_seq: 120,
         lead_id: 22,
         lead_serial_id: 220,
         contact_id: 32,
@@ -245,6 +248,39 @@ describe('ORDER-LIST-001 authenticated storage round trips', () => {
         }]);
         await expect(invoicesService.getInvoice(COMPANY_A, INVOICE_ID))
             .resolves.toMatchObject({ order_list: updated.order_list });
+    });
+
+    test('job-linked invoice creation uses job_seq and carries the legacy parent seed', async () => {
+        mockInvoiceQueries.nextInvoiceSequence.mockResolvedValue(4);
+        mockInvoiceQueries.buildInvoiceNumber.mockReturnValue('INVOICE 120-4');
+
+        await invoicesService.createInvoice(COMPANY_A, USER_ID, {
+            job_id: 12,
+            due_date: '2026-08-15',
+        });
+
+        expect(mockInvoiceQueries.nextInvoiceSequence).toHaveBeenCalledWith(
+            COMPANY_A,
+            {
+                jobSeq: 120,
+                legacyLeadSerialId: 220,
+                legacyJobId: 12,
+                jobId: 12,
+            },
+            null
+        );
+        expect(mockInvoiceQueries.buildInvoiceNumber).toHaveBeenCalledWith({
+            jobSeq: 120,
+            legacyLeadSerialId: 220,
+            legacyJobId: 12,
+            jobId: 12,
+            sequence: 4,
+        });
+        expect(mockInvoiceQueries.createInvoice).toHaveBeenCalledWith(
+            COMPANY_A,
+            expect.objectContaining({ invoice_number: 'INVOICE 120-4' }),
+            null
+        );
     });
 });
 

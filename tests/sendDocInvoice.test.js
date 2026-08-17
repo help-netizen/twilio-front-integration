@@ -137,7 +137,8 @@ function invoiceRow(overrides = {}) {
         contact_id: 7,
         job_id: JOB_ID,
         total: '100.00',
-        public_token: 'tok_invABCDE', // pre-seeded → ensurePublicLink never re-mints
+        public_token: 'tok_invABCDE',
+        public_token_expires_at: '2099-01-01T00:00:00.000Z',
         order_list: [{
             part_number: 'EMAIL-INVOICE-SECRET',
             part_name: 'Internal control board',
@@ -194,9 +195,17 @@ describe('sendInvoice — email happy path', () => {
         const [coId, payload] = mockSendEmail.mock.calls[0];
         expect(coId).toBe(COMPANY_A);
         expect(payload.subject).toBe('Your invoice from Boston Masters');
+        const rotatedToken = mockSetPublicToken.mock.calls[0][2];
         // PAY page link, NOT the /i/<token> PDF short link
-        expect(payload.body).toContain('https://app.albusto.com/pay/tok_invABCDE');
-        expect(payload.body).not.toContain('/i/tok_invABCDE');
+        expect(payload.body).toContain(`https://app.albusto.com/pay/${rotatedToken}`);
+        expect(payload.body).not.toContain(`/i/${rotatedToken}`);
+        expect(mockSetPublicToken).toHaveBeenCalledWith(
+            INV_ID,
+            COMPANY_A,
+            rotatedToken,
+            null,
+            18
+        );
         expect(payload.files[0].mimetype).toBe('application/pdf');
 
         // status + event written
@@ -238,13 +247,12 @@ describe('sendInvoice — email happy path', () => {
             .send({
                 channel: 'email',
                 recipient: 'c@x.com',
-                message: 'Hi https://app.albusto.com/pay/tok_invABCDE',
+                message: 'Hi',
                 includePaymentLink: false,
             });
         expect(res.status).toBe(200);
         const payload = mockSendEmail.mock.calls[0][1];
         expect(payload.body).not.toContain('/pay/');
-        expect(payload.body).not.toContain('tok_invABCDE');
         expect(mockUpdateInvoiceStatus).toHaveBeenCalledWith(INV_ID_S, COMPANY_A, 'sent', 'sent_at');
     });
 });
@@ -258,7 +266,8 @@ describe('sendInvoice — sms happy path', () => {
         expect(res.status).toBe(200);
         expect(mockGetOrCreateConversation).toHaveBeenCalledWith('+15551234567', '+15550001111', COMPANY_A);
         const msg = mockSendMessage.mock.calls[0][1];
-        expect(msg.body).toContain('https://app.albusto.com/pay/tok_invABCDE');
+        const rotatedToken = mockSetPublicToken.mock.calls[0][2];
+        expect(msg.body).toContain(`https://app.albusto.com/pay/${rotatedToken}`);
         expect(mockSendEmail).not.toHaveBeenCalled();
         expect(mockSendMessage.mock.invocationCallOrder[0])
             .toBeLessThan(mockUpdateInvoiceStatus.mock.invocationCallOrder[0]);
@@ -384,5 +393,34 @@ describe('sendInvoice — tenant + permission', () => {
             .post(`/${INV_ID}/send`).send({ channel: 'email', recipient: 'c@x.com', message: 'x' });
         expect(res.status).toBe(403);
         expect(mockGetInvoiceById).not.toHaveBeenCalled();
+    });
+});
+
+describe('ensurePublicLink — expiry and rotation', () => {
+    it('reuses an unexpired token for a plain public-link lookup', async () => {
+        const out = await invoicesService.ensurePublicLink(COMPANY_A, INV_ID);
+
+        expect(out).toEqual({
+            token: 'tok_invABCDE',
+            url: 'https://app.albusto.com/i/tok_invABCDE',
+        });
+        expect(mockSetPublicToken).not.toHaveBeenCalled();
+    });
+
+    it('replaces expired tokens and persists an 18-month database-clock expiry', async () => {
+        mockGetInvoiceById.mockResolvedValue(invoiceRow({
+            public_token_expires_at: '2020-01-01T00:00:00.000Z',
+        }));
+
+        const out = await invoicesService.ensurePublicLink(COMPANY_A, INV_ID);
+
+        expect(out.token).not.toBe('tok_invABCDE');
+        expect(mockSetPublicToken).toHaveBeenCalledWith(
+            INV_ID,
+            COMPANY_A,
+            out.token,
+            null,
+            18
+        );
     });
 });

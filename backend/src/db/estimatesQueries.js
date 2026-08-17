@@ -158,7 +158,7 @@ async function getEstimateById(companyId, id, client = null) {
                 ) AS contact_phone,
                 j.job_number AS job_number,
                 j.job_seq AS job_seq,
-                j.public_code AS public_code,
+                j.public_code AS job_public_code,
                 j.address AS service_address,
                 COALESCE(
                     NULLIF(CONCAT_WS(', ',
@@ -205,6 +205,18 @@ async function getEstimateById(companyId, id, client = null) {
     if (!rows[0]) return null;
     const [estimate] = await applyEstimatePayments(companyId, [rows[0]], client);
     return estimate;
+}
+
+/** Deliberately global resolver for a durable estimate public_code. */
+async function getEstimateByCode(publicCode, client = null) {
+    const query = queryFor(client);
+    const { rows } = await query(
+        `SELECT e.id, e.company_id, e.public_code, e.estimate_number
+         FROM estimates e
+         WHERE e.public_code = $1`,
+        [publicCode]
+    );
+    return rows[0] || null;
 }
 
 /**
@@ -270,8 +282,10 @@ async function getJobContext(companyId, jobId, client = null) {
                 j.lead_id,
                 j.contact_id,
                 j.job_number,
+                j.job_seq,
                 j.service_name,
-                l.serial_id AS lead_serial_id
+                l.serial_id AS lead_serial_id,
+                l.lead_seq AS lead_seq
          FROM jobs j
          LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
          WHERE j.id = $1 AND j.company_id = $2`,
@@ -283,7 +297,8 @@ async function getJobContext(companyId, jobId, client = null) {
 async function getLeadContext(companyId, leadId, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
-        `SELECT id, company_id, contact_id, serial_id, first_name, last_name, email, phone
+        `SELECT id, company_id, contact_id, serial_id, lead_seq,
+                first_name, last_name, email, phone
          FROM leads
          WHERE id = $1 AND company_id = $2`,
         [leadId, companyId]
@@ -302,30 +317,56 @@ async function getContactContext(companyId, contactId, client = null) {
     return rows[0] || null;
 }
 
-function estimateNumberPrefix(leadSerialId) {
-    return `ESTIMATE L-${leadSerialId || '0'}-`;
+function estimateNumberPrefix({ leadSeq, jobSeq }) {
+    if (jobSeq) return `ESTIMATE ${jobSeq}-`;
+    if (leadSeq) return `ESTIMATE L${leadSeq}-`;
+    return 'ESTIMATE L0-';
 }
 
-async function nextEstimateSequence(companyId, { leadSerialId }, client = null) {
+function legacyEstimateNumberPrefix(legacyLeadSerialId) {
+    return `ESTIMATE L-${legacyLeadSerialId || '0'}-`;
+}
+
+async function nextEstimateSequence(
+    companyId,
+    {
+        leadSeq = null,
+        jobSeq = null,
+        legacyLeadSerialId = null,
+        leadId = null,
+        jobId = null,
+    },
+    client = null
+) {
     const query = queryFor(client);
-    // The sequence must be unique within the exact estimate-number namespace
-    // ("ESTIMATE L-<leadSerialId>-<seq>"). leadSerialId is derived from a lead serial, a lead id,
-    // or a job id (fallback) — separate id spaces that can numerically collide (e.g. lead serial
-    // 1528 vs job id 1528). Counting by lead_id/job_id let two different entities mint the SAME
-    // number and violate uq_estimates_number_company, so the estimate save failed silently (the FE
-    // swallows the error → buttons flicker, nothing saves). Count by the number prefix itself so
-    // the sequence is guaranteed unique across whatever produced that key.
+    const newPrefix = estimateNumberPrefix({ leadSeq, jobSeq });
+    const legacyPrefix = legacyEstimateNumberPrefix(legacyLeadSerialId);
+    // New-format rows are counted by their exact number namespace. The matching
+    // parent's legacy rows seed the same MAX so numbering never restarts after
+    // the format cutover.
     const { rows } = await query(
         `SELECT COALESCE(MAX(estimate_sequence), 0) + 1 AS next_sequence
          FROM estimates
-         WHERE company_id = $1 AND estimate_number LIKE $2`,
-        [companyId, `${estimateNumberPrefix(leadSerialId)}%`]
+         WHERE company_id = $1
+           AND (
+                estimate_number LIKE $2
+                OR (
+                    estimate_number LIKE $3
+                    AND (
+                        ($4::BIGINT IS NOT NULL AND job_id = $4)
+                        OR ($5::BIGINT IS NOT NULL AND lead_id = $5 AND job_id IS NULL)
+                        OR ($4::BIGINT IS NULL AND $5::BIGINT IS NULL
+                            AND job_id IS NULL AND lead_id IS NULL)
+                    )
+                )
+           )`,
+        [companyId, `${newPrefix}%`, `${legacyPrefix}%`, jobId, leadId]
     );
     return parseInt(rows[0]?.next_sequence || '1', 10);
 }
 
-function buildEstimateNumber({ leadSerialId, sequence }) {
-    return `${estimateNumberPrefix(leadSerialId)}${sequence}`;
+function buildEstimateNumber({ leadSeq, jobSeq, sequence }) {
+    return `${estimateNumberPrefix({ leadSeq, jobSeq })}${sequence}`;
 }
 
 async function createEstimate(companyId, data, client = null) {
@@ -856,6 +897,7 @@ async function setPublicToken(
 module.exports = {
     listEstimates,
     getEstimateById,
+    getEstimateByCode,
     lockEstimateForConversion,
     getConversionEventForUndo,
     getJobContext,
