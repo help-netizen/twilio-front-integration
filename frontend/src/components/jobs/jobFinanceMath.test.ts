@@ -22,7 +22,13 @@ describe('calculateJobFinanceSummary', () => {
         expect(formatSignedCurrency(summary.due).codePointAt(0)).toBe(0x2212);
     });
 
-    it('CTRL-ZBPAY-DUE-GUARD: counts a standalone ZB payment in Paid but not Due credit', () => {
+    it('CTRL-ZBPAY-DUE-GUARD: an UNLINKED ZB payment credits Paid and Due alike', () => {
+        // The guard used to skip every zenbooker row from the Due offset, on the
+        // premise that ZB money already sat on its invoice. Production says
+        // otherwise: 1403 completed ZB payments ($288,840), none carrying an
+        // invoice_id, and no invoice carrying amount_paid without a linked
+        // payment. So the money counted in Paid and never reduced Due, and every
+        // ZB-funded job showed a debt it did not have (measured 2026-08-16).
         const payment = {
             amount: '95.00',
             invoice_id: null,
@@ -32,9 +38,49 @@ describe('calculateJobFinanceSummary', () => {
         };
 
         expect(completedJobPoolPaid([payment])).toBe(95);
-        expect(completedJobPoolDueOffset([payment])).toBe(0);
+        expect(completedJobPoolDueOffset([payment])).toBe(95);
         expect(calculateJobFinanceSummary([], [], [payment]))
-            .toEqual({ estimated: 0, invoiced: 0, paid: 95, due: 0 });
+            .toEqual({ estimated: 0, invoiced: 0, paid: 95, due: -95 });
+    });
+
+    it('CTRL-ZBPAY-DUE-GUARD: a LINKED ZB payment stays out of both, so it cannot count twice', () => {
+        // This is the case the guard was written for: the invoice already carries
+        // the money in amount_paid, so the pool must not add it again — to Paid
+        // or to Due.
+        const payment = {
+            amount: '95.00',
+            invoice_id: 12,
+            transaction_type: 'payment',
+            status: 'completed',
+            external_source: 'zenbooker',
+        };
+
+        expect(completedJobPoolPaid([payment])).toBe(0);
+        expect(completedJobPoolDueOffset([payment])).toBe(0);
+        expect(calculateJobFinanceSummary([], [{ total: '95', amount_paid: '95', status: 'sent' }], [payment]))
+            .toEqual({ estimated: 0, invoiced: 95, paid: 95, due: 0 });
+    });
+
+    it('reproduces job 1498: ZB money reduces Due instead of inflating it', () => {
+        // Three invoices ($1,665.81 + $125 + $125), a card payment linked to the
+        // first, and a $125 Zenbooker payment with no invoice. Due is what is
+        // left over: $125, not the $250 the old guard produced.
+        const summary = calculateJobFinanceSummary(
+            [],
+            [
+                { total: '1665.81', amount_paid: '0', status: 'sent' },
+                { total: '125.00', amount_paid: '0', status: 'sent' },
+                { total: '125.00', amount_paid: '0', status: 'sent' },
+            ],
+            [
+                { id: 23172, amount: '125.00', invoice_id: null, transaction_type: 'payment', status: 'completed', external_source: 'zenbooker' },
+                { id: 46348, amount: '1665.81', invoice_id: 49, transaction_type: 'payment', status: 'completed', external_source: null },
+            ],
+        );
+
+        expect(formatSignedCurrency(summary.invoiced)).toBe('$1,915.81');
+        expect(formatSignedCurrency(summary.paid)).toBe('$1,790.81');
+        expect(formatSignedCurrency(summary.due)).toBe('$125.00');
     });
 
     it('nets completed refunds, includes invoice-referenced payments, and ignores pending rows', () => {
@@ -67,14 +113,16 @@ describe('calculateJobFinanceSummary', () => {
         expect(completedJobPoolDueOffset(payments)).toBe(70);
     });
 
-    it('a refund of a Zenbooker payment inherits the zenbooker source (Paid nets, Due gets no credit)', () => {
+    it('a refund of a Zenbooker payment inherits the source, and nets in Paid and Due alike', () => {
         const payments = [
             { id: 10, amount: '100', invoice_id: null, transaction_type: 'payment', status: 'refunded', external_source: 'zenbooker' },
             { id: 11, amount: '30', invoice_id: null, transaction_type: 'refund', status: 'completed', external_source: null, metadata: { original_transaction_id: 10 } },
         ];
 
+        // Neither row carries an invoice_id, so the money is nowhere else — it
+        // nets to 70 in both, exactly like any other unlinked payment.
         expect(completedJobPoolPaid(payments)).toBe(70);
-        expect(completedJobPoolDueOffset(payments)).toBe(0);
+        expect(completedJobPoolDueOffset(payments)).toBe(70);
     });
 
     it('drops a voided invoice from Invoiced/Paid/Due', () => {

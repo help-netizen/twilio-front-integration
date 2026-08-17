@@ -72,7 +72,19 @@ export function completedJobPoolPaid(payments: JobPaymentMoney[]): number {
 export function completedJobPoolDueOffset(payments: JobPaymentMoney[]): number {
     const byId = new Map(payments.map(payment => [String(payment.id), payment]));
     return payments.reduce((sum, payment) => {
-        if (effectiveSource(payment, byId) === 'zenbooker') return sum;
+        // SAME condition as completedJobPoolPaid, and that symmetry is the point.
+        // Zenbooker money is skipped only when it is already materialized on an
+        // invoice — i.e. when it is inside `legacyInvoicePaid` and crediting it
+        // here would count it twice.
+        //
+        // The guard used to skip EVERY zenbooker row. Its premise — "ZB money
+        // lives on its invoice" — is false in production: of 1403 completed
+        // Zenbooker payments ($288,840), zero carry an invoice_id, and zero
+        // invoices carry amount_paid without a linked payment. So the money
+        // counted in Paid and never reduced Due, and every job funded through
+        // Zenbooker showed a debt it did not have (job 1498: Due $250 against a
+        // real $125). Measured 2026-08-16 against production.
+        if (effectiveSource(payment, byId) === 'zenbooker' && payment.invoice_id != null) return sum;
         let effect = transactionEffect(payment);
         if (payment.transaction_type === 'payment' && effect > 0) {
             effect = Math.max(effect - Math.max(moneyNumber(payment.metadata?.tip), 0), 0);

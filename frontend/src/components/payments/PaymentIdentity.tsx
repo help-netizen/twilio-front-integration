@@ -2,6 +2,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import type { PaymentDetail } from './paymentTypes';
 import { formatCurrency, formatPaymentDate } from './paymentTypes';
 import { LEVEL_TWO_QUIET, LEVEL_TWO_HEADING } from '../../styles/levelTwo';
+import { useJobFinancials } from '../../hooks/useJobFinancials';
+import { calculateJobFinanceSummary, formatSignedCurrency } from '../jobs/jobFinanceMath';
 
 /**
  * The payment's own identity — everything this record IS, before any job context.
@@ -94,7 +96,16 @@ export function PaymentIdentity({
 }
 
 /**
- * Total, Paid and Due on ONE line. Stacked as rows they read as a list to work
+ * The JOB's finance, not the invoice's (owner, 2026-08-16). A payment does not
+ * need an invoice — it can be taken against the job itself — but it always
+ * belongs to a job, so the invoice trio was both narrower than the truth and,
+ * when the invoice's stored aggregates drifted, wrong: payment 46348 paid its
+ * invoice in full while the card read "Paid $0.00, Due $1,665.81".
+ *
+ * These are the same four figures the job card shows, from the same function,
+ * so the two surfaces cannot disagree.
+ *
+ * Estimated, Invoiced, Paid and Due on ONE line. Stacked as rows they read as a list to work
  * through; side by side they are three numbers you compare at a glance, which
  * is the only reason to show all three.
  *
@@ -104,16 +115,18 @@ export function PaymentIdentity({
  * while money is owed, green when the customer has overpaid (a credit, not an
  * alarm), plain ink at zero.
  */
-export function InvoiceFigures({ invoice }: { invoice: PaymentDetail['invoice'] }) {
-    if (!invoice) return null;
-    const due = Number(invoice.amount_due || 0);
+export function JobFinanceFigures({ jobId }: { jobId: number | null | undefined }) {
+    const { estimates, invoices, jobPayments } = useJobFinancials(jobId ?? 0);
+    if (!jobId) return null;
+    const summary = calculateJobFinanceSummary(estimates, invoices, jobPayments);
+    const due = summary.due;
     const dueColor = due > 0
         ? 'var(--blanc-warning)'
         : due < 0
             ? 'var(--blanc-success)'
             : 'var(--blanc-ink-1)';
 
-    const figure = (label: string, value: string, color?: string) => (
+    const figure = (label: string, value: number, color?: string) => (
         <div className="flex items-baseline gap-2">
             <span style={LEVEL_TWO_QUIET}>{label}</span>
             <span
@@ -121,18 +134,19 @@ export function InvoiceFigures({ invoice }: { invoice: PaymentDetail['invoice'] 
                 className="blanc-l2 tabular-nums"
                 style={{ ...LEVEL_TWO_HEADING, color: color || 'var(--blanc-ink-1)' }}
             >
-                {formatCurrency(value)}
+                {formatSignedCurrency(value)}
             </span>
         </div>
     );
 
     return (
         <div>
-            <p className="blanc-section-heading">Invoice</p>
+            <p className="blanc-section-heading">Finance</p>
             <div className="flex flex-wrap gap-x-7 gap-y-1.5">
-                {figure('Total', invoice.total)}
-                {figure('Paid', invoice.amount_paid)}
-                {figure('Due', invoice.amount_due, dueColor)}
+                {figure('Estimated', summary.estimated)}
+                {figure('Invoiced', summary.invoiced)}
+                {figure('Paid', summary.paid)}
+                {figure('Due', summary.due, dueColor)}
             </div>
         </div>
     );

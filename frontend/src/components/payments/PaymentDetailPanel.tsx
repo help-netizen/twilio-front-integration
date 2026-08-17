@@ -5,7 +5,7 @@ import { useJobDetail } from '../../hooks/useJobDetail';
 import { JobInfoSections } from '../jobs/JobInfoSections';
 import { JobDescription } from '../jobs/JobDescription';
 import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
-import { PaymentIdentity, InvoiceFigures } from './PaymentIdentity';
+import { PaymentIdentity, JobFinanceFigures } from './PaymentIdentity';
 import { PaymentJobSection, PaymentProviders } from './PaymentJobSections';
 import type { PaymentDetail } from './paymentTypes';
 
@@ -63,7 +63,7 @@ export function PaymentDetailPanel({
             {/* ═══ LEFT — the payment, then the job it paid for ═══ */}
             <div className="w-full space-y-6 px-5 py-5 md:w-1/2 md:overflow-y-auto">
                 <PaymentIdentity detail={detail} onToggleDeposited={onToggleDeposited} />
-                <InvoiceFigures invoice={detail.invoice} />
+                <JobFinanceFigures jobId={detail.local_job_id} />
                 <PaymentJobSection detail={detail} job={job} />
 
                 {job ? (
