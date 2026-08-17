@@ -255,7 +255,21 @@ describe('manual-card popup integration', () => {
         let ackTimeoutCallback: (() => void) | null = null;
         const clearTimeout = vi.fn();
         const assign = vi.fn();
+        // The card frame mounts in-page now (CARDFRAME in-page, 2026-08-17), and
+        // `popup` below stands in for its contentWindow.
+        const cardFrameDocument = {
+            body: { appendChild: vi.fn() },
+            createElement: vi.fn(() => ({
+                style: { cssText: '' },
+                setAttribute: vi.fn(),
+                appendChild: vi.fn(),
+                addEventListener: vi.fn(),
+                remove: vi.fn(),
+                contentWindow: popup,
+            })),
+        };
         const hostWindow = {
+            document: cardFrameDocument,
             location: {
                 origin: 'https://app.albusto.test',
                 pathname: '/jobs/1617',
@@ -290,11 +304,11 @@ describe('manual-card popup integration', () => {
             configuredOrigin: 'https://cards.albusto.test',
         });
         expect(handle).not.toBeNull();
-        expect(hostWindow.open).toHaveBeenCalledWith(
-            'https://cards.albusto.test/card-entry.html',
-            'albusto-card',
-            'width=460,height=640',
-        );
+        // The card form mounts as an in-page frame at the configured origin —
+        // no window is opened (CARDFRAME in-page, 2026-08-17). The origin still
+        // governs the handshake, which the two messages below prove.
+        expect(hostWindow.open).not.toHaveBeenCalled();
+        expect(cardFrameDocument.createElement).toHaveBeenCalledWith('iframe');
         expect(hostWindow.setTimeout).toHaveBeenCalledWith(expect.any(Function), 1500);
 
         messageListeners[0]?.({
@@ -350,7 +364,19 @@ describe('manual-card popup integration', () => {
         const setItem = vi.fn();
         const assign = vi.fn();
         const resumeContext = { kind: 'manual-card', stage: 'collect', entityId: '1617' };
+        const cardFrameDocument = {
+            body: { appendChild: vi.fn() },
+            createElement: vi.fn(() => ({
+                style: { cssText: '' },
+                setAttribute: vi.fn(),
+                appendChild: vi.fn(),
+                addEventListener: vi.fn(),
+                remove: vi.fn(),
+                contentWindow: popup,
+            })),
+        };
         const hostWindow = {
+            document: cardFrameDocument,
             location: {
                 origin: 'https://app.albusto.test',
                 pathname: '/jobs/1617',
@@ -389,7 +415,7 @@ describe('manual-card popup integration', () => {
         });
         ackTimeoutCallback!();
 
-        expect(popup.close).toHaveBeenCalledOnce();
+        // A frame is torn down with its overlay — there is no window to close.
         expect(assign).toHaveBeenCalledOnce();
         expect(setItem).toHaveBeenCalledOnce();
         expect(JSON.parse(String(setItem.mock.calls[0]?.[1]))).toMatchObject({

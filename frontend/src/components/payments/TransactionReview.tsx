@@ -12,6 +12,7 @@ import { FloatingField } from '../ui/floating-field';
 import {
     fetchTransaction,
     emailTransactionReceipt,
+    fetchStripeReadiness,
     voidTransaction,
     type PaymentTransaction,
 } from '../../services/paymentsCanonicalApi';
@@ -65,6 +66,35 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     );
 }
 
+
+/**
+ * The id, but clickable — it opens the object in the Stripe dashboard.
+ *
+ * Charges live on the CONNECTED account, so the URL has to be scoped by it
+ * (`/{acct}/payments/{id}`); the unscoped form 404s for anyone signed into the
+ * platform. When the account is not known yet the link still works for whoever
+ * is signed into the account that owns the charge.
+ */
+function StripeDashboardLink({ accountId, path, id }: {
+    accountId: string | null;
+    path: 'payments' | 'customers';
+    id: string;
+}) {
+    const href = `https://dashboard.stripe.com/${accountId ? `${accountId}/` : ''}${path}/${id}`;
+    return (
+        <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="break-all font-mono text-xs hover:underline"
+            style={{ color: 'var(--blanc-accent)' }}
+            title="Open in Stripe"
+        >
+            {id}
+        </a>
+    );
+}
+
 export function TransactionReview({ transactionId, initial, contactEmail, canVoid = false, extraActions, onChanged }: Props) {
     const { timeZone } = useCompanyTime();
     const [tx, setTx] = useState<PaymentTransaction | null>(initial ?? null);
@@ -75,6 +105,17 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
     const [email, setEmail] = useState('');
     const [sending, setSending] = useState(false);
     const [sentTo, setSentTo] = useState<string | null>(null);
+    // Connect account that owns the charge — the dashboard link is scoped by it.
+    const [stripeAccountId, setStripeAccountId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!tx?.stripe_payment_id && !tx?.stripe_customer_id) return;
+        let cancelled = false;
+        fetchStripeReadiness()
+            .then(readiness => { if (!cancelled) setStripeAccountId(readiness.account?.id || null); })
+            .catch(() => { /* the link degrades to the unscoped dashboard URL */ });
+        return () => { cancelled = true; };
+    }, [tx?.stripe_payment_id, tx?.stripe_customer_id]);
 
     const load = useCallback(() => {
         let cancelled = false;
@@ -165,10 +206,22 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
                     {tx.memo ? tx.memo : <span className="text-[var(--blanc-ink-3)]">No memo</span>}
                 </Row>
                 {isCard && tx.stripe_payment_id && (
-                    <Row label="Stripe transaction ID"><span className="break-all font-mono text-xs">{tx.stripe_payment_id}</span></Row>
+                    <Row label="Stripe transaction ID">
+                        <StripeDashboardLink
+                            accountId={stripeAccountId}
+                            path="payments"
+                            id={tx.stripe_payment_id}
+                        />
+                    </Row>
                 )}
                 {isCard && tx.stripe_customer_id && (
-                    <Row label="Stripe customer ID"><span className="break-all font-mono text-xs">{tx.stripe_customer_id}</span></Row>
+                    <Row label="Stripe customer ID">
+                        <StripeDashboardLink
+                            accountId={stripeAccountId}
+                            path="customers"
+                            id={tx.stripe_customer_id}
+                        />
+                    </Row>
                 )}
                 {tx.created_by_name && <Row label="Created by">{tx.created_by_name}</Row>}
                 {tx.territory && <Row label="Territory">{tx.territory}</Row>}

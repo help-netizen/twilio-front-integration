@@ -171,6 +171,8 @@ export interface StripeReadiness {
     configured: boolean;
     can_collect: boolean;
     readiness?: string | null;
+    /** Connect account that owns the charges — dashboard links are scoped by it. */
+    account?: { id?: string | null } | null;
 }
 export async function fetchStripeReadiness(): Promise<StripeReadiness> {
     return paymentsRequest<StripeReadiness>(`${PAYMENTS_BASE}/stripe-readiness`);

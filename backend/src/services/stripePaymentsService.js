@@ -118,6 +118,11 @@ function publicStatus(account) {
         can_collect: canCollect(readiness),
         livemode: account?.livemode ?? false,
         account: account ? {
+            // The connected account id is already client-visible (the card-entry
+            // hand-off carries it to mount Stripe.js), and the dashboard link for
+            // a Connect charge is scoped by it: /{acct}/payments/{id}. Without it
+            // the link 404s for anyone signed into the platform account.
+            id: account.stripe_account_id || null,
             charges_enabled: account.charges_enabled,
             payouts_enabled: account.payouts_enabled,
             details_submitted: account.details_submitted,

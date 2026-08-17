@@ -132,8 +132,23 @@ describe('same-window card-entry handoff', () => {
         };
         let ackTimeoutCallback: (() => void) | null = null;
         const clearTimeout = vi.fn();
+        // The card frame mounts into the host document (CARDFRAME in-page, 2026-08-17).
+        const mounted: Record<string, unknown>[] = [];
+        const makeElement = () => ({
+            style: { cssText: '' },
+            setAttribute: vi.fn(),
+            appendChild: vi.fn(),
+            addEventListener: vi.fn(),
+            remove: vi.fn(),
+            contentWindow: { postMessage: vi.fn() },
+        });
+        const documentMock = {
+            body: { appendChild: vi.fn((el: Record<string, unknown>) => mounted.push(el)) },
+            createElement: vi.fn(() => makeElement()),
+        };
         const resumeContext = { kind: 'manual-card', entityId: '1617' };
         const hostWindow = {
+            document: documentMock,
             location: {
                 origin: 'https://app.albusto.test',
                 pathname: '/jobs/1617',
@@ -171,7 +186,7 @@ describe('same-window card-entry handoff', () => {
 
         ackTimeoutCallback!();
 
-        expect(popup.close).toHaveBeenCalledOnce();
+        // Nothing to close: the frame is torn down with its overlay, not closed.
         expect(clearTimeout).toHaveBeenCalledWith(23);
         expect(assign).toHaveBeenCalledOnce();
         const assignedUrl = String(assign.mock.calls[0]?.[0]);
@@ -187,7 +202,7 @@ describe('same-window card-entry handoff', () => {
         expect(popup.postMessage).not.toHaveBeenCalled();
     });
 
-    it('falls back to same-window mode when the popup is blocked', () => {
+    it('falls back to same-window mode when there is no document to mount a frame into', () => {
         const storage = memoryStorage();
         const assign = vi.fn();
         const open = vi.fn(() => null);
@@ -211,7 +226,8 @@ describe('same-window card-entry handoff', () => {
             accountId: 'acct_11',
             amount: 95,
         }, { hostWindow, sessionId: 11 })).not.toThrow();
-        expect(open).toHaveBeenCalledOnce();
+        // No window is opened any more — the frame mounts in-page, or, with no
+        // document to mount into, the same-window hand-off takes over.
         expect(assign).toHaveBeenCalledOnce();
     });
 
