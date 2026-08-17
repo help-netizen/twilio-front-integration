@@ -148,19 +148,24 @@ assistant/resource cross-company связь запрещена DB+service; вс�
 `assistantId`/`assistantOverrides`/model/voice/tools/server/destination поля
 игнорируются с reject, не merge. Удалены org provisioner/script/test, tenant Vapi
 settings/API/routes, provider connection client key и два global assistant env
-fallback после ABC cutover. Deployment env используется только first-run ABC
-registry bootstrap, не runtime selection. Защищённый route mount снимается
+fallback после ABC cutover. Deployment env используется только явным
+company-scoped operational bootstrap CLI, не migration/runtime selection.
+Защищённый route mount снимается
 отдельным `src/server.js` patch; до него пустой router возвращает 404 без DB.
 Tenant supplier/provider serialization ratchet зелёный.
 
 **Проверка.**
-Первый production apply (owner-controlled, в T5 не выполнялся):
-`PGOPTIONS="-c app.vapi_inbound_assistant_id=${VAPI_INBOUND_ASSISTANT_ID} -c app.vapi_lead_assistant_id=${VAPI_LEAD_CALL_ASSISTANT_ID} -c app.vapi_parts_assistant_id=${VAPI_OUTBOUND_ASSISTANT_ID}" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/db/migrations/273_vapi_assistant_registry.sql`
+Schema apply (data-neutral):
+`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/db/migrations/275_vapi_assistant_registry.sql`
+
+Owner-controlled operational step после schema apply (сначала dry-run):
+`node backend/scripts/bootstrap-vapi-assistant-registry.js --company-id <uuid>`
+`node backend/scripts/bootstrap-vapi-assistant-registry.js --company-id <uuid> --apply`
 
 `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/routes/vapi-tools.test.js tests/routes/vapiTenantIsolation.test.js tests/services/callFlowRuntime.vapi.test.js --runInBand --forceExit`
 `npm --prefix frontend run build`
 `npm --prefix frontend test`
-`grep -R -n -E 'vapiOrgProvisioningService|provision-vapi-tenant|VAPI_LEAD_CALL_ASSISTANT_ID|VAPI_OUTBOUND_ASSISTANT_ID' backend/src frontend/src --exclude-dir=node_modules` → ожидается отсутствие runtime hits; migration bootstrap/docs могут называть deployment env.
+`grep -R -n -E 'vapiOrgProvisioningService|provision-vapi-tenant|VAPI_LEAD_CALL_ASSISTANT_ID|VAPI_OUTBOUND_ASSISTANT_ID' backend/src frontend/src --exclude-dir=node_modules` → ожидается отсутствие runtime hits; operational bootstrap/docs/tests могут называть deployment env.
 
 **Зависимости:** T2, T4. **Размер/оценка:** L, 5–8 дней. Раздувают количество
 старых путей и необходимость staged ABC cutover без сохранения опасного fallback.
@@ -294,15 +299,14 @@ rollback после появления quarantine evidence.
 
 ### `vapi_assistant_registry`
 
-Содержит `vapi_tenant_voice_configs`; расширяет `vapi_assistant_profiles` и
-`vapi_tenant_resources` purpose/environment/template/readback/resource/credential
-полями; добавляет same-company ownership constraints и active tuple uniqueness;
-требует уже разрешённые identity schema surfaces `vapi_tools`,
-`vapi_call_status`, `vapi_assistant_request`, связывает раздельные credentials и
-мигрирует ABC.
-Удаление legacy provider connection key выполняется только после
-проверенного cutover/secret-store presence и имеет явный rollback compatibility
-plan без восстановления plaintext из логов.
+Содержит только schema: `vapi_tenant_voice_configs`; расширяет
+`vapi_assistant_profiles` и `vapi_tenant_resources`
+template/readback/resource/credential полями; добавляет same-company ownership
+constraints и active tuple uniqueness. Не читает env/provider data, не требует
+connection/resource/credentials и не пишет ни одной строки. ABC наполняется
+отдельным dry-run-by-default `bootstrap-vapi-assistant-registry.js`; CLI связывает
+ровно один active credential каждой surface либо оставляет nullable binding +
+readiness false, очищает legacy provider data и идемпотентно upsert-ит registry.
 
 ### `retire_tenant_vapi_marketplace_app`
 

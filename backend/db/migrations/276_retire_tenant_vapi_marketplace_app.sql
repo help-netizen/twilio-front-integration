@@ -1,4 +1,4 @@
--- VAPI-AGENCY-001 T5: the provider is an internal execution plane, not a
+-- Migration 276, VAPI-AGENCY-001 T5: the provider is an internal execution plane, not a
 -- tenant-installable Marketplace app. Older seed migrations are replayed by
 -- ensureMarketplaceSchema, so this retirement seed must be replayed after them.
 
@@ -29,6 +29,6 @@ BEGIN
           AND status = 'disabled'
     ) THEN
         RAISE EXCEPTION
-            'VAPI_AGENCY_274_LEGACY_APP_REQUIRED: expected the retired vapi-ai Marketplace row';
+            'VAPI_AGENCY_276_LEGACY_APP_REQUIRED: expected the retired vapi-ai Marketplace row';
     END IF;
 END $$;

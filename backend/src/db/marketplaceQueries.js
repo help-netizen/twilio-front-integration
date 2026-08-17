@@ -91,7 +91,7 @@ async function ensureMarketplaceSchema(client = null) {
         await query(readMigration('214_google_ads_connector.sql'));
         // VAPI-AGENCY-001 T5: old seeds above republish the legacy provider app;
         // replay its retirement last so no process boot can expose it again.
-        await query(readMigration('274_retire_tenant_vapi_marketplace_app.sql'));
+        await query(readMigration('276_retire_tenant_vapi_marketplace_app.sql'));
         return;
     }
 

@@ -8,6 +8,9 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-028 (2026-08-17)** — Structural migrations must never require environment variables,
+  provider readback, credentials, or tenant resource rows; keep operational discovery, validation,
+  and data backfill in an explicit company-scoped dry-run-by-default CLI.
 - **L-027 (2026-08-16)** — Vapi assistant webhook `server.secret` is write-only: `GET /assistant`
   returns only `isServerUrlSecretSet`; verify a PATCH by that flag, never by secret echo. This differs
   from `model.tools[].server.secret`, whose value is readable, so never log or fixture tool readback.

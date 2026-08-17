@@ -99,11 +99,16 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   org provisioner и CLI удалены в T5. Защищённый mount пустого tombstone-router
   снимается отдельным shell patch из `src/server.js`.
 - На production до T5 был один legacy SIP resource и не было строк registry
-  profile. Registry migration теперь атомарно требует существующие ABC
-  connection/resource и три раздельных machine credentials, получает три полных
-  assistant id из deployment environment и abort-ится при пропуске, конфликте
-  либо неоднозначности. После успешного применения ABC имеет три active tuple:
-  inbound qualification, outbound lead и outbound parts.
+  profile. Migration 275 создаёт только registry schema и не читает env/provider
+  state, не проверяет connection/resource/credentials и не пишет строки.
+  Отдельный platform-only `bootstrap-vapi-assistant-registry.js` с обязательным
+  `--company-id` читает три assistant id из deployment environment, валидирует
+  локальные connection/resource/ownership данные и идемпотентно наполняет ABC;
+  по умолчанию это dry-run. Machine credentials остаются независимым
+  операционным слоем: ровно одна активная строка surface связывается, 0 или >1
+  оставляют nullable binding и `readiness_evidence.complete=false`. Runtime при
+  отсутствующем/неполном registry остаётся fail-closed, а incident fallback
+  продолжает отвечать на входящий без ложной identity.
 - T3 требует exact raw body до JSON parsing для денег, но денежный ingest не
   является предусловием outbound FSM/timeline: attempt коррелируется отдельно по
   company credential + локальной строке. До T5 outbound usage создаётся из
@@ -694,26 +699,36 @@ T1 фиксирует живые provider fixtures до выбора адапт�
   org/assistant/phone resources или видеть provider metadata;
 - runtime environment-driven assistant selection. Deployment значения
   `VAPI_INBOUND_ASSISTANT_ID`, `VAPI_LEAD_CALL_ASSISTANT_ID` и
-  `VAPI_OUTBOUND_ASSISTANT_ID` читаются только однократно migration bootstrap для
-  доказуемого ABC backfill; ни outbound placement, ни usage ingestion не выбирают
-  по ним assistant;
+  `VAPI_OUTBOUND_ASSISTANT_ID` читаются только platform-only operational bootstrap
+  CLI для доказуемого company-scoped backfill; ни migration, ни outbound
+  placement, ни usage ingestion не выбирают по ним assistant;
 - клиентский Vapi API key в `provider_connections` и любой API, который его
   принимает/возвращает. Платформенный ключ существует только в deployment secret
   store и никогда не сохраняется в tenant DB.
 
-Org provisioner, CLI, CRUD и global assistant fallback не оставлены «на всякий
-случай»: их наличие создавало бы второй путь в обход registry, gate и
-platform-key ownership. Сохранённый incident fallback — не этот путь: он
-platform-only, ограничен `legacy_canary`, exact company/purpose/prod resource и не
-возвращает assistant без token.
+Org provisioner, tenant provisioning CLI, CRUD и global assistant fallback не
+оставлены «на всякий случай»: их наличие создавало бы второй путь в обход
+registry, gate и platform-key ownership. Новый bootstrap CLI не создаёт Vapi org
+или provider resources и не является runtime fallback: он пишет только
+company-scoped локальное соответствие после явной операторской проверки.
+Сохранённый incident fallback ограничен `legacy_canary`, exact
+company/purpose/prod resource и не возвращает assistant без token.
 
-Первый запуск migration 273 выполняется прямым `psql` с `ON_ERROR_STOP=1` и
-`PGOPTIONS`, которые однозначно отображают три deployment env в
-`app.vapi_*_assistant_id`. Репозиторный `apply_migrations.js` для этого cutover не
-используется: он исторически проглатывает SQL-ошибки и не может доказать abort.
-Пустое, невалидное, конфликтующее или неоднозначное значение останавливает всю
-migration; повторный запуск уже выводит IDs из заполненного registry и не требует
-env.
+Migration 275 выполняется обычным `psql -v ON_ERROR_STOP=1 -f`, не требует
+`PGOPTIONS`/session settings и всегда остаётся data-neutral. Она добавляет только
+таблицу, nullable registry/readiness columns, constraints и indexes; legacy rows
+не очищает и не backfill-ит. Операционный порядок после DDL:
+
+1. dry-run:
+   `node backend/scripts/bootstrap-vapi-assistant-registry.js --company-id <uuid>`;
+2. при необходимости read-only provider check: добавить `--verify-provider`;
+3. после проверки плана: повторить с `--apply`.
+
+CLI требует все три assistant env ids и однозначные active connection/SIP
+resource, отказывается при conflict/foreign ownership и выполняет data cleanup +
+profile/resource/config upsert в одной транзакции. Отсутствующие/неоднозначные
+operational credentials не мешают registry data bootstrap, но оставляют nullable
+bindings, readiness evidence и runtime fail-closed.
 
 ### Мигрирует
 
@@ -875,7 +890,7 @@ platform route/permission и всегда требует явного target com
 | T4 reconcile/audit | reconcile, audit, provider client, scheduler, migration + затронутые T3/provider/rules siblings | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageReconcile.test.js tests/vapiUsageAuditRepair.test.js tests/vapiProviderClient.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiUsageReconcileMigration.test.js tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js tests/outboundLeadCallSmsCancel.test.js tests/repairAdvisorEvents.test.js tests/rulesEngine.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 13 suites / 160 tests. Включает missing-EoC repair, createdAt+updatedAt audit, exact decimals, leases, T-foreign, no-wallet и scheduler registration. Targeted `tenantSafetyLint` R-natural-key: PASS. |
 | Phase-1 adversarial fixes | независимый FSM, registry-less outbound ingest, identity quarantine, cached tokens, missed-day audit | команда T3/T4 с `tests/vapiProviderMessageQuarantineMigration.test.js` и webhook/provider siblings | PASS; целевой combined run 11 suites / 147 tests; targeted tenant safety 1/1; migration 270 forward×2/rollback/restore через real `psql` PASS |
 | Loss protection: digest + fallback cost | `tests/vapiUsageAlertDelivery.test.js`, `tests/vapiFallbackRating.test.js`, `tests/vapiLossProtectionMigration.test.js`, scheduler/provider/T3/T4 regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageAlertDelivery.test.js tests/vapiFallbackRating.test.js tests/vapiLossProtectionMigration.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiProviderClient.test.js tests/vapiUsageIngest.test.js tests/vapiUsageAuditRepair.test.js tests/vapiUsageReconcile.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; combined 9 suites / 96 tests, включая 12 новых digest/fallback/migration кейсов; targeted tenant SQL sanitizer — 0 нарушений |
-| T5 registry/surface retirement | registry/migration/identity/routes/tools + inbound/outbound/usage regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryMigration.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/outboundCallService.test.js tests/services/callFlowRuntime.vapi.test.js tests/routes/vapiTenantIsolation.test.js tests/vapiUsageIngest.test.js tests/machineCredentialService.test.js tests/vapiCallStatusWebhook.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/routes/vapi-tools.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 14 suites / 303 tests. Реальный autocommit `psql`: forward 273→274, повтор без env, rollback 274→273, restore — PASS; 3 ABC profiles/resource binding/key erasure/retired app проверены |
+| T5 registry/surface retirement | registry/migration/bootstrap/identity/routes/tools + inbound/outbound/usage regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistryBootstrap.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryMigration.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/outboundCallService.test.js tests/services/callFlowRuntime.vapi.test.js tests/routes/vapiTenantIsolation.test.js tests/vapiUsageIngest.test.js tests/machineCredentialService.test.js tests/vapiCallStatusWebhook.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/routes/vapi-tools.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 15 suites / 306 tests. Real autocommit migration 275 `psql -v ON_ERROR_STOP=1 -f` ×2: empty без Vapi rows/settings PASS (`0 connections / 0 resources / 0 profiles / 0 configs`), prod-like PASS и legacy data byte-unchanged. Реальный CLI: dry-run writes 0; apply ×2 даёт `3 profiles / 3 credential-bound / 1 resource / readiness=true` |
 | T7 provisioning/readback | `tests/vapiAgencyProvisioning.test.js` + registry/provider siblings | команда определяется в T7 | PENDING |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
@@ -903,6 +918,7 @@ forward/rollback migration filenames добавляются в ledger после
 | `SAB-VAPI-REGISTRY-COMPANY` | убрать `company_id=$1` из запроса registry profile | `vapiAssistantRegistry` T-own query/company predicate | RED как требуется: exact company predicate исчез; после восстановления suite green |
 | `SAB-VAPI-REGISTRY-FALLBACK` | при missing/foreign profile вернуть global assistant и продолжить `POST /call` | `outboundCallService` missing/foreign mapping no-provider-call | RED как требуется: оба deny case сделали provider POST и вернули success; после восстановления suite green |
 | `SAB-VAPI-NODE-SIP` | предпочесть tenant `node.config.sip_uri` company resource | `callFlowRuntime.vapi` malicious node config + no-resource fallback | RED как требуется: foreign SIP попал в TwiML и bypass-нул fallback; после восстановления suite green |
+| `SAB-VAPI-SCHEMA-DATA-ABORT` | вернуть в migration 275 любой `RAISE EXCEPTION`/data prerequisite | `vapiAssistantRegistryMigration` schema-only empty environment | RED как требуется: временный `provider_connections` prerequisite отверг empty apply с `SABOTAGE_OPERATIONAL_DATA_REQUIRED`; после восстановления 15 suites / 306 tests green |
 | `SAB-VAPI-WEBHOOK-CREDENTIAL` | доверять `companyId` body вместо credential | `vapiCallStatusWebhook` wrong-company credential | PENDING |
 | `SAB-VAPI-EOC-COMPANY` | ослабить сверку company status credential перед session lookup | `vapiUsageIngest` credential B + local session A | RED как требуется: ожидаемый semantic 403 исчез, запрос дошёл до same-company FK и упал 23503; после восстановления тест green |
 | `SAB-VAPI-EOC-IDEMPOTENCY` | добавить random nonce в deterministic sanitized-payload hash | concurrent + sequential duplicate EoC test | RED как требуется: обе concurrent delivery вернули `observationCreated:true`; после восстановления тест green |

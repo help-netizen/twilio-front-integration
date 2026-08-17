@@ -239,7 +239,7 @@ describe('MARKETPLACE-RATINGS-001 migrations 204/205 · prod-shaped PostgreSQL',
             "readMigration('205_marketplace_human_copy_pricing.sql')"
         );
         const retirement = MARKETPLACE_QUERY_SOURCE.indexOf(
-            "readMigration('274_retire_tenant_vapi_marketplace_app.sql')"
+            "readMigration('276_retire_tenant_vapi_marketplace_app.sql')"
         );
         expect(copy).toBeGreaterThan(assistant);
         expect(retirement).toBeGreaterThan(copy);

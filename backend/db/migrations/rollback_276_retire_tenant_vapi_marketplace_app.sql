@@ -1,4 +1,4 @@
--- Rollback 274 republishes only the legacy catalog row. It does not restore the
+-- Rollback 276 republishes only the legacy catalog row. It does not restore the
 -- deleted tenant management routes, frontend page, or provider credentials.
 
 UPDATE marketplace_apps
