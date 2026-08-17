@@ -30,6 +30,13 @@ const buttonVariants = cva(
             },
             size: {
                 default: "h-9 px-4 py-2 has-[>svg]:px-3",
+                // ACTION — the button an entity card puts its next move on: 44px,
+                // the touch minimum, at level-two type. Defined ONCE here because
+                // the finance cards had each hand-rolled `h-[50px] text-[15px]`
+                // plus `truncate`, and truncate is what cut "Mark approved" down
+                // to "Mark appr…" on a phone (owner, 2026-08-17). A label is
+                // never shortened: the row wraps and the button takes its width.
+                action: "h-11 px-5 text-[15px] has-[>svg]:px-4",
                 sm: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
                 lg: "h-10 px-6 has-[>svg]:px-4",
                 icon: "size-9",

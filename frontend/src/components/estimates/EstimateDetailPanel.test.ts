@@ -97,10 +97,11 @@ describe('estimate detail — the decisions', () => {
         // the screen exists for, .blanc-section-heading for the card's name, and
         // .blanc-l2 / -quiet / -heading for everything below it. Nothing else may
         // name a size, or the card drifts back into a font sampler.
-        // 15 is allowed on a <Button>: the button owns its colour by variant,
-        // and .blanc-l2 would repaint a primary button's white label ink-1.
+        // Back to one: the buttons' 15px moved into the shared Button's `action`
+        // size (2026-08-17), so the card names no size but the hero's.
         const sizes = [...panelRaw.matchAll(/text-\[(\d+)px\]/g)].map(m => m[1]);
-        expect(new Set(sizes)).toEqual(new Set(['32', '15']));
+        expect(new Set(sizes)).toEqual(new Set(['32']));
+        expect(panelRaw).toContain('size="action"');
         expect(panelRaw).toContain('blanc-section-heading');
         expect(panelRaw).toContain('blanc-l2-heading');
         expect(panelRaw).not.toContain('blanc-eyebrow');

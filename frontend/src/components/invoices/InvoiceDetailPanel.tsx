@@ -461,28 +461,30 @@ export function InvoiceDetailPanel({
                             of the same row. The stacked bars it replaces cost three rows
                             of screen before the document even started. */}
                         {!editing && (primaryAction || secondaryAction || menuActions.length > 0) ? (
-                            <div className="mt-4 flex items-center gap-2">
+                            <div className="mt-4 flex flex-wrap items-center gap-2">
                                 {primaryAction && (
                                     <Button
                                         type="button"
-                                        className="h-[50px] min-w-0 flex-1 text-[15px] md:h-11 md:flex-none md:px-5"
+                                        size="action"
+                                className="grow md:grow-0"
                                         onClick={primaryAction.onClick}
                                         data-testid={primaryAction.testid}
                                     >
                                         {primaryAction.icon}
-                                        <span className="ml-1.5 truncate">{primaryAction.label}</span>
+                                        <span className="ml-1.5">{primaryAction.label}</span>
                                     </Button>
                                 )}
                                 {secondaryAction && (
                                     <Button
                                         type="button"
                                         variant="secondary"
-                                        className="h-[50px] min-w-0 flex-1 text-[15px] md:h-11 md:flex-none md:px-5"
+                                        size="action"
+                                className="grow md:grow-0"
                                         onClick={secondaryAction.onClick}
                                         data-testid={secondaryAction.testid}
                                     >
                                         {secondaryAction.icon}
-                                        <span className="ml-1.5 truncate">{secondaryAction.label}</span>
+                                        <span className="ml-1.5">{secondaryAction.label}</span>
                                     </Button>
                                 )}
                                 {menuActions.length > 0 && (
@@ -495,7 +497,8 @@ export function InvoiceDetailPanel({
                                                 type="button"
                                                 variant="ghost"
                                                 aria-label="More actions"
-                                                className="size-[50px] shrink-0 justify-center p-0 text-[15px] md:h-11 md:w-auto md:px-3"
+                                                size="action"
+                                        className="w-11 shrink-0 justify-center p-0 md:w-auto md:px-3"
                                                 style={{ color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
                                                 data-testid="invoice-more"
                                             >
@@ -748,7 +751,8 @@ export function InvoiceDetailPanel({
                         look for Edit. */}
                     {editing ? (
                         <section className="pt-1">
-                            <Button type="button" className="h-[50px] w-full md:h-11 md:w-auto md:px-5 text-[15px]" onClick={explicitSave}>
+                            <Button type="button" size="action"
+                                className="grow md:grow-0" onClick={explicitSave}>
                                 <Check className="mr-2 size-4" /> Save changes
                             </Button>
                         </section>

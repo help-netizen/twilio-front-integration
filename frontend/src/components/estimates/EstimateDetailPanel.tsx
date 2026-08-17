@@ -558,28 +558,30 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     moves — declining for the customer, archiving — sit last in the menu,
                     below a separator, away from the hand reaching for the primary. */}
                 {!editing && (primaryAction || secondaryAction || menuActions.length > 0) && (
-                    <div className="mt-4 flex items-center gap-2">
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
                         {primaryAction && (
                             <Button
-                                className="h-[50px] min-w-0 flex-1 text-[15px] md:h-11 md:flex-none md:px-5"
+                                size="action"
+                                className="grow md:grow-0"
                                 onClick={primaryAction.onClick}
                                 disabled={primaryAction.disabled}
                                 data-testid={primaryAction.testid}
                             >
                                 {primaryAction.icon}
-                                <span className="ml-1.5 truncate">{primaryAction.label}</span>
+                                <span className="ml-1.5">{primaryAction.label}</span>
                             </Button>
                         )}
                         {secondaryAction && (
                             <Button
                                 variant="secondary"
-                                className="h-[50px] min-w-0 flex-1 text-[15px] md:h-11 md:flex-none md:px-5"
+                                size="action"
+                                className="grow md:grow-0"
                                 onClick={secondaryAction.onClick}
                                 disabled={secondaryAction.disabled}
                                 data-testid={secondaryAction.testid}
                             >
                                 {secondaryAction.icon}
-                                <span className="ml-1.5 truncate">{secondaryAction.label}</span>
+                                <span className="ml-1.5">{secondaryAction.label}</span>
                             </Button>
                         )}
                         {menuActions.length > 0 && (
@@ -590,7 +592,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                     <Button
                                         variant="ghost"
                                         aria-label="More actions"
-                                        className="size-[50px] shrink-0 justify-center p-0 text-[15px] md:h-11 md:w-auto md:px-3"
+                                        size="action"
+                                        className="w-11 shrink-0 justify-center p-0 md:w-auto md:px-3"
                                         style={{ color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
                                         data-testid="estimate-more"
                                     >
