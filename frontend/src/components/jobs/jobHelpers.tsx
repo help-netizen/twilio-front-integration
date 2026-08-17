@@ -135,7 +135,7 @@ export function makeMetaColumn(apiName: string, displayName: string): ColumnDef 
 export const STATIC_COLUMNS: Record<string, ColumnDef> = {
     job_number: {
         key: 'job_number', label: '#', sortKey: 'job_number', width: 'w-20',
-        render: (j) => <span className="font-mono text-xs text-muted-foreground">{j.job_number || '—'}</span>,
+        render: (j) => <span className="font-mono text-xs text-muted-foreground">{j.job_seq ?? j.job_number ?? '—'}</span>,
     },
     customer_name: {
         key: 'customer_name', label: 'Customer', sortKey: 'customer_name', width: 'w-48 max-w-[12rem]',

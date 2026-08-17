@@ -66,7 +66,7 @@ export function useJobsExport({
             };
 
             const csvRows = exportJobs.map(j => [
-                j.job_number || '',
+                j.job_seq ?? j.job_number ?? '',
                 (j.tags || []).map(t => t.name).join(', '),
                 j.service_name || j.job_type || '',
                 formatDateOnly(j.end_date),
@@ -93,7 +93,9 @@ export function useJobsExport({
                 ...csvRows.map(row => row.map(escape).join(',')),
             ].join('\n');
 
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            // UTF-8 BOM so Excel decodes non-ASCII (em dashes, accents) instead of
+            // mojibaking "—" into "‚Äî".
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

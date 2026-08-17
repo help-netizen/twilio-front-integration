@@ -31,6 +31,10 @@ export interface LocalJob {
     zb_canceled: boolean;
 
     job_number?: string;
+    /** JOB-NUMBERING-001: per-company sequential "Job #" — shown in card/list/export. */
+    job_seq?: number | null;
+    /** JOB-NUMBERING-001: global 5-char code for durable /j/:code deep links. */
+    public_code?: string | null;
     service_name?: string;
     start_date?: string;
     end_date?: string;
