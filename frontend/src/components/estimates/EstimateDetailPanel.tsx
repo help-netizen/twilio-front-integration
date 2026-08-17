@@ -558,30 +558,30 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     moves — declining for the customer, archiving — sit last in the menu,
                     below a separator, away from the hand reaching for the primary. */}
                 {!editing && (primaryAction || secondaryAction || menuActions.length > 0) && (
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <div className="mt-4 flex items-center gap-2">
                         {primaryAction && (
                             <Button
                                 size="action"
-                                className="grow md:grow-0"
+                                className="min-w-0 grow px-3 md:grow-0 md:px-5"
                                 onClick={primaryAction.onClick}
                                 disabled={primaryAction.disabled}
                                 data-testid={primaryAction.testid}
                             >
-                                {primaryAction.icon}
-                                <span className="ml-1.5">{primaryAction.label}</span>
+                                <span className="hidden md:inline-flex">{primaryAction.icon}</span>
+                                <span className="md:ml-1.5">{primaryAction.label}</span>
                             </Button>
                         )}
                         {secondaryAction && (
                             <Button
                                 variant="secondary"
                                 size="action"
-                                className="grow md:grow-0"
+                                className="min-w-0 grow px-3 md:grow-0 md:px-5"
                                 onClick={secondaryAction.onClick}
                                 disabled={secondaryAction.disabled}
                                 data-testid={secondaryAction.testid}
                             >
-                                {secondaryAction.icon}
-                                <span className="ml-1.5">{secondaryAction.label}</span>
+                                <span className="hidden md:inline-flex">{secondaryAction.icon}</span>
+                                <span className="md:ml-1.5">{secondaryAction.label}</span>
                             </Button>
                         )}
                         {menuActions.length > 0 && (
@@ -593,7 +593,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                         variant="ghost"
                                         aria-label="More actions"
                                         size="action"
-                                        className="ml-auto w-11 shrink-0 justify-center p-0 md:ml-0 md:w-auto md:px-3"
+                                        className="w-11 shrink-0 justify-center p-0 md:w-auto md:px-3"
                                         style={{ color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
                                         data-testid="estimate-more"
                                     >

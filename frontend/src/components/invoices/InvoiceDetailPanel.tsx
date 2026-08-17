@@ -338,7 +338,11 @@ export function InvoiceDetailPanel({
 
     const isDraft = invoice.status === 'draft';
     const sendAction: Action = { key: 'send', label: isDraft ? 'Send invoice' : 'Resend', icon: <Send className="size-4" />, onClick: onSend, testid: 'invoice-send' };
-    const collectAction: Action = { key: 'collect', label: 'Collect payment', icon: <CreditCard className="size-4" />, onClick: onCollect || (() => setCollectOpen(true)), testid: 'collect-open' };
+    // "Collect", not "Collect payment" (owner, 2026-08-17): the card is about
+    // money and the amount sits directly above the button, so the object is
+    // already on screen — the second word only made the button too wide to
+    // share a row. The sheet it opens still says "Collect payment" in full.
+    const collectAction: Action = { key: 'collect', label: 'Collect', icon: <CreditCard className="size-4" />, onClick: onCollect || (() => setCollectOpen(true)), testid: 'collect-open' };
     const editAction: Action = { key: 'edit', label: 'Edit invoice', icon: <Pencil className="size-4" />, onClick: () => setEditing(true), testid: 'invoice-edit' };
     const previewAction: Action = { key: 'preview', label: 'Preview PDF', icon: <Eye className="size-4" />, onClick: previewPdf };
 
@@ -461,17 +465,17 @@ export function InvoiceDetailPanel({
                             of the same row. The stacked bars it replaces cost three rows
                             of screen before the document even started. */}
                         {!editing && (primaryAction || secondaryAction || menuActions.length > 0) ? (
-                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                            <div className="mt-4 flex items-center gap-2">
                                 {primaryAction && (
                                     <Button
                                         type="button"
                                         size="action"
-                                className="grow md:grow-0"
+                                className="min-w-0 grow px-3 md:grow-0 md:px-5"
                                         onClick={primaryAction.onClick}
                                         data-testid={primaryAction.testid}
                                     >
-                                        {primaryAction.icon}
-                                        <span className="ml-1.5">{primaryAction.label}</span>
+                                        <span className="hidden md:inline-flex">{primaryAction.icon}</span>
+                                        <span className="md:ml-1.5">{primaryAction.label}</span>
                                     </Button>
                                 )}
                                 {secondaryAction && (
@@ -479,12 +483,12 @@ export function InvoiceDetailPanel({
                                         type="button"
                                         variant="secondary"
                                         size="action"
-                                className="grow md:grow-0"
+                                className="min-w-0 grow px-3 md:grow-0 md:px-5"
                                         onClick={secondaryAction.onClick}
                                         data-testid={secondaryAction.testid}
                                     >
-                                        {secondaryAction.icon}
-                                        <span className="ml-1.5">{secondaryAction.label}</span>
+                                        <span className="hidden md:inline-flex">{secondaryAction.icon}</span>
+                                        <span className="md:ml-1.5">{secondaryAction.label}</span>
                                     </Button>
                                 )}
                                 {menuActions.length > 0 && (
@@ -498,7 +502,7 @@ export function InvoiceDetailPanel({
                                                 variant="ghost"
                                                 aria-label="More actions"
                                                 size="action"
-                                        className="ml-auto w-11 shrink-0 justify-center p-0 md:ml-0 md:w-auto md:px-3"
+                                        className="w-11 shrink-0 justify-center p-0 md:w-auto md:px-3"
                                                 style={{ color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
                                                 data-testid="invoice-more"
                                             >
@@ -752,7 +756,7 @@ export function InvoiceDetailPanel({
                     {editing ? (
                         <section className="pt-1">
                             <Button type="button" size="action"
-                                className="grow md:grow-0" onClick={explicitSave}>
+                                className="min-w-0 grow px-3 md:grow-0 md:px-5" onClick={explicitSave}>
                                 <Check className="mr-2 size-4" /> Save changes
                             </Button>
                         </section>
