@@ -113,6 +113,7 @@ async function getScheduleItems(opts) {
             SELECT
                 'job' AS entity_type,
                 j.id AS entity_id,
+                j.job_seq AS job_seq,
                 COALESCE(j.service_name, 'Job #' || j.job_number) AS title,
                 COALESCE(c.full_name, j.customer_name) AS subtitle,
                 j.blanc_status AS status,
@@ -173,6 +174,7 @@ async function getScheduleItems(opts) {
             SELECT
                 'lead' AS entity_type,
                 l.id AS entity_id,
+                NULL::int AS job_seq,
                 COALESCE(l.job_type, 'Lead') || ' — ' || COALESCE(l.first_name || ' ' || l.last_name, 'Unknown') AS title,
                 COALESCE(l.first_name || ' ' || l.last_name, l.email, l.phone) AS subtitle,
                 l.status,
@@ -236,6 +238,7 @@ async function getScheduleItems(opts) {
             SELECT
                 'task' AS entity_type,
                 t.id AS entity_id,
+                NULL::int AS job_seq,
                 t.title,
                 '' AS subtitle,
                 t.status,

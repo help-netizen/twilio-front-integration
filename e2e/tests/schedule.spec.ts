@@ -5,9 +5,9 @@ import { JobPanel } from '../pages/JobPanel';
 import { JobsPage } from '../pages/JobsPage';
 import { SchedulePage } from '../pages/SchedulePage';
 
-function jobIdFromUrl(url: string): number {
+function jobSeqFromUrl(url: string): number {
     const match = url.match(/\/jobs\/(\d+)/);
-    if (!match) throw new Error(`Expected a /jobs/:id URL, received ${url}`);
+    if (!match) throw new Error(`Expected a /jobs/:seq URL, received ${url}`);
     return Number(match[1]);
 }
 
@@ -37,7 +37,9 @@ test.describe('@suite:schedule', () => {
             });
 
             await expect(page).toHaveURL(/\/jobs\/\d+$/);
-            const jobId = jobIdFromUrl(page.url());
+            const jobSeq = jobSeqFromUrl(page.url());
+            const resolvedJob = await api.getJobBySeq(jobSeq);
+            const jobId = resolvedJob.id;
             cleanup.push({ type: 'job', id: jobId });
             const created = await api.getJob(jobId);
             expect(created.start_date).toBeTruthy();
@@ -47,7 +49,7 @@ test.describe('@suite:schedule', () => {
                 contact.name,
                 undefined,
                 created.start_date || undefined,
-                String(jobId).padStart(6, '0'),
+                String(jobSeq).padStart(6, '0'),
             );
         } finally {
             await api.cleanup(cleanup);

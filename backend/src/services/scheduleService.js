@@ -52,6 +52,7 @@ function rowToScheduleItem(row) {
     return {
         entity_type: row.entity_type,
         entity_id: row.entity_id,
+        job_seq: row.job_seq ?? null,
         title: row.title,
         subtitle: row.subtitle,
         status: row.status,

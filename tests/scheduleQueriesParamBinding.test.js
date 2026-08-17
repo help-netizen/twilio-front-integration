@@ -71,4 +71,12 @@ describe('getScheduleItems parameter binding', () => {
         });
         unifiedEntries().forEach(assertBindConsistent);
     });
+
+    test('job_seq is selected for jobs and type-aligned to null for leads and tasks', async () => {
+        await scheduleQueries.getScheduleItems({ companyId: 'company-1' });
+
+        const sql = unifiedEntries()[0].sql;
+        expect(sql).toContain('j.job_seq AS job_seq');
+        expect(sql.match(/NULL::int AS job_seq/g)).toHaveLength(2);
+    });
 });

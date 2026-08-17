@@ -12,6 +12,8 @@ const SCHEDULE_BASE = '/api/schedule';
 export interface ScheduleItem {
     entity_type: 'job' | 'lead' | 'task';
     entity_id: number;
+    /** JOB-NUMBERING-001: per-company "Job #" for job items (null for lead/task). */
+    job_seq?: number | null;
     title: string;
     subtitle: string;
     status: string;

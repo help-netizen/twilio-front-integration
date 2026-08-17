@@ -4,9 +4,9 @@ import { hasAdmin, JOBS_NATIVE, JOBS_BLOCKED_REASON } from '../fixtures/env';
 import { JobsPage } from '../pages/JobsPage';
 import { JobPanel } from '../pages/JobPanel';
 
-function jobIdFromUrl(url: string): number {
+function jobSeqFromUrl(url: string): number {
     const match = url.match(/\/jobs\/(\d+)/);
-    if (!match) throw new Error(`Expected a /jobs/:id URL, received ${url}`);
+    if (!match) throw new Error(`Expected a /jobs/:seq URL, received ${url}`);
     return Number(match[1]);
 }
 
@@ -29,7 +29,9 @@ test.describe('@suite:jobs', () => {
             await modal.fillAndSubmit({ contactMarker: contact.name, description: `${marker} description` });
 
             await expect(page).toHaveURL(/\/jobs\/\d+$/);
-            const jobId = jobIdFromUrl(page.url());
+            const jobSeq = jobSeqFromUrl(page.url());
+            const resolvedJob = await api.getJobBySeq(jobSeq);
+            const jobId = resolvedJob.id;
             cleanup.push({ type: 'job', id: jobId });
             await expect(page.getByText(/^Job created/)).toBeVisible();
             await expect(page.getByText(contact.name, { exact: false }).first()).toBeVisible();

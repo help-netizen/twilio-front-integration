@@ -41,6 +41,7 @@ export interface ProvisionedTechnicians {
 
 export interface JobRecord extends JsonObject {
     id: number;
+    job_seq?: number | null;
     start_date?: string | null;
     end_date?: string | null;
     assigned_techs?: Array<{ id?: string; name?: string }>;
@@ -386,6 +387,11 @@ export class ApiClient {
 
     async getJob(id: number): Promise<JobRecord> {
         const data = await this.get<JsonObject>(`/api/jobs/${id}`);
+        return { ...data, id: asNumber(data.id, 'job.id') };
+    }
+
+    async getJobBySeq(seq: number): Promise<JobRecord> {
+        const data = await this.get<JsonObject>(`/api/jobs/by-seq/${seq}`);
         return { ...data, id: asNumber(data.id, 'job.id') };
     }
 

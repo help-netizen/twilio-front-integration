@@ -356,20 +356,20 @@ describe('scheduleService.getRouteSegments — lazy seed wiring (S-9/S-10)', () 
 });
 
 // =============================================================================
-// rowToScheduleItem — TC-RV-31 (city mapper, via getScheduleItems)
+// rowToScheduleItem — TC-RV-31 (city/job_seq mapper, via getScheduleItems)
 // =============================================================================
 
-describe('rowToScheduleItem — city field (S-15/INV-10)', () => {
+describe('rowToScheduleItem — city/job_seq fields (S-15/INV-10)', () => {
     // TC-RV-31: job/lead take city from the row, task (SQL selects NULL) → null;
     // ''/undefined normalize to null; subtitle is NEVER composed on the backend.
     test('TC-RV-31: city mapped per entity, normalized to null, subtitle untouched', async () => {
         scheduleQueries.getDispatchSettings.mockResolvedValue(null);
         scheduleQueries.getScheduleItems.mockResolvedValue({
             rows: [
-                { entity_type: 'job', entity_id: 1, title: 'Fridge', subtitle: 'Ann', status: 'Submitted', start_at: null, end_at: null, address_summary: '', city: 'Boston', customer_name: 'Ann', company_id: CO },
-                { entity_type: 'lead', entity_id: 2, title: 'Lead', subtitle: 'Kim', status: 'New', start_at: null, end_at: null, address_summary: '', city: 'Newton', customer_name: 'Kim', company_id: CO },
-                { entity_type: 'task', entity_id: 3, title: 'Call back', subtitle: '', status: 'open', start_at: null, end_at: null, address_summary: '', city: null, customer_name: '', company_id: CO },
-                { entity_type: 'job', entity_id: 4, title: 'No-city job', subtitle: 'Bob', status: 'Submitted', start_at: null, end_at: null, address_summary: '', city: '', customer_name: 'Bob', company_id: CO },
+                { entity_type: 'job', entity_id: 1, job_seq: 1579, title: 'Fridge', subtitle: 'Ann', status: 'Submitted', start_at: null, end_at: null, address_summary: '', city: 'Boston', customer_name: 'Ann', company_id: CO },
+                { entity_type: 'lead', entity_id: 2, job_seq: null, title: 'Lead', subtitle: 'Kim', status: 'New', start_at: null, end_at: null, address_summary: '', city: 'Newton', customer_name: 'Kim', company_id: CO },
+                { entity_type: 'task', entity_id: 3, job_seq: null, title: 'Call back', subtitle: '', status: 'open', start_at: null, end_at: null, address_summary: '', city: null, customer_name: '', company_id: CO },
+                { entity_type: 'job', entity_id: 4, job_seq: 1580, title: 'No-city job', subtitle: 'Bob', status: 'Submitted', start_at: null, end_at: null, address_summary: '', city: '', customer_name: 'Bob', company_id: CO },
             ],
             total: 4,
         });
@@ -377,6 +377,8 @@ describe('rowToScheduleItem — city field (S-15/INV-10)', () => {
         const { items } = await scheduleService.getScheduleItems(CO, {});
 
         expect(items.map(i => i.city)).toEqual(['Boston', 'Newton', null, null]);
+        expect(items.map(i => i.job_seq)).toEqual([1579, null, null, 1580]);
+        expect(items[0]).toHaveProperty('entity_id', 1);
         // subtitle stays EXACTLY the raw value — no "Customer, City" composition here (INV-10).
         expect(items.map(i => i.subtitle)).toEqual(['Ann', 'Kim', '', 'Bob']);
         expect(items[0].customer_name).toBe('Ann');
