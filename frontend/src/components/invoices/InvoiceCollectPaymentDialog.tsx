@@ -181,7 +181,7 @@ export function InvoiceCollectPaymentDialog({
         <div className="space-y-2.5">
             <Button
                 type="button"
-                className="h-[52px] w-full rounded-[15px] text-[16px] font-semibold"
+                size="action" className="h-[52px] w-full rounded-[15px] text-[16px]"
                 onClick={() => void submit()}
                 disabled={submitting || !!amountError || methods.length === 0}
                 data-testid="collect-charge"
@@ -192,7 +192,7 @@ export function InvoiceCollectPaymentDialog({
             <Button
                 type="button"
                 variant="outline"
-                className="h-[46px] w-full rounded-[14px] text-[15px] font-semibold"
+                size="action" className="h-[46px] w-full rounded-[14px] text-[15px]"
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
             >

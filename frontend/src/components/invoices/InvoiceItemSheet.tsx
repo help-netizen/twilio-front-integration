@@ -121,7 +121,7 @@ export function InvoiceItemSheet({
         <div className="space-y-2.5">
             <Button
                 type="button"
-                className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold"
+                size="action" className="h-[52px] w-full rounded-[15px] text-[15px]"
                 onClick={save}
                 disabled={!canSave || saving}
                 data-testid="invoice-item-save"
@@ -132,7 +132,7 @@ export function InvoiceItemSheet({
             <Button
                 type="button"
                 variant="outline"
-                className="h-[46px] w-full rounded-[13px] text-[15px] font-semibold"
+                size="action" className="h-[46px] w-full rounded-[13px] text-[15px]"
                 onClick={() => onOpenChange(false)}
                 disabled={saving}
             >

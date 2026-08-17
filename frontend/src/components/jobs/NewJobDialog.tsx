@@ -435,7 +435,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                                     <span className="ml-auto text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>Change</span>
                                 </button>
                             ) : (
-                                <Button type="button" variant="secondary" className="w-full justify-center h-[50px] text-[15px] rounded-xl" onClick={() => setTimeOpen(true)}>
+                                <Button type="button" variant="secondary" size="action" className="w-full justify-center h-[50px] text-[15px] rounded-xl" onClick={() => setTimeOpen(true)}>
                                     <Clock className="size-4 mr-2" /> Pick time &amp; provider
                                 </Button>
                             )}

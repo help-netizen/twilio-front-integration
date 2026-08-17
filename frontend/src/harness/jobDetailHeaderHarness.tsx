@@ -38,7 +38,7 @@ function Harness() {
                     <h1 className="text-lg font-semibold mb-1" style={{ color: 'var(--blanc-ink-1)' }}>
                         JobDetailHeader — "Job #" (JOB-NUMBERING-001)
                     </h1>
-                    <p className="text-[12.5px] mb-5" style={{ color: 'var(--blanc-ink-3)' }}>
+                    <p className="blanc-l2 blanc-l2-quiet mb-5" style={{ color: 'var(--blanc-ink-3)' }}>
                         The eyebrow shows job_seq ?? job_number ?? id. Status dropdown is empty (no FSM backend) — expected.
                     </p>
                     <div className="space-y-5">

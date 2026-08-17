@@ -61,7 +61,7 @@ export function InvoiceConfirmDialog({
                         <Button
                             type="button"
                             variant="ghost"
-                            className="h-[46px] rounded-[13px] bg-[var(--blanc-field)] text-[15px] font-semibold text-[var(--blanc-ink-1)]"
+                            size="action" className="h-[46px] rounded-[13px] bg-[var(--blanc-field)] text-[15px] text-[var(--blanc-ink-1)]"
                             onClick={() => onOpenChange(false)}
                             disabled={busy}
                         >

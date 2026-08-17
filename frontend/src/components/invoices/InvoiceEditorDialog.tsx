@@ -389,7 +389,7 @@ export function InvoiceEditorDialog({
     const saveButton = (
         <Button
             type="button"
-            className="h-[52px] w-full rounded-[15px] text-[15px] font-semibold"
+            size="action" className="h-[52px] w-full rounded-[15px] text-[15px]"
             onClick={handleSave}
             disabled={saving || !canSave}
             data-testid="invoice-create-save"
@@ -545,7 +545,7 @@ export function InvoiceEditorDialog({
                                         ))}
                                     </div>
                                 ) : null}
-                                <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-[14px] border-dashed" onClick={openNewItem} data-testid="invoice-add-item">
+                                <Button type="button" variant="outline" size="action" className="mt-3 w-full rounded-[14px] border-dashed" onClick={openNewItem} data-testid="invoice-add-item">
                                     <Plus className="mr-1.5 size-4" /> Add item
                                 </Button>
                             </section>
@@ -640,7 +640,7 @@ export function InvoiceEditorDialog({
                     </DialogBody>
 
                     <DialogPanelFooter className="max-md:hidden">
-                        <Button type="button" variant="outline" className="h-12" onClick={() => requestOpenChange(false)} disabled={saving}>Cancel</Button>
+                        <Button type="button" variant="outline" size="action" className="" onClick={() => requestOpenChange(false)} disabled={saving}>Cancel</Button>
                         <div className="w-full max-w-[280px]">{saveButton}</div>
                     </DialogPanelFooter>
                 </DialogContent>

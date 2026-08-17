@@ -242,7 +242,7 @@ export function InvoicesPage() {
                             <Button
                                 type="button"
                                 variant="outline"
-                                className="mt-4 h-[46px] w-full rounded-[13px] text-[15px] font-semibold"
+                                size="action" className="mt-4 h-[46px] w-full rounded-[13px] text-[15px]"
                                 onClick={page.loadMore}
                                 disabled={page.loadingMore}
                                 data-testid="invoice-load-more"

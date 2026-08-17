@@ -600,7 +600,7 @@ export function InvoiceDetailPanel({
                             </div>
                         )}
                         {editing ? (
-                            <Button type="button" variant="outline" className="mt-3 h-12 w-full rounded-[14px] border-dashed" onClick={openNewItem} data-testid="invoice-add-item">
+                            <Button type="button" variant="outline" size="action" className="mt-3 w-full rounded-[14px] border-dashed" onClick={openNewItem} data-testid="invoice-add-item">
                                 <Plus className="mr-1.5 size-4" /> Add item
                             </Button>
                         ) : null}

@@ -624,7 +624,7 @@ function RadiusPanel({ config, assignments, assignmentDisabled, onManage }: {
                     value={radiusMiles}
                     onChange={event => setRadiusMiles(event.target.value)}
                 />
-                <Button type="submit" className="h-[50px] w-full sm:w-auto" disabled={!canSubmit || addRadiusMut.isPending}>
+                <Button type="submit" size="action" className="h-[50px] w-full sm:w-auto" disabled={!canSubmit || addRadiusMut.isPending}>
                     {addRadiusMut.isPending ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
                     Add coverage
                 </Button>
