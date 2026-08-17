@@ -102,8 +102,8 @@ async function seedRuntimeTuple(
         `INSERT INTO vapi_tenant_resources (
              id, tenant_id, provider_connection_id, environment, sip_uri,
              is_active, company_id, purpose, assistant_profile_id,
-             server_credential_id
-         ) VALUES ($1, $2, $3, 'prod', $4, true, $5, 'inbound_call', $6, $7)`,
+             server_credential_id, status
+         ) VALUES ($1, $2, $3, 'prod', $4, true, $5, 'inbound_call', $6, $7, 'active')`,
         [
             resourceId,
             `tenant-${suffix}`,

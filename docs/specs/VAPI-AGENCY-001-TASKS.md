@@ -200,15 +200,29 @@ backfill, но не становятся альтернативной identity.
 **Цель.** Идемпотентно создать assistant + per-company SIP resource + отдельные
 machine credentials из server-owned template и доказать provider readback.
 
-**Критерии приёмки.** Provisioner имеет plan/apply/readback/repair semantics;
-частичный повтор не дублирует resources; tools/status credentials различны,
-company-bound, hashed, rotate/revoke; platform key только в secret store;
-canonical readback hash управляет `ready`, drift закрывает gate/alert. Enable —
-отдельное platform-manage действие после всех checks. Есть dry-run output без
-секретов и documented human Twilio/line-limit steps.
+**Критерии приёмки.** Реализован dry-run-by-default
+`provision-vapi-agency-company.js` с обязательным `--company-id`: он создаёт три
+assistant из versioned server templates, три разные company-bound hash-at-rest
+credentials и один dynamic SIP resource. После create выполняются PATCH + GET и
+canonical secret-free readback; write-only assistant server secret проверяется
+только флагом, tool secrets — значением без логирования. Durable state сохраняет
+частичный provider id до registry upsert, повтор находит объект по operation
+metadata/SIP URI и не дублирует. Tenant input ограничен greeting; company name
+берётся из БД, prompt/model/URLs/ids запрещены. Финальный registry/resource
+upsert и credential rotation атомарны локально; состояние становится `ready`,
+но не `enabled`. `/org` отсутствует.
 
 **Проверка.**
-`NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProvisioning.test.js tests/vapiAssistantRegistry.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit`
+`unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProvisioning.test.js tests/vapiAgencyProviderClient.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryBootstrap.test.js tests/machineCredentialService.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/vapiAssistantRequest.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"`
+
+Migration transport: `/usr/local/Cellar/postgresql@15/15.15_1/bin/psql postgresql://localhost/albusto_test -v ON_ERROR_STOP=1 -f backend/db/migrations/278_vapi_agency_provisioning_state.sql` ×2.
+
+Результат: T7 targeted 2 suites / 13 tests, acceptance 8 suites / 156 tests,
+функциональная регрессия T1–T7 24 suites / 355 tests; migration transport ×2 PASS.
+
+Sabotage: разрешить неизвестную tenant variable → `SAB-T7-ALLOWLIST` RED;
+отключить discovery по operation metadata → `SAB-T7-IDEMPOTENCE` и
+lost-response repair RED. После восстановления targeted suites green.
 
 **Зависимости:** T1, T5. **Размер/оценка:** L, 6–9 дней. Раздувают provider API
 семантика, rollback частичных объектов и ротация нескольких webhook credentials.
@@ -332,6 +346,14 @@ session→profile/resource FK. В session сохраняет только diagno
 outbound identities. Миграция data-neutral: caller resources создаются только
 dry-run-by-default `bootstrap-vapi-outbound-resource.js` с обязательным
 `--company-id`.
+
+### `vapi_agency_provisioning_state`
+
+Добавляет только durable provisioning state machine и secret-free resource
+readback columns. Не создаёт companies/connections/profiles/resources/credentials,
+не читает env и не обращается к provider. Операционные данные создаёт отдельный
+dry-run-by-default `provision-vapi-agency-company.js`; matching rollback удаляет
+только новую таблицу и три readback columns.
 
 ### `vapi_concurrency_leases`
 

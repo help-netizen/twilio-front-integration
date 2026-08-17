@@ -286,6 +286,23 @@ tenant-bound transient Twilio caller number. Twilio account token/SID остаю
 env только отдельным dry-run-by-default operational CLI; runtime env не является
 источником номера.
 
+#### `vapi_tenant_provisioning_runs` (platform-owned)
+
+| Поле | Назначение |
+|---|---|
+| `id`, `company_id`, `environment`, `operation_key` | один durable provisioning workflow на company/environment; provider marker не является tenant authority |
+| `template_bundle_version`, `input_hash`, `template_variables` | версия server-owned bundle, secret-free hash и только allowlisted `{companyName,greeting}` |
+| `state`, `current_step`, `attempt_count` | `planning → credentials_ready → assistants_pending/ready → resource_pending/ready → ready`; `failed` сохраняет точку ремонта |
+| `provider_assistant_ids`, `provider_resource_id`, `sip_uri` | частичные provider identities, сохраняемые сразу после каждого успешного create/discovery |
+| `assistant_readback_evidence`, `resource_readback_hash` | secret-free canonical hashes, provider timestamps и template versions |
+| `*_credential_id` | company-composite FK на три разные machine surfaces; plaintext отсутствует |
+| `last_error_code`, `last_error_step`, timestamps | безопасная операционная диагностика без provider body/секретов |
+
+Таблица не имеет tenant route. Migration 278 создаёт только эту структуру и
+readback-поля ресурса; ни company, ни credentials, ни provider objects она не
+создаёт. Потерянный ответ после provider create восстанавливается через
+`operation_key` в server-owned metadata ассистента либо детерминированный SIP URI.
+
 ### 5.2 Идентичность и supplier usage
 
 #### `vapi_call_sessions` (новая)
@@ -704,6 +721,40 @@ Legacy direct SIP и новый per-company Vapi resource могут разли�
 provider API, но обязаны реализовать один registry/session/credential контракт.
 T1 фиксирует живые provider fixtures до выбора адаптера.
 
+### Реализованный T7-контракт
+
+`backend/scripts/provision-vapi-agency-company.js` требует `--company-id`, по
+умолчанию выполняет только plan и делает записи лишь с `--apply`. Одна операция:
+
+1. создаёт/ремонтирует локальные connection, voice config и durable run;
+2. через migration-264 substrate создаёт три разные hash-at-rest credentials
+   `vapi_tools`, `vapi_call_status`, `vapi_assistant_request`; plaintext берётся
+   только из per-company deployment secret variables и не логируется;
+3. рендерит три versioned source-controlled template: `inbound_call`,
+   `outbound_lead_call`, `outbound_parts_call`; tenant/provider JSON merge нет;
+4. находит объект по сохранённому id или server-owned provisioning metadata,
+   иначе делает `POST /assistant`, затем всегда `PATCH` и `GET` readback;
+5. создаёт/ремонтирует детерминированный Vapi SIP resource с
+   `assistantId=null` и единственным assistant-request URL, затем делает PATCH/GET;
+6. только после полного readback одной транзакцией активирует registry/resource,
+   отзывает superseded credentials и переводит voice config в `ready` (но не
+   `enabled`).
+
+Assistant `server.secret` проверяется только по
+`isServerUrlSecretSet=true`: Vapi не возвращает его значение. Для
+`model.tools[].server.secret` readback обязан совпасть с переданным секретом, но
+ни readback, ни payload не сохраняются и не логируются. Дополнительные provider
+поля терпимы, обязательная форма, число/порядок tools и все отправленные
+security-relevant поля проверяются fail-closed. Ни один путь T7 не вызывает
+`/org`.
+
+Provider create и локальная БД не образуют общую ACID-транзакцию. Поэтому
+частичный успех не маскируется rollback-ом: provider id/evidence сохраняются по
+шагам, `failed/current_step/last_error_code` видимы, а повторный `--apply`
+находит созданное и дочиняет его без дубля. T7 снимает gate на безопасное
+провижининговое подключение второго tenant; перевод реальных звонков в
+`enabled` остаётся отдельным runtime/admission и money gate.
+
 ## 10. Что удаляется и что мигрирует
 
 ### Удалено в T5
@@ -784,6 +835,13 @@ org/account id, assistant/profile/resource id, SIP URI, environment, template,
 server URL/credential, supplier cost, provider status/readback либо
 `assistantOverrides`. Любое изменение бизнес-настроек проходит server-owned
 template/provisioning contract, а не merge provider JSON.
+
+T7 фиксирует минимальный write-контракт template variables: company name берётся
+из canonical `companies.name`, а единственный прямой tenant-editable параметр
+операции — однострочное `greeting` длиной до 240 символов. Неизвестные поля,
+фигурные скобки, URL и переносы строки отвергаются. Будущий экран может читать
+product-level purpose/readiness/revision и редактировать greeting, но не получает
+provider ids, template/prompt/model, webhook/tool URLs или credential evidence.
 
 ### Tenant projection
 
@@ -911,7 +969,7 @@ platform route/permission и всегда требует явного target com
 | Loss protection: digest + fallback cost | `tests/vapiUsageAlertDelivery.test.js`, `tests/vapiFallbackRating.test.js`, `tests/vapiLossProtectionMigration.test.js`, scheduler/provider/T3/T4 regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageAlertDelivery.test.js tests/vapiFallbackRating.test.js tests/vapiLossProtectionMigration.test.js tests/vapiUsageReconcileScheduler.test.js tests/vapiProviderClient.test.js tests/vapiUsageIngest.test.js tests/vapiUsageAuditRepair.test.js tests/vapiUsageReconcile.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; combined 9 suites / 96 tests, включая 12 новых digest/fallback/migration кейсов; targeted tenant SQL sanitizer — 0 нарушений |
 | T5 registry/surface retirement | registry/migration/bootstrap/identity/routes/tools + inbound/outbound/usage regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistryBootstrap.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryMigration.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/outboundCallService.test.js tests/services/callFlowRuntime.vapi.test.js tests/routes/vapiTenantIsolation.test.js tests/vapiUsageIngest.test.js tests/machineCredentialService.test.js tests/vapiCallStatusWebhook.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/routes/vapi-tools.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 15 suites / 306 tests. Real autocommit migration 275 `psql -v ON_ERROR_STOP=1 -f` ×2: empty без Vapi rows/settings PASS (`0 connections / 0 resources / 0 profiles / 0 configs`), prod-like PASS и legacy data byte-unchanged. Реальный CLI: dry-run writes 0; apply ×2 даёт `3 profiles / 3 credential-bound / 1 resource / readiness=true` |
 | T6 outbound registry/session cutover | outbound placement/workers, registry/bootstrap, identity, provider audit/client, webhook regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/outboundCallService.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/outboundLeadCallWebhook.test.js tests/outboundCancelTenantIsolation.test.js tests/vapiAssistantRegistry.test.js tests/vapiOutboundBootstrap.test.js tests/vapiOutboundIdentity.test.js tests/vapiProviderClient.test.js tests/vapiUsageAuditRepair.test.js tests/vapiCallStatusWebhook.test.js tests/vapiCallIdentity.test.js tests/services/callFlowRuntime.vapi.test.js tests/vapiUsageIngest.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 14 suites / 243 tests. Migration 277 повторно применена в real PostgreSQL suite; caller bootstrap apply ×2 idempotent; inbound hotfix, usage/FSM independence и оба outbound семейства green. |
-| T7 provisioning/readback | `tests/vapiAgencyProvisioning.test.js` + registry/provider siblings | команда определяется в T7 | PENDING |
+| T7 provisioning/readback | provisioning state/CLI/provider contracts + registry/machine/webhook regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProvisioning.test.js tests/vapiAgencyProviderClient.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryBootstrap.test.js tests/machineCredentialService.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/vapiAssistantRequest.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; T7 targeted 2 suites / 13 tests, acceptance 8 suites / 156 tests, функциональная регрессия T1–T7 без старых rollback-suites 24 suites / 355 tests. Migration 278 real `psql -v ON_ERROR_STOP=1 -f` autocommit ×2 PASS. |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
 | Forward/rollback migrations | real disposable PostgreSQL migration suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js tests/vapiUsageIngestMigration.test.js tests/vapiUsageReconcileMigration.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; migration 269 repeat/rollback suite green и реальный autocommit `psql -v ON_ERROR_STOP=1 -f` forward 266→267→269 / rollback 269→267→266 green |
@@ -946,6 +1004,8 @@ forward/rollback migration filenames добавляются в ledger после
 | `SAB-VAPI-OUTBOUND-REGISTRY-FALLBACK` | снова потребовать active registry profile перед outbound session | `vapiUsageIngest` empty assistant registry outbound EoC | RED как требуется: `correlated:false`, observation/usage потеряны; после восстановления targeted тест green |
 | `SAB-VAPI-OUTBOUND-ENV-SOURCE` | вернуть runtime assistant/phone id из env и подменить ими pinned reservation | `outboundCallService` `SAB-T6-ENV` | RED как требуется: foreign env assistant попал в POST; после восстановления targeted test green |
 | `SAB-VAPI-OUTBOUND-ATOMIC-BIND` | вернуть отдельный worker UPDATE attempt после provider POST либо retry при bind failure | `outboundCallService` `SAB-T6-ATOMIC` + оба worker `provider_pending` tests | RED как требуется: bind failure потерял `providerPending`; после восстановления targeted test green |
+| `SAB-VAPI-PROVISIONING-ALLOWLIST` | разрешить CLI/template variables `prompt`, `model`, webhook/assistant/SIP id | `vapiAgencyProvisioning` `SAB-T7-ALLOWLIST` | RED как требуется: временно разрешённый `model` прошёл normalize вместо fail-closed; после восстановления targeted suite green |
+| `SAB-VAPI-PROVISIONING-IDEMPOTENCE` | не искать assistant по durable operation metadata и всегда выполнять create | `vapiAgencyProvisioning` `SAB-T7-IDEMPOTENCE` + lost-response repair | RED как требуется: второй apply создал 6 assistants вместо 3; после восстановления targeted suite green |
 | `SAB-VAPI-OVERRIDE` | прокинуть `assistantOverrides` из request/body | provider-contract override rejection test | PENDING |
 | `SAB-VAPI-COST-IDEMPOTENCY` | убрать observation/charge unique key | duplicate EoC/poll money test | PENDING |
 | `SAB-VAPI-LATE-COST` | считать немедленный одинаковый повтор вторым разнесённым замером | `vapiUsageReconcile` identical immediate poll | RED как требуется: повтор через 30 секунд дал `final` вместо `stable_once`; после восстановления тест green |
