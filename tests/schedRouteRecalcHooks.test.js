@@ -74,7 +74,13 @@ describe('createDirectJob local route hooks', () => {
 
         const result = await jobsService.createDirectJob(COMPANY, INPUT);
 
-        expect(result).toEqual({ job_id: 42, zenbooker_job_id: null, zb_warning: null });
+        expect(result).toEqual({
+            job_id: 42,
+            job_seq: null,
+            public_code: null,
+            zenbooker_job_id: null,
+            zb_warning: null,
+        });
         expect(routeSegmentService.recalcForJob).toHaveBeenCalledTimes(1);
         expect(routeSegmentService.recalcForJob).toHaveBeenCalledWith(
             COMPANY,

@@ -94,13 +94,21 @@ describe('POST /api/jobs — local route contract', () => {
     test('uses req.companyFilter and returns the local-only result', async () => {
         mockCreateDirectJob.mockResolvedValue({
             job_id: 7,
+            job_seq: 19,
+            public_code: 'aB3xZ',
             zenbooker_job_id: null,
             zb_warning: null,
         });
         const res = await request(routeApp({ permissions: ['jobs.create'] }), 'POST', '/', VALID_BODY);
 
         expect(res.status).toBe(200);
-        expect(res.body.data).toEqual({ job_id: 7, zenbooker_job_id: null, zb_warning: null });
+        expect(res.body.data).toEqual({
+            job_id: 7,
+            job_seq: 19,
+            public_code: 'aB3xZ',
+            zenbooker_job_id: null,
+            zb_warning: null,
+        });
         expect(mockCreateDirectJob).toHaveBeenCalledWith(
             COMPANY,
             VALID_BODY,
@@ -190,6 +198,8 @@ describe('jobsService.createDirectJob local persistence', () => {
                 return {
                     rows: [{
                         id: 42,
+                        job_seq: 11,
+                        public_code: 'Q7m2P',
                         company_id: COMPANY,
                         contact_id: 5,
                         blanc_status: 'Submitted',
@@ -227,7 +237,13 @@ describe('jobsService.createDirectJob local persistence', () => {
             description: 'door seal',
         });
 
-        expect(result).toEqual({ job_id: 42, zenbooker_job_id: null, zb_warning: null });
+        expect(result).toEqual({
+            job_id: 42,
+            job_seq: 11,
+            public_code: 'Q7m2P',
+            zenbooker_job_id: null,
+            zb_warning: null,
+        });
         expect(canonicalizeAssignments).toHaveBeenCalledWith(
             COMPANY,
             [{ id: 'tech-7' }]

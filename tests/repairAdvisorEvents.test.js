@@ -352,15 +352,21 @@ describe('REPAIR-ADVISOR-001 — createDirectJob emits job.created (Group E)', (
         jest.dontMock('../backend/src/db/connection');
     });
 
-    it('TC-RA-060: emits job.created exactly once, post-commit, with load-bearing payload + opts; return shape unchanged', async () => {
+    it('TC-RA-060: emits job.created exactly once, post-commit, with load-bearing payload + opts', async () => {
         const emit = jest.fn().mockResolvedValue({});
         const deps = zbFailureDeps(emit);
         const svc = loadJobsService(deps);
 
         const out = await svc.createDirectJob(COMPANY_A, CREATE_INPUT);
 
-        // Return value is byte-for-byte the pre-existing shape (additive-only).
-        expect(out).toEqual({ job_id: JOB_ID, zenbooker_job_id: null, zb_warning: null });
+        // Numbering identifiers are additive; the event contract remains unchanged.
+        expect(out).toEqual({
+            job_id: JOB_ID,
+            job_seq: null,
+            public_code: null,
+            zenbooker_job_id: null,
+            zb_warning: null,
+        });
 
         // Emitted once, with the fields the subscriber reads + the opts from §3.2.
         expect(emit).toHaveBeenCalledTimes(1);
@@ -393,7 +399,13 @@ describe('REPAIR-ADVISOR-001 — createDirectJob emits job.created (Group E)', (
         const out = await svc.createDirectJob(COMPANY_A, CREATE_INPUT);
 
         // Same success result despite the rejecting bus.
-        expect(out).toEqual({ job_id: JOB_ID, zenbooker_job_id: null, zb_warning: null });
+        expect(out).toEqual({
+            job_id: JOB_ID,
+            job_seq: null,
+            public_code: null,
+            zenbooker_job_id: null,
+            zb_warning: null,
+        });
         expect(emit).toHaveBeenCalledTimes(1);
 
         // The .catch(()=>{}) at the emit site swallowed the rejection (no unhandled).

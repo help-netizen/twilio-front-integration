@@ -97,6 +97,8 @@ function rowToJob(row) {
         zb_canceled: row.zb_canceled,
 
         job_number: row.job_number,
+        job_seq: row.job_seq ?? null,
+        public_code: row.public_code || null,
         service_name: row.service_name,
         start_date: row.start_date ? row.start_date.toISOString() : null,
         end_date: row.end_date ? row.end_date.toISOString() : null,
@@ -645,7 +647,13 @@ async function createDirectJob(companyId, input = {}, activityActor = null) {
         }
     }
 
-    return { job_id: localJob.id, zenbooker_job_id: null, zb_warning: null };
+    return {
+        job_id: localJob.id,
+        job_seq: localJob.job_seq,
+        public_code: localJob.public_code,
+        zenbooker_job_id: null,
+        zb_warning: null,
+    };
 }
 
 async function getJobById(id, companyId = null, providerScope = null, { client = null, forUpdate = false } = {}) {
@@ -681,6 +689,58 @@ async function getJobById(id, companyId = null, providerScope = null, { client =
     // no tag child rows; tenant-aware callers resolve tags through the owned Job.
     job.tags = companyId ? await getTagsForJob(id, companyId, queryable) : [];
     return job;
+}
+
+async function getJobBySeq(companyId, jobSeq, providerScope = null, { client = null, forUpdate = false } = {}) {
+    if (!companyId) throw jobsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
+
+    const conditions = ['j.company_id = $1', 'j.job_seq = $2'];
+    const params = [companyId, jobSeq];
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) return null;
+        params.push(JSON.stringify([providerScope.userId]));
+        conditions.push(`j.assigned_provider_user_ids @> $${params.length}::jsonb`);
+    }
+
+    const queryable = client || db;
+    const { rows } = await queryable.query(
+        `SELECT j.*, l.serial_id AS lead_serial_id,
+                COALESCE(c.full_name, j.customer_name) AS customer_name,
+                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email
+         FROM jobs j
+         LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
+         LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
+         WHERE ${conditions.join(' AND ')}
+         ${forUpdate ? 'FOR UPDATE OF j' : ''}`,
+        params
+    );
+    if (rows.length === 0) return null;
+
+    const job = rowToJob(rows[0]);
+    job.tags = await getTagsForJob(job.id, companyId, queryable);
+    return job;
+}
+
+/**
+ * Deliberately global resolver for durable /j/:code links. public_code is globally
+ * unique; the returned company_id and job_seq let the caller establish company
+ * context and redirect to that tenant's /jobs/:seq route.
+ */
+async function getJobByCode(publicCode, { client = null } = {}) {
+    const queryable = client || db;
+    const { rows } = await queryable.query(
+        `SELECT j.*, l.serial_id AS lead_serial_id,
+                COALESCE(c.full_name, j.customer_name) AS customer_name,
+                COALESCE(NULLIF(c.phone_e164, ''), NULLIF(j.customer_phone, '')) AS customer_phone,
+                COALESCE(NULLIF(c.email, ''), NULLIF(j.customer_email, '')) AS customer_email
+         FROM jobs j
+         LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
+         LEFT JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
+         WHERE j.public_code = $1`,
+        [publicCode]
+    );
+    return rows.length === 0 ? null : rowToJob(rows[0]);
 }
 
 async function getJobByZbId(zbJobId, companyId) {
@@ -1755,6 +1815,8 @@ module.exports = {
     createManualJob,
     createDirectJob,
     getJobById,
+    getJobBySeq,
+    getJobByCode,
     getJobByZbId,
     listJobs,
     searchJobsForPicker,
