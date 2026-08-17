@@ -149,7 +149,7 @@ async function onPartArrived(jobId, companyId, client = null) {
  * a write failure here never turns a safe-fail into a throw — the task simply
  * stays open with the dispatcher. Preserves every other action verbatim.
  */
-async function stampRobotCallAction(companyId, taskId, state, reason = null, client = null) {
+async function stampRobotCallAction(companyId, taskId, state, reason = null, client = null, options = {}) {
     const query = queryFor(client, db);
     try {
         const res = await query(
@@ -171,6 +171,7 @@ async function stampRobotCallAction(companyId, taskId, state, reason = null, cli
             [companyId, taskId, JSON.stringify(next)]
         );
     } catch (err) {
+        if (options.strict) throw err;
         console.error('[partsCallService] stampRobotCallAction failed (non-fatal):', err.message);
     }
 }
@@ -179,8 +180,8 @@ async function stampRobotCallAction(companyId, taskId, state, reason = null, cli
  * markRobotCallFailed — kept as the pre-existing call-site API (delegates).
  * Stamps `state:'failed'` + the dispatcher-facing reason (S6, FR-9).
  */
-async function markRobotCallFailed(companyId, taskId, reason, client) {
-    return stampRobotCallAction(companyId, taskId, 'failed', reason, client);
+async function markRobotCallFailed(companyId, taskId, reason, client, options) {
+    return stampRobotCallAction(companyId, taskId, 'failed', reason, client, options);
 }
 
 /**

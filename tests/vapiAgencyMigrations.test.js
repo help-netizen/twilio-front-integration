@@ -45,6 +45,10 @@ test('migration 266 is repeatable, rollback-safe before use, and restores forwar
              ) AS resource_tuple_fk,
              EXISTS (
                  SELECT 1 FROM pg_constraint
+                 WHERE conname = 'fk_vapi_session_request_credential_same_company'
+             ) AS request_credential_company_fk,
+             EXISTS (
+                 SELECT 1 FROM pg_constraint
                  WHERE conname = 'fk_vapi_resource_connection_same_company'
              ) AS resource_connection_fk,
              EXISTS (
@@ -82,7 +86,8 @@ test('migration 266 is repeatable, rollback-safe before use, and restores forwar
         sessions: 'vapi_call_sessions',
         observations: 'vapi_call_usage_observations',
         usage: 'vapi_call_usage',
-        resource_tuple_fk: true,
+        resource_tuple_fk: false,
+        request_credential_company_fk: true,
         resource_connection_fk: true,
         provider_call_unique: true,
         provider_call_index_columns: ['vapi_call_id'],

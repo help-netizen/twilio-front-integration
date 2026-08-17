@@ -12,6 +12,10 @@ const MIGRATION = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '266_vapi_call_identity_and_usage.sql'),
     'utf8',
 );
+const RECOVERY_MIGRATION = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '280_vapi_agency_provisioning_recovery.sql'),
+    'utf8',
+);
 
 let pool;
 let client;
@@ -200,6 +204,7 @@ beforeAll(async () => {
     client = await pool.connect();
     await client.query('BEGIN');
     await client.query(MIGRATION);
+    await client.query(RECOVERY_MIGRATION);
     // T5 columns are exercised here without running the ABC-specific bootstrap;
     // the migration itself has a dedicated integration suite.
     await client.query(`
@@ -210,6 +215,8 @@ beforeAll(async () => {
             ADD COLUMN IF NOT EXISTS call_status_credential_id BIGINT;
         ALTER TABLE vapi_tenant_resources
             ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+        ALTER TABLE vapi_usage_alerts
+            ADD COLUMN IF NOT EXISTS provider_call_id TEXT;
     `);
     await seedCompany(COMPANY_A, 'a');
     await seedCompany(COMPANY_B, 'b');
@@ -239,7 +246,17 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+    await client.query(
+        `DELETE FROM vapi_usage_alerts
+         WHERE company_id = ANY($1::uuid[])`,
+        [[COMPANY_A, COMPANY_B]],
+    );
     await client.query('DELETE FROM vapi_call_sessions');
+    await client.query(
+        `DELETE FROM vapi_company_credential_acceptance
+         WHERE company_id = ANY($1::uuid[])`,
+        [[COMPANY_A, COMPANY_B]],
+    );
     await client.query(
         `UPDATE api_integrations
          SET revoked_at = NULL,
@@ -247,6 +264,13 @@ beforeEach(async () => {
              scopes = '["vapi_assistant_request:invoke"]'::jsonb
          WHERE id = ANY($1::bigint[])`,
         [[credentialA, credentialAOther, credentialB]],
+    );
+    await client.query(
+        `UPDATE api_integrations
+         SET revoked_at = NULL,
+             expires_at = NULL
+         WHERE id = ANY($1::bigint[])`,
+        [[toolsCredentialA, statusCredentialA, toolsCredentialB, statusCredentialB]],
     );
     await client.query(
         `UPDATE vapi_assistant_profiles
@@ -323,6 +347,57 @@ describe('VAPI-AGENCY-001 T2 durable inbound identity', () => {
             state: 'active',
             quarantine_reason: null,
         })]);
+    });
+
+    test('SAB-FIX5: revoked call-status credential does not deny inbound reservation', async () => {
+        await client.query(
+            `UPDATE api_integrations SET revoked_at = now() WHERE id = $1`,
+            [statusCredentialA],
+        );
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const reservation = await reserve(COMPANY_A, 'a');
+
+        expect(reservation).toMatchObject({ companyId: COMPANY_A });
+        expect(await sessionSnapshot(COMPANY_A)).toEqual([expect.objectContaining({
+            state: 'admitted',
+        })]);
+        const alert = await client.query(
+            `SELECT kind, details
+             FROM vapi_usage_alerts
+             WHERE company_id = $1
+               AND vapi_call_session_id = $2`,
+            [COMPANY_A, reservation.sessionId],
+        );
+        expect(alert.rows).toEqual([{
+            kind: 'local_missing',
+            details: { reason: 'call_status_credential_unavailable' },
+        }]);
+        errorSpy.mockRestore();
+    });
+
+    test('revoked tools credential is also an alert, never inbound admission', async () => {
+        await client.query(
+            `UPDATE api_integrations SET revoked_at = now() WHERE id = $1`,
+            [toolsCredentialA],
+        );
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const reservation = await reserve(COMPANY_A, 'a');
+
+        expect(reservation).toMatchObject({ companyId: COMPANY_A });
+        const alert = await client.query(
+            `SELECT kind, details
+             FROM vapi_usage_alerts
+             WHERE company_id = $1
+               AND vapi_call_session_id = $2`,
+            [COMPANY_A, reservation.sessionId],
+        );
+        expect(alert.rows).toEqual([{
+            kind: 'local_missing',
+            details: { reason: 'vapi_tools_credential_unavailable' },
+        }]);
+        errorSpy.mockRestore();
     });
 
     test('duplicate exact bind is idempotent and creates no second session', async () => {
@@ -423,8 +498,15 @@ describe('VAPI-AGENCY-001 T2 durable inbound identity', () => {
         })]);
     });
 
-    test('wrong same-company credential quarantines the session', async () => {
+    test('credential rotation overlap accepts only an explicitly admitted same-company credential', async () => {
         const reservation = await reserve(COMPANY_A, 'a');
+        await client.query(
+            `INSERT INTO vapi_company_credential_acceptance (
+                 company_id, environment, machine_surface, credential_id,
+                 acceptance_state, expires_at
+             ) VALUES ($1, 'prod', 'vapi_assistant_request', $2, 'rotating', NULL)`,
+            [COMPANY_A, credentialAOther],
+        );
         const outcome = await bind(
             COMPANY_A,
             credentialAOther,
@@ -432,15 +514,28 @@ describe('VAPI-AGENCY-001 T2 durable inbound identity', () => {
             'provider-call-wrong-credential',
         );
 
-        expect(outcome).toMatchObject({
-            ok: false,
-            code: 'credential_mismatch',
-            status: 403,
-        });
+        expect(outcome).toMatchObject({ ok: true, providerCallId: 'provider-call-wrong-credential' });
+        expect(await sessionSnapshot(COMPANY_A)).toEqual([expect.objectContaining({
+            vapi_call_id: 'provider-call-wrong-credential',
+            state: 'active',
+            quarantine_reason: null,
+        })]);
+    });
+
+    test('arbitrary active same-company credential is not a substitute for the session pin', async () => {
+        const reservation = await reserve(COMPANY_A, 'a');
+
+        const outcome = await bind(
+            COMPANY_A,
+            credentialAOther,
+            reservation.correlationToken,
+            'provider-call-unadmitted-credential',
+        );
+
+        expect(outcome).toMatchObject({ ok: false, code: 'execution_tuple_drift' });
         expect(await sessionSnapshot(COMPANY_A)).toEqual([expect.objectContaining({
             vapi_call_id: null,
             state: 'quarantined',
-            quarantine_reason: 'credential_mismatch',
         })]);
     });
 
@@ -597,5 +692,36 @@ describe('VAPI-AGENCY-001 T2 durable inbound identity', () => {
             flow_node_id: 'vapi-node-retention',
             state: 'admitted',
         })]);
+    });
+
+    test('FIX-20 unattributed alert persists provider identity and deduplicates on the live table', async () => {
+        const input = {
+            companyId: COMPANY_A,
+            providerCallId: 'provider-call-unattributed-real-table',
+            reason: 'assistant_request_bind_failed',
+        };
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await identity.recordUnattributedInboundCall(input, client);
+        await identity.recordUnattributedInboundCall(input, client);
+
+        const alerts = await client.query(
+            `SELECT company_id, provider_call_id, kind, dedupe_key, details
+             FROM vapi_usage_alerts
+             WHERE company_id = $1
+               AND provider_call_id = $2`,
+            [COMPANY_A, input.providerCallId],
+        );
+        expect(alerts.rows).toEqual([{
+            company_id: COMPANY_A,
+            provider_call_id: input.providerCallId,
+            kind: 'provider_orphan',
+            dedupe_key: `provider_orphan:${input.providerCallId}:assistant_request_unattributed`,
+            details: {
+                providerCallId: input.providerCallId,
+                reason: input.reason,
+            },
+        }]);
+        errorSpy.mockRestore();
     });
 });

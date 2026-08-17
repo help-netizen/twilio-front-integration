@@ -7,6 +7,8 @@ const templates = require('./vapiAgencyAssistantTemplates');
 const { createVapiAgencyProviderClient } = require('./vapiAgencyProviderClient');
 
 const ENVIRONMENT = 'prod';
+const DEFAULT_CREDENTIAL_TTL_DAYS = 365;
+const DEFAULT_ASSISTANT_REQUEST_ROTATION_GRACE_MINUTES = 15;
 const CREDENTIALS = Object.freeze([
     {
         key: 'tools',
@@ -30,10 +32,11 @@ const CREDENTIALS = Object.freeze([
 
 class VapiAgencyProvisioningError extends Error {
     constructor(code, options = {}) {
-        super(code);
+        super(options.message || code, options.cause ? { cause: options.cause } : undefined);
         this.name = 'VapiAgencyProvisioningError';
         this.code = code;
         this.step = options.step || null;
+        this.details = options.details || null;
     }
 }
 
@@ -59,6 +62,28 @@ function safeErrorCode(error) {
     return /^[A-Z0-9_]{3,120}$/.test(value) ? value : 'VAPI_AGENCY_PROVISIONING_FAILED';
 }
 
+function credentialExpiry(environment = process.env, now = new Date()) {
+    const raw = environment.VAPI_TENANT_CREDENTIAL_TTL_DAYS;
+    const days = raw === undefined || raw === ''
+        ? DEFAULT_CREDENTIAL_TTL_DAYS
+        : Number.parseInt(raw, 10);
+    if (!Number.isInteger(days) || days < 30 || days > 730) {
+        throw new VapiAgencyProvisioningError('VAPI_AGENCY_CREDENTIAL_TTL_INVALID');
+    }
+    return new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function assistantRequestRotationGraceMinutes(environment = process.env) {
+    const raw = environment.VAPI_ASSISTANT_REQUEST_ROTATION_GRACE_MINUTES;
+    const minutes = raw === undefined || raw === ''
+        ? DEFAULT_ASSISTANT_REQUEST_ROTATION_GRACE_MINUTES
+        : Number.parseInt(raw, 10);
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 60) {
+        throw new VapiAgencyProvisioningError('VAPI_AGENCY_CREDENTIAL_GRACE_INVALID');
+    }
+    return minutes;
+}
+
 function resolveRuntimeConfig(environment = process.env) {
     const baseUrl = environment.WEBHOOK_BASE_URL
         || environment.CALLBACK_HOSTNAME
@@ -77,20 +102,22 @@ function resolveRuntimeConfig(environment = process.env) {
     } catch (_error) {
         throw new VapiAgencyProvisioningError('VAPI_AGENCY_WEBHOOK_BASE_URL_INVALID');
     }
-    const secrets = templates.validateSecrets({
-        tools: environment.VAPI_TENANT_TOOLS_SECRET,
-        callStatus: environment.VAPI_TENANT_CALL_STATUS_SECRET,
-        assistantRequest: environment.VAPI_TENANT_ASSISTANT_REQUEST_SECRET,
-    });
     return {
         endpoints: {
             toolsUrl: `${origin}/api/vapi-tools`,
             callStatusUrl: `${origin}/api/vapi/call-status`,
             assistantRequestUrl: `${origin}/api/vapi/call-status/assistant-request`,
         },
-        secrets,
         sipHost: environment.VAPI_SIP_HOST || 'sip.vapi.ai',
     };
+}
+
+function generatePreviewSecrets() {
+    return templates.validateSecrets({
+        tools: crypto.randomBytes(36).toString('base64url'),
+        callStatus: crypto.randomBytes(36).toString('base64url'),
+        assistantRequest: crypto.randomBytes(36).toString('base64url'),
+    });
 }
 
 async function loadCompany(client, companyId) {
@@ -104,6 +131,39 @@ async function loadCompany(client, companyId) {
     return requireExactlyOne(result.rows, 'VAPI_AGENCY_COMPANY_REQUIRED');
 }
 
+async function acquireCompanyProvisioningLock(client, companyId) {
+    await client.query(
+        `SELECT pg_advisory_lock(hashtextextended('vapi-agency-provisioning:' || $1, 0))`,
+        [companyId],
+    );
+}
+
+async function releaseCompanyProvisioningLock(client, companyId) {
+    await client.query(
+        `SELECT pg_advisory_unlock(hashtextextended('vapi-agency-provisioning:' || $1, 0))`,
+        [companyId],
+    );
+}
+
+async function resolveTemplateVariables(client, { company, greeting }) {
+    const previous = await client.query(
+        `SELECT state, template_variables, last_successful_template_variables
+         FROM vapi_tenant_provisioning_runs
+         WHERE company_id = $1
+           AND environment = $2`,
+        [company.id, ENVIRONMENT],
+    );
+    const run = previous.rows[0] || null;
+    const durable = run?.last_successful_template_variables
+        && Object.keys(run.last_successful_template_variables).length > 0
+        ? run.last_successful_template_variables
+        : (run?.state === 'ready' ? run.template_variables : {});
+    const candidate = { companyName: company.name };
+    if (greeting !== undefined) candidate.greeting = greeting;
+    else if (durable?.greeting !== undefined) candidate.greeting = durable.greeting;
+    return templates.normalizeTenantVariables(candidate);
+}
+
 function buildInputHash({ variables, runtime }) {
     return templates.hashCanonical({
         templateBundleVersion: templates.BUNDLE_VERSION,
@@ -113,29 +173,150 @@ function buildInputHash({ variables, runtime }) {
     });
 }
 
-async function inspectDryRun(client, { company, variables, runtime }) {
+async function inspectDryRun(client, {
+    company,
+    variables,
+    runtime,
+    provider,
+    adoptExisting = false,
+}) {
     const existing = await client.query(
-        `SELECT state, current_step, attempt_count
+        `SELECT *
          FROM vapi_tenant_provisioning_runs
          WHERE company_id = $1
            AND environment = $2`,
         [company.id, ENVIRONMENT],
     );
-    const operationKey = `dry-run-${company.id}`;
+    const operationKey = existing.rows[0]?.operation_key || `dry-run-${company.id}`;
+    // Dry-run renders the exact provider shape with ephemeral values, but never
+    // persists or returns them. Apply creates a fresh credential per company.
+    const secrets = generatePreviewSecrets();
     const rendered = templates.renderBundle({
         companyId: company.id,
         operationKey,
         variables,
         endpoints: runtime.endpoints,
-        secrets: runtime.secrets,
+        secrets,
     });
     const sip = templates.buildSipResource({
         companyId: company.id,
         companyName: variables.companyName,
         sipHost: runtime.sipHost,
         endpoints: runtime.endpoints,
-        secrets: runtime.secrets,
+        secrets,
     });
+    const [listed, profiles, listedPhones, localResources] = await Promise.all([
+        provider.listAssistants(),
+        client.query(
+            `SELECT purpose, vapi_assistant_id
+             FROM vapi_assistant_profiles
+             WHERE company_id = $1
+               AND environment = $2
+               AND purpose = ANY($3::text[])`,
+            [company.id, ENVIRONMENT, rendered.map(({ purpose }) => purpose)],
+        ),
+        provider.listPhoneNumbers(),
+        client.query(
+            `SELECT vapi_phone_number_id
+             FROM vapi_tenant_resources
+             WHERE company_id = $1
+               AND environment = $2
+               AND purpose = 'inbound_call'`,
+            [company.id, ENVIRONMENT],
+        ),
+    ]);
+    const run = existing.rows[0] || {
+        company_id: company.id,
+        operation_key: operationKey,
+        provider_assistant_ids: {},
+    };
+    const assistantChanges = [];
+    for (const entry of rendered) {
+        const candidates = assistantDiscoveryIds({
+            listed,
+            run,
+            localProfiles: profiles.rows,
+            rendered: entry,
+        });
+        if (candidates.length > 1) {
+            throw new VapiAgencyProvisioningError(
+                'VAPI_AGENCY_ASSISTANT_DISCOVERY_AMBIGUOUS',
+                { step: `assistant:${entry.purpose}:discover` },
+            );
+        }
+        if (candidates.length === 0) {
+            assistantChanges.push({
+                purpose: entry.purpose,
+                assistant_id: null,
+                action: 'create',
+                differing_fields: [],
+            });
+            continue;
+        }
+        const assistantId = candidates[0];
+        const readback = await provider.getAssistant(assistantId);
+        const differingFields = templates.assistantReadbackDifferences(readback, entry);
+        const sameIncompleteOperation = (
+            existing.rows[0]
+            && existing.rows[0].state !== 'ready'
+            && listed.some((assistant) => (
+                assistant.id === assistantId
+                && assistant.metadata?.albustoProvisioningKey === operationKey
+                && assistant.metadata?.albustoCompanyId === company.id
+                && assistant.metadata?.albustoPurpose === entry.purpose
+                && assistant.metadata?.albustoEnvironment === ENVIRONMENT
+            ))
+        );
+        let action;
+        if (adoptExisting) action = 'adopt_existing';
+        else if (sameIncompleteOperation) action = 'repair_existing';
+        else if (existing.rows[0]?.state === 'ready' && differingFields.length === 0) {
+            action = 'verify_existing';
+        } else action = 'adopt_required';
+        assistantChanges.push({
+            purpose: entry.purpose,
+            assistant_id: assistantId,
+            action,
+            differing_fields: differingFields,
+        });
+    }
+    const resourceCandidates = resourceDiscoveryIds({
+        listed: listedPhones,
+        run,
+        localResources: localResources.rows,
+        expectedSipUri: sip.sipUri,
+    });
+    if (resourceCandidates.length > 1) {
+        throw new VapiAgencyProvisioningError(
+            'VAPI_AGENCY_RESOURCE_DISCOVERY_AMBIGUOUS',
+            { step: 'resource:discover' },
+        );
+    }
+    let resourceChange = {
+        resource_id: null,
+        action: 'create',
+        differing_fields: [],
+    };
+    if (resourceCandidates.length === 1) {
+        const providerResourceId = resourceCandidates[0];
+        const readback = await provider.getPhoneNumber(providerResourceId);
+        const differingFields = templates.sipResourceReadbackDifferences(readback, sip);
+        let action;
+        if (adoptExisting) action = 'adopt_existing';
+        else if (
+            existing.rows[0]
+            && existing.rows[0].state !== 'ready'
+            && existing.rows[0].provider_resource_id === providerResourceId
+        ) action = 'repair_existing';
+        else if (existing.rows[0]?.state === 'ready' && differingFields.length === 0) {
+            action = 'verify_existing';
+        } else action = 'adopt_required';
+        resourceChange = {
+            resource_id: providerResourceId,
+            action,
+            differing_fields: differingFields,
+        };
+    }
     return {
         mode: 'dry-run',
         company_id: company.id,
@@ -144,8 +325,67 @@ async function inspectDryRun(client, { company, variables, runtime }) {
         purposes: rendered.map((entry) => entry.purpose),
         sip_uri: sip.sipUri,
         existing_state: existing.rows[0]?.state || null,
+        assistant_changes: assistantChanges,
+        resource_change: resourceChange,
+        requires_adopt_existing: (
+            assistantChanges.some(({ action }) => action === 'adopt_required')
+            || resourceChange.action === 'adopt_required'
+        ),
         writes: false,
-        provider_calls: false,
+        provider_calls: true,
+    };
+}
+
+async function readyRegistryProjection(client, companyId) {
+    const [run, profiles, resource] = await Promise.all([
+        client.query(
+            `SELECT id, state, provider_resource_id, sip_uri
+             FROM vapi_tenant_provisioning_runs
+             WHERE company_id = $1
+               AND environment = $2`,
+            [companyId, ENVIRONMENT],
+        ),
+        client.query(
+            `SELECT id, purpose
+             FROM vapi_assistant_profiles
+             WHERE company_id = $1
+               AND environment = $2
+               AND purpose = ANY($3::text[])
+               AND status = 'active'
+               AND is_active = true`,
+            [companyId, ENVIRONMENT, templates.PURPOSES.map(({ purpose }) => purpose)],
+        ),
+        client.query(
+            `SELECT id
+             FROM vapi_tenant_resources
+             WHERE company_id = $1
+               AND environment = $2
+               AND purpose = 'inbound_call'
+               AND status = 'active'
+               AND is_active = true`,
+            [companyId, ENVIRONMENT],
+        ),
+    ]);
+    if (
+        run.rows.length !== 1
+        || run.rows[0].state !== 'ready'
+        || profiles.rows.length !== templates.PURPOSES.length
+        || resource.rows.length !== 1
+    ) return null;
+    const profileIds = Object.fromEntries(profiles.rows.map((row) => [row.purpose, row.id]));
+    if (templates.PURPOSES.some(({ purpose }) => !profileIds[purpose])) return null;
+    return {
+        mode: 'apply',
+        company_id: companyId,
+        environment: ENVIRONMENT,
+        state: 'ready',
+        run_id: run.rows[0].id,
+        template_bundle_version: templates.BUNDLE_VERSION,
+        profile_ids: profileIds,
+        resource_id: resource.rows[0].id,
+        provider_resource_id: run.rows[0].provider_resource_id,
+        sip_uri: run.rows[0].sip_uri,
+        no_op: true,
     };
 }
 
@@ -153,6 +393,27 @@ async function beginRun(client, { company, variables, inputHash }, options = {})
     const manageTransaction = options.manageTransaction !== false;
     if (manageTransaction) await client.query('BEGIN');
     try {
+        const previousVoiceConfig = await client.query(
+            `SELECT rollout_state
+             FROM vapi_tenant_voice_configs
+             WHERE company_id = $1
+               AND environment = $2
+             FOR UPDATE`,
+            [company.id, ENVIRONMENT],
+        );
+        const currentRolloutState = previousVoiceConfig.rows[0]?.rollout_state || null;
+        let previousRolloutState = currentRolloutState;
+        if (currentRolloutState === 'provisioning') {
+            const priorRun = await client.query(
+                `SELECT previous_rollout_state
+                 FROM vapi_tenant_provisioning_runs
+                 WHERE company_id = $1
+                   AND environment = $2
+                 FOR UPDATE`,
+                [company.id, ENVIRONMENT],
+            );
+            previousRolloutState = priorRun.rows[0]?.previous_rollout_state || null;
+        }
         const connection = await client.query(
             `INSERT INTO provider_connections (
                  id, tenant_id, company_id, provider, environment, status,
@@ -189,14 +450,23 @@ async function beginRun(client, { company, variables, inputHash }, options = {})
         const run = await client.query(
             `INSERT INTO vapi_tenant_provisioning_runs (
                  company_id, environment, template_bundle_version, input_hash,
-                 template_variables, state, current_step, attempt_count, started_at
+                 template_variables, previous_rollout_state,
+                 state, current_step, attempt_count, started_at
              ) VALUES (
-                 $1, $2, $3, $4, $5::jsonb, 'planning', 'planning', 1, now()
+                 $1, $2, $3, $4, $5::jsonb, $6,
+                 'planning', 'planning', 1, now()
              )
              ON CONFLICT (company_id, environment) DO UPDATE
              SET template_bundle_version = EXCLUDED.template_bundle_version,
                  input_hash = EXCLUDED.input_hash,
                  template_variables = EXCLUDED.template_variables,
+                 previous_rollout_state = EXCLUDED.previous_rollout_state,
+                 last_successful_template_variables = CASE
+                     WHEN vapi_tenant_provisioning_runs.state = 'ready'
+                      AND vapi_tenant_provisioning_runs.last_successful_template_variables = '{}'::jsonb
+                         THEN vapi_tenant_provisioning_runs.template_variables
+                     ELSE vapi_tenant_provisioning_runs.last_successful_template_variables
+                 END,
                  state = 'planning',
                  current_step = 'planning',
                  last_error_code = NULL,
@@ -212,6 +482,7 @@ async function beginRun(client, { company, variables, inputHash }, options = {})
                 templates.BUNDLE_VERSION,
                 inputHash,
                 JSON.stringify(variables),
+                previousRolloutState,
             ],
         );
         if (manageTransaction) await client.query('COMMIT');
@@ -228,22 +499,34 @@ async function beginRun(client, { company, variables, inputHash }, options = {})
     }
 }
 
-async function provisionCredentials(client, { companyId, runId, secrets }, options = {}) {
+async function provisionCredentials(client, { companyId, runId }, options = {}) {
     const manageTransaction = options.manageTransaction !== false;
     if (manageTransaction) await client.query('BEGIN');
     try {
         const ids = {};
+        const secrets = {};
         for (const definition of CREDENTIALS) {
             const result = await machineCredentials.provisionCredential({
                 companyId,
                 surface: definition.surface,
                 scopes: [definition.scope],
-                secret: secrets[definition.key],
+                secret: null,
+                expiresAt: credentialExpiry(options.environment || process.env),
                 client,
             });
+            if (!result.created || typeof result.secret !== 'string') {
+                throw new VapiAgencyProvisioningError(
+                    'VAPI_AGENCY_FRESH_CREDENTIAL_SECRET_REQUIRED',
+                    { step: 'credentials' },
+                );
+            }
             ids[definition.key] = String(result.id);
+            secrets[definition.key] = result.secret;
         }
-        if (new Set(Object.values(ids)).size !== CREDENTIALS.length) {
+        if (
+            new Set(Object.values(ids)).size !== CREDENTIALS.length
+            || new Set(Object.values(secrets)).size !== CREDENTIALS.length
+        ) {
             throw new VapiAgencyProvisioningError('VAPI_AGENCY_CREDENTIAL_IDS_NOT_DISTINCT');
         }
         const updated = await client.query(
@@ -260,7 +543,13 @@ async function provisionCredentials(client, { companyId, runId, secrets }, optio
             [ids.tools, ids.callStatus, ids.assistantRequest, runId, companyId],
         );
         if (manageTransaction) await client.query('COMMIT');
-        return requireExactlyOne(updated.rows, 'VAPI_AGENCY_CREDENTIAL_STATE_WRITE_FAILED');
+        return {
+            run: requireExactlyOne(
+                updated.rows,
+                'VAPI_AGENCY_CREDENTIAL_STATE_WRITE_FAILED',
+            ),
+            secrets,
+        };
     } catch (error) {
         if (manageTransaction) await client.query('ROLLBACK').catch(() => {});
         throw error;
@@ -357,6 +646,7 @@ async function provisionAssistants(client, {
     companyId,
     run,
     renderedBundle,
+    adoptExisting = false,
 }) {
     await updateRunStep(client, {
         runId: run.id,
@@ -388,9 +678,51 @@ async function provisionAssistants(client, {
             );
         }
         let assistantId = candidates[0] || null;
+        const createdNow = !assistantId;
+        let repairableExisting = false;
         if (!assistantId) {
             const created = await provider.createAssistant(rendered.config);
             assistantId = created.id;
+        } else {
+            repairableExisting = listed.some((assistant) => (
+                assistant.id === assistantId
+                && assistant.metadata?.albustoProvisioningKey === currentRun.operation_key
+                && assistant.metadata?.albustoCompanyId === companyId
+                && assistant.metadata?.albustoPurpose === rendered.purpose
+                && assistant.metadata?.albustoEnvironment === ENVIRONMENT
+            ));
+            const currentReadback = await provider.getAssistant(assistantId);
+            const differingFields = templates.assistantReadbackDifferences(
+                currentReadback,
+                rendered,
+            );
+            if (differingFields.length > 0 && !adoptExisting && !repairableExisting) {
+                throw new VapiAgencyProvisioningError(
+                    'VAPI_AGENCY_EXISTING_ASSISTANT_DRIFT',
+                    {
+                        step: `assistant:${rendered.purpose}:compare`,
+                        details: {
+                            purpose: rendered.purpose,
+                            assistantId,
+                            differingFields,
+                        },
+                        message: `Existing assistant ${rendered.purpose} differs at: ${differingFields.join(', ')}`,
+                    },
+                );
+            }
+            if (!adoptExisting && !repairableExisting) {
+                throw new VapiAgencyProvisioningError(
+                    'VAPI_AGENCY_EXISTING_ASSISTANT_ADOPTION_REQUIRED',
+                    {
+                        step: `assistant:${rendered.purpose}:compare`,
+                        details: {
+                            purpose: rendered.purpose,
+                            assistantId,
+                            differingFields,
+                        },
+                    },
+                );
+            }
         }
         currentRun = await recordAssistantId(client, {
             runId: run.id,
@@ -398,7 +730,13 @@ async function provisionAssistants(client, {
             purpose: rendered.purpose,
             assistantId,
         });
-        await provider.updateAssistant(assistantId, rendered.config);
+        // Existing objects are patched only with explicit adoption, except an object
+        // carrying this exact durable operation marker after a partial provider success.
+        // That narrow repair exception is required because its write-only secret cannot
+        // be recovered after the previous process died.
+        if (!createdNow && (adoptExisting || repairableExisting)) {
+            await provider.updateAssistant(assistantId, rendered.config);
+        }
         const readback = await provider.getAssistant(assistantId);
         const evidence = templates.verifyAssistantReadback(readback, rendered);
         currentRun = await recordAssistantReadback(client, {
@@ -496,6 +834,58 @@ async function provisionSipResource(client, {
         providerResourceId,
         sipUri: expected.sipUri,
     });
+    // Rotation order is local-before-provider. Only the credential pinned on the
+    // call session or one explicitly listed in this bounded overlap is accepted;
+    // arbitrary active same-company credentials are never authority.
+    const localAcceptance = await client.query(
+        `SELECT id
+         FROM api_integrations
+         WHERE id = $1
+           AND company_id = $2
+           AND machine_surface = 'vapi_assistant_request'
+           AND revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > now())
+           AND scopes ? 'vapi_assistant_request:invoke'`,
+        [currentRun.assistant_request_credential_id, companyId],
+    );
+    if (localAcceptance.rows.length !== 1) {
+        throw new VapiAgencyProvisioningError(
+            'VAPI_AGENCY_ASSISTANT_REQUEST_OVERLAP_NOT_READY',
+            { step: 'resource:credential-overlap' },
+        );
+    }
+    const previousCredential = await client.query(
+        `SELECT server_credential_id
+         FROM vapi_tenant_resources
+         WHERE company_id = $1
+           AND environment = $2
+           AND purpose = 'inbound_call'
+         LIMIT 1`,
+        [companyId, ENVIRONMENT],
+    );
+    const previousCredentialId = previousCredential.rows[0]?.server_credential_id || null;
+    if (previousCredentialId && String(previousCredentialId) !== String(currentRun.assistant_request_credential_id)) {
+        await client.query(
+            `INSERT INTO vapi_company_credential_acceptance (
+                 company_id, environment, machine_surface, credential_id,
+                 acceptance_state, expires_at
+             ) VALUES ($1, $2, 'vapi_assistant_request', $3, 'current', NULL)
+             ON CONFLICT (company_id, environment, machine_surface, credential_id)
+             DO NOTHING`,
+            [companyId, ENVIRONMENT, previousCredentialId],
+        );
+    }
+    await client.query(
+        `INSERT INTO vapi_company_credential_acceptance (
+             company_id, environment, machine_surface, credential_id,
+             acceptance_state, expires_at
+         ) VALUES ($1, $2, 'vapi_assistant_request', $3, 'rotating', NULL)
+         ON CONFLICT (company_id, environment, machine_surface, credential_id)
+         DO UPDATE SET acceptance_state = 'rotating',
+                       expires_at = NULL,
+                       accepted_at = now()`,
+        [companyId, ENVIRONMENT, currentRun.assistant_request_credential_id],
+    );
     await provider.updatePhoneNumber(providerResourceId, expected.config);
     const readback = await provider.getPhoneNumber(providerResourceId);
     const evidence = templates.verifySipResourceReadback(readback, expected);
@@ -629,14 +1019,15 @@ async function finalizeRegistry(client, {
                  id, tenant_id, company_id, provider_connection_id, environment,
                  vapi_phone_number_id, sip_uri, server_url,
                  assistant_request_secret, is_active, purpose,
-                 assistant_profile_id, server_credential_id, status,
+                 assistant_profile_id, server_credential_id,
+                 fallback_vapi_assistant_id, status,
                  resource_type, config_hash, provider_updated_at, last_verified_at
              ) VALUES (
                  $1, $2, $3, $4, $5,
                  $6, $7, $8,
                  NULL, true, 'inbound_call',
-                 $9, $10, 'active',
-                 'sip_destination', $11, $12, now()
+                 $9, $10, $11, 'active',
+                 'sip_destination', $12, $13, now()
              )
              ON CONFLICT (company_id, purpose, environment)
              WHERE company_id IS NOT NULL
@@ -650,6 +1041,7 @@ async function finalizeRegistry(client, {
                  is_active = true,
                  assistant_profile_id = EXCLUDED.assistant_profile_id,
                  server_credential_id = EXCLUDED.server_credential_id,
+                 fallback_vapi_assistant_id = EXCLUDED.fallback_vapi_assistant_id,
                  status = 'active',
                  resource_type = 'sip_destination',
                  config_hash = EXCLUDED.config_hash,
@@ -667,12 +1059,55 @@ async function finalizeRegistry(client, {
                 endpoints.assistantRequestUrl,
                 profileIds.inbound_call,
                 credentialIds.assistantRequest,
+                locked.provider_assistant_ids?.inbound_call,
                 locked.resource_readback_hash,
                 locked.resource_provider_updated_at,
             ],
         );
 
+        const graceMinutes = assistantRequestRotationGraceMinutes(
+            options.environment || process.env,
+        );
+        await client.query(
+            `UPDATE vapi_company_credential_acceptance
+             SET acceptance_state = 'retiring',
+                 expires_at = now() + ($4 * interval '1 minute')
+             WHERE company_id = $1
+               AND environment = $2
+               AND machine_surface = 'vapi_assistant_request'
+               AND credential_id <> $3
+               AND acceptance_state IN ('current', 'rotating')`,
+            [company.id, ENVIRONMENT, credentialIds.assistantRequest, graceMinutes],
+        );
+        await client.query(
+            `INSERT INTO vapi_company_credential_acceptance (
+                 company_id, environment, machine_surface, credential_id,
+                 acceptance_state, expires_at
+             ) VALUES ($1, $2, 'vapi_assistant_request', $3, 'current', NULL)
+             ON CONFLICT (company_id, environment, machine_surface, credential_id)
+             DO UPDATE SET acceptance_state = 'current',
+                           expires_at = NULL,
+                           accepted_at = now()`,
+            [company.id, ENVIRONMENT, credentialIds.assistantRequest],
+        );
+
         for (const definition of CREDENTIALS) {
+            if (definition.surface === machineCredentials.SURFACES.VAPI_ASSISTANT_REQUEST) {
+                await client.query(
+                    `UPDATE api_integrations
+                     SET expires_at = LEAST(
+                             COALESCE(expires_at, now() + ($4 * interval '1 minute')),
+                             now() + ($4 * interval '1 minute')
+                         ),
+                         updated_at = now()
+                     WHERE company_id = $1
+                       AND machine_surface = $2
+                       AND id <> $3
+                       AND revoked_at IS NULL`,
+                    [company.id, definition.surface, credentialIds[definition.key], graceMinutes],
+                );
+                continue;
+            }
             await client.query(
                 `UPDATE api_integrations
                  SET revoked_at = now(),
@@ -713,6 +1148,7 @@ async function finalizeRegistry(client, {
             `UPDATE vapi_tenant_provisioning_runs
              SET state = 'ready',
                  current_step = 'ready',
+                 last_successful_template_variables = template_variables,
                  last_error_code = NULL,
                  last_error_step = NULL,
                  verified_at = now(),
@@ -736,7 +1172,7 @@ async function finalizeRegistry(client, {
 
 async function recordFailure(client, { runId, companyId, step, error }) {
     if (!runId) return;
-    await client.query(
+    const failed = await client.query(
         `UPDATE vapi_tenant_provisioning_runs
          SET state = 'failed',
              current_step = $1,
@@ -744,15 +1180,38 @@ async function recordFailure(client, { runId, companyId, step, error }) {
              last_error_step = $1,
              updated_at = now()
          WHERE id = $3
-           AND company_id = $4`,
+           AND company_id = $4
+         RETURNING previous_rollout_state`,
         [step || 'unknown', safeErrorCode(error), runId, companyId],
     );
+    if (failed.rows.length !== 1) return;
+    const previousRolloutState = failed.rows[0].previous_rollout_state;
+    if (previousRolloutState) {
+        await client.query(
+            `UPDATE vapi_tenant_voice_configs
+             SET rollout_state = $1,
+                 updated_at = now()
+             WHERE company_id = $2
+               AND environment = $3
+               AND rollout_state = 'provisioning'`,
+            [previousRolloutState, companyId, ENVIRONMENT],
+        );
+    } else {
+        await client.query(
+            `DELETE FROM vapi_tenant_voice_configs
+             WHERE company_id = $1
+               AND environment = $2
+               AND rollout_state = 'provisioning'`,
+            [companyId, ENVIRONMENT],
+        );
+    }
 }
 
 async function provisionCompany({
     companyId,
-    greeting = null,
+    greeting,
     apply = false,
+    adoptExisting = false,
 }, dependencies = {}) {
     const runtime = resolveRuntimeConfig(dependencies.environment || process.env);
     const externalClient = dependencies.client || null;
@@ -760,13 +1219,67 @@ async function provisionCompany({
     const manageTransaction = dependencies.manageTransactions !== false;
     let runId = null;
     let step = 'planning';
+    let lockAcquired = false;
+    let unlockFailed = false;
     try {
+        if (apply) {
+            await acquireCompanyProvisioningLock(client, companyId);
+            lockAcquired = true;
+        }
         const company = await loadCompany(client, companyId);
-        const variables = templates.normalizeTenantVariables({
-            companyName: company.name,
-            ...(greeting ? { greeting } : {}),
+        const variables = await resolveTemplateVariables(client, {
+            company,
+            greeting,
         });
-        if (!apply) return inspectDryRun(client, { company, variables, runtime });
+        const provider = dependencies.provider || createVapiAgencyProviderClient({
+            apiKeyProvider: () => (dependencies.environment || process.env).VAPI_API_KEY,
+            ...(dependencies.providerClientOptions || {}),
+        });
+        const inspection = await inspectDryRun(client, {
+            company,
+            variables,
+            runtime,
+            provider,
+            adoptExisting,
+        });
+        if (!apply) return inspection;
+        if (inspection.requires_adopt_existing) {
+            const differingFields = [
+                ...inspection.assistant_changes.flatMap((entry) => (
+                    entry.differing_fields.map((field) => `${entry.purpose}:${field}`)
+                )),
+                ...inspection.resource_change.differing_fields.map((field) => (
+                    `inbound_resource:${field}`
+                )),
+            ];
+            const hasProviderDrift = differingFields.length > 0;
+            throw new VapiAgencyProvisioningError(
+                hasProviderDrift
+                    ? 'VAPI_AGENCY_EXISTING_ASSISTANT_DRIFT'
+                    : 'VAPI_AGENCY_EXISTING_PROVIDER_ADOPTION_REQUIRED',
+                {
+                    step: 'preflight:provider-drift',
+                    details: { differingFields },
+                    message: hasProviderDrift
+                        ? `Existing provider configuration differs at: ${differingFields.join(', ')}`
+                        : 'Existing provider objects require --adopt-existing because write-only secrets cannot be verified',
+                },
+            );
+        }
+        if (inspection.existing_state === 'ready' && !adoptExisting) {
+            const allProviderObjectsMatch = (
+                inspection.assistant_changes.every(({ action }) => action === 'verify_existing')
+                && inspection.resource_change.action === 'verify_existing'
+            );
+            const projection = allProviderObjectsMatch
+                ? await readyRegistryProjection(client, company.id)
+                : null;
+            if (projection) return projection;
+            throw new VapiAgencyProvisioningError(
+                'VAPI_AGENCY_READY_REPAIR_REQUIRES_ADOPTION',
+                { step: 'preflight:ready-repair' },
+            );
+        }
 
         const inputHash = buildInputHash({ variables, runtime });
         const initialized = await beginRun(
@@ -776,38 +1289,38 @@ async function provisionCompany({
         );
         let run = initialized.run;
         runId = run.id;
+        step = 'credentials';
+        const credentialState = await provisionCredentials(client, {
+            companyId: company.id,
+            runId,
+        }, {
+            manageTransaction,
+            environment: dependencies.environment || process.env,
+        });
+        run = credentialState.run;
+
         const renderedBundle = templates.renderBundle({
             companyId: company.id,
             operationKey: run.operation_key,
             variables,
             endpoints: runtime.endpoints,
-            secrets: runtime.secrets,
+            secrets: credentialState.secrets,
         });
         const expectedSip = templates.buildSipResource({
             companyId: company.id,
             companyName: variables.companyName,
             sipHost: runtime.sipHost,
             endpoints: runtime.endpoints,
-            secrets: runtime.secrets,
+            secrets: credentialState.secrets,
         });
 
-        step = 'credentials';
-        run = await provisionCredentials(client, {
-            companyId: company.id,
-            runId,
-            secrets: runtime.secrets,
-        }, { manageTransaction });
-
-        const provider = dependencies.provider || createVapiAgencyProviderClient({
-            apiKeyProvider: () => (dependencies.environment || process.env).VAPI_API_KEY,
-            ...(dependencies.providerClientOptions || {}),
-        });
         step = 'assistants';
         run = await provisionAssistants(client, {
             provider,
             companyId: company.id,
             run,
             renderedBundle,
+            adoptExisting,
         });
         step = 'resource';
         run = await provisionSipResource(client, {
@@ -823,7 +1336,10 @@ async function provisionCompany({
             run,
             renderedBundle,
             endpoints: runtime.endpoints,
-        }, { manageTransaction });
+        }, {
+            manageTransaction,
+            environment: dependencies.environment || process.env,
+        });
         return {
             mode: 'apply',
             company_id: company.id,
@@ -844,9 +1360,18 @@ async function provisionCompany({
             || error instanceof machineCredentials.MachineCredentialError
             || error?.name === 'VapiAgencyProviderError'
         ) throw error;
-        throw new VapiAgencyProvisioningError('VAPI_AGENCY_PROVISIONING_FAILED', { step });
+        throw new VapiAgencyProvisioningError(
+            'VAPI_AGENCY_PROVISIONING_FAILED',
+            { step, cause: error },
+        );
     } finally {
-        if (!externalClient) client.release();
+        if (lockAcquired) {
+            await releaseCompanyProvisioningLock(client, companyId).catch((error) => {
+                unlockFailed = true;
+                console.error('[vapiAgencyProvisioning] advisory unlock failed:', error.message);
+            });
+        }
+        if (!externalClient) client.release(unlockFailed);
     }
 }
 
@@ -856,7 +1381,12 @@ module.exports = {
     VapiAgencyProvisioningError,
     resolveRuntimeConfig,
     buildInputHash,
+    credentialExpiry,
+    assistantRequestRotationGraceMinutes,
     loadCompany,
+    resolveTemplateVariables,
+    acquireCompanyProvisioningLock,
+    releaseCompanyProvisioningLock,
     inspectDryRun,
     beginRun,
     provisionCredentials,

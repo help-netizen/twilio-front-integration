@@ -37,6 +37,9 @@ jest.mock('../backend/src/services/groupRouting', () => ({
 jest.mock('../backend/src/services/vapiCallTimelineService', () => ({
     recordPlacement: jest.fn(),
 }));
+jest.mock('../backend/src/services/vapiCallIdentityService', () => ({
+    reapStaleOutboundPlacements: jest.fn(),
+}));
 jest.mock('../backend/src/services/partsCallService', () => ({
     isChainCanceled: jest.fn(),
     markRobotCallCanceled: jest.fn(),
@@ -70,6 +73,7 @@ const outboundCallService = require('../backend/src/services/outboundCallService
 const partsSettings = require('../backend/src/services/outboundCallSettingsService');
 const groupRouting = require('../backend/src/services/groupRouting');
 const vapiCallTimeline = require('../backend/src/services/vapiCallTimelineService');
+const vapiCallIdentity = require('../backend/src/services/vapiCallIdentityService');
 const partsCallService = require('../backend/src/services/partsCallService');
 const marketplaceService = require('../backend/src/services/marketplaceService');
 const scheduleService = require('../backend/src/services/scheduleService');
@@ -180,6 +184,7 @@ beforeEach(() => {
     companyProfileService.getProfile.mockResolvedValue({ name: 'ABC Homes' });
     outboundCallService.placeCall.mockResolvedValue({ ok: true, vapiCallId: 'vapi_lead_1' });
     vapiCallTimeline.recordPlacement.mockResolvedValue(undefined);
+    vapiCallIdentity.reapStaleOutboundPlacements.mockResolvedValue([]);
     timelinesQueries.findOrCreateTimeline.mockResolvedValue({ id: 321 });
     timelinesQueries.createTask.mockResolvedValue({ id: 555 });
 
@@ -461,6 +466,23 @@ describe('TC-OLC-025: placement failure → ladder', () => {
         expect(terminateCalls()).toHaveLength(0);
         expect(ladderInserts()).toHaveLength(0);
         expect(vapiCallTimeline.recordPlacement).not.toHaveBeenCalled();
+    });
+
+    it('stale provider_pending creates a P1 review task without a retry', async () => {
+        await svc.handleProviderPendingExhausted({
+            ...mkLeadAttempt(),
+            attempt_id: '700',
+        });
+        expect(timelinesQueries.createTask).toHaveBeenCalledWith(
+            expect.objectContaining({
+                priority: 'p1',
+                title: expect.stringContaining('outcome unknown'),
+                description: expect.stringContaining('No automatic retry was placed'),
+            }),
+            expect.objectContaining({ query: expect.any(Function) }),
+        );
+        expect(ladderInserts()).toHaveLength(0);
+        expect(outboundCallService.placeCall).not.toHaveBeenCalled();
     });
 });
 

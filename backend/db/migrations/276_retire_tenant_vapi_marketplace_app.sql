@@ -19,16 +19,3 @@ SET status = 'disabled',
     ),
     updated_at = now()
 WHERE app_key = 'vapi-ai';
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM marketplace_apps
-        WHERE app_key = 'vapi-ai'
-          AND status = 'disabled'
-    ) THEN
-        RAISE EXCEPTION
-            'VAPI_AGENCY_276_LEGACY_APP_REQUIRED: expected the retired vapi-ai Marketplace row';
-    END IF;
-END $$;

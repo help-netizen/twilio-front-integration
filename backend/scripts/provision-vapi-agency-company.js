@@ -15,7 +15,7 @@ class VapiAgencyCliError extends Error {
 }
 
 function parseArgs(argv) {
-    const args = { apply: false, greeting: null };
+    const args = { apply: false, adoptExisting: false };
     let explicitDryRun = false;
     for (let index = 0; index < argv.length; index += 1) {
         const token = argv[index];
@@ -31,6 +31,8 @@ function parseArgs(argv) {
             args.greeting = token.slice('--greeting='.length);
         } else if (token === '--apply') {
             args.apply = true;
+        } else if (token === '--adopt-existing') {
+            args.adoptExisting = true;
         } else if (token === '--dry-run') {
             explicitDryRun = true;
         } else {
@@ -43,7 +45,7 @@ function parseArgs(argv) {
     if (args.apply && explicitDryRun) {
         throw new VapiAgencyCliError('VAPI_AGENCY_CLI_MODE_CONFLICT');
     }
-    if (args.greeting !== null && typeof args.greeting !== 'string') {
+    if (args.greeting !== undefined && typeof args.greeting !== 'string') {
         throw new VapiAgencyCliError('VAPI_AGENCY_CLI_GREETING_INVALID');
     }
     return args;
@@ -62,7 +64,13 @@ async function run(argv = process.argv.slice(2), dependencies = {}) {
 if (require.main === module) {
     run()
         .catch((error) => {
-            console.error('Vapi agency company provisioning failed:', error?.code || 'UNKNOWN');
+            const differingFields = Array.isArray(error?.details?.differingFields)
+                ? ` differing_fields=${error.details.differingFields.join(',')}`
+                : '';
+            console.error(
+                'Vapi agency company provisioning failed:',
+                `${error?.code || 'UNKNOWN'}${differingFields}`,
+            );
             process.exitCode = 1;
         })
         .finally(() => db.pool.end().catch(() => {}));

@@ -13,6 +13,7 @@ const templates = require('../backend/src/services/vapiAgencyAssistantTemplates'
 
 const COMPANY = '40000000-0000-4000-8000-000000000007';
 const FOREIGN_COMPANY = '40000000-0000-4000-8000-000000000008';
+const CONCURRENT_COMPANY = '40000000-0000-4000-8000-000000000009';
 const readMigration = (name) => fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', name),
     'utf8',
@@ -22,11 +23,9 @@ const PREREQUISITE_MIGRATIONS = [
     readMigration('277_vapi_outbound_registry_sessions.sql'),
 ];
 const MIGRATION = readMigration('278_vapi_agency_provisioning_state.sql');
+const RECOVERY_MIGRATION = readMigration('280_vapi_agency_provisioning_recovery.sql');
 const ENVIRONMENT = Object.freeze({
     VAPI_API_KEY: 'platform-key-never-logged',
-    VAPI_TENANT_TOOLS_SECRET: 'tools-secret-'.padEnd(48, 't'),
-    VAPI_TENANT_CALL_STATUS_SECRET: 'status-secret-'.padEnd(48, 's'),
-    VAPI_TENANT_ASSISTANT_REQUEST_SECRET: 'request-secret-'.padEnd(48, 'r'),
     WEBHOOK_BASE_URL: 'https://provisioning.example.test',
     VAPI_SIP_HOST: 'sip.vapi.ai',
 });
@@ -99,7 +98,7 @@ function createFakeProvider(options = {}) {
         async createAssistant(config) {
             calls.createAssistant += 1;
             assistantSequence += 1;
-            const id = providerId('assistant', assistantSequence);
+            const id = providerId(options.assistantIdPrefix || 'assistant', assistantSequence);
             assistants.set(id, clone(config));
             if (loseCreateResponse) {
                 loseCreateResponse = false;
@@ -127,13 +126,14 @@ function createFakeProvider(options = {}) {
         async createPhoneNumber(config) {
             calls.createPhoneNumber += 1;
             phoneSequence += 1;
-            const id = providerId('phone', phoneSequence);
+            const id = providerId(options.phoneIdPrefix || 'phone', phoneSequence);
             phones.set(id, clone(config));
             return phoneReadback(id, config);
         },
         async updatePhoneNumber(id, config) {
             calls.updatePhoneNumber += 1;
             if (!phones.has(id)) throw new Error('phone missing');
+            if (options.beforeUpdatePhone) await options.beforeUpdatePhone({ id, config });
             phones.set(id, clone(config));
             return phoneReadback(id, config);
         },
@@ -144,26 +144,53 @@ function createFakeProvider(options = {}) {
     };
 }
 
+function providerSecretsForCompany(provider, companyId) {
+    const assistants = [...provider.assistants.values()].filter((config) => (
+        config.metadata?.albustoCompanyId === companyId
+    ));
+    expect(assistants).toHaveLength(3);
+    const tools = new Set(assistants.flatMap((config) => (
+        config.model.tools.map((tool) => tool.server.secret)
+    )));
+    const callStatus = new Set(assistants.map((config) => config.server.secret));
+    const phone = [...provider.phones.values()].find((config) => (
+        config.sipUri.includes(companyId.replaceAll('-', ''))
+    ));
+    expect(tools.size).toBe(1);
+    expect(callStatus.size).toBe(1);
+    expect(phone).toBeDefined();
+    return {
+        tools: [...tools][0],
+        callStatus: [...callStatus][0],
+        assistantRequest: phone.server.secret,
+    };
+}
+
 let pool;
 let client;
 
-async function cleanCompany(companyId) {
-    await client.query(`DELETE FROM vapi_call_sessions WHERE company_id = $1`, [companyId]);
-    await client.query(`DELETE FROM vapi_tenant_resources WHERE company_id = $1`, [companyId]);
-    await client.query(`DELETE FROM vapi_assistant_profiles WHERE company_id = $1`, [companyId]);
-    await client.query(`DELETE FROM vapi_tenant_provisioning_runs WHERE company_id = $1`, [companyId]);
-    await client.query(`DELETE FROM vapi_tenant_voice_configs WHERE company_id = $1`, [companyId]);
-    await client.query(
+async function cleanCompanyWithQuery(query, companyId) {
+    await query(`DELETE FROM vapi_call_sessions WHERE company_id = $1`, [companyId]);
+    await query(`DELETE FROM vapi_company_credential_acceptance WHERE company_id = $1`, [companyId]);
+    await query(`DELETE FROM vapi_tenant_resources WHERE company_id = $1`, [companyId]);
+    await query(`DELETE FROM vapi_assistant_profiles WHERE company_id = $1`, [companyId]);
+    await query(`DELETE FROM vapi_tenant_provisioning_runs WHERE company_id = $1`, [companyId]);
+    await query(`DELETE FROM vapi_tenant_voice_configs WHERE company_id = $1`, [companyId]);
+    await query(
         `DELETE FROM provider_connections WHERE company_id = $1 AND provider = 'vapi'`,
         [companyId],
     );
-    await client.query(
+    await query(
         `DELETE FROM api_integrations
          WHERE company_id = $1
            AND machine_surface IN ('vapi_tools', 'vapi_call_status', 'vapi_assistant_request')`,
         [companyId],
     );
-    await client.query(`DELETE FROM companies WHERE id = $1`, [companyId]);
+    await query(`DELETE FROM companies WHERE id = $1`, [companyId]);
+}
+
+async function cleanCompany(companyId) {
+    return cleanCompanyWithQuery(client.query.bind(client), companyId);
 }
 
 async function seedCompany(companyId, suffix) {
@@ -190,11 +217,14 @@ async function runApply(provider, overrides = {}) {
 
 beforeAll(async () => {
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    for (const migration of PREREQUISITE_MIGRATIONS) await pool.query(migration);
+    await pool.query(MIGRATION);
+    await pool.query(MIGRATION);
+    await pool.query(RECOVERY_MIGRATION);
+    await pool.query(RECOVERY_MIGRATION);
+    await cleanCompanyWithQuery(pool.query.bind(pool), CONCURRENT_COMPANY);
     client = await pool.connect();
     await client.query('BEGIN');
-    for (const migration of PREREQUISITE_MIGRATIONS) await client.query(migration);
-    await client.query(MIGRATION);
-    await client.query(MIGRATION);
 });
 
 beforeEach(async () => {
@@ -216,10 +246,12 @@ afterAll(async () => {
 });
 
 test('migration is data-neutral and repeatable', () => {
-    expect(MIGRATION).not.toMatch(/^(?:INSERT|UPDATE|DELETE)\b/im);
-    expect(MIGRATION).not.toContain('current_setting');
-    expect(MIGRATION).not.toContain('RAISE EXCEPTION');
-    expect(MIGRATION).not.toContain('VAPI_API_KEY');
+    for (const migration of [MIGRATION, RECOVERY_MIGRATION]) {
+        expect(migration).not.toMatch(/^(?:INSERT|UPDATE|DELETE)\b/im);
+        expect(migration).not.toContain('current_setting');
+        expect(migration).not.toContain('RAISE EXCEPTION');
+        expect(migration).not.toContain('VAPI_API_KEY');
+    }
 });
 
 test('dry-run performs no local or provider writes', async () => {
@@ -238,10 +270,12 @@ test('dry-run performs no local or provider writes', async () => {
         mode: 'dry-run',
         company_id: COMPANY,
         writes: false,
-        provider_calls: false,
+        provider_calls: true,
         purposes: ['inbound_call', 'outbound_lead_call', 'outbound_parts_call'],
     });
-    expect(Object.values(provider.calls).every((count) => count === 0)).toBe(true);
+    expect(provider.calls.listAssistants).toBe(1);
+    expect(provider.calls.createAssistant).toBe(0);
+    expect(provider.calls.updateAssistant).toBe(0);
     const counts = await client.query(
         `SELECT
              (SELECT COUNT(*)::int FROM vapi_tenant_provisioning_runs WHERE company_id = $1) AS runs,
@@ -275,7 +309,9 @@ test('SAB-T7-IDEMPOTENCE: second apply repairs in place without provider or regi
              (SELECT COUNT(*)::int FROM vapi_tenant_resources WHERE company_id = $1 AND purpose = 'inbound_call') AS resources,
              (SELECT COUNT(*)::int FROM api_integrations WHERE company_id = $1 AND machine_surface LIKE 'vapi_%' AND revoked_at IS NULL) AS credentials,
              (SELECT state FROM vapi_tenant_provisioning_runs WHERE company_id = $1) AS run_state,
-             (SELECT rollout_state FROM vapi_tenant_voice_configs WHERE company_id = $1) AS rollout_state`,
+             (SELECT rollout_state FROM vapi_tenant_voice_configs WHERE company_id = $1) AS rollout_state,
+             (SELECT fallback_vapi_assistant_id FROM vapi_tenant_resources
+              WHERE company_id = $1 AND purpose = 'inbound_call') AS fallback_assistant_id`,
         [COMPANY],
     );
     expect(state.rows[0]).toEqual({
@@ -284,6 +320,7 @@ test('SAB-T7-IDEMPOTENCE: second apply repairs in place without provider or regi
         credentials: 3,
         run_state: 'ready',
         rollout_state: 'ready',
+        fallback_assistant_id: expect.any(String),
     });
 
     const inbound = provider.assistants.get(
@@ -293,11 +330,15 @@ test('SAB-T7-IDEMPOTENCE: second apply repairs in place without provider or regi
     );
     expect(inbound.firstMessage).toBe('Thanks for calling Agency Repair. How can I help?');
     expect(inbound.server.url).toBe('https://provisioning.example.test/api/vapi/call-status');
+    const secrets = providerSecretsForCompany(provider, COMPANY);
+    expect(new Set(Object.values(secrets)).size).toBe(3);
     expect(inbound.model.tools.every((tool) => (
         tool.server.url === 'https://provisioning.example.test/api/vapi-tools'
-        && tool.server.secret === ENVIRONMENT.VAPI_TENANT_TOOLS_SECRET
+        && tool.server.secret === secrets.tools
     ))).toBe(true);
-    expect(logs.join('\n')).not.toContain(ENVIRONMENT.VAPI_TENANT_TOOLS_SECRET);
+    for (const secret of Object.values(secrets)) {
+        expect(logs.join('\n')).not.toContain(secret);
+    }
 });
 
 test('lost response after provider assistant creation is visible and retry discovers the object', async () => {
@@ -324,14 +365,261 @@ test('lost response after provider assistant creation is visible and retry disco
     expect(provider.assistants.size).toBe(3);
 });
 
+test('failed apply restores the prior rollout state instead of leaving provisioning', async () => {
+    const provider = createFakeProvider({ assistantSecretFlag: false });
+    await client.query(
+        `INSERT INTO vapi_tenant_voice_configs (
+             company_id, environment, rollout_state, readiness_evidence
+         ) VALUES ($1, 'prod', 'enabled', '{}'::jsonb)`,
+        [COMPANY],
+    );
+
+    await expect(runApply(provider)).rejects.toMatchObject({
+        code: 'VAPI_AGENCY_ASSISTANT_SERVER_SECRET_UNSET',
+    });
+
+    const state = await client.query(
+        `SELECT rollout_state
+         FROM vapi_tenant_voice_configs
+         WHERE company_id = $1 AND environment = 'prod'`,
+        [COMPANY],
+    );
+    expect(state.rows).toEqual([{ rollout_state: 'enabled' }]);
+});
+
+test('FIX-22 repeated begin while already provisioning preserves the original rollout state', async () => {
+    await client.query(
+        `INSERT INTO vapi_tenant_voice_configs (
+             company_id, environment, rollout_state, readiness_evidence
+         ) VALUES ($1, 'prod', 'enabled', '{}'::jsonb)`,
+        [COMPANY],
+    );
+    const company = await provisioning.loadCompany(client, COMPANY);
+    const variables = templates.normalizeTenantVariables({ companyName: company.name });
+    const first = await provisioning.beginRun(client, {
+        company,
+        variables,
+        inputHash: 'first-interrupted-run',
+    }, { manageTransaction: false });
+    expect(first.run.previous_rollout_state).toBe('enabled');
+
+    const second = await provisioning.beginRun(client, {
+        company,
+        variables,
+        inputHash: 'second-repair-run',
+    }, { manageTransaction: false });
+    expect(second.run.previous_rollout_state).toBe('enabled');
+    await provisioning.recordFailure(client, {
+        runId: second.run.id,
+        companyId: COMPANY,
+        step: 'assistants',
+        error: Object.assign(new Error('provider down'), { code: 'PROVIDER_DOWN' }),
+    });
+
+    const state = await client.query(
+        `SELECT rollout_state
+         FROM vapi_tenant_voice_configs
+         WHERE company_id = $1 AND environment = 'prod'`,
+        [COMPANY],
+    );
+    expect(state.rows).toEqual([{ rollout_state: 'enabled' }]);
+});
+
+test('existing assistant drift requires explicit adoption and dry-run reports field paths', async () => {
+    const provider = createFakeProvider();
+    await runApply(provider);
+    const assistantId = [...provider.assistants.keys()][0];
+    provider.assistants.get(assistantId).model.model = 'human-edited-model';
+    const updatesBefore = provider.calls.updateAssistant;
+
+    const dryRun = await provisioning.provisionCompany({
+        companyId: COMPANY,
+        apply: false,
+    }, {
+        client,
+        provider,
+        environment: ENVIRONMENT,
+        manageTransactions: false,
+    });
+    expect(dryRun.requires_adopt_existing).toBe(true);
+    expect(dryRun.assistant_changes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+            assistant_id: assistantId,
+            action: 'adopt_required',
+            differing_fields: expect.arrayContaining(['$.model.model']),
+        }),
+    ]));
+    expect(provider.calls.updateAssistant).toBe(updatesBefore);
+
+    await expect(runApply(provider, { greeting: undefined })).rejects.toMatchObject({
+        code: 'VAPI_AGENCY_EXISTING_ASSISTANT_DRIFT',
+        details: expect.objectContaining({
+            differingFields: expect.arrayContaining(['inbound_call:$.model.model']),
+        }),
+    });
+    expect(provider.calls.updateAssistant).toBe(updatesBefore);
+    expect(provider.assistants.get(assistantId).model.model).toBe('human-edited-model');
+
+    await expect(runApply(provider, {
+        greeting: undefined,
+        adoptExisting: true,
+    })).resolves.toMatchObject({ state: 'ready' });
+    expect(provider.assistants.get(assistantId).model.model).not.toBe('human-edited-model');
+    expect(provider.calls.updateAssistant).toBeGreaterThan(updatesBefore);
+});
+
+test('repeat apply without greeting inherits the last successful greeting', async () => {
+    const provider = createFakeProvider();
+    await runApply(provider, { greeting: 'A durable custom greeting' });
+
+    await runApply(provider, { greeting: undefined });
+
+    const inbound = [...provider.assistants.values()].find((config) => (
+        config.metadata.albustoPurpose === 'inbound_call'
+    ));
+    expect(inbound.firstMessage).toBe('A durable custom greeting');
+    const run = await client.query(
+        `SELECT template_variables, last_successful_template_variables
+         FROM vapi_tenant_provisioning_runs
+         WHERE company_id = $1`,
+        [COMPANY],
+    );
+    expect(run.rows[0].template_variables.greeting).toBe('A durable custom greeting');
+    expect(run.rows[0].last_successful_template_variables.greeting)
+        .toBe('A durable custom greeting');
+});
+
+test('credential rotation is accepted locally before provider update and old credential retires last', async () => {
+    const provider = createFakeProvider();
+    await runApply(provider);
+    let overlapSnapshot = null;
+    const observingProvider = createFakeProvider({
+        beforeUpdatePhone: async () => {
+            overlapSnapshot = (await client.query(
+                `SELECT
+                     COUNT(*) FILTER (WHERE revoked_at IS NULL)::int AS active_credentials,
+                     COUNT(*) FILTER (
+                         WHERE id = (
+                             SELECT assistant_request_credential_id
+                             FROM vapi_tenant_provisioning_runs
+                             WHERE company_id = $1
+                         ) AND revoked_at IS NULL
+                     )::int AS new_credential_active,
+                     (SELECT acceptance_state
+                      FROM vapi_company_credential_acceptance acceptance
+                      WHERE acceptance.company_id = $1
+                        AND acceptance.credential_id = (
+                            SELECT assistant_request_credential_id
+                            FROM vapi_tenant_provisioning_runs
+                            WHERE company_id = $1
+                        )) AS new_acceptance_state
+                 FROM api_integrations
+                 WHERE company_id = $1
+                   AND machine_surface = 'vapi_assistant_request'`,
+                [COMPANY],
+            )).rows[0];
+        },
+    });
+    observingProvider.assistants.clear();
+    observingProvider.phones.clear();
+    for (const [id, config] of provider.assistants) {
+        observingProvider.assistants.set(id, clone(config));
+    }
+    for (const [id, config] of provider.phones) {
+        observingProvider.phones.set(id, clone(config));
+    }
+
+    await runApply(observingProvider, {
+        greeting: undefined,
+        adoptExisting: true,
+    });
+
+    expect(overlapSnapshot).toEqual({
+        active_credentials: 2,
+        new_credential_active: 1,
+        new_acceptance_state: 'rotating',
+    });
+    const final = await client.query(
+        `SELECT acceptance.acceptance_state,
+                acceptance.expires_at,
+                credential.revoked_at,
+                credential.expires_at AS credential_expires_at
+         FROM vapi_company_credential_acceptance acceptance
+         JOIN api_integrations credential
+           ON credential.id = acceptance.credential_id
+          AND credential.company_id = acceptance.company_id
+         WHERE acceptance.company_id = $1
+         ORDER BY acceptance.acceptance_state`,
+        [COMPANY],
+    );
+    expect(final.rows).toEqual([
+        expect.objectContaining({
+            acceptance_state: 'current',
+            expires_at: null,
+            revoked_at: null,
+            credential_expires_at: expect.any(Date),
+        }),
+        expect.objectContaining({
+            acceptance_state: 'retiring',
+            expires_at: expect.any(Date),
+            revoked_at: null,
+            credential_expires_at: expect.any(Date),
+        }),
+    ]);
+    expect(final.rows[1].expires_at.getTime()).toBeLessThanOrEqual(
+        final.rows[1].credential_expires_at.getTime() + 1000,
+    );
+});
+
+test('two concurrent apply operations serialize by company and cannot create duplicate assistants', async () => {
+    const provider = createFakeProvider({
+        assistantIdPrefix: 'concurrent-assistant',
+        phoneIdPrefix: 'concurrent-phone',
+    });
+    const query = pool.query.bind(pool);
+    const cleanup = () => cleanCompanyWithQuery(query, CONCURRENT_COMPANY);
+    await cleanup();
+    await query(
+        `INSERT INTO companies (id, name, slug, status)
+         VALUES ($1, 'Concurrent Voice Co', 'concurrent-voice-co', 'active')`,
+        [CONCURRENT_COMPANY],
+    );
+    try {
+        const dependencies = {
+            db: { getClient: () => pool.connect() },
+            provider,
+            environment: ENVIRONMENT,
+        };
+        const input = {
+            companyId: CONCURRENT_COMPANY,
+            greeting: 'One company, one assistant set',
+            apply: true,
+        };
+
+        const results = await Promise.all([
+            provisioning.provisionCompany(input, dependencies),
+            provisioning.provisionCompany(input, dependencies),
+        ]);
+
+        expect(results.every(({ state }) => state === 'ready')).toBe(true);
+        expect(provider.calls.createAssistant).toBe(3);
+        expect(provider.calls.createPhoneNumber).toBe(1);
+        expect(provider.assistants.size).toBe(3);
+        expect(provider.phones.size).toBe(1);
+    } finally {
+        await cleanup();
+    }
+}, 30000);
+
 test('assistant write-only server secret is verified only by flag and readable tool secrets by value', async () => {
     const provider = createFakeProvider();
     await expect(runApply(provider)).resolves.toMatchObject({ state: 'ready' });
     const assistantId = [...provider.assistants.keys()][0];
     const readback = await provider.getAssistant(assistantId);
+    const secrets = providerSecretsForCompany(provider, COMPANY);
     expect(readback.server.secret).toBeUndefined();
     expect(readback.isServerUrlSecretSet).toBe(true);
-    expect(readback.model.tools[0].server.secret).toBe(ENVIRONMENT.VAPI_TENANT_TOOLS_SECRET);
+    expect(readback.model.tools[0].server.secret).toBe(secrets.tools);
 
     const badProvider = createFakeProvider({ assistantSecretFlag: false });
     await cleanCompany(COMPANY);
@@ -349,12 +637,8 @@ test('assistant write-only server secret is verified only by flag and readable t
 test('plaintext credentials are absent from local database projections', async () => {
     const provider = createFakeProvider();
     await runApply(provider);
-    const secrets = [
-        ENVIRONMENT.VAPI_TENANT_TOOLS_SECRET,
-        ENVIRONMENT.VAPI_TENANT_CALL_STATUS_SECRET,
-        ENVIRONMENT.VAPI_TENANT_ASSISTANT_REQUEST_SECRET,
-    ];
-    for (const secret of secrets) {
+    const secrets = providerSecretsForCompany(provider, COMPANY);
+    for (const secret of Object.values(secrets)) {
         const result = await client.query(
             `SELECT EXISTS (
                  SELECT 1 FROM api_integrations
@@ -373,6 +657,44 @@ test('plaintext credentials are absent from local database projections', async (
         );
         expect(result.rows[0].leaked).toBe(false);
     }
+});
+
+test('SAB-FIX3: two companies receive distinct machine credentials and both reach ready', async () => {
+    const provider = createFakeProvider();
+    const first = await runApply(provider);
+    const second = await runApply(provider, {
+        companyId: FOREIGN_COMPANY,
+        greeting: 'Thanks for calling Agency Repair B. How can I help?',
+    });
+    expect(first).toMatchObject({ company_id: COMPANY, state: 'ready' });
+    expect(second).toMatchObject({ company_id: FOREIGN_COMPANY, state: 'ready' });
+    expect(provider.assistants.size).toBe(6);
+    expect(provider.phones.size).toBe(2);
+
+    const firstSecrets = providerSecretsForCompany(provider, COMPANY);
+    const secondSecrets = providerSecretsForCompany(provider, FOREIGN_COMPANY);
+    expect(new Set([
+        ...Object.values(firstSecrets),
+        ...Object.values(secondSecrets),
+    ]).size).toBe(6);
+
+    const active = await client.query(
+        `SELECT company_id, COUNT(*)::int AS count,
+                COUNT(DISTINCT secret_hash)::int AS distinct_hashes
+         FROM api_integrations
+         WHERE company_id = ANY($1::uuid[])
+           AND machine_surface IN (
+               'vapi_tools', 'vapi_call_status', 'vapi_assistant_request'
+           )
+           AND revoked_at IS NULL
+         GROUP BY company_id
+         ORDER BY company_id`,
+        [[COMPANY, FOREIGN_COMPANY]],
+    );
+    expect(active.rows).toEqual([
+        { company_id: COMPANY, count: 3, distinct_hashes: 3 },
+        { company_id: FOREIGN_COMPANY, count: 3, distinct_hashes: 3 },
+    ]);
 });
 
 test('SAB-T7-ALLOWLIST: tenant provider overrides are rejected before any operation', async () => {
@@ -421,6 +743,17 @@ test('CLI dry-run is default and forwards only the allowlisted greeting', async 
         companyId: COMPANY,
         greeting: 'Hello from Agency Repair',
         apply: false,
+        adoptExisting: false,
     }, expect.objectContaining({ environment: ENVIRONMENT }));
     expect(log).toHaveBeenCalledWith(expect.not.stringContaining('secret-'));
+
+    expect(cli.parseArgs([
+        '--company-id', COMPANY,
+        '--apply',
+        '--adopt-existing',
+    ])).toEqual({
+        companyId: COMPANY,
+        apply: true,
+        adoptExisting: true,
+    });
 });

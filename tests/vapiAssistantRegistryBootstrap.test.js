@@ -66,3 +66,34 @@ test('optional provider verification performs read-only GETs for all three ids',
         });
     }
 });
+
+test('FIX-21 bootstrap apply holds the same company provisioning lock around all writes', async () => {
+    const events = [];
+    const client = {
+        query: jest.fn(async (sql) => {
+            if (/pg_advisory_lock/.test(sql)) events.push('lock');
+            if (/pg_advisory_unlock/.test(sql)) events.push('unlock');
+            return { rows: [] };
+        }),
+    };
+    const inspectPlan = jest.fn(async () => {
+        events.push('inspect');
+        return { companyId: COMPANY };
+    });
+    const applyPlan = jest.fn(async () => {
+        events.push('apply');
+        return { mode: 'apply', company_id: COMPANY };
+    });
+
+    await bootstrap.run(['--company-id', COMPANY, '--apply'], {
+        client,
+        environment: ENVIRONMENT,
+        inspectPlan,
+        applyPlan,
+        log: () => {},
+    });
+
+    expect(events).toEqual(['lock', 'inspect', 'apply', 'unlock']);
+    expect(inspectPlan).toHaveBeenCalledTimes(1);
+    expect(applyPlan).toHaveBeenCalledTimes(1);
+});

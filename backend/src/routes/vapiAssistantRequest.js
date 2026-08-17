@@ -3,6 +3,7 @@
 const express = require('express');
 const machineCredentials = require('../services/machineCredentialService');
 const vapiCallIdentityService = require('../services/vapiCallIdentityService');
+const vapiAssistantRegistry = require('../services/vapiAssistantRegistryService');
 const { parseVapiServerMessageJson, VapiContractError } = require('../services/vapiProviderContracts');
 
 const router = express.Router();
@@ -31,7 +32,7 @@ async function assistantRequestCredentialAuth(req, res, next) {
     }
 }
 
-function extractCorrelationToken(message) {
+function extractCorrelationToken(message, { required = true } = {}) {
     const call = message?.call || {};
     const containers = [
         call.sipHeaders,
@@ -53,6 +54,7 @@ function extractCorrelationToken(message) {
         }
     }
     const unique = [...new Set(values)];
+    if (unique.length === 0 && !required) return null;
     if (unique.length !== 1) {
         throw new vapiCallIdentityService.VapiIdentityError(
             unique.length === 0
@@ -90,6 +92,27 @@ function hasProviderSelectionClaims(message) {
     ].some((value) => value !== undefined && value !== null);
 }
 
+async function answerUnattributed({ companyId, providerCallId, reason }, res) {
+    const selected = await vapiAssistantRegistry.resolveInboundAssistant({ companyId });
+    try {
+        await vapiCallIdentityService.recordUnattributedInboundCall({
+            companyId,
+            providerCallId,
+            reason,
+        });
+    } catch (alertError) {
+        // These identifiers are intentionally sufficient for a manual lookup;
+        // payload, phone, transcript and credential are never logged.
+        console.error('[vapiAssistantRequest] unattributed call alert unavailable', {
+            companyId,
+            providerCallId,
+            reason,
+            error: alertError?.code || alertError?.message || 'unknown',
+        });
+    }
+    return res.json({ assistantId: selected.expected_vapi_assistant_id });
+}
+
 router.post('/', assistantRequestCredentialAuth, async (req, res) => {
     try {
         const parsed = parseVapiServerMessageJson(JSON.stringify(req.body));
@@ -108,14 +131,38 @@ router.post('/', assistantRequestCredentialAuth, async (req, res) => {
             });
         }
 
-        const correlationToken = extractCorrelationToken(message);
-        const bound = await vapiCallIdentityService.bindInboundCall({
-            companyId: req.machineCredential.companyId,
-            credentialId: req.machineCredential.id,
-            correlationToken,
-            providerCallId: parsed.call.id,
-            source: 'assistant_request',
-        });
+        const correlationToken = extractCorrelationToken(message, { required: false });
+        if (!correlationToken) {
+            return answerUnattributed({
+                companyId: req.machineCredential.companyId,
+                providerCallId: parsed.call.id,
+                reason: 'assistant_request_missing_token',
+            }, res);
+        }
+        let bound;
+        try {
+            bound = await vapiCallIdentityService.bindInboundCall({
+                companyId: req.machineCredential.companyId,
+                credentialId: req.machineCredential.id,
+                correlationToken,
+                providerCallId: parsed.call.id,
+                source: 'assistant_request',
+            });
+        } catch (bindError) {
+            // Binding attributes supplier cost; it is not permission to answer a
+            // caller. Machine auth and provider-selection claims were already
+            // checked above, so degrade to the same company-scoped safety path.
+            console.error('[vapiAssistantRequest] bind failed; answering unattributed', {
+                companyId: req.machineCredential.companyId,
+                providerCallId: parsed.call.id,
+                code: bindError?.code || 'VAPI_IDENTITY_BIND_FAILED',
+            });
+            return answerUnattributed({
+                companyId: req.machineCredential.companyId,
+                providerCallId: parsed.call.id,
+                reason: 'assistant_request_bind_failed',
+            }, res);
+        }
 
         return res.json({ assistantId: bound.assistantId });
     } catch (error) {
@@ -131,6 +178,12 @@ router.post('/', assistantRequestCredentialAuth, async (req, res) => {
                 code: error.code,
             });
         }
+        if (error instanceof vapiAssistantRegistry.VapiAssistantRegistryError) {
+            return res.status(error.status).json({
+                error: 'Unable to resolve company assistant',
+                code: error.code,
+            });
+        }
         console.error('[vapiAssistantRequest] handler unavailable');
         return res.status(503).json({
             error: 'Assistant request unavailable',
@@ -142,3 +195,4 @@ router.post('/', assistantRequestCredentialAuth, async (req, res) => {
 module.exports = router;
 module.exports.extractCorrelationToken = extractCorrelationToken;
 module.exports.hasProviderSelectionClaims = hasProviderSelectionClaims;
+module.exports.answerUnattributed = answerUnattributed;

@@ -17,6 +17,28 @@ const ROLLBACK = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', 'rollback_275_vapi_assistant_registry.sql'),
     'utf8',
 );
+const RETIRE_MARKETPLACE = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '276_retire_tenant_vapi_marketplace_app.sql',
+    ),
+    'utf8',
+);
+const RECOVERY = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '280_vapi_agency_provisioning_recovery.sql',
+    ),
+    'utf8',
+);
 const ASSISTANTS = Object.freeze({
     inbound: '30e85a87-9d7e-4694-828e-1fea7d10f3ef',
     lead: 'ef874329-1111-4111-8111-111111111111',
@@ -114,6 +136,7 @@ async function registrySnapshot() {
                  SELECT jsonb_build_object(
                      'profile', assistant_profile_id,
                      'credential', server_credential_id,
+                     'fallback_assistant', fallback_vapi_assistant_id,
                      'secret', assistant_request_secret,
                      'status', status,
                      'updated_at', updated_at
@@ -150,6 +173,7 @@ beforeAll(async () => {
     client = await pool.connect();
     await client.query('BEGIN');
     await client.query(ROLLBACK);
+    await client.query(RECOVERY);
     await cleanAbcData();
 });
 
@@ -174,11 +198,14 @@ afterAll(async () => {
 test('schema-only migration applies twice with no Vapi rows or session settings', async () => {
     await expect(client.query(FORWARD)).resolves.toBeDefined();
     await expect(client.query(FORWARD)).resolves.toBeDefined();
+    await expect(client.query(RECOVERY)).resolves.toBeDefined();
+    await expect(client.query(RECOVERY)).resolves.toBeDefined();
 
     expect(FORWARD).not.toMatch(/^(?:INSERT|UPDATE|DELETE)\b/im);
     expect(FORWARD).not.toContain('current_setting');
     expect(FORWARD).not.toContain('RAISE EXCEPTION');
     expect(FORWARD).not.toContain('VAPI_INBOUND_ASSISTANT_ID');
+    expect(RECOVERY).not.toContain('RAISE EXCEPTION');
 
     const data = await client.query(
         `SELECT
@@ -196,6 +223,20 @@ test('schema-only migration applies twice with no Vapi rows or session settings'
 
     await expect(registry.resolveInboundTuple({ companyId: ABC, client }))
         .rejects.toMatchObject({ code: 'VAPI_REGISTRY_INBOUND_TUPLE_UNAVAILABLE' });
+});
+
+test('migration 276 is a no-op when the operational Marketplace seed is absent', async () => {
+    await client.query(`DELETE FROM marketplace_apps WHERE app_key = 'vapi-ai'`);
+
+    await expect(client.query(RETIRE_MARKETPLACE)).resolves.toBeDefined();
+    await expect(client.query(RETIRE_MARKETPLACE)).resolves.toBeDefined();
+
+    const rows = await client.query(
+        `SELECT COUNT(*)::int AS count FROM marketplace_apps WHERE app_key = 'vapi-ai'`,
+    );
+    expect(rows.rows[0].count).toBe(0);
+    expect(RETIRE_MARKETPLACE).not.toContain('VAPI_AGENCY_276_LEGACY_APP_REQUIRED');
+    expect(RETIRE_MARKETPLACE).not.toContain('RAISE EXCEPTION');
 });
 
 test('operational connection and SIP prerequisites belong to the CLI, not migration', async () => {
@@ -238,7 +279,12 @@ test('prod-like migration is data-neutral; dry-run writes nothing; apply is idem
     const beforeCli = await registrySnapshot();
     expect(beforeCli).toMatchObject({
         connection: { encrypted: '{"api_key":"legacy-must-be-erased"}' },
-        resource: { secret: 'legacy-plaintext-secret', profile: null, credential: null },
+        resource: {
+            secret: 'legacy-plaintext-secret',
+            profile: null,
+            credential: null,
+            fallback_assistant: null,
+        },
         profiles: [],
         config: null,
     });
@@ -272,6 +318,7 @@ test('prod-like migration is data-neutral; dry-run writes nothing; apply is idem
         resource: {
             profile: expect.any(String),
             credential: expect.anything(),
+            fallback_assistant: ASSISTANTS.inbound,
             secret: null,
             status: 'active',
         },
@@ -362,6 +409,30 @@ test('CLI may populate without credentials but runtime remains fail-closed', asy
     expect(snapshot.config.evidence.machine_credentials.complete).toBe(false);
     await expect(registry.resolveInboundTuple({ companyId: ABC, client }))
         .rejects.toMatchObject({ code: 'VAPI_REGISTRY_INBOUND_TUPLE_UNAVAILABLE' });
+});
+
+test('SAB-FIX4: safety snapshot resolves an assistant after the normalized registry is lost', async () => {
+    await prepareLegacyAbc();
+    await client.query(FORWARD);
+    await bootstrap.run(['--company-id', ABC, '--apply'], {
+        client,
+        environment: ENVIRONMENT,
+        log: () => {},
+    });
+
+    await client.query(
+        `UPDATE vapi_tenant_resources
+         SET assistant_profile_id = NULL
+         WHERE company_id = $1`,
+        [ABC],
+    );
+    await client.query(`DELETE FROM vapi_assistant_profiles WHERE company_id = $1`, [ABC]);
+
+    await expect(registry.resolveInboundAssistant({ companyId: ABC, client }))
+        .resolves.toMatchObject({
+            company_id: ABC,
+            expected_vapi_assistant_id: ASSISTANTS.inbound,
+        });
 });
 
 test('global assistant uniqueness cannot fragment by company connection data', async () => {

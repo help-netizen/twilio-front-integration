@@ -247,6 +247,46 @@ function matchesExpected(actual, expected, path = '$') {
     return Object.is(actual, expected) ? null : path;
 }
 
+function collectExpectedDifferences(actual, expected, path = '$', differences = []) {
+    if (Array.isArray(expected)) {
+        if (!Array.isArray(actual) || actual.length !== expected.length) {
+            differences.push(path);
+            return differences;
+        }
+        for (let index = 0; index < expected.length; index += 1) {
+            collectExpectedDifferences(
+                actual[index],
+                expected[index],
+                `${path}[${index}]`,
+                differences,
+            );
+        }
+        return differences;
+    }
+    if (expected && typeof expected === 'object') {
+        if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+            differences.push(path);
+            return differences;
+        }
+        for (const [key, value] of Object.entries(expected)) {
+            collectExpectedDifferences(actual[key], value, `${path}.${key}`, differences);
+        }
+        return differences;
+    }
+    if (!Object.is(actual, expected)) differences.push(path);
+    return differences;
+}
+
+function assistantReadbackDifferences(actual, rendered) {
+    if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+        throw new VapiAgencyTemplateError('VAPI_AGENCY_ASSISTANT_READBACK_INVALID');
+    }
+    return collectExpectedDifferences(
+        withoutSecrets(actual),
+        withoutSecrets(rendered.config),
+    );
+}
+
 function verifyAssistantReadback(actual, rendered) {
     if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
         throw new VapiAgencyTemplateError('VAPI_AGENCY_ASSISTANT_READBACK_INVALID');
@@ -329,6 +369,16 @@ function verifySipResourceReadback(actual, expected) {
     };
 }
 
+function sipResourceReadbackDifferences(actual, expected) {
+    if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+        throw new VapiAgencyTemplateError('VAPI_AGENCY_SIP_READBACK_INVALID');
+    }
+    return collectExpectedDifferences(
+        withoutSecrets(actual),
+        withoutSecrets(expected.config),
+    );
+}
+
 module.exports = {
     BUNDLE_VERSION,
     PLATFORM_ACCOUNT_KEY,
@@ -342,7 +392,9 @@ module.exports = {
     validateSecrets,
     renderBundle,
     verifyAssistantReadback,
+    assistantReadbackDifferences,
     buildSipResource,
     verifySipResourceReadback,
+    sipResourceReadbackDifferences,
     withoutSecrets,
 };

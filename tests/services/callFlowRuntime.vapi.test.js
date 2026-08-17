@@ -239,13 +239,9 @@ describe('advance() — VAPI-AGENCY-001 durable inbound reservation', () => {
         expect(twiml).not.toContain('x-albusto-call-token');
         // ...and the address is dialled clean, not with a dangling '?'.
         expect(twiml).toContain('>sip:tenant-a@sip.vapi.ai</Sip>');
-        const [fallbackSql, fallbackParams] = mockQuery.mock.calls.find(([sql]) => (
-            String(sql).includes('FROM vapi_tenant_resources')
-        ));
-        expect(fallbackSql).toContain("r.purpose = 'inbound_call'");
-        expect(fallbackSql).toContain("r.environment = 'prod'");
-        expect(fallbackSql).toContain("voice_config.rollout_state = 'legacy_canary'");
-        expect(fallbackParams).toEqual(['00000000-0000-4000-8000-00000000000a']);
+        // Predicate/ranking invariants are exercised against real rows in
+        // callFlowRuntime.vapiFallback.db.test.js. SQL-substring assertions here
+        // previously stayed green when ORDER BY semantics were inverted.
     });
 
     test('reservation refusal with no SIP resource at all falls back to voicemail', async () => {

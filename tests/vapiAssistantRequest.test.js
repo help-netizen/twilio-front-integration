@@ -19,6 +19,7 @@ jest.mock('../backend/src/services/machineCredentialService', () => ({
 }));
 
 const mockBindInboundCall = jest.fn();
+const mockRecordUnattributedInboundCall = jest.fn();
 class MockVapiIdentityError extends Error {
     constructor(code, status = 409) {
         super(code);
@@ -30,6 +31,20 @@ jest.mock('../backend/src/services/vapiCallIdentityService', () => ({
     TOKEN_HEADER: 'x-albusto-call-token',
     VapiIdentityError: MockVapiIdentityError,
     bindInboundCall: (...args) => mockBindInboundCall(...args),
+    recordUnattributedInboundCall: (...args) => mockRecordUnattributedInboundCall(...args),
+}));
+
+const mockResolveInboundAssistant = jest.fn();
+class MockVapiAssistantRegistryError extends Error {
+    constructor(code, status = 409) {
+        super(code);
+        this.code = code;
+        this.status = status;
+    }
+}
+jest.mock('../backend/src/services/vapiAssistantRegistryService', () => ({
+    VapiAssistantRegistryError: MockVapiAssistantRegistryError,
+    resolveInboundAssistant: (...args) => mockResolveInboundAssistant(...args),
 }));
 
 const callStatusRouter = require('../backend/src/routes/vapiCallStatus');
@@ -92,6 +107,12 @@ beforeEach(() => {
         assistantId: 'assistant-registry-a',
         idempotent: false,
     });
+    mockRecordUnattributedInboundCall.mockResolvedValue(undefined);
+    mockResolveInboundAssistant.mockImplementation(async ({ companyId }) => ({
+        expected_vapi_assistant_id: companyId === COMPANY_A
+            ? 'assistant-registry-a'
+            : 'assistant-registry-b',
+    }));
 });
 
 describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
@@ -118,19 +139,24 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         expect(JSON.stringify(mockBindInboundCall.mock.calls)).not.toContain('foreign-profile');
     });
 
-    test('T-foreign credential cannot use another company token', async () => {
+    test('T-foreign credential cannot bind another company token and answers only its own assistant', async () => {
         mockBindInboundCall.mockRejectedValue(
             new MockVapiIdentityError('VAPI_IDENTITY_TOKEN_NOT_FOUND', 404),
         );
 
         const response = await post(payload(), 'credential-b');
 
-        expect(response.status).toBe(404);
-        expect(response.body.code).toBe('VAPI_IDENTITY_TOKEN_NOT_FOUND');
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ assistantId: 'assistant-registry-b' });
         expect(mockBindInboundCall).toHaveBeenCalledWith(expect.objectContaining({
             companyId: COMPANY_B,
             credentialId: '202',
         }));
+        expect(mockRecordUnattributedInboundCall).toHaveBeenCalledWith({
+            companyId: COMPANY_B,
+            providerCallId: 'provider-call-a',
+            reason: 'assistant_request_bind_failed',
+        });
     });
 
     test.each([
@@ -160,16 +186,20 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         expect(mockBindInboundCall).toHaveBeenCalledTimes(2);
     });
 
-    test('provider id collision is rejected, never answered with an assistant', async () => {
+    test('provider id collision remains unattributed but does not drop the caller', async () => {
         mockBindInboundCall.mockRejectedValue(
             new MockVapiIdentityError('VAPI_IDENTITY_PROVIDER_CALL_COLLISION', 409),
         );
 
         const response = await post();
 
-        expect(response.status).toBe(409);
-        expect(response.body.code).toBe('VAPI_IDENTITY_PROVIDER_CALL_COLLISION');
-        expect(response.body).not.toHaveProperty('assistantId');
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(mockRecordUnattributedInboundCall).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            providerCallId: 'provider-call-a',
+            reason: 'assistant_request_bind_failed',
+        });
     });
 
     test.each([
@@ -196,19 +226,84 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         expect(mockBindInboundCall).not.toHaveBeenCalled();
     });
 
-    test('missing or ambiguous opaque token fails closed', async () => {
+    test('SAB-FIX4: missing token answers from credential company and records unattributed call', async () => {
         const missing = payload();
         delete missing.message.call.sipHeaders;
         const missingResponse = await post(missing);
-        expect(missingResponse.status).toBe(400);
-        expect(missingResponse.body.code).toBe('VAPI_IDENTITY_TOKEN_REQUIRED');
 
+        expect(missingResponse.status).toBe(200);
+        expect(missingResponse.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(mockResolveInboundAssistant).toHaveBeenCalledWith({ companyId: COMPANY_A });
+        expect(mockRecordUnattributedInboundCall).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            providerCallId: 'provider-call-a',
+            reason: 'assistant_request_missing_token',
+        });
+        expect(mockBindInboundCall).not.toHaveBeenCalled();
+    });
+
+    test('tokenless fallback is tenant-distinct because machine credentials are distinct', async () => {
+        const bodyA = payload();
+        const bodyB = payload();
+        delete bodyA.message.call.sipHeaders;
+        delete bodyB.message.call.sipHeaders;
+        bodyB.message.call.id = 'provider-call-b';
+
+        const responseA = await post(bodyA, 'credential-a');
+        const responseB = await post(bodyB, 'credential-b');
+
+        expect(responseA.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(responseB.body).toEqual({ assistantId: 'assistant-registry-b' });
+        expect(mockResolveInboundAssistant.mock.calls.map(([input]) => input.companyId).sort())
+            .toEqual([COMPANY_A, COMPANY_B].sort());
+    });
+
+    test('tokenless answering survives an accounting-alert write failure', async () => {
+        const body = payload();
+        delete body.message.call.sipHeaders;
+        mockRecordUnattributedInboundCall.mockRejectedValue(new Error('database unavailable'));
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const response = await post(body);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(errorSpy).toHaveBeenCalledWith(
+            '[vapiAssistantRequest] unattributed call alert unavailable',
+            expect.objectContaining({
+                companyId: COMPANY_A,
+                providerCallId: 'provider-call-a',
+                reason: 'assistant_request_missing_token',
+            }),
+        );
+        errorSpy.mockRestore();
+    });
+
+    test('SAB-FIX18: token bind failure degrades to the company assistant and durable alert', async () => {
+        mockBindInboundCall.mockRejectedValue(new Error('identity database unavailable'));
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const response = await post();
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(mockResolveInboundAssistant).toHaveBeenCalledWith({ companyId: COMPANY_A });
+        expect(mockRecordUnattributedInboundCall).toHaveBeenCalledWith({
+            companyId: COMPANY_A,
+            providerCallId: 'provider-call-a',
+            reason: 'assistant_request_bind_failed',
+        });
+        errorSpy.mockRestore();
+    });
+
+    test('ambiguous opaque token still fails closed', async () => {
         const ambiguous = payload();
         ambiguous.message.call.headers = { 'x-albusto-call-token': 'other-token' };
         const ambiguousResponse = await post(ambiguous);
         expect(ambiguousResponse.status).toBe(400);
         expect(ambiguousResponse.body.code).toBe('VAPI_IDENTITY_TOKEN_AMBIGUOUS');
         expect(mockBindInboundCall).not.toHaveBeenCalled();
+        expect(mockResolveInboundAssistant).not.toHaveBeenCalled();
     });
 
     test('unknown required provider discriminators fail closed, extra fields are tolerated', async () => {

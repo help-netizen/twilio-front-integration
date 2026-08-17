@@ -81,8 +81,57 @@ BEGIN
     END IF;
 END $$;
 
+-- If this migration is replayed after a direct rollback on a database where
+-- T4 schema still exists, restore every later FK that depends on 267's
+-- composite observation identity as well as the provisional link above.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'vapi_call_usage'
+          AND column_name = 'authoritative_observation_id'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_vapi_usage_authoritative_observation'
+          AND conrelid = 'vapi_call_usage'::regclass
+    ) THEN
+        ALTER TABLE vapi_call_usage
+            ADD CONSTRAINT fk_vapi_usage_authoritative_observation
+            FOREIGN KEY (authoritative_observation_id, company_id)
+            REFERENCES vapi_call_usage_observations(id, company_id);
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'vapi_call_usage'
+          AND column_name = 'pending_correction_observation_id'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'fk_vapi_usage_pending_correction_observation'
+          AND conrelid = 'vapi_call_usage'::regclass
+    ) THEN
+        ALTER TABLE vapi_call_usage
+            ADD CONSTRAINT fk_vapi_usage_pending_correction_observation
+            FOREIGN KEY (pending_correction_observation_id, company_id)
+            REFERENCES vapi_call_usage_observations(id, company_id);
+    END IF;
+
+    IF to_regclass('vapi_call_usage_final_snapshots') IS NOT NULL
+       AND NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'fk_vapi_final_snapshot_observation_company'
+              AND conrelid = 'vapi_call_usage_final_snapshots'::regclass
+       ) THEN
+        ALTER TABLE vapi_call_usage_final_snapshots
+            ADD CONSTRAINT fk_vapi_final_snapshot_observation_company
+            FOREIGN KEY (observation_id, company_id)
+            REFERENCES vapi_call_usage_observations(id, company_id);
+    END IF;
+END $$;
+
 COMMENT ON COLUMN vapi_call_usage_observations.sanitized_payload IS
     'Allowlisted provider identity/lifecycle/cost evidence only; exact JSON numbers are stored as decimal strings. Never contains transcripts, recordings, phone/customer data, names or assistant/server snapshots.';
 COMMENT ON COLUMN vapi_call_usage.provisional_observation_id IS
     'Append-only EoC observation currently projected as provisional; never a charge or final supplier snapshot.';
-

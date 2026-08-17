@@ -31,15 +31,15 @@ Delivery plan: `docs/specs/VAPI-AGENCY-001-TASKS.md`
 | ID-02 | P0 | `assistant-request` имеет credential A, valid token и `message.call.id=C1` | Session A атомарно bind к C1 до ответа `{assistantId}`; token больше не переиспользуем | `vapiCallIdentity` + `vapiAssistantRequest`: bind |
 | ID-03 | P0 | После bind C1 деактивировать/изменить profile и повторить точный callback C1 | 2xx/idempotent до drift-проверок; session byte-unchanged; новых rows/lease нет | duplicate-after-drift bind sabotage |
 | ID-04 | P0 | После bind C1 прислать C2 с тем же token | Reject/quarantine+alert; C1 не изменён | `SAB-VAPI-IDENTITY-TENANT` suite |
-| ID-05 | P0 | Credential B + token/session A, body утверждает company B/A | Reject; A и B unchanged | wrong credential T-foreign |
+| ID-05 | P0 | Credential B + token/session A, body утверждает company B/A | Bind к session A rejected; A/B sessions unchanged. Если credential B валиден для inbound resource B, клиент получает assistant B как unattributed call и alert содержит provider call id; body claims не меняют company | wrong credential T-foreign + `SAB-FIX18` |
 | ID-06 | P0 | Resource A, assistant B либо наоборот | Reject до routing/bind; provider call/tenant rows unchanged | registry cross-owner constraint |
 | ID-07 | P0 | A и B имеют одинаковые Twilio parent/child-like keys | Lookup с явным company выбирает только свою строку | T-blast natural key |
 | ID-08 | P0 | Один Twilio parent A проходит две AI-ноги C1/C2 | Две sessions, два provider ids, общий parent; ни одна не перезаписана | multi-leg identity |
 | ID-09 | P0 | Twilio child status приходит раньше/после Vapi callback | `answered_by='ai'` может обновиться, но Vapi id не создаётся из Twilio evidence | timeline permutation |
 | ID-10 | P0 | EoC приходит до успешного `assistant-request` bind | Никакого поиска по Twilio SID/company/body/assistant; T3 сохраняет raw evidence только после подтверждения живой формы и применяет тот же exact token/session contract | EoC raw-capture case T3 |
-| ID-11 | P0 | `assistant-request` без token либо с двумя различными token values | Reject; handler не возвращает assistant; эвристического bind нет | assistant-request token fail-closed |
+| ID-11 | P0 | `assistant-request` без token / с одним token, bind которого упал / с двумя различными token values | Первые два случая: credential-company server-owned evidence возвращает assistant без session bind и пишет idempotent `provider_orphan` с provider call id; два token: reject, assistant не возвращается | `SAB-FIX17`; `SAB-FIX18`; ambiguous-token fail-closed |
 | ID-12 | P0 | Outbound worker A создаёт call | Session существует до POST; assistant/caller только из A registry; response id, lead slot и telemetry атомарно в session+attempt | `vapiOutboundIdentity`, outbound workers |
-| ID-13 | P1 | POST мог уйти, ответ timeout/no-id либо bind упал | Session `provider_pending`; job не делает второй POST; audit repair принимает только server-owned session metadata + pinned assistant | ambiguous POST/metadata repair tests |
+| ID-13 | P1 | POST мог уйти, ответ timeout/no-id либо bind упал | Session `provider_pending`; job не делает второй POST; audit repair принимает только server-owned session metadata + pinned assistant. По TTL sweep в одной транзакции закрывает session/attempt и создаёт human follow-up; ошибка follow-up откатывает terminal transition | ambiguous POST/metadata repair + `SAB-FIX19-ATOMIC-FOLLOWUP` |
 | ID-14 | P0 | В request/tool/public payload переданы `assistantId`, `assistantOverrides`, model, voice, tools, destination, server URL/credential | Поля rejected; provider payload содержит только server-owned template | `SAB-VAPI-OVERRIDE` |
 | ID-15 | P0 | Tool webhook A пытается обратиться к entity F | 404; A/F entities and audit unchanged | tools T-foreign/R-matrix |
 | ID-16 | P0 | Tenant JWT используется на machine webhook либо status credential на tools surface | Deny; surface credentials не взаимозаменяемы | `SAB-VAPI-WEBHOOK-CREDENTIAL` |
@@ -56,17 +56,17 @@ Delivery plan: `docs/specs/VAPI-AGENCY-001-TASKS.md`
 | GATE-02 | P0 | В том же состоянии outbound B queued | Нет POST, provider attempt increment и lease; job queued с retry reason | `SAB-VAPI-GATE` |
 | GATE-03 | P0 | B `enabled`, но отсутствует любое одно из 10 evidence conditions | Каждый вариант отдельно fail closed на inbound/outbound | readiness mutation matrix |
 | GATE-04 | P0 | B удовлетворяет условиям, T1–T8 accepted, flag on | Вход/выход допускается только для B registry tuple | positive gate |
-| GATE-05 | P0 | После допуска выключить flag или поставить `suspended` | Новые B calls закрыты; активная session корректно завершается по policy | kill switch |
+| GATE-05 | P0 | После допуска выключить dedicated runtime admission flag | Новые B calls закрыты; активная session корректно завершается по policy. Lifecycle `rollout_state` сам по себе runtime не читает | kill switch + rollout grep ratchet |
 | REG-01 | P0 | Попытка двух active profiles на `(A,purpose,env)` | DB unique violation/transaction rollback | registry constraint |
 | REG-02 | P0 | Profile/resource company mismatch через service и прямой DB fixture | Service deny; DB constraint/FK deny | assistant tenant sabotage |
 | REG-03 | P1 | Provision apply дважды после успеха | Один provider assistant/resource set; один active registry tuple | provisioning idempotency |
 | REG-04 | P1 | Crash после assistant create до resource/readback, затем retry | Repair reuses/reconciles assistant; no duplicate; state не enabled до readback | partial provisioning |
 | REG-05 | P0 | Provider readback assistant/tools/SIP отличается hash | `drifted`, gate deny, alert; tenant не может override | drift test |
-| REG-06 | P0 | Tools и call-status credentials одинаковы/expired/revoked | Readiness deny; callbacks deny according to credential state | credential separation |
+| REG-06 | P0 | Tools и call-status credentials одинаковы/expired/revoked; assistant-request credential ротируется | Поверхности не взаимозаменяемы; callbacks deny according to credential state. Expired/revoked tools/status дают alert/readiness failure, но не блокируют уже поступивший inbound. Assistant-request bind принимает session-pinned credential либо explicit nonexpired rotating/current/retiring acceptance, но не произвольный active same-company credential | `SAB-FIX5`; credential pin/overlap suite |
 | REG-07 | P2 | Provision/dry-run logging | Ни platform key, ни webhook secret/token не встречается в output/log | secret ratchet |
 | REG-08 | P0 | Operational bootstrap CLI получает `--company-id`, existing connection/resource и три assistant env ids | Dry-run не пишет; apply создаёт ровно три active `(company,purpose,prod)` profile и связывает inbound resource; повтор no-op. Отсутствующий/невалидный/conflicting input отклоняет CLI, не schema migration | `vapiAssistantRegistryBootstrap`, `vapiAssistantRegistryMigration` |
 | REG-09 | P0 | Assistant id A повторно вставляется для B при разных/пустых `provider_org_id` | Global unique violation; provider namespace нельзя фрагментировать per-company полем | registry migration collision |
-| REG-10 | P0 | Tenant node передаёт foreign `sip_uri`, profile/resource/assistant id, purpose/env и overrides | Reservation получает hardcoded product purpose/env; wire SIP только из exact company registry. Legacy-canary fallback также читает только company/inbound/prod resource | `SAB-VAPI-NODE-SIP` |
+| REG-10 | P0 | Tenant node передаёт foreign `sip_uri`, profile/resource/assistant id, purpose/env и overrides | Reservation получает hardcoded product purpose/env; wire SIP только из server-owned company resource. Incident fallback не читает rollout/config state, допускает minimal active company resource и фактически предпочитает inbound/prod строку; assistant selector использует то же множество допустимых ресурсов | `SAB-VAPI-NODE-SIP`; `SAB-FIX17`; `SAB-FIX24` |
 | REG-11 | P0 | Runtime env содержит foreign assistant id/phone id/phone number | Provider payload сохраняет pinned A assistant+caller; env values отсутствуют на wire | `SAB-VAPI-OUTBOUND-ENV-SOURCE` |
 | REG-12 | P1 | Outbound caller operational CLI dry-run/apply для A | Обязательный company; обе outbound profiles exact; один generic resource; dry-run 0 writes, apply idempotent; caller B conflict rejected | `vapiOutboundBootstrap` |
 | CAP-01 | P0 | N параллельных admissions A при cap K | Ровно K leases admitted, остальные fallback/queued; никогда K+1 | `SAB-VAPI-CONCURRENCY` |
@@ -169,8 +169,8 @@ AI-ног, потому что это единица supplier cost; UI може�
 | MIG-07 | P1 | Migration 277 на empty и prod-like registry | Только schema/constraints/telemetry; 0 caller rows; repeat idempotent; rollback/forward сохраняют legacy attempts/calls |
 | RET-01 | P0 | Source/import/route scan после T5 | Нет org provisioner/script, tenant key API/settings и runtime global assistant env fallback; env ids допустимы только в operational bootstrap/docs/tests |
 | RET-02 | P0 | Попытка вызвать старый tenant `/api/vapi` route | 404/410 по rollout contract; provider state unchanged; ключ не принимается |
-| RET-03 | P1 | Existing ABC call после cutover | Идёт только registry path; legacy fallback spy не вызывается |
-| RET-04 | P1 | ABC `legacy_canary` reservation временно недоступна | Сохранённый incident fallback набирает только exact company/inbound/prod SIP без token; для обычного/non-ABC rollout тот же путь закрыт | `callFlowRuntime.vapi` hotfix regression |
+| RET-03 | P1 | Existing ABC call после cutover, штатная reservation доступна | Идёт registry/token path; incident fallback не вызывается |
+| RET-04 | P0 | Reservation временно недоступна при empty profile registry либо любом `rollout_state` | Incident fallback набирает company SIP без token; authenticated assistant-request берёт server-owned resource snapshot, назначает assistant и пишет unattributed alert | `callFlowRuntime.vapiFallback.db`; `vapiAssistantRequest`; `SAB-FIX4` |
 | RET-05 | P0 | Старый Marketplace seed проигрывается при boot | Финальный retirement seed снова ставит legacy provider app `disabled`; tenant catalog/installations/direct management его не выдают | registry migration + marketplace query tests |
 | ROLL-01 | P0 | Checklist второго tenant имеет один failed item | Enable transaction abort; tenant остаётся ready/provisioning, runtime closed |
 | ROLL-02 | P1 | Полный checklist + canary, затем suspend | Сначала controlled calls; после suspend новые закрыты/fallback, audit actor/time сохранены |
@@ -182,7 +182,7 @@ AI-ног, потому что это единица supplier cost; UI може�
 | MAN-01 | Непродуктивный inbound звонок через реальный Twilio→SIP→Vapi | Provider id появляется в первом ожидаемом callback; EoC и GET fixtures соответствуют T1 contract |
 | MAN-02 | Непродуктивный voicemail/no-answer/failed набор | Positive provider cost проходит ту же finalization; ended classification верна |
 | MAN-03 | Изменить assistant в provider console | Drift scan обнаруживает hash mismatch и закрывает новый admission |
-| MAN-04 | Ротация tools/status credential по runbook | Overlap/activation/revoke не теряет valid callbacks и не принимает revoked secret |
+| MAN-04 | Ротация tools/status/assistant-request credential по runbook | Tools/status переключаются после verified readback; assistant-request сначала accepted локально, затем отправлен provider, старый bounded `retiring`. In-flight pinned callback проходит overlap, произвольный same-company secret и expired retiring secret не проходят |
 | MAN-05 | Исчерпать тестовый company/global cap конкурентными calls | Фактический provider POST/SIP count не превышает cap; fallback/queue соответствуют контракту |
 | MAN-06 | Provider увеличил общий line limit | Локальная policy меняется отдельно; readback/telemetry отражают новое значение без auto-expansion tenant cap |
 

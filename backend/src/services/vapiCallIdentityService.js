@@ -5,6 +5,7 @@ const { withTransaction } = require('./transactionService');
 const vapiAssistantRegistry = require('./vapiAssistantRegistryService');
 
 const DEFAULT_TOKEN_TTL_SECONDS = 300;
+const DEFAULT_OUTBOUND_PROVIDER_PENDING_MAX_AGE_MINUTES = 30;
 const TOKEN_HEADER = 'x-albusto-call-token';
 const PLATFORM_PROVIDER_ACCOUNT_KEY = 'vapi:platform';
 const PURPOSE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -259,6 +260,7 @@ async function bindOutboundPlacementWithClient({
     providerCallId,
     subscriptionLimits,
     slotJson,
+    allowTerminalRepair = false,
 }, client) {
     const normalizedCompanyId = assertNonEmpty(
         companyId,
@@ -280,7 +282,8 @@ async function bindOutboundPlacementWithClient({
 
     const sessionResult = await client.query(
         `SELECT id, company_id, purpose, state, vapi_call_id,
-                outbound_call_attempt_id, expected_vapi_assistant_id
+                outbound_call_attempt_id, expected_vapi_assistant_id,
+                quarantine_reason
          FROM vapi_call_sessions
          WHERE id = $1
            AND company_id = $2
@@ -296,7 +299,7 @@ async function bindOutboundPlacementWithClient({
     const session = sessionResult.rows[0];
 
     const attemptResult = await client.query(
-        `SELECT id, company_id, scenario, status, vapi_call_id
+        `SELECT id, company_id, scenario, status, vapi_call_id, reason
          FROM outbound_call_attempts
          WHERE id = $1
            AND company_id = $2
@@ -327,7 +330,15 @@ async function bindOutboundPlacementWithClient({
         }
         throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_PROVIDER_RESPONSE_CONFLICT', 409);
     }
-    if (session.state !== 'provider_pending' || attempt.status !== 'dialing') {
+    const isPendingBind = session.state === 'provider_pending' && attempt.status === 'dialing';
+    const isTerminalRepair = Boolean(
+        allowTerminalRepair
+        && session.state === 'quarantined'
+        && session.quarantine_reason === 'provider_outcome_unresolved'
+        && attempt.status === 'exhausted'
+        && attempt.reason === 'provider_outcome_unresolved',
+    );
+    if (!isPendingBind && !isTerminalRepair) {
         throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_BIND_STATE_INVALID', 409);
     }
 
@@ -362,14 +373,24 @@ async function bindOutboundPlacementWithClient({
              bind_source = 'post_call_response',
              bound_at = now(),
              state = 'active',
+             quarantine_reason = NULL,
+             quarantined_at = NULL,
              provider_subscription_limits = COALESCE($4::jsonb, provider_subscription_limits),
              provider_placement_observed_at = now()
          WHERE id = $1
            AND company_id = $2
-           AND state = 'provider_pending'
+           AND state = $5
+           AND ($6::text IS NULL OR quarantine_reason = $6)
            AND vapi_call_id IS NULL
          RETURNING id`,
-        [normalizedSessionId, normalizedCompanyId, normalizedProviderCallId, limitsValue],
+        [
+            normalizedSessionId,
+            normalizedCompanyId,
+            normalizedProviderCallId,
+            limitsValue,
+            isTerminalRepair ? 'quarantined' : 'provider_pending',
+            isTerminalRepair ? 'provider_outcome_unresolved' : null,
+        ],
     );
     const boundAttempt = await client.query(
         `UPDATE outbound_call_attempts
@@ -378,10 +399,18 @@ async function bindOutboundPlacementWithClient({
              updated_at = now()
          WHERE id = $1
            AND company_id = $2
-           AND status = 'dialing'
+           AND status = $5
+           AND ($6::text IS NULL OR reason = $6)
            AND vapi_call_id IS NULL
          RETURNING id`,
-        [attemptId, normalizedCompanyId, normalizedProviderCallId, slotValue],
+        [
+            attemptId,
+            normalizedCompanyId,
+            normalizedProviderCallId,
+            slotValue,
+            isTerminalRepair ? 'exhausted' : 'dialing',
+            isTerminalRepair ? 'provider_outcome_unresolved' : null,
+        ],
     );
     if (boundSession.rows.length !== 1 || boundAttempt.rows.length !== 1) {
         throw new VapiIdentityError('VAPI_IDENTITY_OUTBOUND_ATOMIC_BIND_FAILED', 409);
@@ -392,6 +421,7 @@ async function bindOutboundPlacementWithClient({
         sessionId: String(session.id),
         companyId: session.company_id,
         providerCallId: normalizedProviderCallId,
+        terminalRepair: isTerminalRepair,
     };
 }
 
@@ -435,6 +465,95 @@ async function quarantineOutboundReservationWithClient({
 
 async function quarantineOutboundReservation(input) {
     return withTransaction((client) => quarantineOutboundReservationWithClient(input, client));
+}
+
+async function reapStaleOutboundPlacementsWithClient({
+    maxAgeMinutes = DEFAULT_OUTBOUND_PROVIDER_PENDING_MAX_AGE_MINUTES,
+    limit = 100,
+} = {}, client) {
+    if (!Number.isInteger(maxAgeMinutes) || maxAgeMinutes < 1 || maxAgeMinutes > 1440) {
+        throw new VapiIdentityError('VAPI_IDENTITY_PROVIDER_PENDING_AGE_INVALID', 500);
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        throw new VapiIdentityError('VAPI_IDENTITY_PROVIDER_PENDING_LIMIT_INVALID', 500);
+    }
+    const result = await client.query(
+        // tenant-safety-allow R-worker: this platform worker intentionally sweeps
+        // all tenants, but derives company only from the joined local rows and
+        // performs both terminal writes with that same company_id.
+        `WITH candidates AS (
+             SELECT session.id AS session_id,
+                    session.company_id,
+                    session.outbound_call_attempt_id AS attempt_id,
+                    attempt.job_id,
+                    attempt.task_id,
+                    attempt.contact_id,
+                    attempt.phone,
+                    attempt.attempt_no,
+                    attempt.scenario,
+                    attempt.lead_uuid,
+                    attempt.slot_json
+             FROM vapi_call_sessions session
+             JOIN outbound_call_attempts attempt
+               ON attempt.id = session.outbound_call_attempt_id
+              AND attempt.company_id = session.company_id
+             WHERE session.direction = 'outbound'
+               AND session.state = 'provider_pending'
+               AND session.vapi_call_id IS NULL
+               AND attempt.status = 'dialing'
+               AND attempt.vapi_call_id IS NULL
+               AND session.admitted_at <= now() - make_interval(mins => $1)
+             ORDER BY session.admitted_at, session.id
+             LIMIT $2
+             FOR UPDATE OF session, attempt SKIP LOCKED
+         ), quarantined AS (
+             UPDATE vapi_call_sessions session
+             SET state = 'quarantined',
+                 quarantine_reason = 'provider_outcome_unresolved',
+                 quarantined_at = now(),
+                 updated_at = now()
+             FROM candidates candidate
+             WHERE session.id = candidate.session_id
+               AND session.company_id = candidate.company_id
+               AND session.state = 'provider_pending'
+               AND session.vapi_call_id IS NULL
+             RETURNING session.id
+         ), exhausted AS (
+             UPDATE outbound_call_attempts attempt
+             SET status = 'exhausted',
+                 reason = 'provider_outcome_unresolved',
+                 updated_at = now()
+             FROM candidates candidate
+             WHERE attempt.id = candidate.attempt_id
+               AND attempt.company_id = candidate.company_id
+               AND attempt.status = 'dialing'
+               AND attempt.vapi_call_id IS NULL
+             RETURNING attempt.id
+         )
+         SELECT candidate.*
+         FROM candidates candidate
+         JOIN quarantined ON quarantined.id = candidate.session_id
+         JOIN exhausted ON exhausted.id = candidate.attempt_id
+         ORDER BY candidate.attempt_id`,
+        [maxAgeMinutes, limit],
+    );
+    return result.rows;
+}
+
+async function reapStaleOutboundPlacements(options = {}) {
+    const { onExhaustedWithClient = null, ...queryOptions } = options;
+    return withTransaction(async (client) => {
+        const exhausted = await reapStaleOutboundPlacementsWithClient(queryOptions, client);
+        if (onExhaustedWithClient) {
+            for (const attempt of exhausted) {
+                // The human follow-up and the terminal attempt/session transition
+                // are one commit. A follow-up failure rolls the terminal state back
+                // so the next sweep can retry the whole durable unit.
+                await onExhaustedWithClient(attempt, client);
+            }
+        }
+        return exhausted;
+    });
 }
 
 async function reserveInboundSessionWithClient({
@@ -582,6 +701,47 @@ async function reserveInboundSessionWithClient({
         ],
     );
 
+    const missingOperationalSurfaces = [
+        selected.tools_credential_ready === true
+            ? null
+            : { surface: 'vapi_tools', reason: 'vapi_tools_credential_unavailable' },
+        selected.call_status_credential_ready === true
+            ? null
+            : { surface: 'vapi_call_status', reason: 'call_status_credential_unavailable' },
+    ].filter(Boolean);
+    for (const missing of missingOperationalSurfaces) {
+        await client.query('SAVEPOINT vapi_identity_accounting_alert');
+        try {
+            await client.query(
+                `INSERT INTO vapi_usage_alerts (
+                     company_id, vapi_call_session_id, kind, dedupe_key, details
+                 ) VALUES (
+                     $1, $2, 'local_missing', $3, $4::jsonb
+                 )
+                 ON CONFLICT (dedupe_key) DO UPDATE
+                 SET details = EXCLUDED.details,
+                     resolved_at = NULL
+                 WHERE vapi_usage_alerts.details IS DISTINCT FROM EXCLUDED.details
+                    OR vapi_usage_alerts.resolved_at IS NOT NULL`,
+                [
+                    normalizedCompanyId,
+                    inserted.rows[0].id,
+                    `local_missing:${inserted.rows[0].id}:${missing.surface}_credential`,
+                    JSON.stringify({ reason: missing.reason }),
+                ],
+            );
+            await client.query('RELEASE SAVEPOINT vapi_identity_accounting_alert');
+        } catch (_alertError) {
+            await client.query('ROLLBACK TO SAVEPOINT vapi_identity_accounting_alert');
+            await client.query('RELEASE SAVEPOINT vapi_identity_accounting_alert');
+        }
+        identityAlert(missing.reason, {
+            companyId: normalizedCompanyId,
+            sessionId: inserted.rows[0].id,
+            providerCallId: null,
+        });
+    }
+
     return {
         sessionId: String(inserted.rows[0].id),
         companyId: inserted.rows[0].company_id,
@@ -656,27 +816,33 @@ async function bindInboundCallWithClient({
              credential.machine_surface AS credential_surface,
              credential.scopes AS credential_scopes,
              credential.revoked_at AS credential_revoked_at,
-             credential.expires_at AS credential_expires_at
+             credential.expires_at AS credential_expires_at,
+             acceptance.acceptance_state AS credential_acceptance_state,
+             acceptance.expires_at AS credential_acceptance_expires_at
          FROM vapi_call_sessions session
          LEFT JOIN vapi_tenant_resources resource
            ON resource.id = session.tenant_resource_id
           AND resource.company_id = session.company_id
           AND resource.provider_connection_id = session.provider_connection_id
           AND resource.assistant_profile_id = session.assistant_profile_id
-          AND resource.server_credential_id = session.assistant_request_credential_id
          LEFT JOIN vapi_assistant_profiles profile
            ON profile.id = session.assistant_profile_id
           AND profile.company_id = session.company_id
           AND profile.provider_connection_id = session.provider_connection_id
          LEFT JOIN api_integrations credential
-           ON credential.id = session.assistant_request_credential_id
+           ON credential.id = $3
           AND credential.company_id = session.company_id
+         LEFT JOIN vapi_company_credential_acceptance acceptance
+           ON acceptance.company_id = session.company_id
+          AND acceptance.environment = session.environment
+          AND acceptance.machine_surface = 'vapi_assistant_request'
+          AND acceptance.credential_id = credential.id
          WHERE session.company_id = $1
            AND session.correlation_token_hash = $2
            AND session.direction = 'inbound'
          LIMIT 2
          FOR UPDATE OF session`,
-        [normalizedCompanyId, tokenHash],
+        [normalizedCompanyId, tokenHash, normalizedCredentialId],
     );
     if (found.rows.length !== 1) {
         throw new VapiIdentityError('VAPI_IDENTITY_TOKEN_NOT_FOUND', 404);
@@ -701,7 +867,7 @@ async function bindInboundCallWithClient({
         return quarantineSession(client, session, 'correlation_token_reused');
     }
 
-    if (String(session.assistant_request_credential_id) !== normalizedCredentialId) {
+    if (!session.credential_surface) {
         return quarantineSession(client, session, 'credential_mismatch');
     }
 
@@ -710,6 +876,13 @@ async function bindInboundCallWithClient({
         : [];
     const credentialExpired = session.credential_expires_at
         && new Date(session.credential_expires_at).getTime() <= Date.now();
+    const acceptanceExpired = session.credential_acceptance_expires_at
+        && new Date(session.credential_acceptance_expires_at).getTime() <= Date.now();
+    const credentialPinned = String(session.assistant_request_credential_id)
+        === normalizedCredentialId;
+    const rotationCredentialAccepted = ['rotating', 'current', 'retiring']
+        .includes(session.credential_acceptance_state)
+        && !acceptanceExpired;
     if (
         session.resource_active !== true
         || session.profile_active !== true
@@ -717,6 +890,7 @@ async function bindInboundCallWithClient({
         || !scopes.includes('vapi_assistant_request:invoke')
         || session.credential_revoked_at
         || credentialExpired
+        || (!credentialPinned && !rotationCredentialAccepted)
         || session.current_vapi_assistant_id !== session.expected_vapi_assistant_id
     ) {
         return quarantineSession(client, session, 'execution_tuple_drift');
@@ -791,6 +965,50 @@ async function bindInboundCall(input) {
     return outcome;
 }
 
+async function recordUnattributedInboundCall({ companyId, providerCallId, reason }, client = null) {
+    const normalizedCompanyId = assertNonEmpty(
+        companyId,
+        'VAPI_IDENTITY_COMPANY_REQUIRED',
+        64,
+    );
+    const normalizedProviderCallId = assertNonEmpty(
+        providerCallId,
+        'VAPI_IDENTITY_PROVIDER_CALL_REQUIRED',
+        128,
+    );
+    const normalizedReason = assertNonEmpty(
+        reason,
+        'VAPI_IDENTITY_UNATTRIBUTED_REASON_REQUIRED',
+        64,
+    );
+    const write = (executor) => executor.query(
+        `INSERT INTO vapi_usage_alerts (
+             company_id, provider_call_id, kind, dedupe_key, details
+         ) VALUES (
+             $1, $2, 'provider_orphan', $3, $4::jsonb
+         )
+         ON CONFLICT (dedupe_key) DO UPDATE
+         SET provider_call_id = EXCLUDED.provider_call_id,
+             details = EXCLUDED.details,
+             resolved_at = NULL
+         WHERE vapi_usage_alerts.details IS DISTINCT FROM EXCLUDED.details
+            OR vapi_usage_alerts.resolved_at IS NOT NULL`,
+        [
+            normalizedCompanyId,
+            normalizedProviderCallId,
+            `provider_orphan:${normalizedProviderCallId}:assistant_request_unattributed`,
+            JSON.stringify({ providerCallId: normalizedProviderCallId, reason: normalizedReason }),
+        ],
+    );
+    if (client?.query) await write(client);
+    else await withTransaction(write);
+    identityAlert(normalizedReason, {
+        companyId: normalizedCompanyId,
+        sessionId: null,
+        providerCallId: normalizedProviderCallId,
+    });
+}
+
 module.exports = {
     TOKEN_HEADER,
     VapiIdentityError,
@@ -799,6 +1017,7 @@ module.exports = {
     reserveInboundSessionWithClient,
     bindInboundCall,
     bindInboundCallWithClient,
+    recordUnattributedInboundCall,
     sanitizeSubscriptionLimits,
     reserveOutboundSession,
     reserveOutboundSessionWithClient,
@@ -806,4 +1025,6 @@ module.exports = {
     bindOutboundPlacementWithClient,
     quarantineOutboundReservation,
     quarantineOutboundReservationWithClient,
+    reapStaleOutboundPlacements,
+    reapStaleOutboundPlacementsWithClient,
 };

@@ -282,7 +282,8 @@ async function repairPendingOutboundIdentities(client, providerCalls) {
             // server-generated session UUID stored in provider metadata; company
             // is derived only from that globally unique local row, never provider input.
             `SELECT id, company_id, outbound_call_attempt_id,
-                    expected_vapi_assistant_id, state, vapi_call_id
+                    expected_vapi_assistant_id, state, vapi_call_id,
+                    quarantine_reason
              FROM vapi_call_sessions
              WHERE id = $1
                AND direction = 'outbound'
@@ -292,8 +293,11 @@ async function repairPendingOutboundIdentities(client, providerCalls) {
         );
         if (candidate.rows.length !== 1) continue;
         const session = candidate.rows[0];
+        const pendingPlacement = session.state === 'provider_pending';
+        const terminalPlacement = session.state === 'quarantined'
+            && session.quarantine_reason === 'provider_outcome_unresolved';
         if (
-            session.state !== 'provider_pending'
+            (!pendingPlacement && !terminalPlacement)
             || session.vapi_call_id
             || !session.outbound_call_attempt_id
             || session.expected_vapi_assistant_id !== call.assistantId
@@ -307,6 +311,7 @@ async function repairPendingOutboundIdentities(client, providerCalls) {
                 sessionId: String(session.id),
                 outboundCallAttemptId: String(session.outbound_call_attempt_id),
                 providerCallId: call.id,
+                allowTerminalRepair: terminalPlacement,
             }, client);
             await client.query('RELEASE SAVEPOINT vapi_outbound_identity_repair');
             repaired += 1;

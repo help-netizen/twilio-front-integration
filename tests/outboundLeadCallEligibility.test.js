@@ -4,7 +4,17 @@
  * db/eventBus/services are mocked; the service under test is REAL.
  */
 
-jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
+const mockDbQuery = jest.fn();
+const mockDbRelease = jest.fn();
+const mockDbGetClient = jest.fn(async () => ({
+    query: mockDbQuery,
+    release: mockDbRelease,
+}));
+
+jest.mock('../backend/src/db/connection', () => ({
+    query: mockDbQuery,
+    getClient: mockDbGetClient,
+}));
 jest.mock('../backend/src/services/eventBus', () => ({
     emit: jest.fn().mockResolvedValue(undefined),
     subscribe: jest.fn(),

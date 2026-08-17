@@ -64,6 +64,15 @@ Docker = colima (VM 4cpu/4GiB/15GiB, автостарт `brew services start col
 
 Каждые 10 минут: `fetch origin/master` → новый SHA? → `reset --hard` → **авто-применение новых миграций** (номер > `migration-floor`, по одной, `ON_ERROR_STOP`; упавшая миграция = RED и стоп — ловим ДО прода) → `compose build app slot-engine` → `up -d` → health-poll :3200 → `state/sha`+`GREEN`, иначе `RED`.
 
+До migration 273 deploy-процесс обязан получить стабильный
+`JOB_CODE_FEISTEL_KEY` из staging `.env` и сначала установить то же значение через
+`ALTER DATABASE ... SET app.job_code_feistel_key`. Это обязательная часть deploy,
+которая покрывает raw `psql` и старый процесс до рестарта. После миграций app
+передаёт тот же env на каждом новом DB connection; fingerprint migration 273
+останавливает несовпадение. Без app env процесс стартует degraded и сохраняет
+телефонию, но создание работ явно недоступно.
+Полная процедура: `docs/deploy/JOB-CODE-FEISTEL-KEY.md`.
+
 Проверить статус: `ssh mini cat albusto-staging/state/status`
 Журнал: `ssh mini tail -20 albusto-staging/state/deploy.log`
 Форс-прогон: `ssh mini albusto-staging/bin/staging-deploy.sh`

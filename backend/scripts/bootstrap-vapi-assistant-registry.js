@@ -3,6 +3,10 @@
 
 const axios = require('axios');
 const db = require('../src/db/connection');
+const {
+    acquireCompanyProvisioningLock,
+    releaseCompanyProvisioningLock,
+} = require('../src/services/vapiAgencyProvisioningService');
 
 const ENVIRONMENT = 'prod';
 const PLATFORM_ACCOUNT_KEY = 'vapi:platform';
@@ -385,28 +389,32 @@ async function applyPlan(client, plan) {
          SET purpose = 'inbound_call',
              assistant_profile_id = $1,
              server_credential_id = $2,
+             fallback_vapi_assistant_id = $3,
              assistant_request_secret = NULL,
              status = 'active',
              updated_at = now()
-         WHERE id = $3
-           AND company_id = $4
-           AND provider_connection_id = $5
+         WHERE id = $4
+           AND company_id = $5
+           AND provider_connection_id = $6
            AND (
                purpose,
                assistant_profile_id,
                server_credential_id,
+               fallback_vapi_assistant_id,
                assistant_request_secret,
                status
            ) IS DISTINCT FROM (
                'inbound_call'::text,
                $1::text,
                $2::bigint,
+               $3::text,
                NULL::text,
                'active'::text
            )`,
         [
             profileIds.inbound_call,
             plan.credentials.vapi_assistant_request.id,
+            plan.assistants.find(({ purpose }) => purpose === 'inbound_call').assistantId,
             plan.resource.id,
             plan.companyId,
             plan.connection.id,
@@ -489,15 +497,23 @@ async function run(argv = process.argv.slice(2), dependencies = {}) {
     const externalClient = dependencies.client || null;
     const client = externalClient || await (dependencies.db || db).getClient();
     const ownsTransaction = !externalClient;
+    let lockAcquired = false;
+    let discardClient = false;
     try {
+        if (args.apply) {
+            await acquireCompanyProvisioningLock(client, args.companyId);
+            lockAcquired = true;
+        }
         if (ownsTransaction) await client.query('BEGIN');
-        const plan = await inspectPlan(client, {
+        const inspect = dependencies.inspectPlan || inspectPlan;
+        const apply = dependencies.applyPlan || applyPlan;
+        const plan = await inspect(client, {
             companyId: args.companyId,
             assistants,
             providerVerified: args.verifyProvider,
         });
         const result = args.apply
-            ? await applyPlan(client, plan)
+            ? await apply(client, plan)
             : summarizeDryRun(plan);
         if (ownsTransaction) {
             await client.query(args.apply ? 'COMMIT' : 'ROLLBACK');
@@ -508,7 +524,13 @@ async function run(argv = process.argv.slice(2), dependencies = {}) {
         if (ownsTransaction) await client.query('ROLLBACK').catch(() => {});
         throw error;
     } finally {
-        if (ownsTransaction) client.release();
+        if (lockAcquired) {
+            await releaseCompanyProvisioningLock(client, args.companyId).catch((error) => {
+                discardClient = true;
+                console.error('[vapiRegistryBootstrap] advisory unlock failed:', error.message);
+            });
+        }
+        if (ownsTransaction) client.release(discardClient);
     }
 }
 

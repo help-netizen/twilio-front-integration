@@ -34,6 +34,7 @@ const partsCallService = require('./partsCallService');
 // customer's Pulse timeline. The service is NON-FATAL by contract, but we still
 // wrap the call here (best-effort side-effect — never blocks/reclassifies a dial).
 const vapiCallTimelineService = require('./vapiCallTimelineService');
+const vapiCallIdentityService = require('./vapiCallIdentityService');
 
 const DEFAULT_INTERVAL_MS = 60_000; // 60s tick, matching snoozeScheduler.
 
@@ -415,6 +416,55 @@ async function terminate(attemptId, status, reason) {
     );
 }
 
+async function surfaceUnresolvedProviderPlacement(attempt, client) {
+    console.error('[VAPI_OUTBOUND_ALERT] provider outcome unresolved; attempt exhausted', {
+        companyId: attempt.company_id,
+        attemptId: attempt.attempt_id,
+        sessionId: attempt.session_id,
+        scenario: attempt.scenario,
+    });
+    if (attempt.scenario === 'lead_call') {
+        await require('./outboundLeadCallService').handleProviderPendingExhausted(
+            attempt,
+            client,
+            { strict: true },
+        );
+        return;
+    }
+    await jobsService.addNote(
+        attempt.job_id,
+        'AI: the call provider may have accepted a call, but Albusto could not confirm the result. No automatic retry was placed to avoid calling the customer twice. Please review and follow up.',
+        [],
+        'AI Phone',
+        'AI Phone',
+        null,
+        attempt.company_id,
+        client,
+    );
+    if (attempt.task_id != null) {
+        await partsCallService.markRobotCallFailed(
+            attempt.company_id,
+            attempt.task_id,
+            'Provider call outcome is unknown — review before calling again.',
+            client,
+            { strict: true },
+        );
+    }
+}
+
+async function reapUnresolvedProviderPlacements() {
+    let exhausted;
+    try {
+        exhausted = await vapiCallIdentityService.reapStaleOutboundPlacements({
+            onExhaustedWithClient: surfaceUnresolvedProviderPlacement,
+        });
+    } catch (error) {
+        console.error('[VAPI_OUTBOUND_ALERT] provider-pending sweep failed:', error.message);
+        return 0;
+    }
+    return exhausted.length;
+}
+
 // =============================================================================
 // Claim loop
 // =============================================================================
@@ -426,6 +476,10 @@ async function terminate(attemptId, status, reason) {
  * Exported for direct unit-test invocation (OPC1-T11).
  */
 async function tick() {
+    // An ambiguous POST is never repeated automatically: it may have reached
+    // the provider. The same existing scheduler gives audit repair a bounded
+    // window, then frees the active-attempt guard and raises human follow-up.
+    await reapUnresolvedProviderPlacements();
     let claimed = [];
     try {
         const res = await db.query(

@@ -314,6 +314,69 @@ test('ambiguous POST is repaired from server-owned call metadata before any retr
     });
 });
 
+test('SAB-FIX2: stale provider_pending becomes terminal, frees the guard, and late audit only repairs identity', async () => {
+    const reserved = await reserve(COMPANY_A, attemptA);
+    await client.query(
+        `UPDATE vapi_call_sessions
+         SET admitted_at = now() - interval '2 hours'
+         WHERE id = $1`,
+        [reserved.sessionId],
+    );
+    const swept = await identity.reapStaleOutboundPlacementsWithClient({
+        maxAgeMinutes: 30,
+    }, client);
+    expect(swept).toEqual([
+        expect.objectContaining({
+            session_id: reserved.sessionId,
+            attempt_id: attemptA,
+            company_id: COMPANY_A,
+        }),
+    ]);
+
+    const terminal = await client.query(
+        `SELECT session.state, session.quarantine_reason,
+                attempt.status, attempt.reason
+         FROM vapi_call_sessions session
+         JOIN outbound_call_attempts attempt
+           ON attempt.id = session.outbound_call_attempt_id
+          AND attempt.company_id = session.company_id
+         WHERE session.id = $1`,
+        [reserved.sessionId],
+    );
+    expect(terminal.rows[0]).toEqual({
+        state: 'quarantined',
+        quarantine_reason: 'provider_outcome_unresolved',
+        status: 'exhausted',
+        reason: 'provider_outcome_unresolved',
+    });
+
+    await expect(seedAttempt(COMPANY_A)).resolves.toMatch(/^\d+$/);
+
+    const repaired = await audit.repairPendingOutboundIdentities(client, new Map([
+        ['provider-late-repair', {
+            id: 'provider-late-repair',
+            albustoCallSessionId: reserved.sessionId,
+            assistantId: 'outbound-assistant-a',
+        }],
+    ]));
+    expect(repaired).toBe(1);
+    const late = await client.query(
+        `SELECT session.state, session.vapi_call_id,
+                attempt.status, attempt.vapi_call_id
+         FROM vapi_call_sessions session
+         JOIN outbound_call_attempts attempt
+           ON attempt.id = session.outbound_call_attempt_id
+          AND attempt.company_id = session.company_id
+         WHERE session.id = $1`,
+        [reserved.sessionId],
+    );
+    expect(late.rows[0]).toEqual({
+        state: 'active',
+        vapi_call_id: 'provider-late-repair',
+        status: 'exhausted',
+    });
+});
+
 test('repair rejects metadata when provider assistant is not the pinned company assistant', async () => {
     const reserved = await reserve(COMPANY_A, attemptA);
     const repaired = await audit.repairPendingOutboundIdentities(client, new Map([

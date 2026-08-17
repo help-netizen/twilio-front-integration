@@ -123,14 +123,14 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
         expect(source).not.toMatch(/require\([^)]*Queries/i);
     });
 
-    test('boot replay restores assistant metadata after the split app seed', () => {
+    test('boot replay restores assistant metadata and only the Google Ads catalog seed', () => {
         const source = fs.readFileSync(
             path.join(__dirname, '..', 'backend', 'src', 'db', 'marketplaceQueries.js'),
             'utf8'
         );
         const split = "await query(readMigration('170_split_lead_generator_marketplace_apps.sql'));";
         const assistant = "await query(readMigration('173_seed_assistant_app_descriptions.sql'));";
-        const googleAds = "await query(readMigration('214_google_ads_connector.sql'));";
+        const googleAds = "await query(readSeedStatements(readMigration('214_google_ads_connector.sql')));";
 
         expect(source.match(/readMigration\('173_seed_assistant_app_descriptions\.sql'\)/g))
             .toHaveLength(1);
@@ -139,6 +139,7 @@ describe('ASSISTANT-BOT-001 structural isolation', () => {
         expect(source.indexOf(split)).toBeGreaterThan(-1);
         expect(source.indexOf(assistant)).toBeGreaterThan(source.indexOf(split));
         expect(source.indexOf(googleAds)).toBeGreaterThan(source.indexOf(assistant));
+        expect(source).not.toContain("await query(readMigration('214_google_ads_connector.sql'));");
     });
 
     test('marketplace connection snapshot is one company-scoped pure SELECT', async () => {

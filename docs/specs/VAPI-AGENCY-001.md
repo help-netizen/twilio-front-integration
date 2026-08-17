@@ -93,8 +93,12 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   больше не выбирают destination.
 - Единственный смонтированный selector —
   `POST /api/vapi/call-status/assistant-request`. Company берётся из отдельного
-  machine credential, а сохранённый assistant возвращается только после exact bind
-  token + company + credential + resource tuple + `message.call.id`.
+  per-company machine credential. При наличии token сохранённый assistant
+  возвращается только после exact bind token + company + credential + resource
+  tuple + `message.call.id`. Ошибка bind не имеет права отказать клиенту в
+  ответе: запрос деградирует в тот же credential-company assistant, а звонок
+  явно отмечается неатрибутированным. Аварийный запрос без token ведёт себя так
+  же без создания session. В обоих случаях alert хранит provider call id.
 - Legacy prototype больше не строит transient assistant; tenant CRUD/API/UI,
   org provisioner и CLI удалены в T5. Защищённый mount пустого tombstone-router
   снимается отдельным shell patch из `src/server.js`.
@@ -106,9 +110,20 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   локальные connection/resource/ownership данные и идемпотентно наполняет ABC;
   по умолчанию это dry-run. Machine credentials остаются независимым
   операционным слоем: ровно одна активная строка surface связывается, 0 или >1
-  оставляют nullable binding и `readiness_evidence.complete=false`. Runtime при
-  отсутствующем/неполном registry остаётся fail-closed, а incident fallback
-  продолжает отвечать на входящий без ложной identity.
+  оставляют nullable binding и `readiness_evidence.complete=false`. Штатная
+  reservation при отсутствующем registry остаётся fail-closed, но incident
+  fallback при любом rollout-state продолжает отвечать на входящий без ложной
+  identity.
+- SIP fallback и tokenless assistant selector используют одно множество
+  допустимых server-owned resource rows: company, active resource, непустой SIP,
+  Vapi connection в operator-controlled `active`. `purpose/environment/status`,
+  `rollout_state`, accounting credentials и NULL `fallback_vapi_assistant_id` не
+  являются admission. Assistant берётся по порядку из resource snapshot,
+  company profile, durable provisioning evidence; для единственной legacy SIP
+  company допускается deployment `VAPI_INBOUND_ASSISTANT_ID`. При появлении
+  второй eligible SIP company этот singleton fallback конструктивно отключён.
+  `provider_connections.status` меняют только bootstrap/provisioning/оператор;
+  health-check, webhook error и provider 5xx его автоматически не двигают.
 - T3 требует exact raw body до JSON parsing для денег, но денежный ingest не
   является предусловием outbound FSM/timeline: attempt коррелируется отдельно по
   company credential + локальной строке. До T5 outbound usage создаётся из
@@ -134,13 +149,13 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   состояние `stale_pending`; молчаливой финализации нет.
 - Runtime-выбор нового исходящего assistant идёт только через exact
   `(company,purpose,prod)` active registry tuple; global assistant env fallback
-  удалён. Inbound reservation использует тот же registry, company-owned resource
-  и три typed credentials. Узкий production-инцидентный fallback сохранён только
-  для platform-owned `legacy_canary`: он может набрать закреплённый company SIP
-  без token, но не принимает tenant SIP/purpose/environment/profile и не
-  доступен обычному или второму tenant rollout.
-- Legacy Marketplace row переведён в `disabled` replay-safe seed: старые seeds не
-  могут снова опубликовать его при старте. Tenant API больше не выдаёт скрытые
+-  удалён. Inbound reservation использует тот же registry, company-owned resource
+  и assistant-request credential. `vapi_tools`/`vapi_call_status` readiness
+  проверяется и алертится отдельно, но не является допуском ответа на звонок.
+  Incident fallback находит server-owned company SIP при любом rollout-state и
+  не принимает tenant SIP/purpose/environment/profile.
+- Legacy Marketplace row, если он существует, переводится в `disabled` replay-safe
+  seed; отсутствие операционного seed не роняет migration 276. Tenant API больше не выдаёт скрытые
   installations, Vapi settings route/UI отсутствуют, а client key,
   `base_config_json` и plaintext resource secret запрещены DB constraints.
 
@@ -269,6 +284,7 @@ production gate остаётся закрыт.
 | `resource_type` | `sip_destination`, `vapi_phone_number` либо `transient_twilio` |
 | `vapi_phone_number_id`, `twilio_phone_number`, `sip_uri` | platform-only provider/caller data; runtime не выбирает их из env |
 | `server_credential_id` | собственный company-bound credential ресурса; для assistant-request/resource server, не plaintext secret |
+| `fallback_vapi_assistant_id` | необязательный server-owned snapshot inbound assistant; ускоряет tokenless safety path, но NULL не запрещает ответ и tenant API его не принимает |
 | `status`, `config_hash`, `provider_updated_at`, `last_verified_at` | readiness/drift |
 | `created_at`, `updated_at` | аудит |
 
@@ -296,12 +312,29 @@ env только отдельным dry-run-by-default operational CLI; runtime 
 | `provider_assistant_ids`, `provider_resource_id`, `sip_uri` | частичные provider identities, сохраняемые сразу после каждого успешного create/discovery |
 | `assistant_readback_evidence`, `resource_readback_hash` | secret-free canonical hashes, provider timestamps и template versions |
 | `*_credential_id` | company-composite FK на три разные machine surfaces; plaintext отсутствует |
+| `previous_rollout_state` | lifecycle state непосредственно до `--apply`; восстанавливается при failure |
+| `last_successful_template_variables` | последняя verified allowlisted конфигурация для наследования отсутствующих CLI-аргументов |
 | `last_error_code`, `last_error_step`, timestamps | безопасная операционная диагностика без provider body/секретов |
 
-Таблица не имеет tenant route. Migration 278 создаёт только эту структуру и
-readback-поля ресурса; ни company, ни credentials, ни provider objects она не
-создаёт. Потерянный ответ после provider create восстанавливается через
+Таблица не имеет tenant route. Migrations 278/279 создают только эту структуру,
+readback-поля и recovery columns; ни company, ни credentials, ни provider
+objects они не создают. Потерянный ответ после provider create восстанавливается через
 `operation_key` в server-owned metadata ассистента либо детерминированный SIP URI.
+Если `beginRun` видит уже переходное `rollout_state='provisioning'`, он сохраняет
+ранее зафиксированное стабильное значение, а не затирает его переходным; failure
+всегда возвращает исходное состояние.
+
+#### `vapi_company_credential_acceptance` (platform-owned)
+
+| Поле | Назначение |
+|---|---|
+| `company_id`, `environment`, `machine_surface`, `credential_id` | company-composite identity явно принятого assistant-request credential |
+| `acceptance_state` | `rotating`, `current`, `retiring`; ровно один `current` на company/environment/surface |
+| `accepted_at`, `expires_at` | аудит и обязательная граница `retiring` overlap |
+
+Session остаётся pinned к `assistant_request_credential_id`. Callback принимает
+только этот credential либо credential из явного bounded rotation window;
+произвольная active same-company строка не является authority.
 
 ### 5.2 Идентичность и supplier usage
 
@@ -497,6 +530,19 @@ alerts; неизменившийся fingerprint повторно не отпр�
    observation/usage для unknown/unbound call id; только после exact
    credential + session/attempt correlation он сохраняет allowlisted sanitized
    EoC evidence. Assistant/company mismatch — отказ без денежной строки.
+8. Для аварийной SIP-ноги без token assistant-request всё равно аутентифицируется
+   отдельным credential компании. Handler игнорирует body/SIP selection claims,
+   выбирает assistant только по credential-company и server-owned resource
+   snapshot, совпадающему active profile либо durable provisioning evidence и
+   возвращает его без session bind. Для единственной legacy SIP-компании допустим
+   deployment fallback `VAPI_INBOUND_ASSISTANT_ID`; после появления второй
+   eligible SIP-компании он конструктивно отключается. Поэтому путь работает и
+   при NULL `fallback_vapi_assistant_id` и пустом normalized profile registry.
+   Provider call сохраняется как `provider_orphan` с dedicated
+   `provider_call_id` и причиной `assistant_request_missing_token`; отказ записи
+   alert не блокирует ответ и оставляет company/provider call id в безопасном
+   platform log. Такой звонок не становится «чужим» и не получает выдуманную
+   identity.
 
 Следствие: Vapi id впервые доступен в доверенном `assistant-request` как
 `message.call.id`; к этому моменту локальная session уже существует, а bind
@@ -520,6 +566,16 @@ alerts; неизменившийся fingerprint повторно не отпр�
    не немедленный повтор. Ночной provider list допускает repair только по exact
    server-generated session UUID из call metadata + совпавшему pinned assistant;
    company выводится из local session. До repair повторный `POST /call` запрещён.
+   Через 30 минут без repair существующий worker одной PostgreSQL-транзакцией
+   переводит session в
+   `quarantined/provider_outcome_unresolved`, а attempt — в
+   `exhausted/provider_outcome_unresolved`, освобождает active unique guard и
+   создаёт P1/dispatcher follow-up. Ошибка создания follow-up откатывает и
+   терминальный переход: состояния «attempt закрыт, а задача потеряна» нет.
+   Автоматического retry после неоднозначного POST нет: provider мог принять
+   первый вызов. Поздний audit может дописать
+   provider id в обе identity-строки, но не возвращает attempt из `exhausted` и
+   не воскрешает FSM.
    Provider API документирует call `metadata` в Create/List Call contract:
    https://docs.vapi.ai/api-reference/calls/create и
    https://docs.vapi.ai/api-reference/calls/list.
@@ -656,25 +712,29 @@ flow runtime до выдачи SIP destination, так и outbound worker до l
 
 1. глобальный VAPI agency runtime включён;
 2. отдельный multi-tenant rollout flag включён platform operator;
-3. компания активна, а `(company, environment)` имеет `rollout_state='enabled'`;
+3. компания активна и имеет отдельный platform-owned runtime admission flag;
+   lifecycle-поле `rollout_state` не читается при приёме звонка, reservation или
+   incident fallback и не является допуском;
 4. существует ровно один active assistant registry row для требуемых company,
    purpose и environment;
 5. существует ровно один active SIP resource той же компании, закреплённый за
    этим assistant;
 6. provider readback совпадает с template/resource hashes и не помечен drifted;
-7. существуют активные, неистёкшие и разные server credentials для
-   `vapi_tools`, `vapi_call_status` и credential закреплённого SIP resource;
-   endpoint `vapi_assistant_request` вызывается только если явно включён
-   dynamic-resource path;
+7. существует активный per-company credential закреплённого SIP resource для
+   `vapi_assistant_request`; состояние `vapi_tools`/`vapi_call_status` входит в
+   readiness/alerting и gate второго тенанта, но его отказ не блокирует уже
+   поступивший входящий звонок;
 8. inbound durable session/token bind contract включён и прошёл health/readback;
 9. положительный company concurrency limit и global policy обслуживаются
    атомарным admission/lease механизмом;
 10. есть активная pricing policy и разрешимая существующая subscription/wallet
     связь компании.
 
-Переход `ready -> enabled` доступен только platform manage и транзакционно заново
-вычисляет условия. На каждом звонке runtime повторяет критические relational
-проверки, поэтому устаревший readiness snapshot не открывает доступ.
+Операторский переход `ready -> enabled` доступен только platform manage и
+транзакционно заново вычисляет условия, но сам `rollout_state` остаётся
+наблюдаемым lifecycle-состоянием. Runtime использует отдельную admission policy и
+критические relational проверки, поэтому устаревший readiness snapshot не
+открывает доступ и не ломает страховочный путь.
 
 ABC-only Phase 2 flag становится доступен для изменения только после приёмки
 T1–T8, прохождения всех их P0/P1 и sabotage тестов, provider readback и периода
@@ -689,7 +749,8 @@ T1–T8, прохождения всех их P0/P1 и sabotage тестов, pr
   увеличивает provider attempt count и не списывает деньги.
 
 Отключение multi-tenant flag снова закрывает все компании, кроме отдельно
-контролируемого ABC canary; `suspended` закрывает и конкретный tenant.
+контролируемого ABC canary; остановка конкретного tenant выполняется отдельной
+runtime admission policy, а не чтением provisioning lifecycle state.
 
 ## 9. Provisioning и drift
 
@@ -702,11 +763,34 @@ T1–T8, прохождения всех их P0/P1 и sabotage тестов, pr
 3. рендер server-owned assistant template без tenant/provider overrides;
 4. create/update assistant в общей Vapi organization;
 5. настройка tools/server URLs на соответствующие credential endpoints;
-6. создание/обновление SIP resource компании с фиксированным assistant;
+6. создание/обновление SIP resource компании с dynamic assistant-request и
+   server-owned fallback snapshot того же inbound assistant;
 7. `GET` readback, canonical hashing, сохранение provider generation и перевод в
    `ready` только при полном совпадении;
 8. идемпотентный повтор, repair частично созданных ресурсов, drift scan и
    безопасное disable/rotate.
+
+`--apply` сериализуется session advisory lock по `company_id` на одном выделенном
+DB client на весь внешний workflow. Transaction advisory lock здесь недостаточен:
+промежуточные COMMIT нужны durable repair state и отпустили бы lock до provider
+readback. Legacy registry bootstrap использует тот же lock и не может параллельно
+перецепить registry. Перед началом сохраняется прошлый `rollout_state`; любой failure
+возвращает его (либо удаляет созданную только для прогона config-row), поэтому
+`provisioning` не остаётся навсегда.
+
+Dry-run делает только provider GET/list и возвращает secret-free список
+`differing_fields`. Существующий assistant с расхождением не PATCH-ится без
+`--adopt-existing`; полностью совпавший `ready` tenant возвращает no-op и также
+не получает PATCH. Повторная отправка без adoption допустима только для объекта
+того же durable незавершённого/failed operation, где иначе невозможно восстановить
+write-only secret. Неуказанный `--greeting` наследуется из последнего успешного
+прогона. Ротация следует порядку: новый company credential
+сначала явно добавлен в локальное состояние `rotating` рядом со старым → provider
+PATCH/readback → registry switch → старый становится `retiring` с 15-минутным
+(настраиваемым 5–60) сроком и затем перестаёт проходить expiry-проверку. Callback
+bind принимает credential, pinned на session, либо явно принятый rotation
+credential, но не произвольный active same-company credential. Новые tenant
+credentials имеют настраиваемый срок жизни, по умолчанию 365 дней.
 
 Человеку остаётся:
 
@@ -723,22 +807,28 @@ T1 фиксирует живые provider fixtures до выбора адапт�
 
 ### Реализованный T7-контракт
 
-`backend/scripts/provision-vapi-agency-company.js` требует `--company-id`, по
+  `backend/scripts/provision-vapi-agency-company.js` требует `--company-id`, по
 умолчанию выполняет только plan и делает записи лишь с `--apply`. Одна операция:
 
 1. создаёт/ремонтирует локальные connection, voice config и durable run;
 2. через migration-264 substrate создаёт три разные hash-at-rest credentials
-   `vapi_tools`, `vapi_call_status`, `vapi_assistant_request`; plaintext берётся
-   только из per-company deployment secret variables и не логируется;
+   `vapi_tools`, `vapi_call_status`, `vapi_assistant_request`; plaintext
+   криптографически генерируется заново для этой company самой credential
+   подложкой, передаётся provider только в памяти, в БД остаётся hash и в логах
+   значение не появляется. Общих deployment secret variables для tenant
+   credentials нет;
 3. рендерит три versioned source-controlled template: `inbound_call`,
    `outbound_lead_call`, `outbound_parts_call`; tenant/provider JSON merge нет;
 4. находит объект по сохранённому id или server-owned provisioning metadata,
-   иначе делает `POST /assistant`, затем всегда `PATCH` и `GET` readback;
+   иначе делает `POST /assistant` и `GET` readback. Существующий объект сначала
+   сравнивается: non-secret drift без `--adopt-existing` останавливает прогон с
+   перечнем путей и без PATCH;
 5. создаёт/ремонтирует детерминированный Vapi SIP resource с
    `assistantId=null` и единственным assistant-request URL, затем делает PATCH/GET;
 6. только после полного readback одной транзакцией активирует registry/resource,
-   отзывает superseded credentials и переводит voice config в `ready` (но не
-   `enabled`).
+   немедленно отзывает superseded tools/status credentials, а старому
+   assistant-request credential оставляет короткое expiring overlap для уже
+   admitted sessions; затем переводит voice config в `ready` (но не `enabled`).
 
 Assistant `server.secret` проверяется только по
 `isServerUrlSecretSet=true`: Vapi не возвращает его значение. Для
@@ -781,8 +871,11 @@ Org provisioner, tenant provisioning CLI, CRUD и global assistant fallback не
 registry, gate и platform-key ownership. Новый bootstrap CLI не создаёт Vapi org
 или provider resources и не является runtime fallback: он пишет только
 company-scoped локальное соответствие после явной операторской проверки.
-Сохранённый incident fallback ограничен `legacy_canary`, exact
-company/purpose/prod resource и не возвращает assistant без token.
+Сохранённый incident fallback не читает rollout/config state: он находит
+server-owned SIP resource exact company, предпочитая `inbound_call/prod`, но не
+делая purpose/environment условием существования страховки. Tokenless
+assistant-request возвращает assistant по per-company machine credential,
+создаёт alert и намеренно не создаёт ложную session identity.
 
 Migration 275 выполняется обычным `psql -v ON_ERROR_STOP=1 -f`, не требует
 `PGOPTIONS`/session settings и всегда остаётся data-neutral. Она добавляет только
@@ -933,7 +1026,7 @@ platform route/permission и всегда требует явного target com
 | outbound call worker | job/attempt `company_id` passed explicitly | company + attempt + registry tuple | internal worker contract | worker ✓; HTTP caller ✗ | global env assistant sends call under wrong tenant |
 | Vapi tool webhook | server credential resolved to company | credential + company + session + tool call id | machine surface `vapi_tools` | matching active credential ✓; tenant JWT/body company/other credential ✗ | shared secret/body scope invokes tools cross-tenant |
 | Vapi call-status/EoC webhook | server credential resolved to company | credential + company + provider call id/session | machine surface `vapi_call_status` | matching active credential ✓; tenant JWT/body company/other credential ✗ | forged event binds/costs another tenant's call |
-| Vapi assistant-request webhook (only if enabled) | dedicated resource credential + pending token | credential + company + resource + token/session | machine surface `vapi_assistant_request` | exact active credential/resource ✓; all others ✗ | override/assistant injection defeats hard binding |
+| Vapi assistant-request webhook | dedicated per-company resource credential; pending token for attributed bind | credential + company + resource + token/session when present; credential-company assistant on absent/failed bind | machine surface `vapi_assistant_request` | session-pinned либо explicit current/rotating/retiring credential ✓; arbitrary same-company/body claims/other credential ✗; failed bind answers unattributed | shared credential or override/assistant injection crosses tenant boundary |
 | reconcile dispatcher | platform enumeration only | due company ids | internal scheduler | scheduler ✓; users ✗ | one unbounded query silently skips tenant predicate |
 | reconcile company worker | explicit `companyId` argument | company + session + provider call id | internal worker contract | worker for dispatched company ✓; absent/mismatched company ✗ | provider read updates foreign usage |
 | atomic admission/lease/reaper | explicit `companyId`, session and global policy | company + session/lease | internal worker contract | runtime/worker ✓; user/webhook body ✗ | race exceeds tenant/global cap or frees foreign lease |
@@ -970,6 +1063,9 @@ platform route/permission и всегда требует явного target com
 | T5 registry/surface retirement | registry/migration/bootstrap/identity/routes/tools + inbound/outbound/usage regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAssistantRegistryBootstrap.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryMigration.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/outboundCallService.test.js tests/services/callFlowRuntime.vapi.test.js tests/routes/vapiTenantIsolation.test.js tests/vapiUsageIngest.test.js tests/machineCredentialService.test.js tests/vapiCallStatusWebhook.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/routes/vapi-tools.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 15 suites / 306 tests. Real autocommit migration 275 `psql -v ON_ERROR_STOP=1 -f` ×2: empty без Vapi rows/settings PASS (`0 connections / 0 resources / 0 profiles / 0 configs`), prod-like PASS и legacy data byte-unchanged. Реальный CLI: dry-run writes 0; apply ×2 даёт `3 profiles / 3 credential-bound / 1 resource / readiness=true` |
 | T6 outbound registry/session cutover | outbound placement/workers, registry/bootstrap, identity, provider audit/client, webhook regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/outboundCallService.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/outboundLeadCallWebhook.test.js tests/outboundCancelTenantIsolation.test.js tests/vapiAssistantRegistry.test.js tests/vapiOutboundBootstrap.test.js tests/vapiOutboundIdentity.test.js tests/vapiProviderClient.test.js tests/vapiUsageAuditRepair.test.js tests/vapiCallStatusWebhook.test.js tests/vapiCallIdentity.test.js tests/services/callFlowRuntime.vapi.test.js tests/vapiUsageIngest.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 14 suites / 243 tests. Migration 277 повторно применена в real PostgreSQL suite; caller bootstrap apply ×2 idempotent; inbound hotfix, usage/FSM independence и оба outbound семейства green. |
 | T7 provisioning/readback | provisioning state/CLI/provider contracts + registry/machine/webhook regressions | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProvisioning.test.js tests/vapiAgencyProviderClient.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryBootstrap.test.js tests/machineCredentialService.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/vapiAssistantRequest.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; T7 targeted 2 suites / 13 tests, acceptance 8 suites / 156 tests, функциональная регрессия T1–T7 без старых rollback-suites 24 suites / 355 tests. Migration 278 real `psql -v ON_ERROR_STOP=1 -f` autocommit ×2 PASS. |
+| Phase-2 adversarial repairs | real-table inbound safety net, provider-pending terminal sweep/late identity repair, per-company provisioning secrets | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/services/callFlowRuntime.vapi.test.js tests/services/callFlowRuntime.vapiFallback.db.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/vapiOutboundIdentity.test.js tests/vapiAgencyProvisioning.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 6 suites / 110 tests. Пустые registry/voice config и rollout `ready` проверены на реальных таблицах; stale attempt терминален, late audit не воскрешает FSM; две company получают шесть разных secrets. |
+| Phase-2 adversarial repairs, round 2 + job key | tokenless answer включая пустой normalized registry, accounting/admission split, rollout recovery, concurrent provisioning, credential overlap, adopt/diff, inherited greeting, seed-free 276, per-connection job key | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/services/callFlowRuntime.vapi.test.js tests/services/callFlowRuntime.vapiFallback.db.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/vapiOutboundIdentity.test.js tests/vapiAgencyProvisioning.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryMigration.test.js tests/vapiAssistantRequest.test.js tests/vapiCallIdentity.test.js tests/vapiCallIdentityAlerts.test.js tests/vapiAgencyProviderClient.test.js tests/machineCredentialService.test.js tests/vapiCallStatusWebhook.test.js tests/jobCodeFeistelKeyRuntime.test.js tests/jobNumbering.db.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 16 suites / 243 tests. Recovery migration real `psql -v ON_ERROR_STOP=1 -f` autocommit ×2 PASS; migration 276 real psql ×2 при удалённом seed `UPDATE 0`, transaction rollback PASS. |
+| Phase-2 adversarial repairs, round 3 | lazy/degraded job key, pinned key fingerprint, shared inbound safety policy, attributed-to-unattributed degradation, durable orphan id, atomic unresolved follow-up, bootstrap lock and bounded credential overlap | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/jobCodeFeistelKeyRuntime.test.js tests/services/callFlowRuntime.vapi.test.js tests/services/callFlowRuntime.vapiFallback.db.test.js tests/vapiAssistantRequest.test.js tests/vapiAssistantRequestFallback.db.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryBootstrap.test.js tests/vapiAssistantRegistryMigration.test.js tests/vapiAgencyProvisioning.test.js tests/vapiAgencyProviderClient.test.js tests/vapiProviderPendingAtomicity.test.js tests/vapiOutboundIdentity.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js tests/outboundLeadCallWebhook.test.js tests/vapiCallStatusWebhook.test.js tests/tasksEmit.test.js tests/partsCallService.test.js tests/jobNumbering.db.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; main 20 suites / 336 tests; adjacent identity/machine/tools/outbound/usage 7 suites / 115 tests; tenant `R-natural-key`, `R-write-scope`, `R-no-request-context`, `R-route-permission` targeted ratchets PASS. Migration 273 real `psql`: same key ×2 PASS, different key abort до mutation, `updated_at` unchanged; migration 280 real autocommit ×2 PASS. |
 | Outbound/concurrency | new admission suites + current worker regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiConcurrencyLeases.test.js tests/outboundCallWorker.test.js tests/outboundLeadCallWorker.test.js --runInBand --forceExit` | PENDING |
 | Pricing/settlement/API | new money suites + current billing regressions | `NODE_ENV=test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsagePricing.test.js tests/vapiUsageSettlement.test.js tests/vapiVoiceUsageRoutes.test.js tests/billingPaygSubscribe.test.js --runInBand --forceExit` | PENDING |
 | Forward/rollback migrations | real disposable PostgreSQL migration suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyMigrations.test.js tests/vapiUsageIngestMigration.test.js tests/vapiUsageReconcileMigration.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; migration 269 repeat/rollback suite green и реальный autocommit `psql -v ON_ERROR_STOP=1 -f` forward 266→267→269 / rollback 269→267→266 green |
@@ -1006,6 +1102,18 @@ forward/rollback migration filenames добавляются в ledger после
 | `SAB-VAPI-OUTBOUND-ATOMIC-BIND` | вернуть отдельный worker UPDATE attempt после provider POST либо retry при bind failure | `outboundCallService` `SAB-T6-ATOMIC` + оба worker `provider_pending` tests | RED как требуется: bind failure потерял `providerPending`; после восстановления targeted test green |
 | `SAB-VAPI-PROVISIONING-ALLOWLIST` | разрешить CLI/template variables `prompt`, `model`, webhook/assistant/SIP id | `vapiAgencyProvisioning` `SAB-T7-ALLOWLIST` | RED как требуется: временно разрешённый `model` прошёл normalize вместо fail-closed; после восстановления targeted suite green |
 | `SAB-VAPI-PROVISIONING-IDEMPOTENCE` | не искать assistant по durable operation metadata и всегда выполнять create | `vapiAgencyProvisioning` `SAB-T7-IDEMPOTENCE` + lost-response repair | RED как требуется: второй apply создал 6 assistants вместо 3; после восстановления targeted suite green |
+| `SAB-VAPI-INBOUND-SAFETY-NET` | вернуть JOIN/rollout predicate в fallback SIP lookup | `callFlowRuntime.vapiFallback.db` `SAB-FIX1` на пустой config и отдельный `ready` case | Guard PASS; при возврате зависимости TwiML теряет `<Sip>` и тест краснеет |
+| `SAB-VAPI-PROVIDER-PENDING-TERMINAL` | убрать sweep либо оставить attempt в `dialing` | `vapiOutboundIdentity` `SAB-FIX2` + worker dispatcher/P1 follow-up | Guard PASS; тест краснеет по нетерминальной session/attempt и заблокированному active guard |
+| `SAB-VAPI-PER-COMPANY-SECRETS` | вернуть один набор env secrets для всех company | `vapiAgencyProvisioning` `SAB-FIX3` | Guard PASS; второй company получает credential conflict/совпавшие secrets и тест краснеет |
+| `SAB-VAPI-TOKENLESS-ANSWER` | снова сделать correlation token обязательным до выбора assistant | `vapiAssistantRequest` `SAB-FIX4` | Guard PASS; tokenless fallback вместо 200/credential-company assistant возвращает 400 |
+| `SAB-VAPI-ACCOUNTING-CREDENTIAL-ADMISSION` | вернуть INNER JOIN active `vapi_call_status` в inbound tuple | `vapiAssistantRegistry`/`vapiCallIdentity` `SAB-FIX5` | Guard PASS; revoked call-status credential блокирует reservation вместо admitted session + alert |
+| `SAB-VAPI-PROVISIONING-LOCK` | убрать session advisory lock на весь `--apply` | `vapiAgencyProvisioning` concurrent apply | Guard PASS; параллельный provider create порождает больше 3 assistants либо ambiguous discovery |
+| `SAB-VAPI-PROVISIONING-DRIFT` | безусловно PATCH-ить найденный assistant | `vapiAgencyProvisioning` existing drift/dry-run | Guard PASS; human-edited model перезаписывается и update counter растёт без `--adopt-existing` |
+| `SAB-FIX13-JOB-KEY-BLAST-RADIUS` | вернуть `resolveJobCodeFeistelKey()` на module load либо startup throw | `jobCodeFeistelKeyRuntime` `SAB-FIX13`: процесс без key обязан импортировать call-flow и стартовать; job insert обязан упасть отдельно | Guard PASS; отсутствие job-numbering key не является недоступностью телефонии |
+| `SAB-FIX17-INBOUND-POLICY` | потребовать non-NULL fallback/profile либо сузить assistant selector сильнее SIP fallback | `callFlowRuntime.vapiFallback.db` + `vapiAssistantRequestFallback.db`: NULL snapshot и minimal resource | Guard PASS; оба consumer используют одно eligibility policy, singleton legacy evidence проверяется на живой БД |
+| `SAB-FIX18-BIND-DEGRADATION` | вернуть HTTP error после ошибки token bind | `vapiAssistantRequestFallback.db`: неизвестный token/provider call | Guard PASS; bind остаётся rejected, но credential-company assistant возвращается и orphan alert сохраняется |
+| `SAB-FIX24-SIP-PRIORITY` | инвертировать resource `ORDER BY` | `callFlowRuntime.vapiFallback.db`: preferred inbound/prod row выигрывает у более новой generic row | Guard PASS; тест сравнивает фактический TwiML на живой БД, не подстроку SQL |
+| `SAB-FIX19-ATOMIC-FOLLOWUP` | вынести follow-up после COMMIT терминального sweep | `vapiProviderPendingAtomicity`: ошибка follow-up обязана дать ROLLBACK без terminal state | Guard PASS |
 | `SAB-VAPI-OVERRIDE` | прокинуть `assistantOverrides` из request/body | provider-contract override rejection test | PENDING |
 | `SAB-VAPI-COST-IDEMPOTENCY` | убрать observation/charge unique key | duplicate EoC/poll money test | PENDING |
 | `SAB-VAPI-LATE-COST` | считать немедленный одинаковый повтор вторым разнесённым замером | `vapiUsageReconcile` identical immediate poll | RED как требуется: повтор через 30 секунд дал `final` вместо `stable_once`; после восстановления тест green |

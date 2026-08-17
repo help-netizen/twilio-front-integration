@@ -625,9 +625,10 @@ async function handleLeadEndOfCall(attempt, klass, endedReason, message) {
  * lead-bound AND Pulse-AR-visible; createdBy 'agent' with NO agentStatus (the
  * agentWorker never claims it). Non-fatal by contract.
  */
-async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
+async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}, client = null, options = {}) {
     try {
         const timelinesQueries = require('../db/timelinesQueries');
+        const executor = client?.query ? client : db;
         const leadClientId = lead && lead.ClientId ? lead.ClientId : null;
 
         // Exactly-once belt per chain. NOTE (spec deviation from architecture,
@@ -635,7 +636,7 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
         // timelinesQueries.createTask actually writes (tasks.lead_id is only
         // populated by the /api/tasks parent path).
         if (leadClientId) {
-            const { rows } = await db.query(
+            const { rows } = await executor.query(
                 `SELECT 1 FROM tasks
                  WHERE company_id = $1 AND subject_type = 'lead' AND subject_id = $2
                    AND agent_type = 'outbound_lead_call' AND status = 'open'
@@ -648,7 +649,11 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
             }
         }
 
-        const timeline = await timelinesQueries.findOrCreateTimeline(attempt.phone, companyId);
+        const timeline = await timelinesQueries.findOrCreateTimeline(
+            attempt.phone,
+            companyId,
+            executor,
+        );
         const name = lead
             ? ([lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'the lead')
             : 'the lead';
@@ -687,7 +692,7 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
             // exhausted — per-attempt log lines from the chain.
             let lines = '';
             try {
-                const { rows } = await db.query(
+                const { rows } = await executor.query(
                     `SELECT attempt_no, status, reason, updated_at
                      FROM outbound_call_attempts
                      WHERE lead_uuid = $1 AND company_id = $2
@@ -700,7 +705,11 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
                 ).join('\n');
             } catch { /* attempt log is best-effort */ }
 
-            if (extra.finalReason === 'no_slots') {
+            if (extra.finalReason === 'provider_outcome_unresolved') {
+                title = `Automated call outcome unknown for ${name} — review before retrying`;
+                description = `The call provider may have accepted a call to this ${sourceLabel} lead, but Albusto could not confirm the result. No automatic retry was placed to avoid calling the customer twice.`
+                    + `\n\nPlease review the provider outcome and follow up manually.`;
+            } else if (extra.finalReason === 'no_slots') {
                 title = `Couldn't offer ${name} a time — appointment slots unavailable (${n} attempts)`;
                 description = `Sara couldn't compute appointment slots for this lead (slot engine unavailable or no windows for the lead's location), so no call could offer a time.`
                     + (lines ? `\n\n${lines}` : '')
@@ -723,11 +732,39 @@ async function createLeadCallTask(companyId, lead, attempt, kind, extra = {}) {
             priority: 'p1',
             createdBy: 'agent',
             agentType: 'outbound_lead_call',
-        });
+        }, executor);
         console.log(`[outboundLeadCall] task created kind=${kind} lead=${attempt.lead_uuid}`);
     } catch (err) {
+        if (options.strict) throw err;
         console.warn('[outboundLeadCall] createLeadCallTask failed:', err && err.message);
     }
+}
+
+async function handleProviderPendingExhausted(attempt, client = null, options = {}) {
+    let lead = null;
+    try {
+        lead = await leadsService.getLeadByUUID(attempt.lead_uuid, attempt.company_id);
+    } catch (_error) {
+        // The durable terminal attempt remains authoritative even if the lead
+        // was removed while the provider result was unresolved.
+    }
+    await createLeadCallTask(
+        attempt.company_id,
+        lead,
+        { ...attempt, id: attempt.attempt_id },
+        'exhausted',
+        { finalReason: 'provider_outcome_unresolved' },
+        client,
+        options,
+    );
+    const emit = () => emitLeadAiOutcome(
+        attempt.company_id,
+        'ai_call.exhausted',
+        attempt.lead_uuid,
+        attempt.attempt_id,
+    );
+    if (typeof client?.afterCommit === 'function') client.afterCommit(emit);
+    else await emit();
 }
 
 // Backward-compatible aliases. Trigger sites depend directly on the neutral
@@ -761,6 +798,7 @@ module.exports = {
     scheduleLeadRetryOrExhaust,
     handleLeadEndOfCall,
     createLeadCallTask,
+    handleProviderPendingExhausted,
     // LEADCALL-SMS-CANCEL-001
     CONTACT_CANCEL_CAUSES,
     cancelLeadChainsForCustomerContact,

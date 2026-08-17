@@ -10,6 +10,7 @@ const realtimeService = require('./realtimeService');
 const groupRouting = require('./groupRouting');
 const telephonyTenantService = require('./telephonyTenantService');
 const vapiCallIdentityService = require('./vapiCallIdentityService');
+const vapiInboundSafetyPolicy = require('./vapiInboundSafetyPolicy');
 const { buildSoftphoneIdentity } = require('./softphoneIdentity');
 const { toE164 } = require('../utils/phoneUtils');
 
@@ -401,30 +402,23 @@ function appendSipQuery(sipUri, query) {
 // Where to send the caller when the identity reservation cannot be made. Pre-dates
 // the reservation and stays as the answer-the-phone path: the resource row carries
 // the SIP address on its own, independently of the assistant registry.
-async function resolveVapiSipUriFallback(companyId) {
+async function resolveVapiSipUriFallback(companyId, query = db.query) {
     if (!companyId) return null;
     // Deliberately NOT node.config.sip_uri. Flow nodes are tenant-editable, so honouring
     // an address from there would let a tenant aim the dial at another tenant's assistant
     // in the shared Vapi org — the hole T2 closed. Only the server-owned resource row counts.
     try {
-        const result = await db.query(
+        // provider_connections.status is an operator/provisioning lifecycle switch.
+        // No Vapi health-check, webhook failure, or provider 5xx path mutates it, so
+        // this cannot turn a transient provider/accounting failure into call denial.
+        const result = await query(
             `SELECT NULLIF(BTRIM(r.sip_uri), '') AS sip_uri
              FROM vapi_tenant_resources r
              JOIN provider_connections pc
                ON pc.id = r.provider_connection_id
               AND pc.company_id = r.company_id
-             JOIN vapi_tenant_voice_configs voice_config
-               ON voice_config.company_id = r.company_id
-              AND voice_config.environment = r.environment
-              AND voice_config.rollout_state = 'legacy_canary'
-             WHERE r.company_id = $1
-               AND r.is_active = true
-               AND r.purpose = 'inbound_call'
-               AND r.environment = 'prod'
-               AND pc.provider = 'vapi'
-               AND pc.status = 'active'
-               AND NULLIF(BTRIM(r.sip_uri), '') IS NOT NULL
-             ORDER BY r.created_at DESC
+             WHERE ${vapiInboundSafetyPolicy.eligibleResourcePredicate('r', 'pc')}
+             ORDER BY ${vapiInboundSafetyPolicy.preferredResourceOrder('r')}
              LIMIT 1`,
             [companyId],
         );
@@ -435,7 +429,7 @@ async function resolveVapiSipUriFallback(companyId) {
     }
 }
 
-async function renderVapiNode({ execution, node, context, traceId }) {
+async function renderVapiNode({ execution, node, context, traceId }, dependencies = {}) {
     const cfg = node.config || {};
     let reservation = null;
     try {
@@ -458,7 +452,10 @@ async function renderVapiNode({ execution, node, context, traceId }) {
             '[CallFlowRuntime] Vapi reservation refused, dialling unattributed:',
             error.code || 'unknown',
         );
-        const fallbackSipUri = await resolveVapiSipUriFallback(execution.company_id);
+        const fallbackSipUri = await resolveVapiSipUriFallback(
+            execution.company_id,
+            dependencies.query || db.query,
+        );
         if (!fallbackSipUri) {
             // No SIP address at all is the genuine "AI is not configured" case.
             return followFailureEdge({
@@ -478,8 +475,9 @@ async function renderVapiNode({ execution, node, context, traceId }) {
     const statusCallbackUrl = `${context.baseUrl}/webhooks/twilio/voice-status`;
     const recordingStatusUrl = `${context.baseUrl}/webhooks/twilio/recording-status`;
     // No token when the reservation was refused: the call still goes through, it just
-    // arrives without an identity to bind to. assistant-request refuses an absent or
-    // unknown token, so an unattributed call can never borrow another company's session.
+    // arrives without an identity to bind to. assistant-request then selects only the
+    // authenticated credential company's server-owned fallback assistant; an unknown
+    // token remains a hard failure and can never borrow another company's session.
     const query = reservation.correlationToken
         ? new URLSearchParams({
             [vapiCallIdentityService.TOKEN_HEADER]: reservation.correlationToken,
@@ -669,4 +667,6 @@ module.exports = {
     vapiEventFromDialStatus,
     buildVoicemailTwiml,
     buildHangupTwiml,
+    resolveVapiSipUriFallback,
+    renderVapiNode,
 };

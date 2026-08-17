@@ -36,12 +36,16 @@ jest.mock('../backend/src/services/agentCallWindowService', () => {
 jest.mock('../backend/src/services/vapiCallTimelineService', () => ({
     recordPlacement: jest.fn(),
 }));
+jest.mock('../backend/src/services/vapiCallIdentityService', () => ({
+    reapStaleOutboundPlacements: jest.fn(),
+}));
 // OUTBOUND-PARTS-CALL-CANCEL-001 (CC-04): the CC-01 cancel helpers. Mocked —
 // isChainCanceled feeds the shared no-resurrection retry guard,
 // markRobotCallCanceled is the honest Guard-1's task stamp.
 jest.mock('../backend/src/services/partsCallService', () => ({
     isChainCanceled: jest.fn(),
     markRobotCallCanceled: jest.fn(),
+    markRobotCallFailed: jest.fn(),
 }));
 
 const jobsService = require('../backend/src/services/jobsService');
@@ -49,6 +53,7 @@ const outboundCallService = require('../backend/src/services/outboundCallService
 const settings = require('../backend/src/services/outboundCallSettingsService');
 const agentCallWindowService = require('../backend/src/services/agentCallWindowService');
 const vapiCallTimeline = require('../backend/src/services/vapiCallTimelineService');
+const vapiCallIdentity = require('../backend/src/services/vapiCallIdentityService');
 const partsCallService = require('../backend/src/services/partsCallService');
 const worker = require('../backend/src/services/outboundCallWorker');
 
@@ -95,9 +100,46 @@ beforeEach(() => {
     // above wipes call history each test; this resets the impl (e.g. after a
     // per-test mockRejectedValue) so leaks can't cross tests.
     vapiCallTimeline.recordPlacement.mockResolvedValue(undefined);
+    vapiCallIdentity.reapStaleOutboundPlacements.mockResolvedValue([]);
     // CC-04 defaults: chain clean (guard passes), task stamp succeeds.
     partsCallService.isChainCanceled.mockResolvedValue(false);
     partsCallService.markRobotCallCanceled.mockResolvedValue(undefined);
+    partsCallService.markRobotCallFailed.mockResolvedValue(undefined);
+});
+
+test('provider-pending sweep surfaces a terminal parts attempt without placing another call', async () => {
+    const transactionClient = { query: jest.fn() };
+    const swept = {
+        session_id: 'session-stale',
+        attempt_id: '900',
+        company_id: CO,
+        scenario: 'parts_visit',
+        job_id: 50,
+        task_id: 70,
+    };
+    vapiCallIdentity.reapStaleOutboundPlacements.mockImplementationOnce(async (options) => {
+        await options.onExhaustedWithClient(swept, transactionClient);
+        return [swept];
+    });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(worker.tick()).resolves.toBe(0);
+
+    expect(jobsService.addNote).toHaveBeenCalledWith(
+        50,
+        expect.stringContaining('No automatic retry was placed'),
+        [], 'AI Phone', 'AI Phone', null, CO, transactionClient,
+    );
+    expect(partsCallService.markRobotCallFailed).toHaveBeenCalledWith(
+        CO,
+        70,
+        expect.stringContaining('review before calling again'),
+        transactionClient,
+        { strict: true },
+    );
+    expect(outboundCallService.placeCall).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
 });
 
 // ---------------------------------------------------------------------------

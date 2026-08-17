@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const mockQuery = jest.fn();
 jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 
@@ -34,6 +37,8 @@ function inbound(overrides = {}) {
         assistant_request_credential_id: '13',
         assistant_profile_id: 'profile-inbound-a',
         expected_vapi_assistant_id: 'assistant-inbound-a',
+        tools_credential_ready: true,
+        call_status_credential_ready: true,
         ...overrides,
     };
 }
@@ -109,7 +114,7 @@ test.each([
     })).rejects.toMatchObject({ code: 'VAPI_REGISTRY_PROFILE_UNAVAILABLE' });
 });
 
-test('inbound tuple requires company-owned assistant, resource, and three typed credentials', async () => {
+test('inbound tuple requires company-owned assistant/resource/request credential, not accounting readiness', async () => {
     mockQuery.mockResolvedValue({ rows: [inbound()] });
 
     await expect(registry.resolveInboundTuple({
@@ -123,9 +128,44 @@ test('inbound tuple requires company-owned assistant, resource, and three typed 
     const [sql, params] = mockQuery.mock.calls[0];
     expect(sql).toContain('WHERE resource.company_id = $1');
     expect(sql).toContain("assistant_request_credential.machine_surface = 'vapi_assistant_request'");
-    expect(sql).toContain("tools_credential.machine_surface = 'vapi_tools'");
-    expect(sql).toContain("status_credential.machine_surface = 'vapi_call_status'");
+    expect(sql).toContain("FROM api_integrations status_credential");
+    expect(sql).not.toContain('JOIN api_integrations status_credential');
     expect(params[0]).toBe(COMPANY_A);
+});
+
+test('SAB-FIX5: revoked call-status credential is telemetry, never inbound admission', async () => {
+    mockQuery.mockResolvedValue({ rows: [inbound({ call_status_credential_ready: false })] });
+
+    await expect(registry.resolveInboundTuple({ companyId: COMPANY_A })).resolves.toMatchObject({
+        company_id: COMPANY_A,
+        expected_vapi_assistant_id: 'assistant-inbound-a',
+        call_status_credential_ready: false,
+    });
+});
+
+test('tokenless assistant selection is scoped by authenticated company and server registry', async () => {
+    mockQuery.mockResolvedValue({ rows: [inbound()] });
+
+    await expect(registry.resolveInboundAssistant({ companyId: COMPANY_A })).resolves.toMatchObject({
+        company_id: COMPANY_A,
+        expected_vapi_assistant_id: 'assistant-inbound-a',
+    });
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain('WHERE resource.company_id = $1');
+    expect(params[0]).toBe(COMPANY_A);
+});
+
+test('tokenless assistant selection can use the company resource safety snapshot without a profile', async () => {
+    mockQuery.mockResolvedValue({ rows: [inbound({ assistant_profile_id: null })] });
+
+    await expect(registry.resolveInboundAssistant({ companyId: COMPANY_A })).resolves.toMatchObject({
+        company_id: COMPANY_A,
+        expected_vapi_assistant_id: 'assistant-inbound-a',
+    });
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain('resource.fallback_vapi_assistant_id');
+    expect(sql).toContain('LEFT JOIN vapi_assistant_profiles linked_profile');
+    expect(sql).toContain('foreign_profile.company_id <> resource.company_id');
 });
 
 test.each([
@@ -204,4 +244,15 @@ test('unknown external scenario cannot select a profile', () => {
         .toThrow(expect.objectContaining({
             code: 'VAPI_REGISTRY_OUTBOUND_SCENARIO_UNSUPPORTED',
         }));
+});
+
+test('rollout state is never a runtime admission condition', () => {
+    for (const relativePath of [
+        '../backend/src/services/callFlowRuntime.js',
+        '../backend/src/services/vapiAssistantRegistryService.js',
+        '../backend/src/services/vapiCallIdentityService.js',
+    ]) {
+        const source = fs.readFileSync(path.join(__dirname, relativePath), 'utf8');
+        expect(source).not.toContain('rollout_state');
+    }
 });

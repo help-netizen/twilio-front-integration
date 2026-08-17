@@ -182,7 +182,11 @@ assistant/phone env и lead→parts fallback отсутствуют. Payload п�
 limit оставляет queued без provider call/attempt increment. Timeout после send
 переходит в repairable `provider_pending`, повторный POST заблокирован; audit
 repair использует только server-owned call metadata session UUID + pinned
-assistant. `subscriptionLimits` сохраняется как telemetry и не допускает call.
+assistant. Через 30 минут без repair session/attempt атомарно становятся
+`quarantined`/`exhausted` с `provider_outcome_unresolved`, active guard
+освобождается и создаётся human follow-up; автоматического повторного звонка нет.
+Поздний audit восстанавливает identity, но не FSM. `subscriptionLimits`
+сохраняется как telemetry и не допускает call.
 Cancellation
 и callbacks сохраняют tenant predicates. Старые attempts читаются до завершения
 backfill, но не становятся альтернативной identity.
@@ -203,7 +207,8 @@ machine credentials из server-owned template и доказать provider read
 **Критерии приёмки.** Реализован dry-run-by-default
 `provision-vapi-agency-company.js` с обязательным `--company-id`: он создаёт три
 assistant из versioned server templates, три разные company-bound hash-at-rest
-credentials и один dynamic SIP resource. После create выполняются PATCH + GET и
+credentials с криптографически сгенерированными per-company plaintext secrets
+(только в памяти до отправки provider) и один dynamic SIP resource. После create выполняются PATCH + GET и
 canonical secret-free readback; write-only assistant server secret проверяется
 только флагом, tool secrets — значением без логирования. Durable state сохраняет
 частичный provider id до registry upsert, повтор находит объект по operation
@@ -212,17 +217,42 @@ metadata/SIP URI и не дублирует. Tenant input ограничен gre
 upsert и credential rotation атомарны локально; состояние становится `ready`,
 но не `enabled`. `/org` отсутствует.
 
+Adversarial hardening: весь apply сериализован session advisory lock по company
+на выделенном client; failure восстанавливает предыдущий rollout lifecycle state.
+Dry-run выполняет provider readback и показывает secret-free field diff;
+существующий drift без `--adopt-existing` не PATCH-ится. Неуказанный greeting
+наследуется из последнего успешного run. Новый assistant-request credential
+сначала получает локальное `rotating` acceptance рядом со старым, затем уходит
+provider; после verified readback новый становится `current`, а старый —
+`retiring` с bounded expiry. Existing session остаётся pinned к назначенному
+credential; произвольный active same-company credential bind не получает.
+Generated tenant credentials имеют ограниченный срок жизни. Migrations 276/280 не требуют
+Marketplace seed или любых операционных данных.
+
 **Проверка.**
 `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProvisioning.test.js tests/vapiAgencyProviderClient.test.js tests/vapiAssistantRegistry.test.js tests/vapiAssistantRegistryBootstrap.test.js tests/machineCredentialService.test.js tests/routes/vapi-tools.test.js tests/vapiCallStatusWebhook.test.js tests/vapiAssistantRequest.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"`
 
-Migration transport: `/usr/local/Cellar/postgresql@15/15.15_1/bin/psql postgresql://localhost/albusto_test -v ON_ERROR_STOP=1 -f backend/db/migrations/278_vapi_agency_provisioning_state.sql` ×2.
+Migration transport: `/usr/local/Cellar/postgresql@15/15.15_1/bin/psql postgresql://localhost/albusto_test -v ON_ERROR_STOP=1 -f backend/db/migrations/278_vapi_agency_provisioning_state.sql` ×2; тот же transport для schema-only `280_vapi_agency_provisioning_recovery.sql` ×2. Migration 276 отдельно проверяется без `vapi-ai` seed.
 
-Результат: T7 targeted 2 suites / 13 tests, acceptance 8 suites / 156 tests,
-функциональная регрессия T1–T7 24 suites / 355 tests; migration transport ×2 PASS.
+Результат первого T7 gate: targeted 2 suites / 13 tests, acceptance 8 suites /
+156 tests, функциональная регрессия T1–T7 24 suites / 355 tests. Adversarial
+round 2: provisioning/migration/job-key targeted 3 suites / 23 tests и общий
+затронутый gate 16 suites / 243 tests PASS; recovery migration transport ×2 PASS,
+276 без Marketplace seed через real psql PASS.
 
 Sabotage: разрешить неизвестную tenant variable → `SAB-T7-ALLOWLIST` RED;
 отключить discovery по operation metadata → `SAB-T7-IDEMPOTENCE` и
-lost-response repair RED. После восстановления targeted suites green.
+lost-response repair RED; убрать advisory lock → concurrent apply создаёт дубль;
+вернуть unconditional PATCH → drift test меняет живой assistant; не наследовать
+last successful variables → greeting test теряет значение. После восстановления
+targeted suites green.
+
+Adversarial addendum: два последовательных `--company-id` на одном provider
+успешно доходят до `ready`; все шесть webhook/tool secrets различаются, а в БД
+есть только company-bound hashes. Возврат общих env secrets красит `SAB-FIX3`.
+Bootstrap и provisioning берут один session advisory lock по company, поэтому
+не могут параллельно перецепить registry. Повторный `beginRun` в состоянии
+`provisioning` сохраняет исходное стабильное `previous_rollout_state`.
 
 **Зависимости:** T1, T5. **Размер/оценка:** L, 6–9 дней. Раздувают provider API
 семантика, rollback частичных объектов и ротация нескольких webhook credentials.
@@ -335,7 +365,8 @@ readiness false, очищает legacy provider data и идемпотентно
 `disabled` и обновляет обязательный `metadata.assistant`. Tenant catalog и
 installation lookup больше не открывают эту поверхность. Matching rollback
 републикует только catalog row и не восстанавливает удалённые
-routes/UI/credentials.
+routes/UI/credentials. Если операционный seed `vapi-ai` отсутствует, migration
+идемпотентно ничего не делает и не abort-ит structural rollout.
 
 ### `vapi_outbound_registry_sessions`
 
@@ -354,6 +385,16 @@ readback columns. Не создаёт companies/connections/profiles/resources/c
 не читает env и не обращается к provider. Операционные данные создаёт отдельный
 dry-run-by-default `provision-vapi-agency-company.js`; matching rollback удаляет
 только новую таблицу и три readback columns.
+
+### `vapi_agency_provisioning_recovery`
+
+Добавляет только `previous_rollout_state` и
+`last_successful_template_variables` с object/state constraints плюс структурный
+server-owned `fallback_vapi_assistant_id` на SIP resource с global uniqueness и
+non-empty guard. Не backfill-ит
+операционные значения и не требует company/provider/credential rows; CLI
+заполняет recovery state и safety snapshot при конкретном company-scoped apply.
+Matching rollback удаляет только эти recovery columns/index.
 
 ### `vapi_concurrency_leases`
 
