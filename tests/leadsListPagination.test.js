@@ -168,8 +168,12 @@ describe('Leads complete predicates, ordering, and totals', () => {
         for (const sql of [countSql, pageSql]) {
             expect(sql).toMatch(/l\.company_id = \$1/);
             expect(sql).toMatch(/l\.status NOT IN \('Lost', 'Converted'\)/);
-            expect(sql).toMatch(/l\.created_at >= \$2::date/);
-            expect(sql).toMatch(/l\.created_at < \(\$3::date \+ interval '1 day'\)/);
+            // A calendar day is the COMPANY's day: the bound converts the date at
+            // the company's timezone, not the server's UTC (2026-08-16 — a lead
+            // created at 8pm New York time used to fall into the next day).
+            expect(sql).toMatch(/l\.created_at >= \(\(\(\$2\)::date\)::timestamp AT TIME ZONE/);
+            expect(sql).toMatch(/l\.created_at < \(\(\(\$3\)::date \+ interval '1 day'\)::timestamp AT TIME ZONE/);
+            expect(sql).toMatch(/SELECT c\.timezone FROM companies c WHERE c\.id = \$1/);
             expect(sql).toMatch(/l\.status = ANY\(\$4::text\[\]\)/);
             expect(sql).toMatch(/lcf\.company_id = l\.company_id/);
             expect(sql).toMatch(/lcf\.is_searchable = true/);

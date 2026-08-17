@@ -327,13 +327,20 @@ async function listLeads({
         conditions.push(`l.status NOT IN ('Lost', 'Converted')`);
     }
 
+    // A calendar day is the COMPANY's day, not the server's. `created_at` is a
+    // timestamptz and the session runs in UTC, so a bare `$n::date` meant
+    // midnight UTC — and a lead created at 8pm New York time landed in the
+    // NEXT day's filter. Same defect the payments ledger had (2026-08-16).
+    const companyDayStart = (idx) => `((($${idx})::date)::timestamp AT TIME ZONE COALESCE((SELECT c.timezone FROM companies c WHERE c.id = $1), 'America/New_York'))`;
+    const companyDayAfter = (idx) => `((($${idx})::date + interval '1 day')::timestamp AT TIME ZONE COALESCE((SELECT c.timezone FROM companies c WHERE c.id = $1), 'America/New_York'))`;
+
     if (start_date) {
-        conditions.push(`l.created_at >= $${params.length + 1}::date`);
+        conditions.push(`l.created_at >= ${companyDayStart(params.length + 1)}`);
         params.push(start_date);
     }
 
     if (end_date) {
-        conditions.push(`l.created_at < ($${params.length + 1}::date + interval '1 day')`);
+        conditions.push(`l.created_at < ${companyDayAfter(params.length + 1)}`);
         params.push(end_date);
     }
 

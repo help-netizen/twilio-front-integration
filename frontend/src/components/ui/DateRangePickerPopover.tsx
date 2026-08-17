@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { DateRange } from 'react-day-picker';
 import { Button } from './button';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { Calendar } from './calendar';
@@ -7,7 +8,21 @@ import { format } from 'date-fns';
 import { BottomSheet } from './BottomSheet';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 
-// ─── Props ────────────────────────────────────────────────────────────────────
+/**
+ * ONE calendar, in range mode (owner, 2026-08-16).
+ *
+ * This used to render TWO calendars in `mode="single"`, labelled From and To,
+ * stacked vertically — on a phone that is two full months of scrolling to say
+ * "last week", and the second calendar never knew what the first had picked, so
+ * nothing stopped you choosing a To before the From.
+ *
+ * react-day-picker (already a dependency, and the very library that was being
+ * rendered twice) does ranges natively: first tap sets the start, second sets
+ * the end, the days between highlight as you move, and it will not let the ends
+ * cross. `ui/calendar.tsx` already carried range_start / range_middle /
+ * range_end styling — the mode was simply never switched on. Desktop shows two
+ * months side by side because it has the width; the phone shows one.
+ */
 
 interface DateRangePickerPopoverProps {
     dateFrom?: string;          // yyyy-MM-dd
@@ -17,7 +32,15 @@ interface DateRangePickerPopoverProps {
     align?: 'start' | 'center' | 'end';
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+const iso = (d: Date) => format(d, 'yyyy-MM-dd');
+const parse = (value?: string) => (value ? new Date(value + 'T00:00:00') : undefined);
+
+function startOfDay(offsetDays = 0): Date {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offsetDays);
+    return d;
+}
 
 export function DateRangePickerPopover({
     dateFrom,
@@ -28,69 +51,80 @@ export function DateRangePickerPopover({
 }: DateRangePickerPopoverProps) {
     const [open, setOpen] = useState(false);
 
-    const applyPreset = (from: Date, to: Date) => {
-        onDateFromChange(format(from, 'yyyy-MM-dd'));
-        onDateToChange(format(to, 'yyyy-MM-dd'));
-        setOpen(false);
+    const selected: DateRange | undefined = dateFrom
+        ? { from: parse(dateFrom), to: parse(dateTo) }
+        : undefined;
+
+    const applyRange = (from: Date, to: Date, close: boolean) => {
+        onDateFromChange(iso(from));
+        onDateToChange(iso(to));
+        if (close) setOpen(false);
+    };
+
+    const handleSelect = (range: DateRange | undefined) => {
+        if (!range?.from) return;
+        // First tap: the start is chosen and the panel stays open for the end.
+        // Second tap completes the range, so there is nothing left to ask.
+        if (!range.to) {
+            onDateFromChange(iso(range.from));
+            onDateToChange(iso(range.from));
+            return;
+        }
+        applyRange(range.from, range.to, true);
     };
 
     const label = (() => {
         if (dateFrom && dateTo) {
-            return `${format(new Date(dateFrom + 'T00:00:00'), 'MMM dd')} – ${format(new Date(dateTo + 'T00:00:00'), 'MMM dd, yyyy')}`;
+            const from = parse(dateFrom)!;
+            const to = parse(dateTo)!;
+            if (iso(from) === iso(to)) return format(from, 'MMM d, yyyy');
+            return `${format(from, 'MMM d')} – ${format(to, 'MMM d, yyyy')}`;
         }
-        if (dateFrom) {
-            return `From ${format(new Date(dateFrom + 'T00:00:00'), 'MMM dd, yyyy')}`;
-        }
+        if (dateFrom) return `From ${format(parse(dateFrom)!, 'MMM d, yyyy')}`;
         return 'Date Range';
     })();
 
-    const presetButtons = (
-        <>
-            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                const today = new Date();
-                applyPreset(today, today);
-            }}>Today</Button>
-            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                const d = new Date(); d.setDate(d.getDate() - 7);
-                applyPreset(d, new Date());
-            }}>Last 7 days</Button>
-            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                const d = new Date(); d.setDate(d.getDate() - 30);
-                applyPreset(d, new Date());
-            }}>Last 30 days</Button>
-            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                const now = new Date();
-                applyPreset(new Date(now.getFullYear(), now.getMonth(), 1), now);
-            }}>This Month</Button>
-            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                const now = new Date();
-                const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                const last = new Date(now.getFullYear(), now.getMonth(), 0);
-                applyPreset(prev, last);
-            }}>Last Month</Button>
-        </>
-    );
+    const PRESETS: { label: string; range: () => [Date, Date] }[] = [
+        { label: 'Today', range: () => [startOfDay(), startOfDay()] },
+        { label: 'Yesterday', range: () => [startOfDay(-1), startOfDay(-1)] },
+        { label: 'Last 7 days', range: () => [startOfDay(-6), startOfDay()] },
+        { label: 'Last 30 days', range: () => [startOfDay(-29), startOfDay()] },
+        {
+            label: 'This month',
+            range: () => {
+                const now = startOfDay();
+                return [new Date(now.getFullYear(), now.getMonth(), 1), now];
+            },
+        },
+        {
+            label: 'Last month',
+            range: () => {
+                const now = startOfDay();
+                return [
+                    new Date(now.getFullYear(), now.getMonth() - 1, 1),
+                    new Date(now.getFullYear(), now.getMonth(), 0),
+                ];
+            },
+        },
+    ];
 
-    const calendars = (
-        <>
-            <div className="text-xs text-muted-foreground mb-1">From</div>
-            <Calendar
-                mode="single"
-                selected={dateFrom ? new Date(dateFrom + 'T00:00:00') : undefined}
-                onSelect={(date) => { if (date) onDateFromChange(format(date, 'yyyy-MM-dd')); }}
-            />
-            <div className="text-xs text-muted-foreground mb-1 mt-2">To</div>
-            <Calendar
-                mode="single"
-                selected={dateTo ? new Date(dateTo + 'T00:00:00') : undefined}
-                onSelect={(date) => { if (date) onDateToChange(format(date, 'yyyy-MM-dd')); }}
-            />
-        </>
-    );
+    const presetButtons = PRESETS.map(preset => (
+        <Button
+            key={preset.label}
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => {
+                const [from, to] = preset.range();
+                applyRange(from, to, true);
+            }}
+        >
+            {preset.label}
+        </Button>
+    ));
 
     const isMobile = isMobileViewport();
 
-    // mobile only — desktop popover unchanged
     if (isMobile) {
         return (
             <>
@@ -98,12 +132,18 @@ export function DateRangePickerPopover({
                     <CalendarIcon className="size-4" />
                     {label}
                 </Button>
-                <BottomSheet open={open} onClose={() => setOpen(false)} title="Date Range" size="full">
-                    <div className="flex flex-wrap gap-1.5 mb-3">
-                        {presetButtons}
-                    </div>
-                    <div className="flex flex-col items-center">
-                        {calendars}
+                <BottomSheet open={open} onClose={() => setOpen(false)} title="Date range" size="full">
+                    {/* Presets two-up: six of them in one column pushed the calendar
+                        below the fold, which is the whole reason nobody scrolled to it. */}
+                    <div className="mb-3 grid grid-cols-2 gap-1.5">{presetButtons}</div>
+                    <div className="flex justify-center">
+                        <Calendar
+                            mode="range"
+                            numberOfMonths={1}
+                            defaultMonth={parse(dateFrom)}
+                            selected={selected}
+                            onSelect={handleSelect}
+                        />
                     </div>
                 </BottomSheet>
             </>
@@ -120,12 +160,18 @@ export function DateRangePickerPopover({
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align={align}>
                 <div className="flex">
-                    <div className="border-r p-3 space-y-1">
-                        <div className="text-sm font-medium mb-2">Presets</div>
+                    <div className="space-y-1 border-r p-3">
+                        <div className="mb-2 text-sm font-medium">Presets</div>
                         {presetButtons}
                     </div>
                     <div className="p-3">
-                        {calendars}
+                        <Calendar
+                            mode="range"
+                            numberOfMonths={2}
+                            defaultMonth={parse(dateFrom)}
+                            selected={selected}
+                            onSelect={handleSelect}
+                        />
                     </div>
                 </div>
             </PopoverContent>

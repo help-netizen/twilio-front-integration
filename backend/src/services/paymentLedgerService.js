@@ -282,11 +282,11 @@ async function listPayments(companyId, {
 
     if (dateFrom) {
         params.push(dateFrom);
-        baseConditions.push(`p.payment_date >= $${params.length}::date`);
+        baseConditions.push(`p.payment_date >= ${dayStartInCompanyTz(params.length)}`);
     }
     if (dateTo) {
         params.push(dateTo);
-        baseConditions.push(`p.payment_date < ($${params.length}::date + interval '1 day')`);
+        baseConditions.push(`p.payment_date < ${dayAfterInCompanyTz(params.length)}`);
     }
     if (normalizedPaymentMethod) {
         params.push(`%${normalizedPaymentMethod}%`);
@@ -512,6 +512,23 @@ async function listPayments(companyId, {
     };
 }
 
+/**
+ * A calendar day boundary, in the COMPANY's timezone (owner, 2026-08-16).
+ *
+ * `payment_date` is a timestamptz and the session runs in UTC, so comparing it
+ * to a bare `$n::date` asked Postgres for midnight UTC. A payment taken at
+ * 8pm on the 14th in New York is stored as the 15th at 00:00Z, so a filter for
+ * "Aug 15–16" dragged in a payment the list itself printed as Aug 14 — the
+ * boundary and the display disagreed about what a day is.
+ *
+ * The company's own timezone decides. `companies.timezone` is the source of
+ * truth (America/New_York is the established fallback elsewhere in the
+ * backend), read inline so the bound can never drift from the setting.
+ */
+const COMPANY_TZ = "COALESCE((SELECT c.timezone FROM companies c WHERE c.id = $1), 'America/New_York')";
+const dayStartInCompanyTz = (dateParam) => `((($${dateParam})::date)::timestamp AT TIME ZONE ${COMPANY_TZ})`;
+const dayAfterInCompanyTz = (dateParam) => `((($${dateParam})::date + interval '1 day')::timestamp AT TIME ZONE ${COMPANY_TZ})`;
+
 async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMethod, search } = {}) {
     if (!companyId) {
         throw paymentsListError('TENANT_CONTEXT_REQUIRED', 'Company context is required', 403);
@@ -521,12 +538,12 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
     let paramIdx = 2;
 
     if (dateFrom) {
-        conditions.push(`p.payment_date >= $${paramIdx}`);
+        conditions.push(`p.payment_date >= ${dayStartInCompanyTz(paramIdx)}`);
         params.push(dateFrom);
         paramIdx++;
     }
     if (dateTo) {
-        conditions.push(`p.payment_date < ($${paramIdx}::date + interval '1 day')`);
+        conditions.push(`p.payment_date < ${dayAfterInCompanyTz(paramIdx)}`);
         params.push(dateTo);
         paramIdx++;
     }
