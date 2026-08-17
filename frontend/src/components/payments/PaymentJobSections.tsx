@@ -46,7 +46,7 @@ export function PaymentJobSection({ detail, job }: { detail: PaymentDetail; job:
                 type="button"
                 data-testid="payment-job-title"
                 disabled={!detail.local_job_id}
-                onClick={() => detail.local_job_id && navigate(`/jobs/${detail.local_job_id}`)}
+                onClick={() => detail.local_job_id && navigate(`/jobs/by-id/${detail.local_job_id}`)}
                 className="blanc-section-heading block text-left hover:underline disabled:no-underline"
                 style={{
                     background: 'none', border: 'none', padding: 0, marginBottom: 8,

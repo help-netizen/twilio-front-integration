@@ -6,7 +6,7 @@ const GENERIC_BODY = 'Open Albusto to view this update.';
 const PRE_CHANGE_GENERIC_TITLE = 'Assignment updated';
 
 const DEEP_LINKS = Object.freeze({
-    job: id => `/jobs/${encodeURIComponent(id)}`,
+    job: id => `/jobs/by-id/${encodeURIComponent(id)}`,
     lead: id => `/leads/${encodeURIComponent(id)}`,
     task: () => '/tasks',
     contact: id => `/pulse/contact/${encodeURIComponent(id)}`,

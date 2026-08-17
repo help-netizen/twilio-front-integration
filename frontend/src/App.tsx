@@ -71,6 +71,7 @@ import DocumentTemplateEditorPage from './pages/DocumentTemplateEditorPage';
 import { EmailPage } from './pages/EmailPage';
 import ServiceTerritoriesPage from './pages/ServiceTerritoriesPage';
 import JobsPage from './pages/JobsPage';
+import { JobByIdRedirect, JobByCodeRedirect } from './pages/JobRedirect';
 import { SchedulePage } from './pages/SchedulePage';
 import EstimatesPage from './pages/EstimatesPage';
 import InvoicesPage from './pages/InvoicesPage';
@@ -142,7 +143,11 @@ function App() {
               <Route path="/leads" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
               <Route path="/leads/:leadId" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
               <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
-              <Route path="/jobs/:jobId" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
+              {/* JOB-NUMBERING-001: id/code redirect shims resolve to the canonical /jobs/:seq.
+                  Declared before /jobs/:seq (static segments outrank the :seq param anyway). */}
+              <Route path="/jobs/by-id/:id" element={<ProtectedRoute permissions={['jobs.view']}><JobByIdRedirect /></ProtectedRoute>} />
+              <Route path="/j/:code" element={<ProtectedRoute permissions={['jobs.view']}><JobByCodeRedirect /></ProtectedRoute>} />
+              <Route path="/jobs/:seq" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/schedule" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
               <Route path="/schedule/jobs/:jobId" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
               <Route path="/tasks" element={<ProtectedRoute permissions={['tasks.view']}><TasksPage /></ProtectedRoute>} />

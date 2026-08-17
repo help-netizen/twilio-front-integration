@@ -28,9 +28,14 @@ interface ContactInfo {
 }
 
 interface UseJobDetailParams {
-    jobId: number | null;
+    /** Resolve by GLOBAL id — payment detail panel + the /schedule/jobs/:id deep-link. */
+    jobId?: number | null;
+    /** JOB-NUMBERING-001: resolve by per-company job_seq — the /jobs/:seq page. Provide
+        exactly one of jobId/jobSeq; either drives ONLY the initial fetch — every refetch
+        and mutation below keys off the resolved job.id. */
+    jobSeq?: number | null;
     /** Fired when the job fetch fails (404/403) — e.g. a stale or forbidden deep link. */
-    onNotFound?: (jobId: number) => void;
+    onNotFound?: (ref: number) => void;
     /** Called after any mutation so the parent can refresh its own list */
     onJobMutated?: () => void;
 }
@@ -55,7 +60,7 @@ export interface UseJobDetailResult {
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
-export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailParams): UseJobDetailResult {
+export function useJobDetail({ jobId = null, jobSeq = null, onJobMutated, onNotFound }: UseJobDetailParams): UseJobDetailResult {
     const [job, setJob] = useState<LocalJob | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
     const [contactInfo, setContactInfo] = useState<ContactInfo | null>(null);
@@ -68,7 +73,8 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
     // ─── Fetch job + contact on jobId change ─────────────────────────
 
     useEffect(() => {
-        if (!jobId) {
+        const ref = jobSeq ?? jobId; // the URL reference: seq (/jobs/:seq) or id (schedule/payment)
+        if (ref == null) {
             setJob(null);
             setContactInfo(null);
             setDetailLoading(false);
@@ -81,7 +87,9 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
 
         (async () => {
             try {
-                const detail = await jobsApi.getJob(jobId);
+                const detail = jobSeq != null
+                    ? await jobsApi.getJobBySeq(jobSeq)
+                    : await jobsApi.getJob(jobId!);
                 if (cancelled) return;
                 setJob(detail);
 
@@ -101,7 +109,7 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
                     } catch { /* no contact found */ }
                 }
             } catch {
-                if (!cancelled) { setJob(null); onNotFound?.(jobId); }
+                if (!cancelled) { setJob(null); onNotFound?.(ref); }
             }
             finally {
                 if (!cancelled) setDetailLoading(false);
@@ -110,7 +118,7 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
 
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [jobId]);
+    }, [jobId, jobSeq]);
 
     // ─── Fetch tags once ─────────────────────────────────────────────
 
@@ -187,8 +195,12 @@ export function useJobDetail({ jobId, onJobMutated, onNotFound }: UseJobDetailPa
 
     useRealtimeEvents({
         onJobUpdated: useCallback(() => {
-            if (jobId) void refreshJob(jobId);
-        }, [jobId, refreshJob]),
+            // Refetch by the loaded job's real id; before it resolves, the id param
+            // (id-callers pass a real id — the seq page passes jobSeq, so this stays
+            // null until the job loads, which is the correct "nothing to refetch yet").
+            const id = job?.id ?? jobId;
+            if (id) void refreshJob(id);
+        }, [job?.id, jobId, refreshJob]),
     });
 
     return {

@@ -147,6 +147,16 @@ export async function getJob(id: number): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}`);
 }
 
+/** JOB-NUMBERING-001: resolve a job by its per-company sequential number (the /jobs/:seq URL). */
+export async function getJobBySeq(seq: number): Promise<LocalJob> {
+    return jobsRequest<LocalJob>(`${JOBS_BASE}/by-seq/${seq}`);
+}
+
+/** JOB-NUMBERING-001: resolve a job by its global public_code (durable /j/:code links). */
+export async function getJobByCode(code: string): Promise<LocalJob> {
+    return jobsRequest<LocalJob>(`${JOBS_BASE}/by-code/${encodeURIComponent(code)}`);
+}
+
 // ─── RATE-ME-CRM-002: job attribution + dispatcher send ────────────────────
 
 export type RateLinkChannel = 'sms' | 'email' | 'copy';

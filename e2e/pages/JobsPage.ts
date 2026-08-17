@@ -23,7 +23,9 @@ export class JobsPage {
     }
 
     async openJob(id: number, marker: string): Promise<void> {
-        await this.page.goto(`/jobs/${id}`);
+        // JOB-NUMBERING-001: /jobs/:n is now the per-company job_seq; navigate by the
+        // global id through the by-id shim, which redirects to the canonical /jobs/:seq.
+        await this.page.goto(`/jobs/by-id/${id}`);
         await expect(this.page.getByRole('heading', { name: marker, exact: true })).toBeVisible();
     }
 

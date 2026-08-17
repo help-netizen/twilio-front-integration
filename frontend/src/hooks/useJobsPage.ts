@@ -10,18 +10,18 @@ import { useRealtimeEvents } from './useRealtimeEvents';
 
 export function useJobsPage() {
     const navigate = useNavigate();
-    const { jobId: urlJobId } = useParams<{ jobId?: string }>();
+    const { seq: urlSeq } = useParams<{ seq?: string }>();
 
     // Selection is derived from URL (single source of truth).
-    // This avoids a race where closing the panel set local state to null
-    // while URL still held the ID, causing a useEffect to reopen it.
-    const selectedJobId = urlJobId ? parseInt(urlJobId, 10) : null;
+    // JOB-NUMBERING-001: the /jobs/:seq param is the per-company job_seq. It drives
+    // the detail fetch (via /api/jobs/by-seq); every mutation keys off the resolved job.id.
+    const selectedJobSeq = urlSeq ? parseInt(urlSeq, 10) : null;
 
     // Compose sub-hooks
     const data = useJobsData();
 
     const detail = useJobDetail({
-        jobId: selectedJobId,
+        jobSeq: selectedJobSeq,
         onJobMutated: useCallback(() => { void data.resetJobs(); }, [data.resetJobs]),
     });
 
@@ -37,7 +37,9 @@ export function useJobsPage() {
     // ─── Selection / Navigation ──────────────────────────────────────
 
     const handleSelectJob = useCallback((job: LocalJob) => {
-        navigate(`/jobs/${job.id}`, { replace: true });
+        // Canonical per-company URL when we have the seq; fall back to the id shim
+        // (redirects to /jobs/:seq) for the rare job that lacks one.
+        navigate(job.job_seq != null ? `/jobs/${job.job_seq}` : `/jobs/by-id/${job.id}`, { replace: true });
     }, [navigate]);
 
     const handleCloseDetail = useCallback(() => {

@@ -47,7 +47,7 @@ export function JobsList({ contactId }: { contactId: number }) {
                 return (
                     <div
                         key={job.id}
-                        onClick={() => navigate(`/jobs/${job.id}`)}
+                        onClick={() => navigate(`/jobs/by-id/${job.id}`)}
                         className="flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all hover:shadow-sm"
                         style={{ border: '1px solid var(--blanc-line)', background: 'transparent' }}
                     >

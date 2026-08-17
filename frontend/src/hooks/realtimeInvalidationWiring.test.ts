@@ -38,7 +38,10 @@ describe('PII-free realtime invalidation wiring', () => {
         expect(messagesSource).toContain('onMessageAdded: refreshMessagesData');
         expect(messagesSource).not.toContain('event.message');
         expect(messagesSource).not.toContain('event.conversation');
-        expect(jobDetailSource).toContain('void refreshJob(jobId)');
+        // JOB-NUMBERING-001: refetch by the resolved real id (job?.id ?? jobId), never the
+        // SSE event payload — still a PII-free fresh fetch, just not the raw URL param.
+        expect(jobDetailSource).toContain('void refreshJob(id)');
+        expect(jobDetailSource).not.toContain('event.job');
         expect(jobsPageSource).toContain('void data.resetJobs()');
         expect(jobsPageSource).not.toContain('event.job');
     });

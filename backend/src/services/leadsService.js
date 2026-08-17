@@ -1412,7 +1412,7 @@ async function convertLead(uuid, overrides = {}, companyId = null, activityActor
         job_id: localJobId,
         zenbooker_job_id: zenbookerJobId,
         zb_warning: null,
-        link: `/jobs/${localJobId}`,
+        link: `/jobs/by-id/${localJobId}`,
     };
 }
 

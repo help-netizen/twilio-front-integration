@@ -192,7 +192,7 @@ export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasAct
                     } catch { /* non-critical */ }
                 }
 
-                toast.success('Lead & Job created', { description: jobId ? `Job #${jobId}` : 'Job created', duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+                toast.success('Lead & Job created', { description: jobId ? `Job #${jobId}` : 'Job created', duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/by-id/${jobId}`) } : undefined });
             } else {
                 toast.success('Lead created', { description: 'Status: Submitted' });
             }

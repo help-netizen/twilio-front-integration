@@ -115,7 +115,7 @@ async function unwrap<T>(res: Response): Promise<T> {
 /** Map a task to the route that opens its parent entity's card. */
 export function parentPath(task: Pick<Task, 'parent_type' | 'parent_id'>): string {
     switch (task.parent_type) {
-        case 'job': return `/jobs/${task.parent_id}`;
+        case 'job': return `/jobs/by-id/${task.parent_id}`;
         case 'lead': return `/leads/${task.parent_id}`;
         case 'contact': return `/contacts/${task.parent_id}`;
         // Estimates/Invoices open via the existing ?openId query mechanism.

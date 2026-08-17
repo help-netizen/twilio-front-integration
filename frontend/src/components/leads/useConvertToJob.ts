@@ -133,7 +133,7 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
                 address: { line1: addressFields.street, line2: addressFields.apt, city: addressFields.city, state: addressFields.state, postal_code: addressFields.zip },
             });
             const jobId = result.data?.job_id;
-            toast.success('Job created', { description: `Job #${jobId}`, duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+            toast.success('Job created', { description: `Job #${jobId}`, duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/by-id/${jobId}`) } : undefined });
             onSuccess({ ...lead, Status: 'Converted' }); onOpenChange(false);
         } catch (err) { toast.error('Failed to create job', { description: err instanceof Error ? err.message : 'Unknown error' }); }
         finally { setSubmitting(false); }

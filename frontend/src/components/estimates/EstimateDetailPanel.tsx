@@ -535,8 +535,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         <>
                             {' · '}
                             <a
-                                href={`/jobs/${estimate.job_id}`}
-                                onClick={e => { e.preventDefault(); window.open(`/jobs/${estimate.job_id}`, '_blank', 'noopener,noreferrer'); }}
+                                href={`/jobs/by-id/${estimate.job_id}`}
+                                onClick={e => { e.preventDefault(); window.open(`/jobs/by-id/${estimate.job_id}`, '_blank', 'noopener,noreferrer'); }}
                                 style={{ color: 'var(--blanc-job)' }}
                                 className="hover:underline"
                             >

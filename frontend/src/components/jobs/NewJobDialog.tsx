@@ -250,7 +250,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                 toast.warning('Job created but Zenbooker failed', {
                     description: data.zb_warning,
                     duration: 15000,
-                    action: { label: 'Open Job', onClick: () => navigate(`/jobs/${data.job_id}`) },
+                    action: { label: 'Open Job', onClick: () => navigate(`/jobs/by-id/${data.job_id}`) },
                 });
             } else {
                 toast.success('Job created', {
@@ -258,7 +258,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                     duration: 10000,
                 });
             }
-            navigate(`/jobs/${data.job_id}`);
+            navigate(`/jobs/by-id/${data.job_id}`);
             close();
         } catch (err) {
             toast.error('Failed to create job', { description: err instanceof Error ? err.message : 'Unknown error' });
