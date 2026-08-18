@@ -72,6 +72,7 @@ import ServiceTerritoriesPage from './pages/ServiceTerritoriesPage';
 import JobsPage from './pages/JobsPage';
 import { JobByIdRedirect, JobByCodeRedirect } from './pages/JobRedirect';
 import { LeadByIdRedirect, LeadByUuidRedirect, LeadByCodeRedirect } from './pages/LeadRedirect';
+import { EstimateByIdRedirect, InvoiceByIdRedirect } from './pages/DocRedirect';
 import { SchedulePage } from './pages/SchedulePage';
 import EstimatesPage from './pages/EstimatesPage';
 import InvoicesPage from './pages/InvoicesPage';
@@ -156,7 +157,12 @@ function App() {
               <Route path="/schedule/jobs/:jobId" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
               <Route path="/tasks" element={<ProtectedRoute permissions={['tasks.view']}><TasksPage /></ProtectedRoute>} />
               <Route path="/estimates" element={<ProtectedRoute permissions={['estimates.view']}><EstimatesPage /></ProtectedRoute>} />
+              {/* INVOICE-ESTIMATE-NUMBERING-001: canonical durable-code URL + by-id redirect shim (before /:code). */}
+              <Route path="/estimates/by-id/:id" element={<ProtectedRoute permissions={['estimates.view']}><EstimateByIdRedirect /></ProtectedRoute>} />
+              <Route path="/estimates/:code" element={<ProtectedRoute permissions={['estimates.view']}><EstimatesPage /></ProtectedRoute>} />
               <Route path="/invoices" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
+              <Route path="/invoices/by-id/:id" element={<ProtectedRoute permissions={['invoices.view']}><InvoiceByIdRedirect /></ProtectedRoute>} />
+              <Route path="/invoices/:code" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
               <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               <Route path="/contacts/:contactId" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               

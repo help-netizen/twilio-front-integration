@@ -353,7 +353,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 }
             );
             onInvoiceCreated?.();
-            if (hasPermission('invoices.view')) navigate(`/invoices?openId=${invoice.id}`);
+            if (hasPermission('invoices.view')) navigate(`/invoices/by-id/${invoice.id}`);
         } catch (err: any) {
             toast.error(err.message || 'Failed to create invoice');
         } finally {
@@ -420,7 +420,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     };
     const doSend = () => { if (requireItems()) setSendOpen(true); };
     const doApprove = () => { if (requireItems()) onApprove(); };
-    const openLinkedInvoice = () => navigate(`/invoices?openId=${estimate.invoice_id}`);
+    const openLinkedInvoice = () => navigate(`/invoices/by-id/${estimate.invoice_id}`);
 
     /**
      * The action matrix (ESTIMATE-REDESIGN-001 §2.2, revised by the owner

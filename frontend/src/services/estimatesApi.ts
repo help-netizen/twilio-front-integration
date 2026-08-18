@@ -84,6 +84,7 @@ export interface Estimate {
     job_seq?: number | null;
     invoice_id?: number | null;
     invoice_number?: string | null;
+    public_code?: string | null;   // INVOICE-ESTIMATE-NUMBERING-001: durable /estimates/:code
 }
 
 export interface EstimateEvent {
@@ -310,6 +311,11 @@ export async function fetchEstimates(filters: EstimatesListParams = {}): Promise
 
 export async function fetchEstimate(id: number): Promise<Estimate> {
     return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}`);
+}
+
+/** Resolve a durable global estimate code → the estimate (INVOICE-ESTIMATE-NUMBERING-001). */
+export async function getEstimateByCode(code: string): Promise<Estimate> {
+    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/by-code/${encodeURIComponent(code)}`);
 }
 
 export async function createEstimate(data: EstimateCreateData): Promise<Estimate> {

@@ -119,8 +119,8 @@ export function parentPath(task: Pick<Task, 'parent_type' | 'parent_id'>): strin
         case 'lead': return `/leads/by-id/${task.parent_id}`;
         case 'contact': return `/contacts/${task.parent_id}`;
         // Estimates/Invoices open via the existing ?openId query mechanism.
-        case 'estimate': return `/estimates?openId=${task.parent_id}`;
-        case 'invoice': return `/invoices?openId=${task.parent_id}`;
+        case 'estimate': return `/estimates/by-id/${task.parent_id}`;
+        case 'invoice': return `/invoices/by-id/${task.parent_id}`;
         // Timeline (Pulse thread) tasks open the conversation.
         case 'timeline': return `/pulse/timeline/${task.parent_id}`;
         default: return '/tasks';

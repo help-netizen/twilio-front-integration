@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useEstimates } from '../hooks/useEstimates';
 import { EstimateDetailPanel } from '../components/estimates/EstimateDetailPanel';
 import { EstimateEditorDialog } from '../components/estimates/EstimateEditorDialog';
@@ -9,6 +9,7 @@ import { StatusPill } from '../components/estimates/EstimateStatusPill';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Loader2, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import type { Estimate, EstimateCreateData } from '../services/estimatesApi';
+import { getEstimateByCode } from '../services/estimatesApi';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
@@ -33,8 +34,24 @@ export function EstimatesPage() {
     const [editorOpen, setEditorOpen] = useState(false);
     const [editingEstimate, setEditingEstimate] = useState<Estimate | null>(null);
     const [searchParams, setSearchParams] = useSearchParams();
+    const { code } = useParams<{ code?: string }>();
 
-    // Auto-open an estimate when navigated with ?openId=<id> (e.g. from a Task).
+    // Canonical deep link: /estimates/:code resolves the durable code and opens the panel
+    // (INVOICE-ESTIMATE-NUMBERING-001). The global id never appears in the URL.
+    useEffect(() => {
+        if (!code) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const est = await getEstimateByCode(code);
+                if (!cancelled) page.selectEstimate(est.id);
+            } catch { /* not found / cross-tenant → stay on the list */ }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [code]);
+
+    // Legacy: auto-open an estimate when navigated with ?openId=<id> (old links/bookmarks).
     useEffect(() => {
         const openId = searchParams.get('openId');
         if (!openId) return;

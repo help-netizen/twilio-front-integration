@@ -29,6 +29,7 @@ export interface Invoice {
     id: number;
     company_id: string;
     invoice_number: string;
+    public_code?: string | null;   // INVOICE-ESTIMATE-NUMBERING-001: durable /invoices/:code
     status: 'draft' | 'sent' | 'viewed' | 'partial' | 'paid' | 'overdue' | 'void' | 'refunded';
     contact_id: number | null;
     lead_id: number | null;
@@ -195,6 +196,11 @@ export async function fetchInvoices(filters: InvoicesListParams = {}): Promise<I
 
 export async function fetchInvoice(id: number): Promise<Invoice> {
     return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}`);
+}
+
+/** Resolve a durable global invoice code → the invoice (INVOICE-ESTIMATE-NUMBERING-001). */
+export async function getInvoiceByCode(code: string): Promise<Invoice> {
+    return invoicesRequest<Invoice>(`${INVOICES_BASE}/by-code/${encodeURIComponent(code)}`);
 }
 
 export class InvoiceItemsNotHydratedError extends Error {

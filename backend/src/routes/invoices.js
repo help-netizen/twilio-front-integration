@@ -92,7 +92,7 @@ router.get('/by-code/:code', requirePermission('invoices.view'), async (req, res
             });
         }
         const invoice = await invoicesService.getInvoice(companyId, resolved.id);
-        res.json({ invoice });
+        res.json({ ok: true, data: invoice });
     } catch (err) {
         console.error('[Invoices] GET /by-code/:code error:', err.message);
         const status = err.httpStatus || 500;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useInvoices } from '../hooks/useInvoices';
 import { InvoiceDetailPanel } from '../components/invoices/InvoiceDetailPanel';
 import { InvoiceEditorDialog } from '../components/invoices/InvoiceEditorDialog';
@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import type { HydratedInvoice, Invoice, InvoiceCreateData } from '../services/invoicesApi';
+import { getInvoiceByCode } from '../services/invoicesApi';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { getInvoiceCapabilities } from '../hooks/useInvoice';
 import { useAuthz } from '../hooks/useAuthz';
@@ -67,8 +68,24 @@ export function InvoicesPage() {
     } | null>(null);
     const [rowConfirmBusy, setRowConfirmBusy] = useState(false);
     const [searchParams, setSearchParams] = useSearchParams();
+    const { code } = useParams<{ code?: string }>();
 
-    // Auto-open invoice when navigated with ?openId=<id> (e.g. from estimate → invoice conversion).
+    // Canonical deep link: /invoices/:code resolves the durable code and opens the panel
+    // (INVOICE-ESTIMATE-NUMBERING-001). The global id never appears in the URL.
+    useEffect(() => {
+        if (!code) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const inv = await getInvoiceByCode(code);
+                if (!cancelled) page.selectInvoice(inv.id);
+            } catch { /* not found / cross-tenant → stay on the list */ }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [code]);
+
+    // Legacy: auto-open invoice when navigated with ?openId=<id> (old links/conversion).
     useEffect(() => {
         const openId = searchParams.get('openId');
         if (!openId) return;

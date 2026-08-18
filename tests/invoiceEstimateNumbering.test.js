@@ -155,10 +155,13 @@ describe.each([
         });
 
         expect(response.statusCode).toBe(200);
-        expect(response.body[key]).toEqual(expect.objectContaining({
+        // Standard envelope { ok, data } — matches /:id and the request helper.
+        expect(response.body.ok).toBe(true);
+        expect(response.body.data).toEqual(expect.objectContaining({
             id: expect.any(Number),
             public_code: code,
         }));
+        void key;
         expect(resolver).toHaveBeenCalledWith(code);
         expect(hydrator).toHaveBeenCalledWith(COMPANY_A, expect.any(Number));
     });

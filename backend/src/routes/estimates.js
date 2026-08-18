@@ -85,7 +85,7 @@ router.get('/by-code/:code', requirePermission('estimates.view'), async (req, re
             });
         }
         const estimate = await estimatesService.getEstimate(companyId, resolved.id);
-        res.json({ estimate });
+        res.json({ ok: true, data: estimate });
     } catch (err) {
         console.error('[Estimates] GET /by-code/:code error:', err.message);
         const status = err.httpStatus || 500;
