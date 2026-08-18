@@ -156,6 +156,13 @@ honor'ит ли Vapi `assistantOverrides` из ответа на assistant-reque
 **Проверка:** после переключения владелец звонит в офис → ассистент отвечает как обычно →
 у сессии появляется `vapi_call_id` → в течение нескольких минут появляется запись о расходе.
 
+**Подготовка окна (code review 18.08): NO-GO до protected server patch.** Сквозной real-DB
+тест `tests/vapiInboundSwitchPath.db.test.js` подтвердил цепочку machine auth → bind → EoC →
+accepted observation/provisional usage. Но реальный `src/server.js` монтирует call-status после
+`express.json()`, поэтому точный raw EoC теряется и денежный ingest пишет
+`exact usage body unavailable`. До окна mount должен быть перенесён перед JSON parser; процедура,
+dry-run helper и однокомандный rollback: `docs/deploy/VAPI-OB-62-SIP-SWITCH.md`.
+
 ---
 
 ## OB-61 (2026-08-18) — Sara не может создать лид: `createLead` с пустыми аргументами — **ИСПРАВЛЕНО В MASTER, ждёт деплоя и проверки 5 звонками**

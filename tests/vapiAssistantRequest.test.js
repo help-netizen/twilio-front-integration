@@ -51,6 +51,18 @@ const callStatusRouter = require('../backend/src/routes/vapiCallStatus');
 
 const COMPANY_A = '00000000-0000-4000-8000-00000000000a';
 const COMPANY_B = '00000000-0000-4000-8000-00000000000b';
+const PROBE_VARIABLES = {
+    albusto_context_contract: 'assistant-request-probe/v1',
+    albusto_context_status: 'generic',
+    albusto_ob62_probe: 'sip-assistant-request-v1',
+};
+
+function assistantResponse(assistantId) {
+    return {
+        assistantId,
+        assistantOverrides: { variableValues: PROBE_VARIABLES },
+    };
+}
 
 function makeApp() {
     const app = express();
@@ -128,7 +140,7 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         const response = await post(body);
 
         expect(response.status).toBe(200);
-        expect(response.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(response.body).toEqual(assistantResponse('assistant-registry-a'));
         expect(mockBindInboundCall).toHaveBeenCalledWith({
             companyId: COMPANY_A,
             credentialId: '101',
@@ -147,7 +159,7 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         const response = await post(payload(), 'credential-b');
 
         expect(response.status).toBe(200);
-        expect(response.body).toEqual({ assistantId: 'assistant-registry-b' });
+        expect(response.body).toEqual(assistantResponse('assistant-registry-b'));
         expect(mockBindInboundCall).toHaveBeenCalledWith(expect.objectContaining({
             companyId: COMPANY_B,
             credentialId: '202',
@@ -181,7 +193,7 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
 
         expect(first.status).toBe(200);
         expect(duplicate.status).toBe(200);
-        expect(first.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(first.body).toEqual(assistantResponse('assistant-registry-a'));
         expect(duplicate.body).toEqual(first.body);
         expect(mockBindInboundCall).toHaveBeenCalledTimes(2);
     });
@@ -194,7 +206,7 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         const response = await post();
 
         expect(response.status).toBe(200);
-        expect(response.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(response.body).toEqual(assistantResponse('assistant-registry-a'));
         expect(mockRecordUnattributedInboundCall).toHaveBeenCalledWith({
             companyId: COMPANY_A,
             providerCallId: 'provider-call-a',
@@ -232,7 +244,7 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         const missingResponse = await post(missing);
 
         expect(missingResponse.status).toBe(200);
-        expect(missingResponse.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(missingResponse.body).toEqual(assistantResponse('assistant-registry-a'));
         expect(mockResolveInboundAssistant).toHaveBeenCalledWith({ companyId: COMPANY_A });
         expect(mockRecordUnattributedInboundCall).toHaveBeenCalledWith({
             companyId: COMPANY_A,
@@ -252,8 +264,8 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         const responseA = await post(bodyA, 'credential-a');
         const responseB = await post(bodyB, 'credential-b');
 
-        expect(responseA.body).toEqual({ assistantId: 'assistant-registry-a' });
-        expect(responseB.body).toEqual({ assistantId: 'assistant-registry-b' });
+        expect(responseA.body).toEqual(assistantResponse('assistant-registry-a'));
+        expect(responseB.body).toEqual(assistantResponse('assistant-registry-b'));
         expect(mockResolveInboundAssistant.mock.calls.map(([input]) => input.companyId).sort())
             .toEqual([COMPANY_A, COMPANY_B].sort());
     });
@@ -267,7 +279,7 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         const response = await post(body);
 
         expect(response.status).toBe(200);
-        expect(response.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(response.body).toEqual(assistantResponse('assistant-registry-a'));
         expect(errorSpy).toHaveBeenCalledWith(
             '[vapiAssistantRequest] unattributed call alert unavailable',
             expect.objectContaining({
@@ -286,7 +298,7 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         const response = await post();
 
         expect(response.status).toBe(200);
-        expect(response.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(response.body).toEqual(assistantResponse('assistant-registry-a'));
         expect(mockResolveInboundAssistant).toHaveBeenCalledWith({ companyId: COMPANY_A });
         expect(mockRecordUnattributedInboundCall).toHaveBeenCalledWith({
             companyId: COMPANY_A,
@@ -317,6 +329,6 @@ describe('VAPI-AGENCY-001 T2 assistant-request machine boundary', () => {
         extra.message.call.futureCallField = true;
         const accepted = await post(extra);
         expect(accepted.status).toBe(200);
-        expect(accepted.body).toEqual({ assistantId: 'assistant-registry-a' });
+        expect(accepted.body).toEqual(assistantResponse('assistant-registry-a'));
     });
 });

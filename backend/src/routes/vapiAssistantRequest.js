@@ -7,6 +7,20 @@ const vapiAssistantRegistry = require('../services/vapiAssistantRegistryService'
 const { parseVapiServerMessageJson, VapiContractError } = require('../services/vapiProviderContracts');
 
 const router = express.Router();
+const ASSISTANT_REQUEST_PROBE_VARIABLES = Object.freeze({
+    albusto_context_contract: 'assistant-request-probe/v1',
+    albusto_context_status: 'generic',
+    albusto_ob62_probe: 'sip-assistant-request-v1',
+});
+
+function buildAssistantResponse(assistantId) {
+    return {
+        assistantId,
+        assistantOverrides: {
+            variableValues: { ...ASSISTANT_REQUEST_PROBE_VARIABLES },
+        },
+    };
+}
 
 async function assistantRequestCredentialAuth(req, res, next) {
     try {
@@ -110,7 +124,7 @@ async function answerUnattributed({ companyId, providerCallId, reason }, res) {
             error: alertError?.code || alertError?.message || 'unknown',
         });
     }
-    return res.json({ assistantId: selected.expected_vapi_assistant_id });
+    return res.json(buildAssistantResponse(selected.expected_vapi_assistant_id));
 }
 
 router.post('/', assistantRequestCredentialAuth, async (req, res) => {
@@ -164,7 +178,13 @@ router.post('/', assistantRequestCredentialAuth, async (req, res) => {
             }, res);
         }
 
-        return res.json({ assistantId: bound.assistantId });
+        console.log('[vapiAssistantRequest] bound', {
+            companyId: bound.companyId,
+            providerCallId: bound.providerCallId,
+            sessionId: bound.sessionId,
+            idempotent: bound.idempotent,
+        });
+        return res.json(buildAssistantResponse(bound.assistantId));
     } catch (error) {
         if (error instanceof VapiContractError) {
             return res.status(400).json({
@@ -196,3 +216,5 @@ module.exports = router;
 module.exports.extractCorrelationToken = extractCorrelationToken;
 module.exports.hasProviderSelectionClaims = hasProviderSelectionClaims;
 module.exports.answerUnattributed = answerUnattributed;
+module.exports.buildAssistantResponse = buildAssistantResponse;
+module.exports.ASSISTANT_REQUEST_PROBE_VARIABLES = ASSISTANT_REQUEST_PROBE_VARIABLES;

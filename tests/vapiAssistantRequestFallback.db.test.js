@@ -8,6 +8,16 @@ const COMPANY_ID = '51000000-0000-4000-8000-000000000071';
 const CONNECTION_ID = 'vapi-assistant-request-fallback-db';
 const RESOURCE_ID = 'vapi-assistant-request-minimal-resource';
 const ASSISTANT_ID = 'assistant-request-company-fallback';
+const EXPECTED_RESPONSE = {
+    assistantId: ASSISTANT_ID,
+    assistantOverrides: {
+        variableValues: {
+            albusto_context_contract: 'assistant-request-probe/v1',
+            albusto_context_status: 'generic',
+            albusto_ob62_probe: 'sip-assistant-request-v1',
+        },
+    },
+};
 
 jest.mock('../backend/src/services/machineCredentialService', () => ({
     SURFACES: { VAPI_ASSISTANT_REQUEST: 'vapi_assistant_request' },
@@ -119,7 +129,7 @@ test('SAB-FIX17 null fallback assistant column still answers from company-owned 
         .send(payload());
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ assistantId: ASSISTANT_ID });
+    expect(response.body).toEqual(EXPECTED_RESPONSE);
 });
 
 test('minimal live resource uses the same eligibility set for SIP and assistant selection', async () => {
@@ -142,7 +152,7 @@ test('minimal live resource uses the same eligibility set for SIP and assistant 
         .send(payload({ callId: 'provider-call-minimal-resource' }));
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ assistantId: ASSISTANT_ID });
+    expect(response.body).toEqual(EXPECTED_RESPONSE);
 });
 
 test('SAB-FIX18 real token bind failure answers and persists provider-call identity', async () => {
@@ -155,7 +165,7 @@ test('SAB-FIX18 real token bind failure answers and persists provider-call ident
         .send(payload({ token: 'unknown-but-well-formed-token', callId }));
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ assistantId: ASSISTANT_ID });
+    expect(response.body).toEqual(EXPECTED_RESPONSE);
     const alert = await pool.query(
         `SELECT company_id, provider_call_id, kind, details
          FROM vapi_usage_alerts
