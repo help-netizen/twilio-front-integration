@@ -32,17 +32,33 @@ export function useFullScreenViewport(active: boolean): FullScreenViewport {
             return;
         }
         const vv = window.visualViewport;
-        const read = () => setViewport({
-            top: Math.max(0, vv.offsetTop),
-            bottom: Math.max(0, window.innerHeight - vv.height - vv.offsetTop),
-        });
+        // A keyboard inset is only real when an editable control is focused. An iOS PWA
+        // backgrounded WITH the keyboard up can resume reporting a stale, keyboard-shrunk
+        // visualViewport, which would open a full-screen layer at half height. When nothing
+        // editable is focused there is no keyboard, so report a zero inset.
+        const isEditableFocused = () => {
+            const el = document.activeElement;
+            return el instanceof HTMLElement
+                && el.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+        };
+        const read = () => {
+            const kb = isEditableFocused();
+            setViewport({
+                top: kb ? Math.max(0, vv.offsetTop) : 0,
+                bottom: kb ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0,
+            });
+        };
         read();
         vv.addEventListener('resize', read);
         vv.addEventListener('scroll', read);
+        window.addEventListener('focusout', read);          // blur ⇒ keyboard down ⇒ drop inset
+        document.addEventListener('visibilitychange', read); // app resumed ⇒ re-measure
         const poll = window.setInterval(read, 250); // belt — iOS drops vv events
         return () => {
             vv.removeEventListener('resize', read);
             vv.removeEventListener('scroll', read);
+            window.removeEventListener('focusout', read);
+            document.removeEventListener('visibilitychange', read);
             window.clearInterval(poll);
         };
     }, [active]);

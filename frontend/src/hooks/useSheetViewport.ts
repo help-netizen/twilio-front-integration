@@ -133,10 +133,18 @@ export function useSheetViewport({
         let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
         const read = () => {
+            // There is no on-screen keyboard unless an editable control is focused. An iOS
+            // PWA that was backgrounded WITH the keyboard up can resume reporting a stale,
+            // keyboard-shrunk visualViewport (height < innerHeight) even though the keyboard
+            // is gone — which stuck every sheet/panel at half height. When nothing editable
+            // is focused, ignore the shrunk viewport and feed keyboard-down metrics so the
+            // sheet always spans the full height.
+            const layoutHeight = window.innerHeight || document.documentElement.clientHeight;
+            const keyboardPossible = isEditableControl(document.activeElement);
             const next = computeSheetViewportGeometry({
-                layoutHeight: window.innerHeight || document.documentElement.clientHeight,
-                visualHeight: viewport.height,
-                visualOffsetTop: viewport.offsetTop,
+                layoutHeight,
+                visualHeight: keyboardPossible ? viewport.height : layoutHeight,
+                visualOffsetTop: keyboardPossible ? viewport.offsetTop : 0,
                 topGap,
             });
             geometryRef.current = next;
@@ -162,12 +170,19 @@ export function useSheetViewport({
         viewport.addEventListener('scroll', scheduleRead);
         window.addEventListener('resize', scheduleRead);
         window.addEventListener('orientationchange', scheduleRead);
+        // focusout: a field blurred ⇒ keyboard down ⇒ drop the inset (iOS can skip the
+        // vv resize on blur). visibilitychange: the app resumed ⇒ re-measure, in case it
+        // was backgrounded mid-keyboard and iOS never fired a resize on return.
+        window.addEventListener('focusout', scheduleRead);
+        document.addEventListener('visibilitychange', scheduleRead);
 
         return () => {
             viewport.removeEventListener('resize', scheduleRead);
             viewport.removeEventListener('scroll', scheduleRead);
             window.removeEventListener('resize', scheduleRead);
             window.removeEventListener('orientationchange', scheduleRead);
+            window.removeEventListener('focusout', scheduleRead);
+            document.removeEventListener('visibilitychange', scheduleRead);
             if (readRaf !== null) cancelAnimationFrame(readRaf);
             if (settleTimer !== null) clearTimeout(settleTimer);
         };
