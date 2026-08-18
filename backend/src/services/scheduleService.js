@@ -30,7 +30,9 @@ function deriveLocality(address) {
     const parts = address.split(',').map(p => p.trim()).filter(Boolean);
     for (let i = 1; i < parts.length; i++) {
         const firstTok = parts[i].split(/\s+/)[0]?.toUpperCase();
-        if (US_STATES.has(firstTok) && parts[i - 1]) return parts[i - 1];
+        // The component before the state token is the city — unless it starts with a
+        // digit (then the address had no city and we'd be about to return the street).
+        if (US_STATES.has(firstTok) && parts[i - 1] && !/^\d/.test(parts[i - 1])) return parts[i - 1];
     }
     return null;
 }

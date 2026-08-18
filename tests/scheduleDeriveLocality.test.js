@@ -24,6 +24,10 @@ describe('deriveLocality', () => {
     it('returns null when no US state token is present', () => {
         expect(deriveLocality('Some Place, Nowhere')).toBeNull();
     });
+    it('returns null when the address has no city (street sits before the state)', () => {
+        expect(deriveLocality('100 Test Street, NY, 10001')).toBeNull();
+        expect(deriveLocality('45 Oak Rd, MA 02341')).toBeNull();
+    });
     it('returns null for a comma-less string', () => {
         expect(deriveLocality('No commas here')).toBeNull();
     });
