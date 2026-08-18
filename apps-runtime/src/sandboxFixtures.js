@@ -189,7 +189,6 @@ function generateSandboxFixtures(seed = DEFAULT_SANDBOX_SEED, anchor = null) {
             customer_email: customer.email,
             address: customer.address,
             city: customer.city,
-            postal_code: customer.postal_code,
             territory: 'Greater Boston',
             invoice_total: plan.billing ? money(service.price) : null,
             invoice_status: plan.billing === 'paid' ? 'paid' : (plan.billing ? 'partial' : null),

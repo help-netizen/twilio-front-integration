@@ -72,7 +72,7 @@
 
 ---
 
-## OB-65 (2026-08-18) — appSandboxFixtureContract падает: Job-проектор SQL уехал от контракта песочницы — **ОТКРЫТ, тест-дрейф, раздел App Studio/MCP**
+## OB-65 (2026-08-18) — appSandboxFixtureContract падает: Job-проектор SQL уехал от контракта песочницы — **✅ РЕШЁН (tandem: Codex), тест-дрейф, раздел App Studio/MCP**
 
 **Симптом.** `tests/appSandboxFixtureContract.test.js` (APP-SANDBOX-001 «CRM projector response-shape contract») падает: `Unexpected Job projector SQL`. Пре-существующее — падает и на чистом master без каких-либо правок (проверено `git stash` моих файлов); поймано попутно при гейте `b9d9b9b2` (TILE-CITY-002).
 
@@ -81,6 +81,8 @@
 **Где чинить.**
 - `tests/appSandboxFixtureContract.test.js:101` — обновить регекс под новый платёжный SQL (`/WITH\s+original_payments AS/i` или `ledger_effects`), вернув `paymentRows`.
 - Перепроверить `keyPaths(sandboxList) === keyPaths(realList)`: если новый проектор поменял КЛЮЧИ вывода — перегенерить фикстуру `apps-runtime/src/sandboxFixtures` под новую форму (иначе следом упадёт `toEqual`).
+
+**Решение (tandem, Codex).** Матчер `appSandboxFixtureContract.test.js` обновлён под новый платёжный SQL: ветка `WITH original_payments` с разбором `FROM ordered`→allocation-rows (`legacy_paid/capacity`) и `FROM ledger_effects … GROUP BY`→pool-rows (`native_pool/total_pool`). Плюс подтвердился второй дрейф (как и предсказано выше): из `apps-runtime/src/sandboxFixtures.js` убран **фантомный `postal_code` у JOB** (в таблице `jobs` такой колонки нет — на контактах/клиентах оставлен). Реальный `jobsService.listJobs` НЕ тронут (чистый тест-дрейф). Тест зелёный 1/1; sabotage: сломал матчер-регекс → RED (`Unexpected Job projector SQL`), восстановил → GREEN; full key-path equality assertion сохранён.
 - Первоисточник изменения: `backend/src/services/jobsService.listJobs` (+ `chatgptMcpReadService.safeResult`).
 
 **Кому.** Ветка **`integrate/fsm-recon-appstudio`** — раздел App Studio / CRM-projector-MCP (родня OB-49..54: конвейер песочницы/контракта/MCP-read).

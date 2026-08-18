@@ -81,10 +81,15 @@ describe('APP-SANDBOX-001 CRM projector response-shape contract', () => {
             job_id: job.id,
             ...tag,
         })));
+        const allocationRows = fixtures.invoices.map(invoice => ({
+            job_id: invoice.job_id,
+            legacy_paid: 0,
+            capacity: invoice.total,
+        }));
         const paymentRows = fixtures.invoices.map(invoice => ({
             job_id: invoice.job_id,
-            total_paid: invoice.amount_paid,
-            total_due: invoice.balance_due,
+            native_pool: invoice.amount_paid,
+            total_pool: invoice.amount_paid,
         }));
 
         mockQuery.mockImplementation(async sql => {
@@ -98,7 +103,12 @@ describe('APP-SANDBOX-001 CRM projector response-shape contract', () => {
             }
             if (/SELECT j\.\*,[\s\S]*FROM jobs j/i.test(sql)) return { rows };
             if (/FROM job_tag_assignments jta[\s\S]*scoped_job/i.test(sql)) return { rows: tagRows };
-            if (/WITH invoice_rollup AS/i.test(sql)) return { rows: paymentRows };
+            if (/WITH\s+original_payments AS/i.test(sql)) {
+                if (/FROM ordered/i.test(sql)) return { rows: allocationRows };
+                if (/FROM ledger_effects[\s\S]*GROUP BY job_id/i.test(sql)) {
+                    return { rows: paymentRows };
+                }
+            }
             throw new Error(`Unexpected Job projector SQL: ${sql}`);
         });
         const realList = safeResult(await jobsService.listJobs({
