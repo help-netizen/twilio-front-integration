@@ -100,6 +100,14 @@ export async function getContact(id: number): Promise<ContactDetailResponse> {
     return request<ContactDetailResponse>(`${API_BASE}/${id}`);
 }
 
+/**
+ * Resolve a durable global contact code → the contact (CONTACT-NUMBERING-001).
+ * Returns just the contact (with id + public_code); callers load full detail via getContact(id).
+ */
+export async function getContactByCode(code: string): Promise<{ ok: true; data: Contact }> {
+    return request<{ ok: true; data: Contact }>(`${API_BASE}/by-code/${encodeURIComponent(code)}`);
+}
+
 export async function listSavedPaymentMethods(contactId: number): Promise<SavedPaymentMethod[]> {
     const response = await request<{ ok: true; data: SavedPaymentMethod[] }>(
         `${API_BASE}/${contactId}/saved-payment-methods`

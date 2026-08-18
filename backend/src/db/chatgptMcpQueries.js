@@ -92,7 +92,7 @@ async function getLead(companyId, leadUuid) {
 async function getContact(companyId, contactId) {
     requireCompanyId(companyId);
     const { rows } = await db.query(
-        `SELECT c.*,
+        `SELECT c.*, c.public_code,
                 COALESCE(emails.items, '[]'::jsonb) AS emails,
                 COALESCE(addresses.items, '[]'::jsonb) AS addresses
          FROM contacts c

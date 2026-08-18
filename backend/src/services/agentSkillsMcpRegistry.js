@@ -413,11 +413,13 @@ const DISPATCHER_READ_TOOLS = [
     dispatcherRead('svc.get_lead_transitions', 'getLeadTransitions', 'List actions from the company-published Lead workflow.', strictObjectSchema({ lead_uuid: stringSchema() }, ['lead_uuid'])),
     dispatcherRead('svc.search_contacts', 'searchContacts', 'Search company Contacts by name, phone, or email.', strictObjectSchema({
         search: stringSchema(), limit: integerSchema(1, 100), offset: integerSchema(0),
-    })),
-    dispatcherRead('svc.get_contact', 'getContact', 'Get one company-owned Contact with owned emails and addresses.', strictObjectSchema({ contact_id: integerSchema(1) }, ['contact_id'])),
+    }), { outputSchema: listContactsOutputSchema() }),
+    dispatcherRead('svc.get_contact', 'getContact', 'Get one company-owned Contact with owned emails and addresses.', strictObjectSchema({ contact_id: integerSchema(1) }, ['contact_id']), {
+        outputSchema: getContactOutputSchema(),
+    }),
     dispatcherRead('svc.get_contact_history', 'getContactHistory', 'Get bounded company-owned Contact history.', strictObjectSchema({
         contact_id: integerSchema(1), limit: integerSchema(1, 100),
-    }, ['contact_id'])),
+    }, ['contact_id']), { outputSchema: getContactHistoryOutputSchema() }),
     dispatcherRead('svc.list_schedule', 'listSchedule', 'List company Schedule items in a bounded range.', strictObjectSchema({
         start_date: dateSchema(), end_date: dateSchema(),
         entity_types: arraySchema(enumSchema(['job', 'lead', 'task']), 3),
@@ -1268,6 +1270,44 @@ function nullableOutput(type, description, extras = {}) {
 
 function outputField(type, description, extras = {}) {
     return { type, description, ...extras };
+}
+
+function contactIdentityOutputProperties() {
+    return {
+        id: outputField(['integer', 'string'], 'Albusto Contact ID. Live PostgreSQL BIGINT values are serialized as decimal strings; sandbox fixtures may use integers.'),
+        public_code: nullableOutput('string', 'Durable global contact code for /contacts/:code links.'),
+    };
+}
+
+function contactOutputSchema(description) {
+    return outputField('object', description, {
+        additionalProperties: true,
+        properties: contactIdentityOutputProperties(),
+    });
+}
+
+function listContactsOutputSchema() {
+    return outputField('object', 'A page of company-owned Contacts and pagination metadata.', {
+        additionalProperties: true,
+        properties: {
+            results: outputField('array', 'Contact rows for this page.', {
+                items: contactOutputSchema('One company-owned Contact summary.'),
+            }),
+        },
+    });
+}
+
+function getContactOutputSchema() {
+    return contactOutputSchema('One company-owned Contact with owned emails and addresses.');
+}
+
+function getContactHistoryOutputSchema() {
+    return outputField('object', 'One company-owned Contact and its bounded history.', {
+        additionalProperties: true,
+        properties: {
+            contact: contactOutputSchema('The company-owned Contact.'),
+        },
+    });
 }
 
 function jobOutputProperties({ includeBalances = false } = {}) {

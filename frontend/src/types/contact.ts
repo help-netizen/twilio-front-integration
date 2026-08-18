@@ -18,6 +18,7 @@ export type ContactAddress = {
 
 export type Contact = {
     id: number;
+    public_code?: string | null;   // CONTACT-NUMBERING-001: durable /contacts/:code
     full_name: string | null;
     first_name: string | null;
     last_name: string | null;

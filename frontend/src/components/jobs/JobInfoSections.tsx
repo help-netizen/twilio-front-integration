@@ -244,7 +244,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated, variant = 'car
                             {(contactInfo?.id || job.contact_id) ? (
                                 <button
                                     type="button"
-                                    onClick={() => navigate(`/contacts/${contactInfo?.id ?? job.contact_id}`)}
+                                    onClick={() => navigate(`/contacts/by-id/${contactInfo?.id ?? job.contact_id}`)}
                                     className={`flex items-center gap-1 hover:underline ${value}`}
                                     style={{ color: flat ? 'var(--blanc-ink-1)' : 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}
                                 >

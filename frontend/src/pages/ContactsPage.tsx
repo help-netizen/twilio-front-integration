@@ -63,17 +63,24 @@ export function ContactsPage() {
     const [selectedLeads, setSelectedLeads] = useState<ContactLead[]>([]);
     const [detailLoading, setDetailLoading] = useState(false);
 
-    // Auto-open contact from URL param (e.g. /contacts/:contactId)
+    // Auto-open contact from URL param — CONTACT-NUMBERING-001: /contacts/:code is the
+    // durable code; a legacy numeric id still works (old links) via the fallback below.
     useEffect(() => {
         if (!contactId) return;
-        const numericId = Number(contactId);
-        if (!numericId || isNaN(numericId)) return;
-        // Don't re-fetch if already selected
-        if (selectedContact?.id === numericId) return;
+        // Already showing this contact (matched by code or legacy numeric id)?
+        if (selectedContact && (selectedContact.public_code === contactId || String(selectedContact.id) === contactId)) return;
         (async () => {
             setDetailLoading(true);
             try {
-                const res = await contactsApi.getContact(numericId);
+                let id: number;
+                try {
+                    const byCode = await contactsApi.getContactByCode(contactId);
+                    id = byCode.data.id;
+                } catch {
+                    id = Number(contactId); // legacy numeric-id link
+                }
+                if (!id || isNaN(id)) return;
+                const res = await contactsApi.getContact(id);
                 setSelectedContact(res.data.contact);
                 setSelectedLeads(res.data.leads);
             } catch (err) {
@@ -86,8 +93,8 @@ export function ContactsPage() {
 
     // Handle contact selection
     const handleSelectContact = async (contact: Contact) => {
-        // Update URL to reflect selected contact
-        navigate(`/contacts/${contact.id}`, { replace: true });
+        // Update URL to the durable code (CONTACT-NUMBERING-001); id fallback for un-backfilled rows.
+        navigate(`/contacts/${contact.public_code ?? contact.id}`, { replace: true });
         setSelectedContact(contact);
         setDetailLoading(true);
         try {

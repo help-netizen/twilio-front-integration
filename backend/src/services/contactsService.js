@@ -31,6 +31,7 @@ function rowToContact(row) {
     const zbData = row.zenbooker_data || {};
     return {
         id: row.id,
+        public_code: row.public_code || null,
         full_name: row.full_name,
         first_name: row.first_name || null,
         last_name: row.last_name || null,
@@ -176,7 +177,7 @@ async function listContacts({ search, offset, limit = 50, cursor, companyId, pro
     }
 
     const sql = `
-        SELECT c.*, ${bigintCursorExpression('c.id')} AS __cursor_id
+        SELECT c.*, c.public_code, ${bigintCursorExpression('c.id')} AS __cursor_id
         FROM contacts c
         ${whereClause}${cursorPredicate}
         ORDER BY c.id DESC
@@ -227,6 +228,26 @@ async function getContactById(id, companyId = null, providerScope = null, client
 }
 
 /**
+ * Deliberately global resolver for durable Contact codes. The route compares
+ * the returned company_id with the authenticated company before hydrating it.
+ */
+async function getContactByCode(publicCode, { client = null } = {}) {
+    const { rows } = await queryFor(client)(
+        `SELECT c.*, c.public_code
+         FROM contacts c
+         WHERE c.public_code = $1`,
+        [publicCode]
+    );
+    if (rows.length === 0) {
+        const err = new Error('Contact not found');
+        err.code = 'NOT_FOUND';
+        err.httpStatus = 404;
+        throw err;
+    }
+    return rowToContact(rows[0]);
+}
+
+/**
  * Tenant-safe contact lookup. Returns null (never throws) when the contact
  * does not exist, belongs to another company, or is not visible under the
  * provider scope — callers translate null into 404 (PF007-HARDENING-001).
@@ -263,7 +284,7 @@ async function getById(id, companyId = null, providerScope = null, client = null
               AND pj.assigned_provider_user_ids @> $${params.length}::jsonb
         )`);
     }
-    const sql = `SELECT c.*
+    const sql = `SELECT c.*, c.public_code
                  FROM contacts c
                  WHERE ${conditions.join(' AND ')}
                  ${client?.query ? 'FOR SHARE OF c' : ''}`;
@@ -427,6 +448,7 @@ async function upsertFromZenbooker(customer, companyId) {
 module.exports = {
     listContacts,
     getContactById,
+    getContactByCode,
     getById,
     getContactLeads,
     getContactEmails,

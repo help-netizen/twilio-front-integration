@@ -226,6 +226,46 @@ router.get('/search-candidates', requirePermission('contacts.view'), async (req,
 });
 
 // =============================================================================
+// GET /api/contacts/by-code/:code — Resolve a durable global Contact code
+// MUST stay ABOVE every /:id route or Express matches "by-code" as an id.
+// =============================================================================
+router.get('/by-code/:code', requirePermission('contacts.view'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) {
+            return res.status(403).json(errorResponse(
+                'TENANT_CONTEXT_REQUIRED',
+                'Company context is required',
+                reqId,
+            ));
+        }
+
+        const resolved = await contactsService.getContactByCode(req.params.code);
+        if (resolved.company_id !== companyId) {
+            return res.status(404).json(errorResponse(
+                'NOT_FOUND',
+                'Contact not found',
+                reqId,
+            ));
+        }
+
+        const contact = await contactsService.getContactById(
+            resolved.id,
+            companyId,
+            getProviderScope(req)
+        );
+        res.json({ ok: true, data: contact });
+    } catch (err) {
+        if (err.code === 'NOT_FOUND') {
+            return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+        }
+        console.error(`[ContactsAPI][${reqId}] by-code error:`, err);
+        res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
+    }
+});
+
+// =============================================================================
 // GET /api/contacts/:id/call-masking — masked dial number + stable contact code
 // =============================================================================
 router.get('/:id/call-masking', requirePermission('call_masking.use'), async (req, res) => {

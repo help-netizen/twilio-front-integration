@@ -73,6 +73,7 @@ import JobsPage from './pages/JobsPage';
 import { JobByIdRedirect, JobByCodeRedirect } from './pages/JobRedirect';
 import { LeadByIdRedirect, LeadByUuidRedirect, LeadByCodeRedirect } from './pages/LeadRedirect';
 import { EstimateByIdRedirect, InvoiceByIdRedirect } from './pages/DocRedirect';
+import { ContactByIdRedirect } from './pages/ContactRedirect';
 import { SchedulePage } from './pages/SchedulePage';
 import EstimatesPage from './pages/EstimatesPage';
 import InvoicesPage from './pages/InvoicesPage';
@@ -164,6 +165,8 @@ function App() {
               <Route path="/invoices/by-id/:id" element={<ProtectedRoute permissions={['invoices.view']}><InvoiceByIdRedirect /></ProtectedRoute>} />
               <Route path="/invoices/:code" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
               <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
+              {/* CONTACT-NUMBERING-001: by-id redirect shim → canonical /contacts/:code (before the :param route). */}
+              <Route path="/contacts/by-id/:id" element={<ProtectedRoute permissions={['contacts.view']}><ContactByIdRedirect /></ProtectedRoute>} />
               <Route path="/contacts/:contactId" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               
               <Route path="/settings" element={<SettingsLandingRedirect />} />

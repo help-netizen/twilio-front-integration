@@ -71,7 +71,7 @@ export function LeadInfoSections({ lead }: LeadInfoSectionsProps) {
                             {lead.ContactId ? (
                                 <button
                                     type="button"
-                                    onClick={() => navigate(`/contacts/${lead.ContactId}`)}
+                                    onClick={() => navigate(`/contacts/by-id/${lead.ContactId}`)}
                                     className="flex items-center gap-1 text-[13px] font-semibold hover:underline"
                                     style={{ color: 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}
                                 >
