@@ -118,7 +118,7 @@ async function runSkill(name, companyId, rawContext, input) {
         // UNKNOWN-CALLER-LEAD-001: createLead may use only server-resolved phone
         // identity. A model/client contactId must never pin the resolver result.
         const identityBlock = identityBlockFrom(input, {
-            includeContactId: name !== 'createLead',
+            includeContactId: !['createLead', 'recordLeadDisposition'].includes(name),
         });
 
         // (2) Re-derive the verification level from the DB every call.

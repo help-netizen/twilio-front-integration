@@ -156,3 +156,21 @@ test('tenant scoping: resolver and lead insert use the dispatcher company, never
         { activityActor: { id: null, type: 'ai', label: 'AI Phone', source: 'agent' } },
     );
 });
+
+test('recordLeadDisposition strips model ownership claims and writes only in the transport company', async () => {
+    await runSkill('recordLeadDisposition', CO_B, { source: 'test' }, {
+        phone: '+18564043689',
+        companyId: CO_A,
+        contactId: 4093,
+        contact_id: 4093,
+        disqualified: true,
+        disqualReason: 'out_of_area',
+    });
+
+    expect(identityResolver.resolve.mock.calls[0][0]).toBe(CO_B);
+    expect(identityResolver.resolve.mock.calls[0][1]).not.toHaveProperty('contactId');
+    const [body, companyId] = leadsService.createLead.mock.calls[0];
+    expect(companyId).toBe(CO_B);
+    expect(body).not.toHaveProperty('contact_id');
+    expect(body.JobSource).toBe('AI Phone (Invalid)');
+});

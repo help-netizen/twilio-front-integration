@@ -2,9 +2,9 @@
  * agentSkills / skills / createLead — RELOCATED legacy L0 tool
  * (AGENT-SKILLS-001, spec §7.3 / task T3; slot-persist from VAPI-SLOT-ENGINE-001).
  *
- * Byte-identical relocation of `handleCreateLead` (+ `buildCallSummary`) from
- * `routes/vapi-tools.js` (the pre-T4 source of truth). Internals RELOCATED, NOT
- * rewritten — every branch preserved verbatim:
+ * Originally relocated from `routes/vapi-tools.js`. The speech-safe result shape
+ * remains backward compatible; OB-61 additionally derives address-validation
+ * evidence server-side instead of trusting model-echoed flags/coordinates:
  *   - phone guard: valid leads require a phone (≥5 chars); disqualified leads are
  *     logged without one → { success:false, error:'Phone number is required…' };
  *   - field mapping: FirstName/LastName (+ callerName split fallback), Phone,
@@ -13,8 +13,9 @@
  *     City/State/PostalCode(normalizeZip);
  *   - chosenSlot slot-persist (Decision D): a valid chosenSlot writes real
  *     TIMESTAMPTZ columns LeadDateTime/LeadEndDateTime via tzCombine, + optional
- *     Latitude/Longitude when both finite; malformed/absent chosenSlot ⇒ none of
- *     the four keys; a slot-compose fault never blocks lead creation;
+ *     server-validated Latitude/Longitude when both finite; malformed/absent
+ *     chosenSlot ⇒ none of the four keys; a slot-compose fault never blocks lead
+ *     creation;
  *   - 1-retry: on failure wait 2s and retry once; two failures →
  *     { success:false, error:'Lead creation failed after retry' } (HTTP 200);
  *   - success → { success:true, leadId }.
@@ -32,6 +33,7 @@
 
 const leadsService = require('../../leadsService');
 const slotEngineService = require('../../slotEngineService');
+const validateAddress = require('./validateAddress');
 const { aiActor } = require('../../leadContactActivityService');
 // ZIP normalization (recover a dropped leading zero) — shared util.
 const { normalizeZip } = require('../../../utils/zip');
@@ -86,10 +88,10 @@ async function run(companyId, verifiedContext, input = {}) {
         firstName, lastName, phone, email,
         street, apt, zip, city, state,
         unitType, brand, unitAge, problemDescription,
-        preferredSlot, addressValidated, escalationRequested,
+        preferredSlot, escalationRequested,
         disqualified, disqualReason,
         callerName,
-        chosenSlot, lat, lng,
+        chosenSlot,
     } = input;
 
     // Disqualified leads (out-of-area / unsupported appliance) are logged for
@@ -99,6 +101,30 @@ async function run(companyId, verifiedContext, input = {}) {
         return { success: false, error: 'Phone number is required to create lead' };
     }
 
+    // Provider arguments are not authoritative evidence that an address was
+    // validated. Re-run the server-owned validator from the address fields so
+    // the reduced provider schema never has to echo lat/lng/addressValidated
+    // through the model. Old payloads may still contain those keys during the
+    // rollout; they are deliberately accepted and ignored.
+    let serverAddress = {
+        valid: false,
+        correctedZip: normalizeZip(zip),
+        lat: null,
+        lng: null,
+    };
+    if (street) {
+        serverAddress = await validateAddress.run(companyId, verifiedContext, {
+            street,
+            apt,
+            city,
+            state,
+            zip,
+        });
+    }
+
+    const addressValidated = serverAddress?.valid === true;
+    const lat = serverAddress?.lat;
+    const lng = serverAddress?.lng;
     const resolvedIdentity = resolvedLeadIdentity(verifiedContext);
     const summary = buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested });
     const body = {
@@ -117,7 +143,7 @@ async function run(companyId, verifiedContext, input = {}) {
         ...(apt && { Unit: apt }),
         City:      city || '',
         State:     state || '',
-        PostalCode: normalizeZip(zip),
+        PostalCode: normalizeZip(serverAddress?.correctedZip || zip),
     };
 
     // VAPI-SLOT-ENGINE-001 (Decision D): when the caller picked an engine-offered

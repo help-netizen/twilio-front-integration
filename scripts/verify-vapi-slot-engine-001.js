@@ -14,7 +14,7 @@
  *     'Converted'/'Lost' row in both, failing AC-6);
  *   • tzCombine is DST-aware (EDT date → UTC−4, EST date → UTC−5);
  *   • the held-lead sub-read is date-windowed / company-scoped / small (EXPLAIN);
- *   • the repo assistant JSON is valid (6 tools, recommendSlots shape + 8 params,
+ *   • the repo assistant JSON is valid (16 tools, recommendSlots shape + 8 params,
  *     scheduling prompt steps 6+9 rewritten) — NOT pushed to the live assistant.
  *
  * REAL (unmocked) functions exercised:
@@ -375,7 +375,7 @@ CASE('VSE-EXPLAIN', 'explain', 'held-lead sub-read is date-windowed + company-sc
 });
 
 // ── cfg — VSE-CFG (assistant JSON validated, NOT pushed) ─────────────────────
-CASE('VSE-CFG', 'cfg', 'assistant JSON valid: 6 tools, recommendSlots shape + 8 params, prompt steps 6+9 rewritten', async () => {
+CASE('VSE-CFG', 'cfg', 'assistant JSON valid: 16 tools, recommendSlots shape + 8 params, prompt steps 6+9 rewritten', async () => {
     const fs = require('fs');
     const jsonPath = path.join(ROOT, 'voice-agent/assistants/lead-qualifier-v2.json');
     const raw = fs.readFileSync(jsonPath, 'utf8');
@@ -383,7 +383,7 @@ CASE('VSE-CFG', 'cfg', 'assistant JSON valid: 6 tools, recommendSlots shape + 8 
     try { j = JSON.parse(raw); } catch (e) { throw new CheckError(`lead-qualifier-v2.json is not valid JSON: ${e.message}`); }
 
     const tools = j.model?.tools || [];
-    eq(tools.length, 6, 'model.tools has exactly 6 tools');
+    eq(tools.length, 16, 'model.tools has exactly 16 tools');
     const rs = tools.find(t => t.function?.name === 'recommendSlots');
     check(rs, 'recommendSlots tool-def present');
     eq(rs.type, 'function', 'recommendSlots is a function tool');
@@ -401,7 +401,7 @@ CASE('VSE-CFG', 'cfg', 'assistant JSON valid: 6 tools, recommendSlots shape + 8 
     check(/chosenSlot/.test(content), 'scheduling prompt references chosenSlot (step 9)');
     check(/excludeSlots/.test(content), 'scheduling prompt references excludeSlots (deeper mode)');
 
-    record('VSE-CFG', 'PASS', `6 tools; recommendSlots shape+8 params; prompt 6/9 rewritten (NOT pushed to 30e85a87)`);
+    record('VSE-CFG', 'PASS', `16 tools; recommendSlots shape+8 params; prompt 6/9 rewritten (NOT pushed to 30e85a87)`);
 });
 
 // ── sab — sabotage negative control ──────────────────────────────────────────

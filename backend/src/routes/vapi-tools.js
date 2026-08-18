@@ -58,6 +58,7 @@ const TOOLS_EXPECTING_ARGUMENTS = new Set([
     'checkAvailability',
     'recommendSlots',
     'createLead',
+    'recordLeadDisposition',
 ]);
 
 function parseToolArguments(rawArguments) {

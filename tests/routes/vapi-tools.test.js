@@ -511,8 +511,11 @@ describe('Group 6 — createLead', () => {
         expect(body.FirstName).toBe('John');
         expect(body.Phone).toBe('+16175551234');
         expect(body.PostalCode).toBe('02101');
+        // The legacy payload's addressValidated=true is accepted but no longer
+        // trusted. With no street to validate server-side, the durable summary
+        // correctly records that validation was not established.
         expect(body.Comments).toBe(
-            'Unit: Refrigerator | Brand: Samsung | Age: 5 years | Problem: not cooling | Fee agreed: Yes | Slot: Tuesday June 10th 10am-1pm | Address validated: yes',
+            'Unit: Refrigerator | Brand: Samsung | Age: 5 years | Problem: not cooling | Fee agreed: Yes | Slot: Tuesday June 10th 10am-1pm | Address validated: no',
         );
         expect(typeof companyId).toBe('string');
     });
@@ -578,6 +581,54 @@ describe('Group 6 — createLead', () => {
             .send(toolCall('createLead', { phone: '+15085550099' }));
         expect(resultOf(res)).toEqual({ success: true, leadId: 'explicit-phone' });
         expect(leadsService.createLead.mock.calls[0][0].Phone).toBe('+15085550099');
+    });
+
+    test('recordLeadDisposition logs an invalid lead with the server caller phone', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'disposition-invalid' });
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('recordLeadDisposition', {
+                disqualified: true,
+                disqualReason: 'out_of_area',
+            }));
+
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'disposition-invalid' });
+        expect(leadsService.createLead.mock.calls[0][0]).toMatchObject({
+            Phone: '+16175551234',
+            JobSource: 'AI Phone (Invalid)',
+        });
+        expect(leadsService.createLead.mock.calls[0][0].Comments)
+            .toContain('INVALID LEAD — out_of_area');
+    });
+
+    test('recordLeadDisposition records a requested human escalation separately', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'disposition-escalation' });
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('recordLeadDisposition', {
+                disqualified: false,
+                escalationRequested: true,
+            }));
+
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'disposition-escalation' });
+        expect(leadsService.createLead.mock.calls[0][0]).toMatchObject({
+            Phone: '+16175551234',
+            JobSource: 'AI Phone',
+        });
+        expect(leadsService.createLead.mock.calls[0][0].Comments)
+            .toContain('escalation_requested: true');
+    });
+
+    test('recordLeadDisposition rejects an unknown disqualification reason without a write', async () => {
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('recordLeadDisposition', {
+                disqualified: true,
+                disqualReason: 'made_up',
+            }));
+
+        expect(resultOf(res)).toEqual({
+            success: false,
+            error: 'A supported disqualification reason is required',
+        });
+        expect(leadsService.createLead).not.toHaveBeenCalled();
     });
 
     // Disqualified (invalid) lead: logged for refund tracking, no phone required
@@ -909,13 +960,22 @@ describe('Group 11 — createLead slot-persist', () => {
         leadsService.createLead.mockResolvedValue({ uuid: 'lead-slot-1' });
     });
 
-    // WITH chosenSlot + coords → all four columns + Comments kept.
-    test('chosenSlot + lat/lng → LeadDateTime/LeadEndDateTime/Latitude/Longitude in body', async () => {
+    // Model-supplied geo is ignored; server validation supplies all address facts.
+    test('chosenSlot + address → server-validated geo wins over model flags and coordinates', async () => {
+        mockGeocode({
+            status: 'OK',
+            results: [{
+                formatted_address: '12 Oak St, Boston, MA 02101, USA',
+                geometry: { location: { lat: 42.41, lng: -71.11 } },
+                address_components: [{ types: ['postal_code'], short_name: '02101' }],
+            }],
+        });
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('createLead', {
                 ...baseArgs,
+                street: '12 Oak St',
                 chosenSlot: { date: '2026-07-08', start: '10:00', end: '13:00' },
-                lat: 42.35, lng: -71.06,
+                lat: 1, lng: 2, addressValidated: false,
             }));
         expect(resultOf(res)).toEqual({ success: true, leadId: 'lead-slot-1' });
         const body = leadsService.createLead.mock.calls[0][0];
@@ -923,10 +983,29 @@ describe('Group 11 — createLead slot-persist', () => {
         expect(slotEngineService.tzCombine).toHaveBeenCalledWith('2026-07-08', '13:00', 'America/New_York');
         expect(body.LeadDateTime).toBe('2026-07-08T10:00:00.000Z-COMBINED');
         expect(body.LeadEndDateTime).toBe('2026-07-08T13:00:00.000Z-COMBINED');
-        expect(body.Latitude).toBe(42.35);
-        expect(body.Longitude).toBe(-71.06);
+        expect(body.Latitude).toBe(42.41);
+        expect(body.Longitude).toBe(-71.11);
         // Comments summary still recorded for human context.
         expect(body.Comments).toContain('Slot: Tuesday July 8th 10am-1pm');
+        expect(body.Comments).toContain('Address validated: yes');
+    });
+
+    test('old model geo cannot forge validation when the server rejects the address', async () => {
+        mockGeocode({ status: 'ZERO_RESULTS', results: [] });
+        await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', {
+                ...baseArgs,
+                street: '999 Missing St',
+                chosenSlot: { date: '2026-07-08', start: '10:00', end: '13:00' },
+                lat: 42.35,
+                lng: -71.06,
+                addressValidated: true,
+            }));
+
+        const body = leadsService.createLead.mock.calls[0][0];
+        expect(body).not.toHaveProperty('Latitude');
+        expect(body).not.toHaveProperty('Longitude');
+        expect(body.Comments).toContain('Address validated: no');
     });
 
     // Edge 7 — chosenSlot present, coords absent → only the two datetime columns.

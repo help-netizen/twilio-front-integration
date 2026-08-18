@@ -6,10 +6,12 @@
  *
  *   { name, kind: 'read'|'write', requiredLevel: 'L0'|'L1'|'L2', run }
  *
- * 15 skills total (AGENT-SKILLS-001: 14 + AGENT-SKILLS-002: +bookOnLead):
+ * 16 skills total (AGENT-SKILLS-001: 14 + AGENT-SKILLS-002: +bookOnLead,
+ * OB-61: +recordLeadDisposition):
  *   - 10 NEW skills (identifyCaller + existing-customer reads/writes + bookOnLead)
  *   - 5 RELOCATED legacy L0 tools (checkServiceArea / validateAddress /
- *     checkAvailability / recommendSlots / createLead), moved verbatim in 001-T3.
+ *     checkAvailability / recommendSlots / createLead), plus the small OB-61
+ *     recordLeadDisposition write used by the inbound provider contract.
  *
  * Level assignment (AGENT-SKILLS-002 §2.1 relaxed the existing-customer skills to L1):
  *   L0  identifyCaller (derives level) + the 5 legacy tools (never block the call)
@@ -95,13 +97,16 @@ const SKILLS = [
     // isolation is fully in-skill. Inbound Sara's tool-set is unchanged.
     { name: 'confirmLeadBooking', kind: 'write', requiredLevel: 'L0', run: lazyRun('confirmLeadBooking') },
 
-    // --- 5 RELOCATED legacy L0 tools (byte-compat; own legacy shapes) --------
+    // --- 5 RELOCATED legacy L0 tools (public-shape compat) -------------------
     // L0 so deriveLevel never blocks them → "never block the call" preserved.
     { name: 'checkServiceArea', kind: 'read', requiredLevel: 'L0', run: lazyRun('checkServiceArea') },
     { name: 'validateAddress', kind: 'read', requiredLevel: 'L0', run: lazyRun('validateAddress') },
     { name: 'checkAvailability', kind: 'read', requiredLevel: 'L0', run: lazyRun('checkAvailability') },
     { name: 'recommendSlots', kind: 'read', requiredLevel: 'L0', run: lazyRun('recommendSlots') },
     { name: 'createLead', kind: 'write', requiredLevel: 'L0', run: lazyRun('createLead') },
+    // Provider-only inbound disposition. It is intentionally absent from the
+    // explicit CRM MCP registry, so OB-61 adds no ChatGPT connector reachability.
+    { name: 'recordLeadDisposition', kind: 'write', requiredLevel: 'L0', run: lazyRun('recordLeadDisposition') },
 ];
 
 /**
