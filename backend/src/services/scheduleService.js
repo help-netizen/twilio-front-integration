@@ -767,4 +767,5 @@ module.exports = {
     getAvailableSlots,
     ScheduleServiceError,
     deriveLocality,
+    rowToScheduleItem,
 };
