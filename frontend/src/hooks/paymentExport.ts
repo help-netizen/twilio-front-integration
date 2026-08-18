@@ -19,7 +19,7 @@ export async function exportPaymentsCSV(dateFrom: string, dateTo: string): Promi
     const exportRows: Record<string, string>[] = json.data;
     const headers = ['Job #', 'Client', 'Job Type', 'Status', 'Payment Methods', 'Amount Paid', 'Tags', 'Date', 'Source', 'Tech', 'Claim ID and Other'];
     const csvRows = exportRows.map(r => [
-        r.job_number || '', r.client || '', r.job_type || '', r.status || '',
+        String(r.job_seq ?? r.job_number ?? ''), r.client || '', r.job_type || '', r.status || '',
         r.payment_methods || '', r.amount_paid || '', r.tags || '',
         r.payment_date || '', r.source || '', r.tech || '', r.custom_fields || '',
     ]);

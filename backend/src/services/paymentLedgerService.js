@@ -40,6 +40,9 @@ const PAYMENT_LEDGER_ROWS_SQL = `
         COALESCE(NULLIF(local_job.job_number, ''),
                  NULLIF(t.metadata->'legacy'->>'job_number', ''),
                  NULLIF(t.metadata->>'job_number', ''), '—') AS job_number,
+        -- JOB-NUMBERING-001: the per-company Job # the app shows. NULL for ZB-only
+        -- payments with no native job, where the reader falls back to job_number.
+        local_job.job_seq AS job_seq,
         COALESCE(NULLIF(c.full_name, ''), NULLIF(local_job.customer_name, ''),
                  NULLIF(t.metadata->'legacy'->>'client', ''),
                  CASE WHEN t.external_source = 'zenbooker' THEN NULLIF(t.memo, '') END, '—') AS client,
@@ -260,7 +263,9 @@ const PAYMENT_LIST_SORTS = Object.freeze({
     payment_date: { expression: 'p.payment_date', type: 'timestamp', nullable: true },
     amount_paid: { expression: 'COALESCE(p.amount_paid, 0)', type: 'numeric' },
     invoice_amount_due: { expression: 'COALESCE(p.invoice_amount_due, 0)', type: 'numeric' },
-    job_number: { expression: `LOWER(COALESCE(p.job_number, '')) COLLATE "C"`, type: 'text' },
+    // Sort by the per-company Job # the column actually shows (JOB-NUMBERING-001);
+    // ZB-only payments have no job_seq and sort last (nulls handled by the framework).
+    job_number: { expression: 'p.job_seq', type: 'numeric', nullable: true },
     client: { expression: `LOWER(COALESCE(p.client, '')) COLLATE "C"`, type: 'text' },
     payment_methods: { expression: `LOWER(COALESCE(p.payment_methods, '')) COLLATE "C"`, type: 'text' },
     tech: { expression: `LOWER(COALESCE(p.tech, '')) COLLATE "C"`, type: 'text' },
@@ -370,6 +375,7 @@ async function listPayments(companyId, {
         baseConditions.push(`(
             p.client ILIKE $${params.length}
             OR p.job_number ILIKE $${params.length}
+            OR p.job_seq::text ILIKE $${params.length}
             OR p.tags ILIKE $${params.length}
             OR p.source ILIKE $${params.length}
             OR p.transaction_id ILIKE $${params.length}
@@ -499,7 +505,7 @@ async function listPayments(companyId, {
          )
          SELECT
             p.id, p.transaction_id, p.invoice_id, p.job_id, p.local_job_id,
-            p.job_number, p.client, p.job_type, p.status,
+            p.job_seq, p.job_number, p.client, p.job_type, p.status,
             p.payment_methods, p.display_payment_method, p.payment_method,
             p.amount_paid::text AS amount_paid,
             p.amount::text AS amount, p.currency,
@@ -627,6 +633,7 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
         conditions.push(`(
             p.client ILIKE $${paramIdx}
             OR p.job_number ILIKE $${paramIdx}
+            OR p.job_seq::text ILIKE $${paramIdx}
             OR p.tags ILIKE $${paramIdx}
             OR p.source ILIKE $${paramIdx}
             OR p.transaction_id ILIKE $${paramIdx}
@@ -642,6 +649,7 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
             ${PAYMENT_LEDGER_ROWS_SQL}
          )
          SELECT
+            p.job_seq,
             p.job_number,
             p.client,
             p.job_type,

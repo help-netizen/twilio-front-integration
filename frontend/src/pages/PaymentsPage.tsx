@@ -237,7 +237,7 @@ export default function PaymentsPage() {
                                         <td className="amount-cell">{formatCurrency(row.amount_paid)}</td>
                                         <td className={`due-cell${row.invoice_amount_due && parseFloat(row.invoice_amount_due) > 0 ? ' due-outstanding' : ''}`}>{row.invoice_amount_due ? formatCurrency(row.invoice_amount_due) : '—'}</td>
                                         <td><span className="payments-method-badge">{paymentMethodIcon(row.payment_methods)} {row.display_payment_method || row.payment_methods}</span></td>
-                                        <td className={row.missing_job_link ? 'missing' : ''}>{row.job_number}</td>
+                                        <td className={row.missing_job_link ? 'missing' : ''}>{row.job_seq ?? row.job_number}</td>
                                         <td className={row.missing_job_link ? 'missing' : ''}>{row.client}</td>
                                         <td>{row.tech || '—'}</td>
                                     </tr>
