@@ -20,7 +20,7 @@ export interface CopyJobData {
 export function buildCopyJobData(job: LocalJob): CopyJobData {
     return {
         contact: job.contact_id
-            ? { id: job.contact_id, name: job.customer_name || `Contact #${job.contact_id}` }
+            ? { id: job.contact_id, name: job.customer_name || 'Unnamed contact' }
             : undefined,
         address: { ...parseDescription(job.address || ''), lat: job.lat ?? null, lng: job.lng ?? null },
         jobType: job.job_type || '',

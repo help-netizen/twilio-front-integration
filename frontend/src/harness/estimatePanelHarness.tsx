@@ -17,7 +17,7 @@ import type { Estimate, EstimateEvent } from '../services/estimatesApi';
 const estimate = {
     id: 58,
     company_id: 'demo',
-    estimate_number: 'ESTIMATE L-1516-2',
+    estimate_number: 'ESTIMATE L1516-2',
     status: 'approved',
     contact_id: 4532,
     contact_name: 'Tammy Thomas',

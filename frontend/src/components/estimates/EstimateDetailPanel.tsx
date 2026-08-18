@@ -540,7 +540,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 style={{ color: 'var(--blanc-job)' }}
                                 className="hover:underline"
                             >
-                                Job #{estimate.job_seq ?? estimate.job_number ?? estimate.job_id}
+                                Job #{estimate.job_seq ?? estimate.job_number ?? '—'}
                             </a>
                         </>
                     )}

@@ -187,7 +187,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
         c: DedupeCandidate,
         addr?: { line1: string | null; line2: string | null; city: string | null; state: string | null; postal_code: string | null; lat?: number | null; lng?: number | null }
     ) => {
-        const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || c.phone_e164 || `Contact #${c.id}`;
+        const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || c.phone_e164 || 'Unnamed contact';
         setSelectedContact({ id: c.id, name });
         if (addr) {
             const zip = addr.postal_code ?? '';
@@ -254,7 +254,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                 });
             } else {
                 toast.success('Job created', {
-                    description: data.zenbooker_job_id ? `Zenbooker Job: ${data.zenbooker_job_id}` : `Local Job #${data.job_seq ?? data.job_id}`,
+                    description: data.zenbooker_job_id ? `Zenbooker Job: ${data.zenbooker_job_id}` : `Local Job #${data.job_seq ?? '—'}`,
                     duration: 10000,
                 });
             }

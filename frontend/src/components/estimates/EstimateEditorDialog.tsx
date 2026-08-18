@@ -133,7 +133,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     const previewEstimate: Estimate = {
         id: estimate?.id || 0,
         company_id: estimate?.company_id || '',
-        estimate_number: estimate?.estimate_number || defaultEstimateNumber || (defaultLeadId ? `ESTIMATE L-${defaultLeadId}-1` : 'ESTIMATE'),
+        estimate_number: estimate?.estimate_number || defaultEstimateNumber || 'ESTIMATE',
         status: estimate?.status || 'draft',
         contact_id: estimate?.contact_id || null,
         lead_id: estimate?.lead_id ?? defaultLeadId ?? null,

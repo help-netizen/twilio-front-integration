@@ -74,7 +74,6 @@ function MetricCell({ label, value, tone = 'default' }: { label: string; value: 
 
 interface Props {
     jobId: number;
-    leadSerialId?: number | null;
     contactEmail?: string | null;
     contactPhone?: string | null;
     hasContact?: boolean;
@@ -83,7 +82,7 @@ interface Props {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPhone, hasContact, cardResumeEnabled }: Props) {
+export function JobFinancialsTab({ jobId, contactEmail, contactPhone, hasContact, cardResumeEnabled }: Props) {
     const {
         estimates, invoices, jobPayments, loading,
         selectedEstimate, selectedInvoice,
@@ -444,7 +443,6 @@ export function JobFinancialsTab({ jobId, leadSerialId, contactEmail, contactPho
                 onOpenChange={(open) => { setShowEstimateEditor(open); if (!open) setEditingEstimate(null); }}
                 estimate={editingEstimate}
                 defaultJobId={jobId}
-                defaultEstimateNumber={leadSerialId ? `ESTIMATE L-${leadSerialId}-1` : undefined}
                 onSave={async (data) => {
                     if (editingEstimate) {
                         const updated = await updateEstimate(editingEstimate.id, data);

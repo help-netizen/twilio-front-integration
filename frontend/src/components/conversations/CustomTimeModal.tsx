@@ -561,7 +561,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
                         zIndex: 100 - i,
                     });
                     const infoContent = `<div style="font-size:13px;max-width:220px">
-                        <div style="font-weight:700;margin-bottom:3px;color:${color}">${group.name} #${num} — ${job.customer_name || `Job #${job.job_seq ?? job.id}`}</div>
+                        <div style="font-weight:700;margin-bottom:3px;color:${color}">${group.name} #${num} — ${job.customer_name || `Job #${job.job_seq ?? '—'}`}</div>
                         ${timeStr ? `<div style="color:#6b7280">${timeStr}</div>` : ''}
                         ${job.service_name ? `<div style="color:#6b7280">${job.service_name}</div>` : ''}
                         ${job.address ? `<div style="color:#9ca3af;font-size:11px;margin-top:2px">${job.address}</div>` : ''}

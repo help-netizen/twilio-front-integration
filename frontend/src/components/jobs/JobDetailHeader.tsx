@@ -78,8 +78,8 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy, on
                     style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.12em' }}
                 >
                     Job
-                    {(job.job_seq ?? job.job_number ?? job.id) && (
-                        <span className="font-mono">#{job.job_seq ?? job.job_number ?? job.id}</span>
+                    {(job.job_seq ?? job.job_number) && (
+                        <span className="font-mono">#{job.job_seq ?? job.job_number}</span>
                     )}
                 </span>
 

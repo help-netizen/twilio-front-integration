@@ -118,7 +118,6 @@ export function JobDetailPanel({
                             {canViewFinancials && (
                                 <JobFinancialsTab
                                     jobId={job.id}
-                                    leadSerialId={job.lead_serial_id}
                                     contactEmail={contactInfo?.email || job.customer_email}
                                     contactPhone={contactInfo?.phone || job.customer_phone}
                                     hasContact={Boolean(contactInfo?.id || job.contact_id)}
@@ -145,7 +144,6 @@ export function JobDetailPanel({
                     {canViewFinancials && (
                         <JobFinancialsTab
                             jobId={job.id}
-                            leadSerialId={job.lead_serial_id}
                             contactEmail={contactInfo?.email || job.customer_email}
                             contactPhone={contactInfo?.phone || job.customer_phone}
                             hasContact={Boolean(contactInfo?.id || job.contact_id)}

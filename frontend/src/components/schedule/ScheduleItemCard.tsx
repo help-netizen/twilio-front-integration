@@ -277,7 +277,7 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({
                     className="text-[11px] font-semibold tabular-nums truncate"
                     style={{ color: 'var(--sched-ink-3)', letterSpacing: '0.02em' }}
                 >
-                    {String(item.job_seq ?? item.entity_id).padStart(6, '0')}
+                    {item.job_seq != null ? String(item.job_seq).padStart(6, '0') : '—'}
                 </span>
                 {item.status && (
                     <span

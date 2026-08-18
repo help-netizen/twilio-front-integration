@@ -75,7 +75,7 @@ export function ContactsPage() {
                 let id: number;
                 try {
                     const byCode = await contactsApi.getContactByCode(contactId);
-                    id = byCode.data.id;
+                    id = Number(byCode.data.id);
                 } catch {
                     id = Number(contactId); // legacy numeric-id link
                 }

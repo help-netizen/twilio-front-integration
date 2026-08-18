@@ -433,7 +433,7 @@ export function InvoiceDetailPanel({
                         )}
                         <p className="blanc-l2 blanc-l2-quiet mt-1.5">
                             {invoice.contact_name || 'No customer linked'}
-                            {invoice.job_id ? ` · Job #${invoice.job_seq ?? invoice.job_number ?? invoice.job_id}` : ''}
+                            {invoice.job_id ? ` · Job #${invoice.job_seq ?? invoice.job_number ?? '—'}` : ''}
                         </p>
                         </div>
                         <div className="mt-2.5 flex flex-wrap items-center gap-2">

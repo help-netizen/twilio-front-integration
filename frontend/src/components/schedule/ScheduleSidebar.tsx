@@ -92,7 +92,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                         style={{ ...badgeStyle, border: `1px solid ${badgeStyle.borderColor}` }}
                     >
                         <Icon className="size-3" />
-                        {entityInfo.label} #{String(item.job_seq ?? item.entity_id).padStart(6, '0')}
+                        {entityInfo.label} #{item.job_seq != null ? String(item.job_seq).padStart(6, '0') : '—'}
                     </span>
                     {item.status && (
                         <span

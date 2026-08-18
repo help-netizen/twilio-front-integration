@@ -145,7 +145,7 @@ export interface PreviewEstimate {
 }
 
 const FIXTURE: PreviewEstimate = {
-    estimate_number: 'ESTIMATE L-1042-1',
+    estimate_number: 'ESTIMATE L1042-1',
     status: 'draft',
     contact_name: 'Jane Customer',
     contact_email: 'jane@example.com',

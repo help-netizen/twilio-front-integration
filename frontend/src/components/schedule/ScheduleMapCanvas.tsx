@@ -171,7 +171,7 @@ export const ScheduleMapCanvas = memo(function ScheduleMapCanvas({
             const order = pin.routeOrders
                 .map(routeOrder => `${routeOrder.technicianName} #${routeOrder.order}`)
                 .join(' · ');
-            const heading = pin.job.title || pin.job.customer_name || `Job #${pin.job.job_seq ?? pin.job.entity_id}`;
+            const heading = pin.job.title || pin.job.customer_name || `Job #${pin.job.job_seq ?? '—'}`;
             const infoContent = `<div style="font-size:13px;max-width:240px;color:#191919">
                 <div style="font-weight:700;margin-bottom:3px">${escapeHtml(heading)}</div>
                 ${order ? `<div style="color:${pin.primaryColor};font-weight:600">${escapeHtml(order)}</div>` : '<div style="color:#6B7280;font-weight:600">Unassigned · no route</div>'}

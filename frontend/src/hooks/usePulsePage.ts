@@ -104,7 +104,7 @@ export function usePulsePage() {
 
     const conversations = meta?.conversations || [];
     const contact = meta?.contact || contactCalls[0]?.contact;
-    const selectedConv = filteredCalls.find((c: Call) => { const tlId = (c as any).timeline_id; return tlId ? Number(tlId) === timelineId : c.contact?.id === contactId; });
+    const selectedConv = filteredCalls.find((c: Call) => { const tlId = (c as any).timeline_id; return tlId ? Number(tlId) === timelineId : Number(c.contact?.id) === contactId; });
     const phone = contact?.phone_e164 || (selectedConv as any)?.tl_phone || contactCalls[0]?.from_number || contactCalls[0]?.to_number || selectedConv?.contact?.phone_e164 || selectedConv?.from_number || conversations[0]?.customer_e164 || '';
     const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
 

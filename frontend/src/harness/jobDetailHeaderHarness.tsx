@@ -27,7 +27,7 @@ const mockJob = (over: Partial<LocalJob>): LocalJob => ({
 const CASES: { label: string; job: LocalJob }[] = [
     { label: 'job_seq present → "#1917" (the new per-company Job #)', job: mockJob({ job_seq: 1917, public_code: '0IMBQ' }) },
     { label: 'job_seq null, legacy ZB job_number → "#ZB-4421"', job: mockJob({ job_seq: null, job_number: 'ZB-4421' }) },
-    { label: 'both null → falls back to id "#2066"', job: mockJob({ job_seq: null, job_number: undefined }) },
+    { label: 'both null → no badge (never the internal id)', job: mockJob({ job_seq: null, job_number: undefined }) },
 ];
 
 function Harness() {

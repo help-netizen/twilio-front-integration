@@ -108,7 +108,12 @@ export function SchedulePage() {
             setSelectedScheduleItemKey(scheduleJobKey(item));
             // PUSH on first open from /schedule so Back closes; REPLACE when
             // switching between cards so Back doesn't walk every card glanced at.
-            navigate(`/schedule/jobs/${item.job_seq ?? item.entity_id}`, { replace: selectedJobSeq != null });
+            // Deep-link strictly by job_seq (never the global entity_id — /schedule/jobs/:seq
+            // resolves via getJobBySeq, so a raw id would open the wrong job). The panel is
+            // already open above; if a job somehow lacks a seq we just skip the URL update.
+            if (item.job_seq != null) {
+                navigate(`/schedule/jobs/${item.job_seq}`, { replace: selectedJobSeq != null });
+            }
         } else {
             schedule.selectItem(item);
         }
