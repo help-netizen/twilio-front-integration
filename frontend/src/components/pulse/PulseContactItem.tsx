@@ -78,13 +78,10 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const { company: authCompany } = useAuth();
     const companyTz = authCompany?.timezone || 'America/New_York';
     const tlId = (call as any).timeline_id;
-    const tlCode = (call as any).timeline_public_code;
     const contactId = call.contact?.id || call.id;
-    const contactCode = (call.contact as any)?.public_code;
-    // Prefer the durable code in the URL (TIMELINE/CONTACT-NUMBERING); fall back to the id.
     const targetPath = tlId
-        ? `/pulse/timeline/${tlCode ?? tlId}`
-        : (contactId ? `/pulse/contact/${contactCode ?? contactId}` : null);
+        ? `/pulse/timeline/${tlId}`
+        : (contactId ? `/pulse/contact/${contactId}` : null);
 
     const hasUnread = (call as any).tl_has_unread || (call as any).sms_has_unread || call.has_unread;
     const rawPhone = (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
