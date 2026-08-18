@@ -96,6 +96,11 @@ jest.mock('../backend/src/services/vapiCallTimelineService', () => ({
     applyStatusUpdate: (...a) => mockApplyStatusUpdate(...a),
 }));
 
+const mockHandleInboundRecovery = jest.fn();
+jest.mock('../backend/src/services/inboundVoiceRecoveryService', () => ({
+    handleEndOfCall: (...args) => mockHandleInboundRecovery(...args),
+}));
+
 const SECRET = 'test-webhook-secret';
 
 const vapiCallStatusRouter = require('../backend/src/routes/vapiCallStatus');
@@ -146,6 +151,7 @@ beforeEach(() => {
     mockRetryBlockReason.mockReset();
     mockFinalize.mockReset();
     mockApplyStatusUpdate.mockReset();
+    mockHandleInboundRecovery.mockReset();
     mockResolveCredential.mockReset();
     mockIngestServerMessage.mockReset();
 
@@ -188,6 +194,7 @@ beforeEach(() => {
     // the ROUTE stays 200 + FSM intact even when these resolve OR reject.
     mockFinalize.mockResolvedValue('CA_final');
     mockApplyStatusUpdate.mockResolvedValue('CA_mid');
+    mockHandleInboundRecovery.mockResolvedValue({ status: 'skipped', reason: 'short_call' });
 });
 
 // Helper: queue the correlation SELECT (first db.query) → the attempt row.
@@ -698,13 +705,44 @@ describe('timeline hooks — CT-05', () => {
         expect(mockQuery).toHaveBeenCalledTimes(1);           // only the SELECT, then drop
     });
 
-    test('(d) end-of-call with NO correlating attempt → finalize NOT called (foreign call ignored)', async () => {
+    test('(d) end-of-call with NO outbound attempt → no outbound finalize; inbound recovery evaluates it', async () => {
         withAttempt(null);
         const res = await post(endReport('foreign-eoc', 'voicemail'));
         expect(res.status).toBe(200);
         expect(mockFinalize).not.toHaveBeenCalled();
         expect(mockApplyStatusUpdate).not.toHaveBeenCalled();
         expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(mockHandleInboundRecovery).toHaveBeenCalledWith({
+            companyId: COMPANY,
+            message: expect.objectContaining({
+                type: 'end-of-call-report',
+                call: expect.objectContaining({ id: 'foreign-eoc' }),
+            }),
+        });
+    });
+
+    test('inbound callback-task failure is non-fatal and webhook still returns 200', async () => {
+        withAttempt(null);
+        mockHandleInboundRecovery.mockRejectedValueOnce(
+            Object.assign(new Error('task table unavailable'), { code: 'TASK_WRITE_FAILED' }),
+        );
+        const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await post(endReport('inbound-task-failure', 'customer-ended-call'));
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true });
+        expect(mockHandleInboundRecovery).toHaveBeenCalledTimes(1);
+        expect(mockFinalize).not.toHaveBeenCalled();
+        expect(error).toHaveBeenCalledWith(
+            '[vapiCallStatus] inbound recovery unavailable (non-fatal)',
+            expect.objectContaining({
+                companyId: COMPANY,
+                providerCallId: 'inbound-task-failure',
+                code: 'TASK_WRITE_FAILED',
+            }),
+        );
+        error.mockRestore();
     });
 
     // (e) — company scoping: the ROW company is what reaches the seam; a spoofed

@@ -34,18 +34,72 @@ const agentSkills = require('../services/agentSkills');
 const resultShapes = require('../services/agentSkills/resultShapes');
 const vapiCallContextService = require('../services/vapiCallContextService');
 const machineCredentials = require('../services/machineCredentialService');
+const inboundVoiceRecoveryService = require('../services/inboundVoiceRecoveryService');
 
-// The 5 relocated legacy L0 tools keep byte-identical behavior (AC-11): they read
-// their OWN `phone` from `args` and must NOT be perturbed by the silent caller-ID
-// fallback below. The new identity/verification skills DO get the silent phone so
-// an existing customer on a masked line can still be resolved.
+// The 4 relocated read-only legacy L0 tools keep byte-identical behavior (AC-11).
+// createLead is deliberately NOT in this set: caller identity is server context,
+// and the model consistently sends `{}` for identity fields. It therefore gets
+// the same silent caller-ID fallback as identifyCaller/getCustomerOverview.
 const LEGACY_TOOLS = new Set([
+    'checkServiceArea',
+    'validateAddress',
+    'checkAvailability',
+    'recommendSlots',
+]);
+
+// These tools cannot do their intended work from an empty model argument object.
+// The diagnostic is intentionally transport-level: it tells operators whether
+// Vapi sent literal `{}` or sent a non-empty string that failed JSON parsing.
+// Never log parsed arguments wholesale; the raw preview is emitted only on an
+// empty/invalid parse and is capped because malformed input can contain PII.
+const TOOLS_EXPECTING_ARGUMENTS = new Set([
     'checkServiceArea',
     'validateAddress',
     'checkAvailability',
     'recommendSlots',
     'createLead',
 ]);
+
+function parseToolArguments(rawArguments) {
+    let parsed;
+    let state = null;
+    try {
+        parsed = typeof rawArguments === 'string'
+            ? JSON.parse(rawArguments)
+            : (rawArguments || {});
+    } catch (_error) {
+        parsed = {};
+        state = 'parse_error';
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        parsed = {};
+        state = state || 'invalid_shape';
+    } else if (Object.keys(parsed).length === 0) {
+        state = state || (rawArguments == null ? 'missing' : 'empty_object');
+    }
+
+    return { args: parsed, state };
+}
+
+function logEmptyRequiredArguments(name, rawArguments, state) {
+    if (!TOOLS_EXPECTING_ARGUMENTS.has(name) || !state) return;
+    let raw = '';
+    if (typeof rawArguments === 'string') raw = rawArguments;
+    else {
+        try {
+            raw = JSON.stringify(rawArguments ?? null);
+        } catch (_error) {
+            raw = '[unserializable]';
+        }
+    }
+    console.warn('[vapi-tools] required tool arguments empty', {
+        tool: name,
+        argumentState: state,
+        rawLength: raw.length,
+        rawPrefix: raw.slice(0, 200),
+    });
+}
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
@@ -77,9 +131,9 @@ async function vapiSecretAuth(req, res, next) {
  * caller-ID (`message.call.customer.number`) in as the SILENT phone — a FALLBACK
  * only: anything the assistant re-sent in `args` wins (`{ phone: callerId, ...args }`).
  *
- * The silent phone is threaded ONLY for the new identity/verification skills. The
- * 5 legacy L0 tools are excluded so their observable output stays byte-identical
- * to the pre-refactor handlers (they never saw the raw caller-ID before).
+ * The silent phone is threaded for identity/verification skills AND createLead.
+ * The 4 read-only legacy L0 tools remain excluded so their observable output stays
+ * byte-identical to the pre-refactor handlers.
  *
  * OUTBOUND-PARTS-CALL-001: Vapi echoes pre-bound identity in
  * `call.assistantOverrides.variableValues`, but the public request body is not an
@@ -121,6 +175,25 @@ router.post('/', vapiSecretAuth, async (req, res) => {
     try {
         const message = req.body?.message;
         if (!message || message.type !== 'tool-calls') {
+            // The live inbound assistant historically uses this endpoint as its
+            // top-level server URL. Keep end-of-call recovery here as well as on
+            // /api/vapi/call-status: provider delivery can overlap, and the
+            // provider-call key makes that overlap exactly-once. This side path
+            // must never change the provider webhook response.
+            if (message?.type === 'end-of-call-report') {
+                try {
+                    await inboundVoiceRecoveryService.handleEndOfCall({
+                        companyId: req.machineCredential.companyId,
+                        message,
+                    });
+                } catch (recoveryError) {
+                    console.error('[vapi-tools] inbound recovery unavailable (non-fatal)', {
+                        companyId: req.machineCredential.companyId,
+                        providerCallId: message.call?.id || null,
+                        code: recoveryError?.code || 'VOICE_RECOVERY_UNAVAILABLE',
+                    });
+                }
+            }
             return res.json({});
         }
 
@@ -146,15 +219,10 @@ router.post('/', vapiSecretAuth, async (req, res) => {
 
         for (const toolCall of toolCallList) {
             const name = toolCall.function?.name;
-            const args = (() => {
-                try {
-                    return typeof toolCall.function?.arguments === 'string'
-                        ? JSON.parse(toolCall.function.arguments)
-                        : (toolCall.function?.arguments || {});
-                } catch {
-                    return {};
-                }
-            })();
+            const rawArguments = toolCall.function?.arguments;
+            const parsedArguments = parseToolArguments(rawArguments);
+            const args = parsedArguments.args;
+            logEmptyRequiredArguments(name, rawArguments, parsedArguments.state);
 
             // Generic dispatch — the SINGLE choke-point. No if/else per tool, no
             // business logic here. `runSkill` gates + runs the skill and degrades
@@ -196,3 +264,4 @@ module.exports = router;
 // Exported additively for unit tests (variableValues anti-spoof precedence). The
 // router remains the default export; this does not alter the mount behavior.
 module.exports.buildSkillInput = buildSkillInput;
+module.exports.parseToolArguments = parseToolArguments;

@@ -16,6 +16,13 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
             alertDeliveryService: {
                 dispatchAlerts: jest.fn().mockResolvedValue({ skipped: true }),
             },
+            inboundVoiceRecoveryService: {
+                sweepRetryPending: jest.fn().mockResolvedValue({
+                    due: 0,
+                    tasksCreated: 0,
+                    stillPending: 0,
+                }),
+            },
         };
     }
 
@@ -155,6 +162,13 @@ describe('VAPI-AGENCY-001 T4 scheduler boundary', () => {
                 dispatchAlerts: jest.fn().mockImplementation(async () => {
                     calls.push('delivery');
                     return { sent: true };
+                }),
+            },
+            inboundVoiceRecoveryService: {
+                sweepRetryPending: jest.fn().mockResolvedValue({
+                    due: 0,
+                    tasksCreated: 0,
+                    stillPending: 0,
                 }),
             },
         });

@@ -55,6 +55,9 @@ jest.mock('../../backend/src/services/machineCredentialService', () => {
         resolveCredential: jest.fn(),
     };
 });
+jest.mock('../../backend/src/services/inboundVoiceRecoveryService', () => ({
+    handleEndOfCall: jest.fn(),
+}));
 jest.mock('https', () => ({ get: jest.fn() }));
 
 const https = require('https');
@@ -67,6 +70,7 @@ const scheduleService = require('../../backend/src/services/scheduleService');
 const marketplaceService = require('../../backend/src/services/marketplaceService');
 const slotEngineService = require('../../backend/src/services/slotEngineService');
 const machineCredentials = require('../../backend/src/services/machineCredentialService');
+const inboundVoiceRecoveryService = require('../../backend/src/services/inboundVoiceRecoveryService');
 const vapiToolsRouter = require('../../backend/src/routes/vapi-tools');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -141,6 +145,7 @@ beforeEach(() => {
     });
     process.env.GOOGLE_GEOCODING_KEY = 'test-geocoding-key';
     delete process.env.VITE_GOOGLE_MAPS_API_KEY; // ensure dedicated key is used
+    inboundVoiceRecoveryService.handleEndOfCall.mockResolvedValue({ status: 'skipped' });
     app = makeApp();
 });
 
@@ -205,10 +210,44 @@ describe('Group 2 — dispatcher', () => {
     test('non tool-calls message types → {}', async () => {
         for (const type of ['status-update', 'end-of-call-report']) {
             const res = await auth(request(app).post('/api/vapi-tools'))
-                .send({ message: { type } });
+                .send({ message: { type, call: { id: 'provider-call-1' } } });
             expect(res.status).toBe(200);
             expect(res.body).toEqual({});
         }
+        expect(inboundVoiceRecoveryService.handleEndOfCall).toHaveBeenCalledTimes(1);
+        expect(inboundVoiceRecoveryService.handleEndOfCall).toHaveBeenCalledWith({
+            companyId: '00000000-0000-0000-0000-000000000001',
+            message: {
+                type: 'end-of-call-report',
+                call: { id: 'provider-call-1' },
+            },
+        });
+    });
+
+    test('end-of-call recovery failure is non-fatal on the live tools webhook', async () => {
+        const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+        inboundVoiceRecoveryService.handleEndOfCall.mockRejectedValueOnce(
+            Object.assign(new Error('database unavailable'), { code: 'DB_UNAVAILABLE' }),
+        );
+
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send({
+                message: {
+                    type: 'end-of-call-report',
+                    call: { id: 'provider-call-2' },
+                },
+            });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({});
+        expect(error).toHaveBeenCalledWith(
+            '[vapi-tools] inbound recovery unavailable (non-fatal)',
+            expect.objectContaining({
+                providerCallId: 'provider-call-2',
+                code: 'DB_UNAVAILABLE',
+            }),
+        );
+        error.mockRestore();
     });
 
     // TC-LQV2-006 / ASK-DEG-07 (G6): unknown tool → well-formed results[] with the
@@ -224,6 +263,7 @@ describe('Group 2 — dispatcher', () => {
 
     // TC-LQV2-007
     test('invalid JSON arguments → parsed as {} (zip missing)', async () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send({
                 message: {
@@ -236,6 +276,16 @@ describe('Group 2 — dispatcher', () => {
         expect(res.status).toBe(200);
         // empty args → zip missing → handler returns the "zip is required" branch
         expect(resultOf(res)).toEqual({ inServiceArea: false, error: 'zip is required' });
+        expect(warn).toHaveBeenCalledWith(
+            '[vapi-tools] required tool arguments empty',
+            expect.objectContaining({
+                tool: 'checkServiceArea',
+                argumentState: 'parse_error',
+                rawLength: 14,
+                rawPrefix: 'not valid json',
+            }),
+        );
+        warn.mockRestore();
     });
 });
 
@@ -503,12 +553,31 @@ describe('Group 6 — createLead', () => {
     });
 
     // TC-LQV2-023
-    test('phone missing → success false, createLead not called', async () => {
-        const { phone, ...noPhone } = fullArgs;
+    test('empty model arguments → caller phone is injected and lead is created', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'caller-fallback' });
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
         const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('createLead', noPhone));
-        expect(resultOf(res)).toEqual({ success: false, error: 'Phone number is required to create lead' });
-        expect(leadsService.createLead).not.toHaveBeenCalled();
+            .send(toolCall('createLead', {}));
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'caller-fallback' });
+        expect(leadsService.createLead.mock.calls[0][0].Phone).toBe('+16175551234');
+        expect(warn).toHaveBeenCalledWith(
+            '[vapi-tools] required tool arguments empty',
+            expect.objectContaining({
+                tool: 'createLead',
+                argumentState: 'empty_object',
+                rawLength: 2,
+                rawPrefix: '{}',
+            }),
+        );
+        warn.mockRestore();
+    });
+
+    test('explicit model phone overrides the caller phone fallback', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'explicit-phone' });
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', { phone: '+15085550099' }));
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'explicit-phone' });
+        expect(leadsService.createLead.mock.calls[0][0].Phone).toBe('+15085550099');
     });
 
     // Disqualified (invalid) lead: logged for refund tracking, no phone required

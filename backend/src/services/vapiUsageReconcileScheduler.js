@@ -4,6 +4,7 @@ const reconcileService = require('./vapiUsageReconcileService');
 const auditService = require('./vapiUsageAuditService');
 const fallbackRatingService = require('./vapiFallbackRatingService');
 const alertDeliveryService = require('./vapiUsageAlertDeliveryService');
+const inboundVoiceRecoveryService = require('./inboundVoiceRecoveryService');
 
 const TICK_INTERVAL_MS = 60 * 1000;
 
@@ -12,6 +13,8 @@ function createVapiUsageReconcileScheduler(dependencies = {}) {
     const audit = dependencies.auditService || auditService;
     const fallbackRating = dependencies.fallbackRatingService || fallbackRatingService;
     const alertDelivery = dependencies.alertDeliveryService || alertDeliveryService;
+    const inboundRecovery = dependencies.inboundVoiceRecoveryService
+        || inboundVoiceRecoveryService;
     let nextRunAt = 0;
     let running = false;
     let lastAuditDate = null;
@@ -93,6 +96,18 @@ function createVapiUsageReconcileScheduler(dependencies = {}) {
                     error: String(error?.code || error?.message || 'alert_delivery_failed'),
                 };
             }
+            let inboundRecoveryResult;
+            try {
+                inboundRecoveryResult = await inboundRecovery.sweepRetryPending({ now });
+            } catch (error) {
+                // Human callback recovery is independent from cost reconciliation
+                // and alert delivery. A sweep fault is visible but never poisons
+                // the shared scheduler tick or another subsystem's state.
+                inboundRecoveryResult = {
+                    failed: true,
+                    error: String(error?.code || error?.message || 'inbound_recovery_failed'),
+                };
+            }
             return {
                 skipped: false,
                 companies,
@@ -111,6 +126,7 @@ function createVapiUsageReconcileScheduler(dependencies = {}) {
                 audit: auditResult,
                 fallbackRating: fallbackResult,
                 alertDelivery: alertResult,
+                inboundRecovery: inboundRecoveryResult,
             };
         } finally {
             running = false;

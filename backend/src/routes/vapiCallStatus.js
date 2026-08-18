@@ -68,6 +68,7 @@ const jobsService = require('../services/jobsService');
 const eventService = require('../services/eventService');
 const eventBus = require('../services/eventBus');
 const outboundCallSettingsService = require('../services/outboundCallSettingsService');
+const inboundVoiceRecoveryService = require('../services/inboundVoiceRecoveryService');
 
 function emitJobAiOutcome(companyId, eventType, jobId, attemptId) {
     return eventBus.emit(companyId, eventType, {
@@ -308,8 +309,25 @@ router.post('/', statusCredentialAuth, async (req, res) => {
         const endedReason = message && (message.endedReason || (message.call && message.call.endedReason));
 
         if (!attempt) {
-            // Inbound T2 session: provisional evidence is already persisted; the
-            // outbound retry/timeline state machine has no attempt to update.
+            // Inbound safety net runs BESIDE cost ingest. A missing lead/job after
+            // a substantive AI conversation creates one durable dispatcher task;
+            // any failure is retained for the existing scheduler and must never
+            // change this webhook's 200 response.
+            try {
+                await inboundVoiceRecoveryService.handleEndOfCall({
+                    companyId: req.machineCredential.companyId,
+                    message,
+                });
+            } catch (recoveryError) {
+                console.error('[vapiCallStatus] inbound recovery unavailable (non-fatal)', {
+                    companyId: req.machineCredential.companyId,
+                    providerCallId: providerCallId || null,
+                    code: recoveryError?.code || 'VOICE_RECOVERY_UNAVAILABLE',
+                });
+            }
+            // Inbound T2 session: provisional evidence is already persisted when
+            // accounting accepts it; the outbound retry/timeline FSM has no
+            // attempt to update regardless of either side-path's outcome.
             return res.json({ ok: true });
         }
 
