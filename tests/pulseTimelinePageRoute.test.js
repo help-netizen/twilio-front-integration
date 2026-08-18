@@ -61,6 +61,7 @@ const CONTACT = {
 };
 const TIMELINE = {
     id: 77,
+    public_code: 'Tl7Ab',
     company_id: COMPANY_A,
     contact_id: CONTACT.id,
     phone_e164: CONTACT.phone_e164,
@@ -601,7 +602,7 @@ test('TC-TRP-026: assigned_only invisibility and orphan timelines 404 before fee
 test('TC-TRP-027: no-limit response on both endpoints is byte-identical to frozen golden', async () => {
     const expectedKeys = [
         'calls', 'messages', 'conversations', 'email_messages', 'financial_events',
-        'timeline_id', 'display_name', 'external_source', 'contact',
+        'timeline_id', 'timeline_public_code', 'display_name', 'external_source', 'contact',
     ];
     for (const path of [`timeline-by-id/${TIMELINE.id}`, `timeline/${CONTACT.id}`]) {
         clearActivity();
@@ -638,6 +639,7 @@ test('TC-TRP-028: three-page walk is complete, ordered, DTO-identical to legacy,
     expect(pages.map(entry => entry.page.has_more)).toEqual([true, true, false]);
     expect(pages[2].page.next_cursor).toBeNull();
     expect(pages[0]).toHaveProperty('meta');
+    expect(pages[0].meta.timeline_public_code).toBe(TIMELINE.public_code);
     expect(pages[0].meta.conversations[0].proxy_e164).toBe(CONVERSATION.proxy_e164);
     expect(pages[1]).not.toHaveProperty('meta');
     expect(pages[2]).not.toHaveProperty('meta');

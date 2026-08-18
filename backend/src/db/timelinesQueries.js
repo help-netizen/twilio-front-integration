@@ -16,6 +16,17 @@ const { requireCompanyId } = require('../utils/tenantContext');
  */
 const ANONYMOUS_PHONE_SENTINEL = 'ANONYMOUS';
 
+/** Deliberately global resolver for a durable timeline public_code. */
+async function getTimelineByCode(publicCode) {
+    const { rows } = await db.query(
+        `SELECT id, company_id, public_code
+         FROM timelines
+         WHERE public_code = $1`,
+        [publicCode]
+    );
+    return rows[0] || null;
+}
+
 // =============================================================================
 // Timeline unread state
 // =============================================================================
@@ -611,6 +622,7 @@ async function getUnifiedTimelinePage({
              tl.external_source AS external_source,
              tl.id as tl_id,
              tl.id as timeline_id,
+             tl.public_code as timeline_public_code,
              tl.has_unread as tl_has_unread,
              COALESCE(tl.phone_e164, co.phone_e164) as tl_phone,
              tl.sms_last_at,
@@ -1003,6 +1015,7 @@ async function getOpenTaskByThread(threadId) {
 // =============================================================================
 
 module.exports = {
+    getTimelineByCode,
     markTimelineUnread,
     markTimelineRead,
     findOrCreateTimeline,

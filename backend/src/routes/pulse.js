@@ -12,6 +12,7 @@ const contactsService = require('../services/contactsService');
 const emailQueries = require('../db/emailQueries');
 const { projectEmailTimelineItem } = require('../services/email/emailTimelineItem');
 const timelinePage = require('../services/timelinePage');
+const { getTimelineByCode } = require('../db/timelinesQueries');
 const {
     getMaskViewer,
     redactPulsePayload,
@@ -148,6 +149,33 @@ router.get('/timeline-by-id/:timelineId', async (req, res) => {
     } catch (error) {
         console.error('[Pulse] GET /timeline-by-id/:timelineId error:', error);
         res.status(500).json({ error: 'Failed to fetch timeline' });
+    }
+});
+
+// Resolve a durable timeline code to its numeric id.
+// MUST stay above /timeline/:contactId.
+router.get('/timeline/by-code/:code', async (req, res) => {
+    try {
+        const companyId = tenantCompanyId(req);
+        if (!companyId) {
+            return res.status(403).json({ error: 'Company context is required' });
+        }
+
+        const resolved = await getTimelineByCode(req.params.code);
+        if (!resolved || resolved.company_id !== companyId) {
+            return res.status(404).json({ error: 'Timeline not found' });
+        }
+
+        res.json({
+            ok: true,
+            data: {
+                id: resolved.id,
+                public_code: resolved.public_code,
+            },
+        });
+    } catch (error) {
+        console.error('[Pulse] GET /timeline/by-code/:code error:', error);
+        res.status(500).json({ error: 'Failed to resolve timeline' });
     }
 });
 
@@ -566,6 +594,7 @@ async function buildTimelinePage(req, res, contact, timeline, { limit, before })
         }
         response.meta = {
             timeline_id: timeline?.id || null,
+            timeline_public_code: timeline?.public_code || null,
             display_name: timeline?.display_name || null,
             external_source: timeline?.external_source || null,
             contact: contactOut,
@@ -712,6 +741,7 @@ async function buildTimeline(req, res, contact, timeline) {
         email_messages: emailMessages,
         financial_events: financialEvents,
         timeline_id: timeline?.id || null,
+        timeline_public_code: timeline?.public_code || null,
         // YELP-TIMELINE-DEDUP-001: label + badge for a contactless conv-id timeline
         // (contact is NULL, so the header falls back to these).
         display_name: timeline?.display_name || null,

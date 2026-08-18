@@ -227,6 +227,7 @@ router.get('/by-contact', async (req, res) => {
             return {
                 ...formatted,
                 timeline_id: c.tl_id || c.timeline_id || null,
+                timeline_public_code: c.timeline_public_code || null,
                 // YELP-TIMELINE-DEDUP-001: a contactless conv-id timeline has no contact,
                 // so formatCall (call-fields only) leaves the row with no name. The unified
                 // query denormalizes tl.display_name / tl.external_source for exactly this

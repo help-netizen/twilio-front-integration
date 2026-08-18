@@ -34,6 +34,11 @@ export const pulseApi = {
         });
         return response.data;
     },
+    /** Resolve a durable global timeline code → its numeric id (TIMELINE-NUMBERING). */
+    getTimelineByCode: async (code: string): Promise<{ ok: true; data: { id: number; public_code: string } }> => {
+        const response = await apiClient.get<{ ok: true; data: { id: number; public_code: string } }>(`/pulse/timeline/by-code/${encodeURIComponent(code)}`);
+        return response.data;
+    },
     /** Find or create a timeline for a phone number, optionally linking to a contact */
     ensureTimeline: async (phone: string, contactId?: number): Promise<{ timelineId: number; contactId: number | null; created: boolean }> => {
         const response = await apiClient.post<{ timelineId: number; contactId: number | null; created: boolean }>('/pulse/ensure-timeline', { phone, contactId });

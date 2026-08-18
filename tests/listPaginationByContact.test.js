@@ -482,7 +482,8 @@ function row(i, over = {}) {
         answered_at: null, ended_at: null, duration_sec: 30,
         created_at: '2026-06-30T10:00:00Z', updated_at: '2026-06-30T10:00:00Z',
         contact: { id: 1000 + i, phone_e164: `+1508500${String(1000 + i)}`, full_name: `C${i}` },
-        tl_id: i, timeline_id: i, tl_has_unread: false,
+        tl_id: i, timeline_id: i, timeline_public_code: `Tl${String(i).padStart(3, '0')}`,
+        tl_has_unread: false,
         tl_phone: `+1508500${String(1000 + i)}`,
         is_action_required: false, action_required_reason: null, action_required_set_at: null,
         snoozed_until: null, owner_user_id: null,
@@ -870,7 +871,7 @@ describe('GET /api/calls/by-contact — route', () => {
         for (const key of [
             'last_interaction_at', 'last_interaction_type', 'last_interaction_phone',
             'email_thread_id', 'has_unread', 'tl_has_unread', 'sms_has_unread',
-            'sms_conversation_id', 'timeline_id', 'tl_phone', 'is_action_required',
+            'sms_conversation_id', 'timeline_id', 'timeline_public_code', 'tl_phone', 'is_action_required',
             'action_required_reason', 'action_required_set_at', 'snoozed_until',
             'owner_user_id', 'has_open_task', 'open_task_count', 'open_tasks', 'open_task',
         ]) {
@@ -892,7 +893,7 @@ describe('GET /api/calls/by-contact — route', () => {
             'last_interaction_at', 'last_interaction_phone', 'last_interaction_type',
             'open_task', 'open_task_count', 'open_tasks', 'owner_user_id', 'parent_call_sid',
             'sms_conversation_id', 'sms_has_unread', 'snoozed_until', 'started_at',
-            'status', 'timeline_id', 'tl_has_unread', 'tl_phone', 'to_number',
+            'status', 'timeline_id', 'timeline_public_code', 'tl_has_unread', 'tl_phone', 'to_number',
             'updated_at',
         ]);
     });
