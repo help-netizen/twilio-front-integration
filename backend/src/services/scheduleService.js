@@ -10,6 +10,31 @@ const { logJobActivity } = require('./jobActivityService');
 const { withTransaction } = require('./transactionService');
 const eventBus = require('./eventBus');
 
+const US_STATES = new Set([
+    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN',
+    'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV',
+    'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN',
+    'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC',
+]);
+
+/**
+ * TILE-CITY-002: best-effort locality from a formatted US address so the schedule
+ * card can still show "Customer, City" when the structured `jobs.city`/`leads.city`
+ * column is null (older / free-text / non-structured addresses never populated it).
+ * The city is the comma component immediately before the "ST" / "ST ZIP" token
+ * (e.g. "100 Test St, New York, NY, 10001" → "New York"; "…, Hanson, MA 02341, USA"
+ * → "Hanson"). Display-only, never persisted; returns null if nothing matches.
+ */
+function deriveLocality(address) {
+    if (!address || typeof address !== 'string') return null;
+    const parts = address.split(',').map(p => p.trim()).filter(Boolean);
+    for (let i = 1; i < parts.length; i++) {
+        const firstTok = parts[i].split(/\s+/)[0]?.toUpperCase();
+        if (US_STATES.has(firstTok) && parts[i - 1]) return parts[i - 1];
+    }
+    return null;
+}
+
 function domainActor(activityActor) {
     return {
         actorType: activityActor?.type || 'system',
@@ -62,7 +87,9 @@ function rowToScheduleItem(row) {
         // SCHED-ROUTE-VIS-001 (FR-3): city as its own field (jobs/leads from the
         // DB, tasks select NULL). "Customer, City" is composed on the frontend —
         // subtitle stays untouched (INV-10, shared contract).
-        city: row.city || null,
+        // TILE-CITY-002: fall back to the locality parsed from the normalized/raw address
+        // when the structured column is null, so the card isn't left with just the name.
+        city: row.city || deriveLocality(row.normalized_address) || deriveLocality(row.address_summary) || null,
         // SCHED-ROUTE-001 (FR-002): geocoding state so the UI can show
         // pending / needs-review / failed without any Google call on read.
         lat: row.lat != null ? Number(row.lat) : null,
@@ -737,4 +764,5 @@ module.exports = {
     updateDispatchSettings,
     getAvailableSlots,
     ScheduleServiceError,
+    deriveLocality,
 };
