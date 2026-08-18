@@ -72,11 +72,14 @@ const HANDLERS = {
         await db.query(
             `UPDATE jobs SET lat=$3, lng=$4, normalized_address=$5,
                 geocoding_status=$6, geocoding_place_id=$7, geocoded_at=now(),
+                -- TILE-CITY-002: fill the structured city from Google's locality, but
+                -- never overwrite a city a human already entered.
+                city = COALESCE(NULLIF(TRIM(city), ''), $8),
                 geocoding_provider='google_maps', geocoding_error_code=NULL,
                 geocoding_error_message=NULL, updated_at=now()
              WHERE id=$1 AND company_id=$2`,
             [jobId, task.company_id, result.lat, result.lng, result.normalized_address || null,
-             result.status, result.place_id || null]);
+             result.status, result.place_id || null, result.city || null]);
 
         // Coordinates changed → recalc affected technician/day segments.
         await require('./routeSegmentService').recalcForJob(task.company_id, jobId, { coordsChanged: true });

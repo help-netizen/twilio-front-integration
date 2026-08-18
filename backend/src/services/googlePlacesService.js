@@ -10,6 +10,22 @@ const KEY = process.env.GOOGLE_PLACES_KEY || process.env.GOOGLE_GEOCODING_KEY ||
 const GEOCODE_KEY = () => process.env.GOOGLE_GEOCODING_KEY || process.env.GOOGLE_PLACES_KEY || null;
 
 /**
+ * TILE-CITY-002: the locality (city) from a Google address_components array —
+ * the authoritative, structured source for jobs.city. locality is the standard
+ * US city; sublocality / postal_town / admin_area_level_3 cover the cases Google
+ * classifies differently. Returns null when none is present.
+ */
+function extractLocality(components) {
+    const comps = components || [];
+    const get = (type) => comps.find(c => (c.types || []).includes(type));
+    return get('locality')?.long_name
+        || get('sublocality')?.long_name
+        || get('postal_town')?.long_name
+        || get('administrative_area_level_3')?.long_name
+        || null;
+}
+
+/**
  * SCHED-ROUTE-001 (C-5): geocode a raw service address (no place_id path).
  * Returns coordinates + normalized address + confidence signals (location_type,
  * partial_match, place_id) so callers can set jobs.geocoding_status. Returns
@@ -49,6 +65,7 @@ async function geocodeAddress(address) {
             status,                                   // 'success' | 'needs_review'
             lat, lng,
             normalized_address: r.formatted_address || null,
+            city: extractLocality(r.address_components),
             place_id: r.place_id || null,
             location_type: r.geometry?.location_type || null,
             partial_match: r.partial_match === true,
@@ -89,11 +106,7 @@ async function resolve(placeId) {
 
     const comps = json.result.address_components || [];
     const get = (type) => comps.find(c => c.types.includes(type));
-    const city = get('locality')?.long_name
-        || get('sublocality')?.long_name
-        || get('postal_town')?.long_name
-        || get('administrative_area_level_3')?.long_name
-        || null;
+    const city = extractLocality(comps);
     const state = get('administrative_area_level_1')?.short_name || null;
     const zip = get('postal_code')?.long_name || null;
     const lat = json.result.geometry?.location?.lat ?? null;
@@ -117,4 +130,4 @@ async function resolve(placeId) {
     return { city, state, zip, lat, lng, timezone };
 }
 
-module.exports = { suggest, resolve, geocodeAddress, _hasKey: () => !!KEY };
+module.exports = { suggest, resolve, geocodeAddress, extractLocality, _hasKey: () => !!KEY };
