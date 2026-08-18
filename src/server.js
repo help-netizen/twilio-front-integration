@@ -104,6 +104,13 @@ app.use('/api/auth/backchannel-logout', requestId, backchannelLogoutRouter);
 // above) so verification + JSON parse run on the unmodified payload.
 app.use('/api/email/push', express.raw({ type: '*/*', limit: '1mb' }),
     require('../backend/src/routes/emailPush'));
+// VAPI call-status (end-of-call cost reports). Machine-authenticated by a
+// per-company secret inside the route — never by a user session. Mounted with the
+// RAW body BEFORE express.json (mirrors the Stripe/Gmail webhooks above) because the
+// cost ingest reads the unmodified payload; without it the report is accepted but
+// the money is silently dropped as "exact usage body unavailable".
+app.use('/api/vapi/call-status', express.raw({ type: '*/*', limit: '1mb' }),
+    require('../backend/src/routes/vapiCallStatus'));
 app.use('/internal/app-runtime', appRuntimeGatewayRouter);
 app.use('/api/platform/app-runtime', appRuntimeDevTokensRouter);
 
@@ -167,8 +174,6 @@ app.use('/api/phone-settings', authenticate, requireCompanyAccess, phoneSettings
 // NOT a user session. Mounted BEFORE the session-authed /api/vapi router below so
 // the machine caller (VAPI) is never blocked by authenticate/requireCompanyAccess/
 // tenant.integrations.manage. Company is derived from the correlated attempt row.
-const vapiCallStatusRouter = require('../backend/src/routes/vapiCallStatus');
-app.use('/api/vapi/call-status', vapiCallStatusRouter);
 app.use('/api/vapi', authenticate, requireCompanyAccess, vapiRouter);
 
 // Telephony Admin routes
