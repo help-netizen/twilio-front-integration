@@ -20,6 +20,23 @@
 
 ---
 
+## OB-65 (2026-08-18) — appSandboxFixtureContract падает: Job-проектор SQL уехал от контракта песочницы — **ОТКРЫТ, тест-дрейф, раздел App Studio/MCP**
+
+**Симптом.** `tests/appSandboxFixtureContract.test.js` (APP-SANDBOX-001 «CRM projector response-shape contract») падает: `Unexpected Job projector SQL`. Пре-существующее — падает и на чистом master без каких-либо правок (проверено `git stash` моих файлов); поймано попутно при гейте `b9d9b9b2` (TILE-CITY-002).
+
+**Корень.** SQL реального Job-проектора платежей переписан. Mock-матчер теста (`appSandboxFixtureContract.test.js:101`) ждёт префикс `WITH invoice_rollup AS`, а проектор теперь эмитит `WITH original_payments AS … ledger_effects AS …` (леджер рефандов/tip/void — из PAY-JOB-CENTRIC / over-collection). SQL не совпал ни с одним паттерном → `throw`. **Это тест-дрейф контракта:** реальный проектор `jobsService.listJobs` работает, разошёлся только матчер/фикстура песочницы.
+
+**Где чинить.**
+- `tests/appSandboxFixtureContract.test.js:101` — обновить регекс под новый платёжный SQL (`/WITH\s+original_payments AS/i` или `ledger_effects`), вернув `paymentRows`.
+- Перепроверить `keyPaths(sandboxList) === keyPaths(realList)`: если новый проектор поменял КЛЮЧИ вывода — перегенерить фикстуру `apps-runtime/src/sandboxFixtures` под новую форму (иначе следом упадёт `toEqual`).
+- Первоисточник изменения: `backend/src/services/jobsService.listJobs` (+ `chatgptMcpReadService.safeResult`).
+
+**Кому.** Ветка **`integrate/fsm-recon-appstudio`** — раздел App Studio / CRM-projector-MCP (родня OB-49..54: конвейер песочницы/контракта/MCP-read).
+
+**Влияние.** НЕ блокирует прод (тест-only; `svc.list_jobs`/`get_job`/`list_tasks` в реале не затронуты). Блокирует зелёный прогон полного backend-сьюта.
+
+---
+
 ## OB-64 (2026-08-18) — Хвосты по Vapi: дубль ассистента, пустой маршрут, непрогнанная проба — **ОТКРЫТ, низкий**
 
 - **Дубликат ассистента.** В организации Vapi лежит `Lead Qualifier v2 (Copy)`
