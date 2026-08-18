@@ -4,16 +4,18 @@
 Дата: 2026-08-16
 Связанные документы: `docs/specs/VAPI-AGENCY-001-TASKS.md`,
 `docs/test-cases/VAPI-AGENCY-001.md`,
+`docs/specs/VOICE-TENANT-CONFIG-001.md`,
 `docs/specs/TENANCY-RBAC-CANON.md`
 
 ## 1. Цель
 
 Albusto использует один платформенный аккаунт и одну организацию Vapi как
 недоверенную execution plane. Тенанты не получают аккаунт, ключ, org id или
-прямой доступ к Vapi. Albusto создаёт и закрепляет ассистентов и SIP-ресурсы за
-компаниями, измеряет фактическую стоимость каждой AI-ноги, применяет
-версионируемую наценку и списывает результат через существующие prepaid wallet и
-auto-recharge.
+прямой доступ к Vapi. На каждое назначение существует один общий assistant
+deployment с дорожками `stable`/`candidate`; company-owned остаются SIP/caller
+resource, assistant-request credential, call/session identity, контекст и деньги.
+Albusto измеряет фактическую стоимость каждой AI-ноги, применяет версионируемую
+наценку и списывает результат через существующие prepaid wallet и auto-recharge.
 
 Изоляция, авторизация, корреляция, лимиты, денежный учёт и биллинг находятся в
 Albusto. `assistantId`, SIP URI, входные заголовки или поля webhook не считаются
@@ -25,12 +27,14 @@ Albusto. `assistantId`, SIP URI, входные заголовки или пол
 
 - входящие и исходящие Vapi-звонки, включая неуспешные и несколько AI-ног на
   один Twilio-звонок;
-- реестр ассистентов `(company, purpose, environment)` и закреплённые SIP-ресурсы;
+- общий реестр deployments `(purpose, environment, channel)` и закреплённые за
+  компаниями SIP/caller resources;
 - устойчивая идентичность AI-ноги, типизированный usage ledger, reconcile и
   финализация supplier cost;
 - атомарные глобальные и покомпанейские concurrency leases;
 - cost-plus pricing, settlement и проекция в существующий кошелёк;
-- provisioning, drift detection, эксплуатационные алерты и безопасный rollout;
+- shared-assistant adoption, drift reporting, эксплуатационные алерты и
+  stable/candidate rollout без автоматической перезаписи owner-managed behavior;
 - tenant aggregate API и platform-only audit API без UI-дизайна;
 - удаление прежней модели «Vapi-организация/ключ на тенанта».
 
@@ -40,6 +44,7 @@ Albusto. `assistantId`, SIP URI, входные заголовки или пол
 - новый расчётный контур, новый кошелёк или использование Stripe Connect для
   оплаты Vapi usage;
 - выдача тенанту Vapi credentials либо provider diagnostics;
+- создание/patch отдельного assistant на компанию;
 - изменения TENANT-ISO-002;
 - покупка телефонных номеров у Vapi: Twilio остаётся владельцем номера, Vapi SIP
   используется как AI-назначение;
@@ -159,6 +164,36 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
   installations, Vapi settings route/UI отсутствуют, а client key,
   `base_config_json` и plaintext resource secret запрещены DB constraints.
 
+## 2.3 Архитектурный разворот: общий assistant на назначение
+
+Решение владельца от 2026-08-17 заменяет предпосылку T5/T7 «assistant object на
+tenant». Нормативная модель:
+
+- один platform assistant на purpose (`inbound_call`, `outbound_lead_call`,
+  `outbound_parts_call`) и environment, с парой `stable`/`candidate`;
+- tenant nuances передаются per-call только через allowlisted
+  `assistantOverrides.variableValues` по контракту
+  `VOICE-TENANT-CONFIG-001`; tenant text никогда не становится Liquid template,
+  model/voice/tool/server override;
+- prompt/model/voice принадлежат owner и меняются им в Vapi; Albusto владеет
+  security shell (webhook URLs, message/tool contracts, secrets). Behavior drift
+  только отчёт; автоматический PATCH запрещён;
+- company identity не выводится из общего assistant id. Каноническая граница —
+  server-created `vapi_call_session` и global provider call id;
+- per-company остаются SIP/caller resource и assistant-request credential. Общие
+  status/tools credentials только аутентифицируют provider; tenant для этих
+  callbacks восстанавливается по `call.id → session/attempt`;
+- отсутствие/ошибка tenant context не блокирует ответ: shared stable assistant
+  получает generic context. Строгая работа при DB outage требует независимого
+  LKG credential/deployment snapshot, описанного в новой спеке §8.
+
+Из уже реализованного T5/T7 несущими остаются correlation, session/usage ledger,
+company resources, assistant-request credential rotation, limits/gate и money
+pipeline. Per-company assistant registry, discovery/create/adopt/patch, full
+assistant templates и provisioning state machine являются переходным кодом и
+подлежат физическому удалению по §10. При противоречии §2.3 и
+`VOICE-TENANT-CONFIG-001` имеют приоритет над историческими описаниями T5/T7 ниже.
+
 ## 3. Закрытые решения — дословно
 
 ### 3.1 Решения владельца
@@ -190,6 +225,10 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
 - Деньги: `NUMERIC`, никаких float. Округление до центов — на уровне settlement, не по звонку.
 - Реестр ассистентов по ключу `(company, purpose, environment)`.
 
+Последний пункт фиксирует прежнее решение и с 2026-08-17 заменён §2.3:
+исполняемый реестр теперь `(purpose, environment, channel)`, а company закрепляется
+за session/resource, не за provider assistant object.
+
 ## 4. Архитектурные инварианты
 
 1. Любая AI-нога имеет один локальный `vapi_call_session`; в единственной
@@ -197,10 +236,13 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
    company-scoped `provider_connections`. Twilio CallSid не уникален для AI-ног.
 2. Любое чтение/изменение tenant-данных использует явный `company_id`; webhook
    получает компанию только из серверного credential/resource/session, не из body.
-3. Ассистент, SIP-ресурс и credential одной сессии принадлежат одной компании,
-   purpose и environment. Несовпадение закрывает вызов.
-4. Внешний caller не может задавать `assistantId`, `assistantOverrides`, model,
-   voice, tools, destinations, server URL/credential или provider metadata.
+3. Session и SIP/caller resource принадлежат ровно одной компании; общий
+   assistant deployment принадлежит platform purpose/environment/channel и
+   pin-ится на session. Assistant id больше не доказывает company.
+4. Внешний caller не может задавать `assistantId`, model, voice, tools,
+   destinations, server URL/credential или provider metadata. Единственный
+   допустимый `assistantOverrides` строит сервер из tenant context v1 и содержит
+   только allowlisted `variableValues`.
 5. EoC — только наблюдение. Только два одинаковых авторитетных `GET /call/:id`
    переводят стоимость в `final`.
 6. Денежные значения — PostgreSQL `NUMERIC`; supplier cost не перезаписывается,
@@ -210,7 +252,9 @@ company при выборе. Tenant API `backend/src/routes/vapi.js:153-207` п�
    provider call. Ошибка/timeout освобождает lease идемпотентно.
 8. Vapi usage списывается только существующим wallet ledger; Connect/application
    fee остаются отдельным контуром tenant-to-customer payments.
-9. До снятия Phase 2 gate голос доступен только канонической компании ABC.
+9. До снятия обновлённого shared-assistant gate голос доступен только
+   канонической компании ABC; наличие общего assistant id само по себе gate не
+   открывает.
 10. Tenant API никогда не сериализует provider/supplier поля, даже для admin.
 
 ## 4.1 Untrusted Vapi input inventory
@@ -220,13 +264,13 @@ provider call:
 
 | Вход | Опасные поля/поведение | Требуемый контракт |
 |---|---|---|
-| Call Flow Vapi node config | прямой `sip_uri`, `vapi_resource_id`, `provider_connection_id`, profile/assistant id, purpose, environment | Runtime игнорирует эти поля и разрешает только server-owned `inbound_call/prod` registry tuple той же company; legacy-canary fallback также читает только exact company resource |
-| Tenant Vapi routes/UI | `api_key`, `base_config_json`, `vapi_assistant_id`, SIP/server URL | Поверхность удаляется; только platform provisioning из template |
+| Call Flow Vapi node config | прямой `sip_uri`, `vapi_resource_id`, `provider_connection_id`, profile/assistant id, purpose, environment | Runtime игнорирует эти поля, выбирает exact company resource и global purpose deployment; fallback также читает только exact company resource |
+| Tenant Vapi routes/UI | `api_key`, `base_config_json`, `vapi_assistant_id`, SIP/server URL | Поверхность удалена; tenant редактирует только provider-neutral context по `VOICE-TENANT-CONFIG-001` |
 | SIP query/custom headers | `company-id`, profile, group/flow/node, caller data | Никакой header не авторизует tenant/assistant; только opaque one-time session token, credential и stored resource binding |
-| `assistant-request` body | `call.id`, assistant profile/overrides, customer, destination | `call.id` — evidence для exact bind; assistant/resource уже server-selected. Unknown/mismatch fail closed, transient assistant запрещён |
-| `/api/vapi-tools` public body | tool args, `message.call.assistantOverrides.variableValues`, claimed company/subject | Company только из surface credential; session repairs subject; args allowlisted per tool; ownership claims не доверяются |
+| `assistant-request` body | `call.id`, assistant profile/overrides, customer, destination | `call.id` — evidence для exact bind; global deployment и context уже server-selected. Provider selection claims запрещены; Albusto сам возвращает allowlisted variableValues |
+| `/api/vapi-tools` public body | tool args, `message.call.assistantOverrides.variableValues`, claimed company/subject | Shared surface credential только authenticates Vapi; company только из exact call session. Session repairs subject; args allowlisted per tool; ownership claims не доверяются |
 | Outbound HTTP/job data | scenario, purpose, first message, arbitrary variables/assistant overrides | Worker разрешает server-owned scenario→purpose mapping и typed template variables; caller не передаёт provider config |
-| Status/EoC body | company/org/assistant/resource ids, Twilio SID, timestamps, cost/breakdown | Company из credential; call/session exact bind. Lifecycle/cost — validated evidence, не authorization |
+| Status/EoC body | company/org/assistant/resource ids, Twilio SID, timestamps, cost/breakdown | Shared credential authenticates provider; company из global call/session correlation. Lifecycle/cost — validated evidence, не authorization |
 | Provider readback/create response | ids, server URL, tools/model/voice/destination | Canonical allowlist/hash; unexpected privileged fields либо drift закрывают readiness |
 
 Даже если поле совпадает с БД, оно не становится authority: authority —
@@ -240,6 +284,24 @@ company-bound credential плюс server-created session/resource relation.
 уникального ограничения provider account + provider call id.
 
 ### 5.1 Конфигурация и реестр
+
+#### `vapi_assistant_deployments` и routing policy (новые, platform-owned)
+
+Исполняемый реестр после shared-assistant pivot:
+
+| Поле | Назначение |
+|---|---|
+| `id`, `purpose`, `environment`, `channel` | unique `(purpose,environment,stable|candidate)` |
+| `provider_account_key`, `vapi_assistant_id` | constant `vapi:platform`; provider id globally unique |
+| `state` | `observed`, `active`, `drifted`, `disabled`; drift не блокирует уже пришедший звонок |
+| `prompt_abi_version` | marker variable contract из `VOICE-TENANT-CONFIG-001`, не prompt body |
+| `security_contract_version`, `security_contract_hash` | Albusto-owned URLs/tool schemas/message types |
+| `behavior_fingerprint` | read-only prompt/model/voice evidence, принимаемое owner; не цель auto-patch |
+| `last_verified_at`, `provider_updated_at`, timestamps | platform audit |
+
+Отдельная routing policy pin-ит stable/candidate deployments по purpose/environment
+и canary policy. Любая session сохраняет deployment FK и exact assistant id на
+момент admission; смена policy не переписывает in-flight/history.
 
 #### `vapi_tenant_voice_configs` (новая, platform-owned)
 
@@ -259,7 +321,7 @@ Tenant route записи отсутствует. Runtime повторно пр�
 группой `vapi_usage_charges` в T9; до этого поле логически unset, поэтому non-ABC
 production gate остаётся закрыт.
 
-#### `vapi_assistant_profiles` (существующая, становится authoritative registry)
+#### `vapi_assistant_profiles` (legacy; выводится из runtime)
 
 | Поле | Назначение |
 |---|---|
@@ -271,29 +333,29 @@ production gate остаётся закрыт.
 | `provider_generation`, `provider_updated_at`, `last_verified_at` | readback/drift evidence |
 | `created_at`, `updated_at` | аудит |
 
-Существует ровно одно пространство имён платформенного аккаунта: business key
-`(company_id, purpose, environment)` уникален, а непустой `vapi_assistant_id`
-глобально уникален независимо от любых per-company `provider_org_id`. Константный
-`provider_account_key='vapi:platform'` дополнительно закрыт CHECK constraint.
+Эта таблица была authoritative для per-company assistant и сохраняется лишь на
+переходе как historical evidence/backfill source. Новые selection/provisioning
+записи в неё не создаются. После переноса session FK она удаляется отдельной
+структурной migration; её `(company,purpose,environment)` больше не является
+архитектурной границей.
 
 #### `vapi_tenant_resources` (существующая, расширяется)
 
 | Поле | Назначение |
 |---|---|
-| `company_id`, `purpose`, `environment`, `assistant_profile_id` | закрепление ресурса за тем же tenant tuple |
+| `company_id`, `purpose`, `environment` | закрепление transport resource за tenant; assistant profile FK после backfill удаляется |
 | `resource_type` | `sip_destination`, `vapi_phone_number` либо `transient_twilio` |
 | `vapi_phone_number_id`, `twilio_phone_number`, `sip_uri` | platform-only provider/caller data; runtime не выбирает их из env |
 | `server_credential_id` | собственный company-bound credential ресурса; для assistant-request/resource server, не plaintext secret |
-| `fallback_vapi_assistant_id` | необязательный server-owned snapshot inbound assistant; ускоряет tokenless safety path, но NULL не запрещает ответ и tenant API его не принимает |
+| `fallback_vapi_assistant_id` | legacy transition field; global shared stable id берётся из deployment/LKG и после cutover колонка удаляется |
 | `status`, `config_hash`, `provider_updated_at`, `last_verified_at` | readiness/drift |
 | `created_at`, `updated_at` | аудит |
 
-База и сервис запрещают ссылку ресурса компании A на профиль/credential компании
-B. `tools`, `call_status` и resource `assistant_request` используют разные
-`api_integrations.machine_surface`; их secret hashes не совпадают. Migration 264
-даёт подложку, identity schema разрешает `vapi_call_status` и
-`vapi_assistant_request`, а registry migration требует и связывает раздельные
-active credentials через same-company constraints.
+База и сервис запрещают ссылку ресурса компании A на credential компании B.
+Resource `assistant_request` остаётся отдельным per-company machine surface.
+Shared assistant `tools`/`call_status` credentials являются platform secrets и
+не выбирают company; tenant scope для них появляется только после global call-id
+correlation.
 
 Outbound использует один generic resource `(company_id, outbound_call, prod)`,
 который может ссылаться либо на зарегистрированный Vapi phone id, либо на
@@ -302,7 +364,7 @@ tenant-bound transient Twilio caller number. Twilio account token/SID остаю
 env только отдельным dry-run-by-default operational CLI; runtime env не является
 источником номера.
 
-#### `vapi_tenant_provisioning_runs` (platform-owned)
+#### `vapi_tenant_provisioning_runs` (legacy; выводится)
 
 | Поле | Назначение |
 |---|---|
@@ -322,7 +384,9 @@ objects они не создают. Потерянный ответ после p
 `operation_key` в server-owned metadata ассистента либо детерминированный SIP URI.
 Если `beginRun` видит уже переходное `rollout_state='provisioning'`, он сохраняет
 ранее зафиксированное стабильное значение, а не затирает его переходным; failure
-всегда возвращает исходное состояние.
+всегда возвращает исходное состояние. После shared-assistant cutover новые runs
+не создаются: tenant onboarding создаёт только resource/credential/context, а
+global deployment lifecycle хранится отдельно.
 
 #### `vapi_company_credential_acceptance` (platform-owned)
 
@@ -345,7 +409,7 @@ Session остаётся pinned к `assistant_request_credential_id`. Callback �
 | Поле | Назначение |
 |---|---|
 | `id`, `company_id`, `direction`, `purpose`, `environment` | локальный canonical root |
-| `assistant_profile_id`, `tenant_resource_id`, `provider_account_key` | server-selected execution tuple; account key — platform-only audit label, не per-company namespace |
+| `assistant_deployment_id`, `tenant_resource_id`, `provider_account_key` | global purpose/channel deployment + company transport; account key — platform-only audit label |
 | `vapi_call_id` | nullable до bind; глобально уникален в единственной платформенной организации |
 | `twilio_parent_call_sid`, `twilio_child_call_sid` | evidence/correlation, не identity AI-ноги |
 | `outbound_call_attempt_id`, `flow_execution_id`, `flow_node_id` | nullable local origins |
@@ -353,6 +417,7 @@ Session остаётся pinned к `assistant_request_credential_id`. Callback �
 | `state` | `created`, `admitted`, `provider_pending`, `active`, `ended`, `cost_pending`, `closed`, `quarantined` |
 | `started_at`, `ended_at`, `provider_ended_reason` | provider lifecycle evidence |
 | `provider_subscription_limits`, `provider_placement_observed_at` | диагностический POST response snapshot/time; не admission authority |
+| `tenant_context_revision`, `tenant_context_hash` | nullable evidence version/hash того, что было отправлено; не копия live hours/zones и не source of truth |
 | `created_at`, `updated_at` | аудит |
 
 Все lookups по Twilio SID дополнительно фильтруются `company_id`; несколько
@@ -506,17 +571,19 @@ alerts; неизменившийся fingerprint повторно не отпр�
 ### 6.2 Входящий звонок
 
 1. До перевода на SIP runtime, уже знающий `company_id`, flow node, purpose и
-   environment, выбирает только активные registry/resource records.
+   environment, выбирает company-owned resource и pin-ит global shared
+   stable/candidate deployment по server routing policy.
 2. В одной транзакции создаются session/reservation и одноразовый correlation
    token. В SIP destination уходит только opaque token; tenant/company id,
    provider secret и свободный `assistantId` не передаются. Атомарный capacity
    lease добавляется в T8 до снятия multi-tenant gate.
-3. Закреплённый SIP-resource имеет один server-owned assistant profile и отдельный
-   assistant-request credential. Единственный поддерживаемый assistant-request
-   handler возвращает только сохранённый `assistantId`; transient assistant и
-   provider/body selection запрещены.
+3. SIP-resource имеет отдельный per-company assistant-request credential, но не
+   владеет assistant object. Единственный handler возвращает pinned shared
+   `assistantId` и server-rendered allowlisted `variableValues`; transient
+   assistant и provider/body selection запрещены.
 4. Аутентифицированный `assistant-request`, содержащий `message.call.id` и opaque
-   token, атомарно bind-ит `vapi_call_id` к session до ответа Vapi.
+   token, атомарно bind-ит `vapi_call_id` к session до ответа Vapi. Tenant context
+   строится рядом, но его fault не откатывает bind и не запрещает ответ.
 5. Первичный bind проходит только если credential company, token/session, resource и
    assistant совпали. Token одноразовый и имеет TTL. Повтор с тем же call id
    идемпотентен до drift-проверок и не меняет уже связанную session; другой call id
@@ -531,13 +598,10 @@ alerts; неизменившийся fingerprint повторно не отпр�
    credential + session/attempt correlation он сохраняет allowlisted sanitized
    EoC evidence. Assistant/company mismatch — отказ без денежной строки.
 8. Для аварийной SIP-ноги без token assistant-request всё равно аутентифицируется
-   отдельным credential компании. Handler игнорирует body/SIP selection claims,
-   выбирает assistant только по credential-company и server-owned resource
-   snapshot, совпадающему active profile либо durable provisioning evidence и
-   возвращает его без session bind. Для единственной legacy SIP-компании допустим
-   deployment fallback `VAPI_INBOUND_ASSISTANT_ID`; после появления второй
-   eligible SIP-компании он конструктивно отключается. Поэтому путь работает и
-   при NULL `fallback_vapi_assistant_id` и пустом normalized profile registry.
+   отдельным credential компании. Handler игнорирует body/SIP selection claims и
+   возвращает global shared stable assistant без session bind; если company
+   context доступен, он может передать только safe tenant variables. Legacy
+   `fallback_vapi_assistant_id`/per-company profile больше не prerequisites.
    Provider call сохраняется как `provider_orphan` с dedicated
    `provider_call_id` и причиной `assistant_request_missing_token`; отказ записи
    alert не блокирует ответ и оставляет company/provider call id в безопасном
@@ -552,12 +616,13 @@ alerts; неизменившийся fingerprint повторно не отпр�
 ### 6.3 Исходящий звонок
 
 1. Worker передаёт только локальные `company_id` и `outbound_call_attempt.id`.
-   Purpose выводится из локальной строки attempt; profile выбирается по
-   `(company,purpose,prod)`, caller — по `(company,outbound_call,prod)`. Env id,
+   Purpose выводится из attempt; assistant deployment выбирается по
+   `(purpose,prod,stable|candidate)`, caller — по company-owned resource. Env id,
    request assistant/phone/purpose и lead→parts fallback не участвуют.
 2. Worker проходит gate и атомарно резервирует lease, затем создаёт session в
    `provider_pending` до сетевого вызова. `POST /call` строится только из
-   pinned registry tuple/server template и несёт server-owned
+   pinned global deployment, company caller resource и server-rendered tenant
+   context; он несёт server-owned
    `metadata.albustoCallSessionId`.
 3. Ответный Vapi call id одной PostgreSQL-транзакцией записывается и в session,
    и в существующий company-scoped outbound attempt; lead slot и диагностический
@@ -600,9 +665,10 @@ EoC observation
 - `end-of-call-report` записывается append-only и идемпотентно по provider event
   identity либо детерминированному payload hash. Он обновляет provisional evidence,
   но никогда не финализирует и не списывает.
-- Status/EoC допускается только company-bound `vapi_call_status` credential; его
-  company должна совпасть с T2 session либо outbound attempt. Assistant id
-  сравнивается с pinned registry identity. Unknown/foreign id не создаёт session,
+- Status/EoC допускается только platform `vapi_call_status` credential. Он
+  аутентифицирует provider, но не выбирает tenant: company восстанавливается по
+  global call id из T2 session либо outbound attempt. Assistant id сравнивается с
+  pinned shared deployment identity. Unknown/unbound id не создаёт session,
   observation или usage.
 - EoC хранит только allowlisted sanitized provider payload: identity, lifecycle и
   cost lexemes. JSON numbers сохраняются decimal-строками; transcript, messages,
@@ -715,15 +781,18 @@ flow runtime до выдачи SIP destination, так и outbound worker до l
 3. компания активна и имеет отдельный platform-owned runtime admission flag;
    lifecycle-поле `rollout_state` не читается при приёме звонка, reservation или
    incident fallback и не является допуском;
-4. существует ровно один active assistant registry row для требуемых company,
-   purpose и environment;
-5. существует ровно один active SIP resource той же компании, закреплённый за
-   этим assistant;
-6. provider readback совпадает с template/resource hashes и не помечен drifted;
-7. существует активный per-company credential закреплённого SIP resource для
-   `vapi_assistant_request`; состояние `vapi_tools`/`vapi_call_status` входит в
-   readiness/alerting и gate второго тенанта, но его отказ не блокирует уже
-   поступивший входящий звонок;
+4. существует active shared deployment для purpose/environment и pin-able
+   stable/candidate routing policy; один и тот же assistant id допустим для всех
+   компаний и не является tenant evidence;
+5. существует ровно один eligible SIP/caller resource требуемого типа той же
+   компании;
+6. provider readback security shell совпадает с contract; behavior drift
+   зафиксирован/принят owner. Drift запрещает promotion, но не отказывает уже
+   поступившему звонку;
+7. существует активный per-company credential SIP resource для
+   `vapi_assistant_request`; platform `vapi_tools`/`vapi_call_status` credentials
+   authenticates provider, а readiness дополнительно подтверждает exact
+   call-id→session tenant resolution;
 8. inbound durable session/token bind contract включён и прошёл health/readback;
 9. положительный company concurrency limit и global policy обслуживаются
    атомарным admission/lease механизмом;
@@ -754,7 +823,39 @@ runtime admission policy, а не чтением provisioning lifecycle state.
 
 ## 9. Provisioning и drift
 
-Полностью автоматизируется:
+### 9.1 Нормативный shared-assistant lifecycle
+
+Tenant onboarding больше не создаёт и не PATCH-ит assistant. Одна операция
+создаёт/ремонтирует только company connection, SIP/caller resource,
+assistant-request credential, voice admission/context rows и проверяет, что
+global deployment для нужного purpose существует. Partial state видим и
+идемпотентен, но не содержит per-tenant provider assistant id.
+
+Global assistant lifecycle — отдельная platform operation с обязательным
+`purpose`, `environment`, `channel` и explicit owner acceptance. Existing Sara
+adopt-ится read-only как stable: сначала GET/fingerprint, затем локальная запись;
+обычный verify никогда не PATCH-ит prompt/model/voice. Albusto readback отдельно
+сравнивает:
+
+- behavior fields (prompt/model/voice/name) — report only;
+- security shell (server/tool URLs, message types, schemas, secret-set flags) —
+  P0 report и запрет candidate promotion, но не call admission;
+- prompt ABI marker — personalization readiness/report, но отсутствие marker
+  возвращает generic call, не отказ.
+
+Stable/candidate routing переключается локальной policy и pin-ится в session.
+Provider write допускается только отдельной owner-approved maintenance operation;
+никакой tenant config save не вызывает Vapi PATCH. Migration создаёт только
+deployment/routing schema. Assistant ids/fingerprints — операционные данные,
+которые вносит отдельный dry-run-by-default platform CLI.
+
+### 9.2 Исторический T7-контракт — выводится из эксплуатации
+
+Весь оставшийся текст этого подраздела описывает реализованную per-tenant модель
+до решения §2.3. Он сохранён временно только как migration evidence и не является
+целевым контрактом. Соответствующие service/CLI physically delete по §10.
+
+Legacy T7 полностью автоматизировал:
 
 1. создание `provisioning` tenant config;
 2. выпуск отдельных machine credentials на базе механизма migration 264 —
@@ -805,7 +906,7 @@ Legacy direct SIP и новый per-company Vapi resource могут разли�
 provider API, но обязаны реализовать один registry/session/credential контракт.
 T1 фиксирует живые provider fixtures до выбора адаптера.
 
-### Реализованный T7-контракт
+### Legacy реализованный T7-контракт (не нормативный)
 
   `backend/scripts/provision-vapi-agency-company.js` требует `--company-id`, по
 умолчанию выполняет только plan и делает записи лишь с `--apply`. Одна операция:
@@ -847,6 +948,34 @@ Provider create и локальная БД не образуют общую ACID
 
 ## 10. Что удаляется и что мигрирует
 
+### Удаляется после shared-assistant cutover
+
+- `backend/src/services/vapiAgencyProvisioningService.js` — создаёт и PATCH-ит
+  assistant на компанию;
+- `backend/src/services/vapiAgencyAssistantTemplates.js` — рендерит полный
+  per-tenant prompt/model/voice bundle; вместо него остаются context renderer и
+  узкий security-shell readback contract;
+- `backend/scripts/provision-vapi-agency-company.js`;
+- `backend/scripts/bootstrap-vapi-assistant-registry.js`;
+- per-company assistant branches из
+  `backend/src/services/vapiAssistantRegistryService.js`; после разделения на
+  global deployment selector и company resource selector старый service удаляется;
+- assistant/env selection из
+  `backend/scripts/bootstrap-vapi-outbound-resource.js`; если transport bootstrap
+  остаётся, он не принимает assistant id;
+- tests старой архитектуры `tests/vapiAgencyProvisioning.test.js` и
+  `tests/vapiAssistantRegistryBootstrap.test.js`, заменённые shared deployment,
+  context и dead-path ratchet suites;
+- runtime writes/dependencies от `vapi_assistant_profiles`,
+  `vapi_tenant_provisioning_runs`, `fallback_vapi_assistant_id`, per-company
+  tools/status credential bindings. После backfill historical rows/tables
+  удаляются отдельной структурной migration.
+
+Ни один старый CLI/service не остаётся dormant: наличие executable per-tenant
+assistant provisioner создаёт глобальный blast radius и однажды перезапишет
+owner-managed Sara. Company SIP/caller resource и assistant-request credential
+не удаляются — это transport/tenant identity, а не assistant provisioning.
+
 ### Удалено в T5
 
 - `backend/src/services/vapiOrgProvisioningService.js`;
@@ -857,52 +986,42 @@ Provider create и локальная БД не образуют общую ACID
   `frontend/src/services/vapiApi.ts`, а также tenant routes из
   `backend/src/routes/vapi.js`, которые позволяют вводить Vapi API key, создавать
   org/assistant/phone resources или видеть provider metadata;
-- runtime environment-driven assistant selection. Deployment значения
+- runtime environment-driven assistant selection. Legacy значения
   `VAPI_INBOUND_ASSISTANT_ID`, `VAPI_LEAD_CALL_ASSISTANT_ID` и
-  `VAPI_OUTBOUND_ASSISTANT_ID` читаются только platform-only operational bootstrap
-  CLI для доказуемого company-scoped backfill; ни migration, ни outbound
-  placement, ни usage ingestion не выбирают по ним assistant;
+  `VAPI_OUTBOUND_ASSISTANT_ID` могут использоваться только разовой platform
+  adoption-операцией для создания global deployment evidence; ни migration, ни
+  tenant bootstrap, ни placement/ingestion не выбирают по ним assistant;
 - клиентский Vapi API key в `provider_connections` и любой API, который его
   принимает/возвращает. Платформенный ключ существует только в deployment secret
   store и никогда не сохраняется в tenant DB.
 
-Org provisioner, tenant provisioning CLI, CRUD и global assistant fallback не
-оставлены «на всякий случай»: их наличие создавало бы второй путь в обход
-registry, gate и platform-key ownership. Новый bootstrap CLI не создаёт Vapi org
-или provider resources и не является runtime fallback: он пишет только
-company-scoped локальное соответствие после явной операторской проверки.
-Сохранённый incident fallback не читает rollout/config state: он находит
-server-owned SIP resource exact company, предпочитая `inbound_call/prod`, но не
-делая purpose/environment условием существования страховки. Tokenless
-assistant-request возвращает assistant по per-company machine credential,
-создаёт alert и намеренно не создаёт ложную session identity.
+Org provisioner, per-tenant assistant provisioner/bootstrap и provider CRUD не
+оставляются «на всякий случай»: это второй путь, способный перезаписать общий
+owner-managed assistant. Incident fallback, наоборот, сохраняется, но не читает
+tenant rollout/config state: он находит server-owned SIP resource exact company,
+а assistant-request выбирает global stable deployment. Tokenless путь выводит
+company только из per-resource credential/LKG, отвечает generic, создаёт alert и
+намеренно не создаёт ложную session identity.
 
-Migration 275 выполняется обычным `psql -v ON_ERROR_STOP=1 -f`, не требует
-`PGOPTIONS`/session settings и всегда остаётся data-neutral. Она добавляет только
-таблицу, nullable registry/readiness columns, constraints и indexes; legacy rows
-не очищает и не backfill-ит. Операционный порядок после DDL:
-
-1. dry-run:
-   `node backend/scripts/bootstrap-vapi-assistant-registry.js --company-id <uuid>`;
-2. при необходимости read-only provider check: добавить `--verify-provider`;
-3. после проверки плана: повторить с `--apply`.
-
-CLI требует все три assistant env ids и однозначные active connection/SIP
-resource, отказывается при conflict/foreign ownership и выполняет data cleanup +
-profile/resource/config upsert в одной транзакции. Отсутствующие/неоднозначные
-operational credentials не мешают registry data bootstrap, но оставляют nullable
-bindings, readiness evidence и runtime fail-closed.
+Migration 275 остаётся исторической data-neutral структурой и не запускает
+bootstrap автоматически. `backend/scripts/bootstrap-vapi-assistant-registry.js`
+выводится из эксплуатации по списку выше. Новые shared-deployment migrations
+также создают только структуру; ABC adoption выполняется отдельной platform
+operation read-only относительно Vapi и с explicit owner acceptance.
 
 ### Мигрирует
 
-- существующие ABC `vapi_assistant_profiles` и `vapi_tenant_resources` в новый
-  tuple registry с environment/purpose/template evidence;
-- текущий SIP `sip:blanc-ai-dev@sip.vapi.ai` — в resource ABC после provider
-  readback, без предположения, что это купленный номер;
+- существующие ABC assistant ids/readback evidence — в global
+  `vapi_assistant_deployments` по purpose/environment/channel; одна Sara принимается
+  owner как stable без PATCH;
+- существующий ABC `vapi_tenant_resources` и текущий SIP
+  `sip:blanc-ai-dev@sip.vapi.ai` остаются company-owned transport после readback,
+  без предположения, что это купленный номер;
 - известные `outbound_call_attempts.vapi_call_id` — в session/usage identity при
   однозначном company-bound соответствии;
-- существующие machine credentials — в отдельные surfaces и ротацию; секреты не
-  копируются в документы/логи;
+- per-resource `vapi_assistant_request` credentials остаются company-bound;
+  assistant `vapi_tools`/`vapi_call_status` credentials становятся platform
+  provider-auth, а tenant scope всегда приходит из global call-id correlation;
 - tenant billing link — на существующие subscription, prepaid wallet и
   auto-recharge, без миграции Stripe Connect в usage billing;
 - исторические `calls.price` не становятся Vapi cost: это поле сохраняет текущую
@@ -917,24 +1036,20 @@ bindings, readiness evidence и runtime fail-closed.
 
 ## 11. API-контракты без UI-дизайна
 
-### Контракт данных будущей настройки AI-ассистента
+### Контракт tenant voice context
 
-T5 не создаёт замену удалённому экрану и не определяет route/layout. Будущему
-provider-neutral экрану backend должен дать только product identity/purpose,
-пользовательское имя, product-level readiness/availability, revision для
-optimistic concurrency и allowlisted business settings/capabilities, которые
-будут отдельно утверждены продуктом. Он не должен получать или принимать Vapi,
-org/account id, assistant/profile/resource id, SIP URI, environment, template,
-server URL/credential, supplier cost, provider status/readback либо
-`assistantOverrides`. Любое изменение бизнес-настроек проходит server-owned
-template/provisioning contract, а не merge provider JSON.
+Нормативный backend/API/call contract находится в
+`docs/specs/VOICE-TENANT-CONFIG-001.md`. Tenant редактирует ровно FAQ,
+«обязательно упомянуть» и два списка полей lead/contact. Company name/phone,
+hours, zones и slot capability читаются живьём из существующих sources of truth.
+Старый T7-контракт `{companyName,greeting}` и полный template provisioning
+отменены.
 
-T7 фиксирует минимальный write-контракт template variables: company name берётся
-из canonical `companies.name`, а единственный прямой tenant-editable параметр
-операции — однострочное `greeting` длиной до 240 символов. Неизвестные поля,
-фигурные скобки, URL и переносы строки отвергаются. Будущий экран может читать
-product-level purpose/readiness/revision и редактировать greeting, но не получает
-provider ids, template/prompt/model, webhook/tool URLs или credential evidence.
+Tenant API не получает и не принимает Vapi, org/account id,
+assistant/profile/deployment/resource id, SIP URI, environment/channel, prompt,
+model, voice, server/tool URL, credential, supplier diagnostics или произвольный
+`assistantOverrides`. Server сам строит только allowlisted
+`assistantOverrides.variableValues`; tenant text остаётся escaped data.
 
 ### Tenant projection
 
@@ -1019,13 +1134,14 @@ platform route/permission и всегда требует явного target com
 |---|---|---|---|---|---|
 | retired tenant `/api/vapi/*` management | route absent; no scope/query occurs | none | none | все tenant/platform roles ✗ (404) | оставленный CRUD принял бы чужой assistant/SIP/key |
 | tenant Marketplace catalog/installations | authenticated tenant company | published app + company installation | existing marketplace read/manage permissions | обычные marketplace роли; retired provider app ✗ | старый seed мог снова раскрыть provider branding/install action |
+| `GET/PUT /api/voice-assistant/config` | `req.companyFilter?.company_id` | company + revision + company-scoped child ids | `tenant.company.manage` | tenant admin/custom-with-permission ✓; manager/dispatcher/provider/custom-without ✗ | unscoped config/context injects one tenant's text into another's calls |
 | `GET /api/billing/voice-usage` | `req.companyFilter?.company_id` | company + subscription period | `tenant.company.manage` | tenant admin/custom-with-permission ✓; manager/dispatcher/provider/custom-without ✗ | unscoped aggregate reveals other tenants' calls/money |
 | platform usage read | authenticated platform actor + explicit target company | target company + session/period | `platform.companies.view` | platform super_admin ✓; tenant/unscoped roles ✗ | provider ids and supplier economics leak |
-| platform provision/enable/rotate/repair | authenticated platform actor + explicit target company | company + purpose + environment | `platform.companies.manage` | platform super_admin ✓; tenant/unscoped roles ✗ | wrong assistant/secret can receive another tenant's calls |
-| inbound flow Vapi-node runtime | existing flow execution company | company + flow execution/node + registry tuple | internal worker contract; originating flow already tenant-scoped | runtime service ✓; direct user input ✗ | unscoped assistant lookup routes a call across companies |
-| outbound call worker | job/attempt `company_id` passed explicitly | company + attempt + registry tuple | internal worker contract | worker ✓; HTTP caller ✗ | global env assistant sends call under wrong tenant |
-| Vapi tool webhook | server credential resolved to company | credential + company + session + tool call id | machine surface `vapi_tools` | matching active credential ✓; tenant JWT/body company/other credential ✗ | shared secret/body scope invokes tools cross-tenant |
-| Vapi call-status/EoC webhook | server credential resolved to company | credential + company + provider call id/session | machine surface `vapi_call_status` | matching active credential ✓; tenant JWT/body company/other credential ✗ | forged event binds/costs another tenant's call |
+| platform deployment observe/promote/repair | authenticated platform actor + explicit purpose/environment/channel | global deployment + provider assistant id | `platform.companies.manage`/operator | platform super_admin ✓; tenant/unscoped roles ✗ | global PATCH/routing change affects every tenant |
+| inbound flow Vapi-node runtime | existing flow execution company | company + flow execution/node + company resource + global deployment | internal worker contract; originating flow already tenant-scoped | runtime service ✓; direct user input ✗ | wrong session/context crosses tenants even though assistant id is shared |
+| outbound call worker | job/attempt `company_id` passed explicitly | company + attempt/resource + global deployment | internal worker contract | worker ✓; HTTP caller ✗ | wrong session/context/caller resource crosses tenants |
+| Vapi tool webhook | platform credential authenticates Vapi; call session resolves company | credential + global call id + session + tool call id | platform `vapi_tools` surface | matching credential + correlated call ✓; tenant JWT/body company/unbound call ✗ | shared secret plus body scope invokes tools cross-tenant |
+| Vapi call-status/EoC webhook | platform credential authenticates Vapi; call session/attempt resolves company | credential + global provider call id/session | platform `vapi_call_status` surface | matching credential + correlated call ✓; tenant JWT/body company/unbound call ✗ | forged/unbound event binds/costs another tenant's call |
 | Vapi assistant-request webhook | dedicated per-company resource credential; pending token for attributed bind | credential + company + resource + token/session when present; credential-company assistant on absent/failed bind | machine surface `vapi_assistant_request` | session-pinned либо explicit current/rotating/retiring credential ✓; arbitrary same-company/body claims/other credential ✗; failed bind answers unattributed | shared credential or override/assistant injection crosses tenant boundary |
 | reconcile dispatcher | platform enumeration only | due company ids | internal scheduler | scheduler ✓; users ✗ | one unbounded query silently skips tenant predicate |
 | reconcile company worker | explicit `companyId` argument | company + session + provider call id | internal worker contract | worker for dispatched company ✓; absent/mismatched company ✗ | provider read updates foreign usage |
@@ -1034,6 +1150,7 @@ platform route/permission и всегда требует явного target com
 | wallet projection | existing billing company scope | company + settlement idempotency key | existing billing service contract | billing worker ✓; Connect webhook ✗ | double debit or Connect/usage ledger mixing |
 | tenant usage SSE/cache (если добавится) | authenticated subscription company | company + aggregate version | `tenant.company.manage` | same as tenant read ✓/✗ | shared cache/channel leaks amounts; v1 may use no SSE |
 | MCP voice-usage tool/resource | authenticated company context | company + same aggregate service | `tenant.company.manage` | same as tenant read ✓/✗ | MCP-specific SQL/drift exposes supplier fields |
+| MCP tenant-context settings/field write | route/tool absent | none | none | все роли ✗ | accidental projection creates unapproved connector reach |
 
 Обязательная матрица тестов для каждой company-scoped строки:
 
@@ -1054,6 +1171,7 @@ platform route/permission и всегда требует явного target com
 
 | Область | Планируемые suites | Точная команда | Результат |
 |---|---|---|---|
+| Shared assistant + tenant context pivot | suites/команды T1–T9 из `VOICE-TENANT-CONFIG-001` §13 | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath <VOICE-TENANT-CONFIG-001 files> --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PENDING; live inbound override proof обязателен до enable |
 | T1 provider contracts + T2 inbound identity | `tests/vapiAgencyProviderContracts.test.js`, `tests/vapiCallIdentity.test.js`, `tests/vapiAssistantRequest.test.js`, `tests/vapiCallIdentityAlerts.test.js`, `tests/services/callFlowRuntime.vapi.test.js`, `tests/vapiCallStatusWebhook.test.js` | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiAgencyProviderContracts.test.js tests/vapiCallIdentity.test.js tests/vapiAssistantRequest.test.js tests/vapiCallIdentityAlerts.test.js tests/services/callFlowRuntime.vapi.test.js tests/vapiCallStatusWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; финальный combined run с migration/machine/sibling suites: 10 suites / 137 tests |
 | Phase 2 gate | `tests/vapiAgencyGate.test.js` | команда определяется в T8 | PENDING |
 | T3 provisional usage ingest | `tests/vapiUsageIngest.test.js`, `tests/vapiUsageIngestMigration.test.js`, provider/route sibling suites | `unset NODE_USE_SYSTEM_CA; DATABASE_URL=postgresql://localhost/albusto_test node --use-bundled-ca --experimental-vm-modules ../../../node_modules/jest/bin/jest.js --runTestsByPath tests/vapiUsageIngest.test.js tests/vapiUsageIngestMigration.test.js tests/vapiAgencyProviderContracts.test.js tests/vapiCallStatusWebhook.test.js tests/outboundLeadCallWebhook.test.js --runInBand --forceExit --testPathIgnorePatterns "/node_modules/"` | PASS; 5 suites / 97 tests. T2 identity/assistant-request/machine siblings: 5 suites / 48 tests. Tenant SQL rules PASS; public-route rule PASS after registering the credential-protected assistant-request subrouter. |
@@ -1084,6 +1202,11 @@ forward/rollback migration filenames добавляются в ledger после
 
 | ID | Что временно сломать | Какой тест обязан покраснеть | Результат |
 |---|---|---|---|
+| `SAB-VAPI-SHARED-DEPLOYMENT` | вернуть per-company assistant lookup | `vapiSharedAssistantDeployment` A+B pin same purpose stable deployment | PENDING |
+| `SAB-VAPI-SHARED-TOOL-SCOPE` | брать company shared tools/status callback из credential/body, не call session | `vapiToolsTenancy`/`vapiCallStatusWebhook` same-secret T-blast | PENDING |
+| `SAB-VAPI-CONTEXT-ANSWER` | сделать config/renderer/DB prerequisite возврата assistant | `vapiAssistantRequestTenantContext` generic/LKG cases | PENDING |
+| `SAB-VAPI-TENANT-LIQUID` | конкатенировать tenant FAQ в Liquid source | `voiceTenantContextService` literal control-tag fixture | PENDING |
+| `SAB-VAPI-PER-TENANT-PROVISIONER` | вернуть require старого service/CLI | `vapiDeadPathRatchet` | PENDING |
 | `SAB-VAPI-GATE` | убрать ABC/multi-tenant gate перед inbound и outbound | `vapiAgencyGate` non-ABC deny/no-provider-call | PENDING |
 | `SAB-VAPI-IDENTITY-TENANT` | убрать `company_id` из session lookup | `vapiCallIdentity` T-blast/T-foreign unchanged | RED как требуется: T-foreign resolved foreign row вместо 404; после восстановления suite green |
 | `SAB-VAPI-IDENTITY-CREDENTIAL` | отключить сравнение callback credential с credential session/resource | `vapiCallIdentity` wrong same-company credential quarantine | RED как требуется: foreign credential получил `ok:true`; после восстановления suite green |
@@ -1174,6 +1297,11 @@ MCP использует тот же company-scoped tenant aggregate service, pe
 `tenant.company.manage` и тот же allowlist `{minutes, calls, amount}`; отдельного
 SQL/бизнес-правил нет, Vapi/org/provider/supplier поля не выдаются.
 
+`VOICE-TENANT-CONFIG-001` не добавляет ChatGPT connector ни read, ни write reach:
+FAQ, required mentions, collection rules, field presence и Vapi-only
+`updateCallerFields` отсутствуют в MCP registry. Любое такое расширение требует
+отдельного owner consent, OAuth/grants/confirmation contract и R-matrix.
+
 ## 16. Закрытые решения второго круга
 
 Эти решения окончательны и дополняют §3; вариантов для выбора перед реализацией
@@ -1211,6 +1339,10 @@ SQL/бизнес-правил нет, Vapi/org/provider/supplier поля не �
 
 | Риск | Последствие | Контроль | Тест/сигнал |
 |---|---|---|---|
+| Один behavior assistant обслуживает всех tenants | Ошибка owner prompt/model/voice имеет глобальный blast radius | stable/candidate, explicit promotion, read-only behavior fingerprint, no auto-PATCH | canary eval; owner-edited Sara unchanged sabotage |
+| Shared status/tool secret ошибочно считается tenant credential | Cross-tenant tool/usage access | provider auth отдельно; company только global call-id→session | same-secret T-blast webhook/tool suites |
+| Tenant text попал в Liquid source | Управляющие конструкции/чужое поведение | typed variableValues, scalar brace escaping, static ABI block | literal `{% if %}` fixture |
+| Основная БД недоступна на assistant-request | Caller не получает assistant либо небезопасный unauthenticated fallback | independent signed LKG credential/deployment snapshot; generic context | DB fault + valid/foreign LKG tests, snapshot-age alert |
 | Общая Vapi org не даёт provider-side hard isolation | Provider/operator error затрагивает несколько tenants | Vapi считается untrusted plane; server-owned registry/resource/credential bindings, per-call gate, least provider access | T-blast registry/webhooks; drift/unbound-call alert |
 | Inbound callback потерян или пришёл не по ожидаемому endpoint | AI-нога без identity/cost | Session до SIP, one-time bind, audit provider calls против local sessions | ID-01..ID-11, unbound provider metric |
 | Provider schema/ended taxonomy изменились | Cost quarantined либо неверная аналитика | Sanitized contracts, tolerant unknown fields, required-field validation, unknown reason bills positive final cost + alerts | T1 fixtures, MONEY-20/26 |
