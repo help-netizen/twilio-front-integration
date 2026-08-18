@@ -179,10 +179,13 @@ const PulsePageInner: React.FC = () => {
     // so the big callbacks block isn't duplicated. `idx` only feeds the key fallback.
     const renderItem = (call: typeof displayedCalls[number], idx: number) => {
         const tlId = (call as any).timeline_id;
+        const tlCode = (call as any).timeline_public_code;
         const cId = call.contact?.id || call.id;
+        const cCode = (call.contact as any)?.public_code;
+        // Match whichever form the URL is in — durable code (canonical) or legacy numeric id.
         const isActive = tlId
-            ? p.location.pathname === `/pulse/timeline/${tlId}`
-            : (!!cId && p.location.pathname === `/pulse/contact/${cId}`);
+            ? (p.location.pathname === `/pulse/timeline/${tlCode ?? tlId}` || p.location.pathname === `/pulse/timeline/${tlId}`)
+            : (!!cId && (p.location.pathname === `/pulse/contact/${cCode ?? cId}` || p.location.pathname === `/pulse/contact/${cId}`));
         return (
             <PulseContactItem
                 key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}

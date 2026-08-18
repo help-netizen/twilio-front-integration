@@ -6,6 +6,7 @@ import { useCallsByContact } from './useConversations';
 import { usePulseTimeline } from './usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
 import * as contactsApi from '../services/contactsApi';
+import { pulseApi } from '../services/pulseApi';
 import * as emailApi from '../services/emailApi';
 import * as jobsApi from '../services/jobsApi';
 import { buildMessageTargets, type MessageTarget } from '../components/pulse/smsFormHelpers';
@@ -22,8 +23,32 @@ export function usePulsePage() {
     const { id } = useParams<{ id: string }>();
     const location = useLocation();
     const isTimelineRoute = location.pathname.startsWith('/pulse/timeline/');
-    const timelineId = isTimelineRoute ? parseInt(id || '0') : 0;
-    const contactId = isTimelineRoute ? 0 : parseInt(id || '0');
+    // TIMELINE/CONTACT-NUMBERING: the :id param may be a numeric id (legacy links) or a
+    // durable public_code. A numeric param stays 100% synchronous — no behavior change for
+    // existing links; a code is resolved to its id below (brief empty state while resolving).
+    const numericParam = id && /^\d+$/.test(id) ? parseInt(id) : null;
+    const [codeResolvedId, setCodeResolvedId] = useState<number | null>(null);
+    useEffect(() => {
+        setCodeResolvedId(null);
+        if (!id || numericParam != null) return; // numeric id or empty → nothing to resolve
+        let cancelled = false;
+        (async () => {
+            try {
+                const rid = isTimelineRoute
+                    ? (await pulseApi.getTimelineByCode(id)).data.id
+                    : (await contactsApi.getContactByCode(id)).data.id;
+                // node-pg returns BIGINT ids as strings ("4409"); coerce so downstream
+                // strict comparisons (selectedConv: Number(tlId) === timelineId) match the
+                // numeric-param path exactly — otherwise selectedConv stays undefined and the
+                // open timeline's Action Required tasks never render.
+                if (!cancelled) setCodeResolvedId(Number(rid));
+            } catch { /* unknown/foreign code → leave unresolved (empty state) */ }
+        })();
+        return () => { cancelled = true; };
+    }, [id, isTimelineRoute, numericParam]);
+    const effectiveId = numericParam ?? codeResolvedId ?? 0;
+    const timelineId = isTimelineRoute ? effectiveId : 0;
+    const contactId = isTimelineRoute ? 0 : effectiveId;
 
     const [searchQuery, setSearchQuery] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
