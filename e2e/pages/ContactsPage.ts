@@ -23,7 +23,8 @@ export class ContactsPage {
 
     async open(marker: string): Promise<void> {
         await (await this.searchFor(marker)).click();
-        await expect(this.page).toHaveURL(/\/contacts\/\d+$/);
+        // CONTACT-NUMBERING-001: the URL is now the durable public_code (or a legacy numeric id).
+        await expect(this.page).toHaveURL(/\/contacts\/[0-9A-Za-z]+$/);
         await expect(this.page.getByRole('heading', { name: marker, exact: true })).toBeVisible();
     }
 

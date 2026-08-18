@@ -72,7 +72,7 @@ test.describe('@suite:leads', () => {
             const linkedContact = leads.linkedContact(lead.name);
             await expect(linkedContact).toBeVisible();
             await linkedContact.click();
-            await expect(page).toHaveURL(new RegExp(`/contacts/${lead.id}$`));
+            await expect(page).toHaveURL(new RegExp(`/contacts/(${lead.id}|[0-9A-Za-z]+)$`));
         } finally {
             await api.cleanup(cleanup);
             await api.dispose();

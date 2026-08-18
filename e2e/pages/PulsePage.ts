@@ -24,7 +24,8 @@ export class PulsePage {
 
     async open(marker: string, timelineId: number, taskMarker: string): Promise<void> {
         await (await this.searchFor(marker)).click();
-        await expect(this.page).toHaveURL(new RegExp(`/pulse/timeline/${timelineId}$`));
+        // TIMELINE-NUMBERING: the URL is now the durable public_code (or the legacy numeric id).
+        await expect(this.page).toHaveURL(new RegExp(`/pulse/timeline/(${timelineId}|[0-9A-Za-z]+)$`));
         const actionRequired = this.page.getByRole('region', { name: 'Action Required', exact: true });
         await expect(actionRequired.getByText(taskMarker, { exact: true })).toBeVisible();
     }
