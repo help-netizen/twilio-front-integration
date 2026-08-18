@@ -336,9 +336,7 @@ export function TasksPage() {
                 {groups.length > 0 && <LoadMoreFooter {...footerProps} />}
                 {snoozedTasks.length > 0 && (
                     <div className="space-y-2">
-                        <div className="blanc-eyebrow inline-flex items-center gap-1.5" style={{ color: 'var(--blanc-ink-3)' }}>
-                            <Moon className="size-3" /> Snoozed
-                        </div>
+                        <div className="blanc-section-heading">Snoozed</div>
                         {snoozedTasks.map(t => renderSnoozedTile(t))}
                         <LoadMoreFooter {...snoozedFooterProps} />
                     </div>
@@ -546,10 +544,8 @@ export function TasksPage() {
                                         {snoozedTasks.length > 0 && (
                                             <>
                                                 <tr>
-                                                    <td colSpan={COLUMNS.length} className="px-4 pt-6 pb-1">
-                                                        <span className="blanc-eyebrow inline-flex items-center gap-1.5" style={{ color: 'var(--blanc-ink-3)', marginBottom: 0 }}>
-                                                            <Moon className="size-3" /> Snoozed
-                                                        </span>
+                                                    <td colSpan={COLUMNS.length} className="px-4 pt-8 pb-1" style={{ background: 'transparent' }}>
+                                                        <span className="blanc-section-heading" style={{ display: 'block', marginBottom: 0 }}>Snoozed</span>
                                                     </td>
                                                 </tr>
                                                 {snoozedTasks.map(t => {
