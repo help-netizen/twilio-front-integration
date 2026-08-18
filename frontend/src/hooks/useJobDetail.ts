@@ -28,7 +28,7 @@ interface ContactInfo {
 }
 
 interface UseJobDetailParams {
-    /** Resolve by GLOBAL id — payment detail panel + the /schedule/jobs/:id deep-link. */
+    /** Resolve by GLOBAL id — the payment detail panel (the schedule deep-link now uses jobSeq). */
     jobId?: number | null;
     /** JOB-NUMBERING-001: resolve by per-company job_seq — the /jobs/:seq page. Provide
         exactly one of jobId/jobSeq; either drives ONLY the initial fetch — every refetch

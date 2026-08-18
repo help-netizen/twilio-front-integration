@@ -75,15 +75,17 @@ export function SchedulePage() {
     // Back closes the card. A deep link opens the job even when it isn't in the
     // visible day/range — useJobDetail fetches it via GET /api/jobs/:id, the same
     // path the /jobs/:id page uses.
-    const { jobId: jobIdParam } = useParams<{ jobId?: string }>();
-    const selectedJobId = useMemo(() => {
-        if (!jobIdParam) return null;
-        const n = Number(jobIdParam);
+    // The schedule URL number is the per-company job_seq, consistent with /jobs/:seq — so the
+    // browser bar, the card (#job_seq), and the /jobs page all show the SAME number for a job.
+    const { jobId: jobSeqParam } = useParams<{ jobId?: string }>();
+    const selectedJobSeq = useMemo(() => {
+        if (!jobSeqParam) return null;
+        const n = Number(jobSeqParam);
         return Number.isInteger(n) && n > 0 ? n : null;
-    }, [jobIdParam]);
+    }, [jobSeqParam]);
 
     const jobDetail = useJobDetail({
-        jobId: selectedJobId,
+        jobSeq: selectedJobSeq,
         onJobMutated: schedule.refresh,
         onNotFound: useCallback(() => {
             toast.error('Job not found or unavailable');
@@ -94,11 +96,11 @@ export function SchedulePage() {
     // Highlight the calendar card for the URL-selected job when it is on screen
     // (a click already set it; this covers arriving via a deep link).
     useEffect(() => {
-        if (selectedJobId == null) return;
+        if (selectedJobSeq == null) return;
         const match = schedule.scheduledItems.find(item =>
-            item.entity_type === 'job' && item.entity_id === selectedJobId);
+            item.entity_type === 'job' && item.job_seq === selectedJobSeq);
         if (match) setSelectedScheduleItemKey(scheduleJobKey(match));
-    }, [selectedJobId, schedule.scheduledItems]);
+    }, [selectedJobSeq, schedule.scheduledItems]);
 
     /** When a schedule item is clicked, jobs open in FloatingDetailPanel; others go to SidebarStack */
     const handleSelectItem = useCallback((item: ScheduleItem) => {
@@ -106,11 +108,11 @@ export function SchedulePage() {
             setSelectedScheduleItemKey(scheduleJobKey(item));
             // PUSH on first open from /schedule so Back closes; REPLACE when
             // switching between cards so Back doesn't walk every card glanced at.
-            navigate(`/schedule/jobs/${item.entity_id}`, { replace: selectedJobId != null });
+            navigate(`/schedule/jobs/${item.job_seq ?? item.entity_id}`, { replace: selectedJobSeq != null });
         } else {
             schedule.selectItem(item);
         }
-    }, [schedule.selectItem, navigate, selectedJobId]);
+    }, [schedule.selectItem, navigate, selectedJobSeq]);
 
     const handleMapJobSelect = useCallback((item: ScheduleItem) => {
         setSelectedScheduleItemKey(scheduleJobKey(item));
