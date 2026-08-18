@@ -1,4 +1,5 @@
 import { authedFetch } from '../services/apiClient';
+import { formatPaymentDate } from '../components/payments/paymentTypes';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -21,7 +22,7 @@ export async function exportPaymentsCSV(dateFrom: string, dateTo: string): Promi
     const csvRows = exportRows.map(r => [
         String(r.job_seq ?? r.job_number ?? ''), r.client || '', r.job_type || '', r.status || '',
         r.payment_methods || '', r.amount_paid || '', r.tags || '',
-        r.payment_date || '', r.source || '', r.tech || '', r.custom_fields || '',
+        formatPaymentDate(r.payment_date), r.source || '', r.tech || '', r.custom_fields || '',
     ]);
     const csv = [headers.map(escapeCsv).join(','), ...csvRows.map(row => row.map(escapeCsv).join(','))].join('\n');
 
