@@ -117,17 +117,35 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         const a = audioRef.current; if (!a) return;
-        const onTime = () => setCurrentTime(a.currentTime);
+
+        // iOS resets playbackRate to 1 on load()/play() and drops a rate set made
+        // before the element is ready — so the speed control "did nothing, always
+        // 1x" on mobile. Re-assert the chosen rate on every lifecycle beat AND,
+        // drift-guarded, on each timeupdate, so a mid-playback change also sticks.
+        const applyRate = () => { if (a.playbackRate !== rateRef.current) a.playbackRate = rateRef.current; };
+
+        // A seek requested before the element could honor it (switch-and-seek loads
+        // a fresh src and play()s from 0; metadata + a seekable range arrive later).
+        // iOS frequently DROPS a currentTime set made at loadedmetadata because the
+        // media is not seekable yet — which played the recording "from the start"
+        // instead of the tapped timecode. Retry across the load phases and only
+        // retire the request once the element actually landed near the target.
+        const applyPendingSeek = () => {
+            const seek = pendingSeekRef.current;
+            if (seek == null) return;
+            const target = clampSeek(seek, a.duration);
+            try { a.currentTime = target; setCurrentTime(target); } catch { return; }
+            if (Math.abs(a.currentTime - target) < 0.5) pendingSeekRef.current = null;
+        };
+
+        const onTime = () => { setCurrentTime(a.currentTime); applyRate(); };
         const onDur = () => {
             if (isFinite(a.duration) && a.duration > 0) setDuration(a.duration);
-            // A seek requested before metadata arrived is applied here.
-            const seek = pendingSeekRef.current;
-            if (seek != null) {
-                pendingSeekRef.current = null;
-                try { a.currentTime = seek; setCurrentTime(seek); } catch { /* ignore */ }
-            }
+            applyPendingSeek();
         };
+        const onReady = () => { applyPendingSeek(); applyRate(); };
         const onPlay = () => setIsPlaying(true);
+        const onPlaying = () => { setIsPlaying(true); applyRate(); };
         const onPause = () => setIsPlaying(false);
         const onEnded = () => setIsPlaying(false);
         // Media/network errors (401 on a stale token, unsupported source, …).
@@ -139,7 +157,10 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
         a.addEventListener('timeupdate', onTime);
         a.addEventListener('loadedmetadata', onDur);
         a.addEventListener('durationchange', onDur);
+        a.addEventListener('loadeddata', onReady);
+        a.addEventListener('canplay', onReady);
         a.addEventListener('play', onPlay);
+        a.addEventListener('playing', onPlaying);
         a.addEventListener('pause', onPause);
         a.addEventListener('ended', onEnded);
         a.addEventListener('error', onError);
@@ -147,7 +168,10 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
             a.removeEventListener('timeupdate', onTime);
             a.removeEventListener('loadedmetadata', onDur);
             a.removeEventListener('durationchange', onDur);
+            a.removeEventListener('loadeddata', onReady);
+            a.removeEventListener('canplay', onReady);
             a.removeEventListener('play', onPlay);
+            a.removeEventListener('playing', onPlaying);
             a.removeEventListener('pause', onPause);
             a.removeEventListener('ended', onEnded);
             a.removeEventListener('error', onError);
@@ -169,8 +193,8 @@ export function PulsePlayerProvider({ children }: { children: ReactNode }) {
         erroredSrcRef.current = null;
         pendingSeekRef.current = seek;
         a.src = buildAudioSrc(t.audioUrl, tokenRef.current);
-        a.playbackRate = rateRef.current;
         a.load();
+        a.playbackRate = rateRef.current; // AFTER load(): iOS resets the rate to 1 on load()
         setCurrentTime(seek ?? 0);
         setDuration(t.durationHint && isFinite(t.durationHint) ? t.durationHint : 0);
         setTrack(t);
