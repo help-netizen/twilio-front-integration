@@ -8,7 +8,7 @@ import {
     DropdownMenuSeparator, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { Input } from '../ui/input';
-import { MoneyInput } from '../ui/MoneyInput';
+import { DiscountControl } from '../shared/DiscountControl';
 import { Label } from '../ui/label';
 import { Checkbox } from '../ui/checkbox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
@@ -811,43 +811,23 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             ) : (
                                 /* OB-24: wrap so the amount drops to its own line on narrow widths. */
                                 <div className="flex flex-wrap items-center gap-2 blanc-l2">
-                                    <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                    <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 bg-[var(--blanc-panel-surface,#fffdf9)] shrink-0">
-                                        <button
-                                            type="button"
-                                            disabled={readOnly}
-                                            onClick={() => { setDiscountType('fixed'); persist({ discount_type: 'fixed', discount_value: discountValue || '0' } as any); }}
-                                            className={`px-2.5 py-0.5 rounded-md blanc-l2 transition-colors ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
-                                        >$</button>
-                                        <button
-                                            type="button"
-                                            disabled={readOnly}
-                                            onClick={() => { setDiscountType('percentage'); persist({ discount_type: 'percentage', discount_value: discountValue || '0' } as any); }}
-                                            className={`px-2.5 py-0.5 rounded-md blanc-l2 transition-colors ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
-                                        >%</button>
-                                    </div>
-                                    {discountType === 'fixed' ? (
-                                        <MoneyInput
-                                            value={discountValue}
-                                            onValueChange={setDiscountValue}
-                                            onBlur={() => persist({ discount_value: discountValue || '0' } as any)}
-                                            disabled={readOnly}
-                                            className="h-8 w-24 rounded-[10px] border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 text-right blanc-l2 tabular-nums outline-none transition-colors focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
-                                        />
-                                    ) : (
-                                        <Input
-                                            type="text"
-                                            inputMode="decimal"
-                                            value={discountValue}
-                                            onChange={e => setDiscountValue(e.target.value.replace(/[^0-9.]/g, ''))}
-                                            onBlur={() => persist({ discount_value: discountValue || '0' } as any)}
-                                            disabled={readOnly}
-                                            className="w-24 h-8 text-right tabular-nums"
-                                        />
-                                    )}
-                                    <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" disabled={readOnly} onClick={() => { setDiscountType(null); setDiscountValue('0'); persist({ discount_type: null, discount_value: '0' } as any); }} title="Remove discount">
-                                        <Trash2 className="size-4" />
-                                    </Button>
+                                    <DiscountControl
+                                        kind={discountType}
+                                        value={discountValue}
+                                        disabled={readOnly}
+                                        onKindChange={(kind, next) => {
+                                            setDiscountType(kind);
+                                            setDiscountValue(next);
+                                            persist({ discount_type: kind, discount_value: next || '0' } as any);
+                                        }}
+                                        onValueChange={setDiscountValue}
+                                        onCommit={() => persist({ discount_value: discountValue || '0' } as any)}
+                                        onRemove={() => {
+                                            setDiscountType(null);
+                                            setDiscountValue('0');
+                                            persist({ discount_type: null, discount_value: '0' } as any);
+                                        }}
+                                    />
                                     <span className="font-mono text-red-600 ml-auto">-{money(estimate.discount_amount)}</span>
                                 </div>
                             ) : !readOnly && (

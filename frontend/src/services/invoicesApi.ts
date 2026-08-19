@@ -43,6 +43,9 @@ export interface Invoice {
     tax_rate: string;
     tax_amount: string;
     discount_amount: string;
+    /** Percentage discounts round-trip since migration 287 — same shape as estimates. */
+    discount_type?: 'fixed' | 'percentage' | null;
+    discount_value?: string | null;
     total: string;
     amount_paid: string;
     balance_due: string;
@@ -125,6 +128,8 @@ export interface InvoiceCreateData {
     internal_note?: string;
     tax_rate?: string;
     discount_amount?: string;
+    discount_type?: 'fixed' | 'percentage' | null;
+    discount_value?: string | null;
     currency?: string;
     payment_terms?: string | null;
     due_date?: string | null;

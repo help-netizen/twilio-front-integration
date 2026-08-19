@@ -20,7 +20,6 @@ import {
 } from '../ui/dropdown-menu';
 import { FloatingField, FloatingLabel } from '../ui/floating-field';
 import { FloatingSelect } from '../ui/floating-select';
-import { MoneyInput } from '../ui/MoneyInput';
 import { SelectItem } from '../ui/select';
 import { TaskStack } from '../tasks/TaskStack';
 import { EstimateSummaryDialog } from '../estimates/EstimateSummaryDialog';
@@ -49,6 +48,7 @@ import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
 import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
 import { InvoiceCollectPaymentDialog } from './InvoiceCollectPaymentDialog';
 import { InvoiceItemSheet, type InvoiceItemDraft } from './InvoiceItemSheet';
+import { DiscountControl, type DiscountKind } from '../shared/DiscountControl';
 import { invoiceStatusTone } from './InvoiceMobileRow';
 import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
 
@@ -131,7 +131,10 @@ export function InvoiceDetailPanel({
     const [itemDraft, setItemDraft] = useState<InvoiceItemDraft>(emptyItem());
     const [savePresetOnNextItem, setSavePresetOnNextItem] = useState(false);
     const [taxRate, setTaxRate] = useState('0');
-    const [discountAmount, setDiscountAmount] = useState('0');
+    // OB-69: invoices persist discount_type/discount_value since migration 287, so the
+    // edit surface can offer the percentage its own create form always had.
+    const [discountKind, setDiscountKind] = useState<DiscountKind>(null);
+    const [discountValue, setDiscountValue] = useState('0');
     const [hasDiscount, setHasDiscount] = useState(false);
     const [dueDate, setDueDate] = useState('');
     const [paymentTerms, setPaymentTerms] = useState('');
@@ -151,11 +154,16 @@ export function InvoiceDetailPanel({
 
     useEffect(() => {
         setTaxRate(invoice.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
-        setDiscountAmount(invoice.discount_amount ? String(invoice.discount_amount) : '0');
-        setHasDiscount(Number(invoice.discount_amount) > 0);
+        setDiscountKind(invoice.discount_type ?? (Number(invoice.discount_amount) > 0 ? 'fixed' : null));
+        setDiscountValue(
+            invoice.discount_value != null && invoice.discount_value !== ''
+                ? String(invoice.discount_value)
+                : (invoice.discount_amount ? String(invoice.discount_amount) : '0'),
+        );
+        setHasDiscount(Number(invoice.discount_amount) > 0 || !!invoice.discount_type);
         setDueDate(toDateInput(invoice.due_date));
         setPaymentTerms(invoice.payment_terms || '');
-    }, [invoice.discount_amount, invoice.due_date, invoice.payment_terms, invoice.tax_rate]);
+    }, [invoice.discount_amount, invoice.discount_type, invoice.discount_value, invoice.due_date, invoice.payment_terms, invoice.tax_rate]);
 
     const { capabilities } = invoiceData;
     const isTerminal = invoice.status === 'void' || invoice.status === 'refunded';
@@ -618,23 +626,41 @@ export function InvoiceDetailPanel({
                         <div className="mt-2 space-y-1 blanc-l2">
                             <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Subtotal</span><span className="font-mono font-semibold">{money(invoice.subtotal)}</span></div>
                             {hasDiscount ? editing ? (
-                                <div className="flex flex-wrap items-center gap-2 py-1">
-                                    <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                    <FloatingLabel label="Amount" filled className="w-28">
-                                        <MoneyInput
-                                            value={discountAmount}
-                                            onValueChange={setDiscountAmount}
-                                            onBlur={() => persist({ discount_amount: discountAmount || '0' })}
-                                            className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right blanc-l2 tabular-nums outline-none focus:border-[var(--blanc-line-strong)]"
-                                        />
-                                    </FloatingLabel>
-                                    <Button type="button" variant="ghost" className="h-10 px-2 text-[var(--blanc-danger)]" onClick={() => { setHasDiscount(false); setDiscountAmount('0'); persist({ discount_amount: '0' }); }}>Remove</Button>
-                                    <span className="ml-auto font-mono font-semibold text-[var(--blanc-danger)]">-{money(invoice.discount_amount)}</span>
+                                <div className="py-1">
+                                    <DiscountControl
+                                        kind={discountKind}
+                                        value={discountValue}
+                                        disabled={readOnly}
+                                        onKindChange={(kind, next) => {
+                                            setDiscountKind(kind);
+                                            setDiscountValue(next);
+                                            persist({ discount_type: kind, discount_value: next || '0' });
+                                        }}
+                                        onValueChange={setDiscountValue}
+                                        onCommit={() => persist({
+                                            discount_type: discountKind ?? 'fixed',
+                                            discount_value: discountValue || '0',
+                                        })}
+                                        onRemove={() => {
+                                            setHasDiscount(false);
+                                            setDiscountKind(null);
+                                            setDiscountValue('0');
+                                            persist({ discount_type: null, discount_value: '0' });
+                                        }}
+                                    />
+                                    <p className="mt-1 text-right font-mono font-semibold text-[var(--blanc-danger)]">
+                                        −{money(invoice.discount_amount)}
+                                    </p>
                                 </div>
                             ) : (
-                                <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Discount</span><span className="font-mono font-semibold text-[var(--blanc-danger)]">-{money(invoice.discount_amount)}</span></div>
+                                <div className="flex min-h-8 items-center justify-between">
+                                    <span className="text-[var(--blanc-ink-2)]">
+                                        Discount{invoice.discount_type === 'percentage' && Number(invoice.discount_value) > 0 ? ` (${Number(invoice.discount_value)}%)` : ''}
+                                    </span>
+                                    <span className="font-mono font-semibold text-[var(--blanc-danger)]">−{money(invoice.discount_amount)}</span>
+                                </div>
                             ) : editing ? (
-                                <button type="button" className="min-h-10 blanc-l2" style={{ color: 'var(--blanc-job)' }} onClick={() => { setHasDiscount(true); setDiscountAmount('0'); }}>+ Add discount</button>
+                                <button type="button" className="min-h-10 blanc-l2" style={{ color: 'var(--blanc-job)' }} onClick={() => { setHasDiscount(true); setDiscountKind('fixed'); setDiscountValue('0'); }}>+ Add discount</button>
                             ) : null}
                             {editing ? (
                                 <div className="flex items-center justify-between gap-3 py-1">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Loader2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { ChevronRight, Loader2, Pencil, Plus, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { aiDraftEstimate } from '../../services/estimatesApi';
 import { expandGroup } from '../../services/priceBookApi';
@@ -23,8 +23,8 @@ import {
     DialogTitle,
 } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { FloatingField, FloatingLabel } from '../ui/floating-field';
-import { MoneyInput } from '../ui/MoneyInput';
+import { FloatingField } from '../ui/floating-field';
+import { DiscountControl } from '../shared/DiscountControl';
 import { OverlayClose } from '../ui/OverlayClose';
 import {
     OrderListSection,
@@ -146,8 +146,11 @@ export function InvoiceEditorDialog({
         if (!open) return;
         const nextItems = invoiceItems(invoice);
         const initialDiscount = Number(invoice?.discount_amount) || 0;
-        const nextDiscountType = initialDiscount > 0 ? 'fixed' as const : null;
-        const nextDiscountValue = initialDiscount > 0 ? String(initialDiscount) : '0';
+        const nextDiscountType = invoice?.discount_type
+            ?? (initialDiscount > 0 ? 'fixed' as const : null);
+        const nextDiscountValue = invoice?.discount_value != null && invoice.discount_value !== ''
+            ? String(invoice.discount_value)
+            : (initialDiscount > 0 ? String(initialDiscount) : '0');
         const nextTaxRate = invoice?.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0';
         const nextOrderList = (invoice?.order_list || []).map(part => (
             makeOrderRow(part.part_number, part.part_name, String(part.quantity))
@@ -364,6 +367,11 @@ export function InvoiceEditorDialog({
                 estimate_id: invoice?.estimate_id ?? defaultEstimateId ?? null,
                 notes: summary.trim() || undefined,
                 tax_rate: taxRate || '0',
+                // OB-69: the kind travels with the value now (migration 287), so a
+                // percentage survives a save and reopens as a percentage instead of
+                // being flattened into the dollars it happened to work out to.
+                discount_type: discountType,
+                discount_value: discountType ? String(rawDiscountValue) : '0',
                 discount_amount: String(discountAmount),
                 items: items.map((item, index) => ({
                     sort_order: index,
@@ -575,35 +583,18 @@ export function InvoiceEditorDialog({
                                                 <span className="text-[var(--blanc-ink-2)]">Discount</span>
                                                 <span className="font-mono font-semibold text-[var(--blanc-danger)]">−{money(discountAmount)}</span>
                                             </div>
-                                            <div className="mt-1.5 flex items-center gap-2">
-                                                <div className="inline-flex shrink-0 rounded-[10px] border border-[var(--blanc-line)] p-0.5">
-                                                    <button type="button" onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Fixed discount">$</button>
-                                                    <button type="button" onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }} className={`rounded-md px-2.5 py-1 text-sm ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-3)]'}`} aria-label="Percentage discount">%</button>
-                                                </div>
-                                                {discountType === 'fixed' ? (
-                                                    <FloatingLabel label="Amount" filled className="w-28">
-                                                        <MoneyInput
-                                                            value={discountValue}
-                                                            onValueChange={setDiscountValue}
-                                                            aria-invalid={!!discountError}
-                                                            aria-describedby={discountError ? 'invoice-discount-error' : undefined}
-                                                            className="h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-transparent px-3 text-right text-sm tabular-nums outline-none focus:border-[var(--blanc-line-strong)]"
-                                                        />
-                                                    </FloatingLabel>
-                                                ) : (
-                                                    <FloatingField
-                                                        label="Percent"
-                                                        value={discountValue}
-                                                        inputMode="decimal"
-                                                        containerClassName="w-28"
-                                                        aria-invalid={!!discountError}
-                                                        aria-describedby={discountError ? 'invoice-discount-error' : undefined}
-                                                        onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
-                                                    />
-                                                )}
-                                                <Button type="button" variant="ghost" size="icon" className="size-10 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }} aria-label="Remove discount">
-                                                    <Trash2 className="size-4" />
-                                                </Button>
+                                            <div className="mt-1.5">
+                                                <DiscountControl
+                                                    kind={discountType}
+                                                    value={discountValue}
+                                                    size="field"
+                                                    showLabel={false}
+                                                    invalid={!!discountError}
+                                                    describedBy={discountError ? 'invoice-discount-error' : undefined}
+                                                    onKindChange={(kind, next) => { setDiscountType(kind); setDiscountValue(next); }}
+                                                    onValueChange={setDiscountValue}
+                                                    onRemove={() => { setDiscountType(null); setDiscountValue('0'); }}
+                                                />
                                             </div>
                                             {discountError ? (
                                                 <p id="invoice-discount-error" className="mt-1.5 text-sm text-[var(--blanc-danger)]">{discountError}</p>

@@ -12,8 +12,10 @@ import {
 } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
+import { Input } from '../ui/input';
 import { Checkbox } from '../ui/checkbox';
 import { Badge } from '../ui/badge';
+import { DiscountControl } from '../shared/DiscountControl';
 import { MoneyInput } from '../ui/MoneyInput';
 import { AutoGrowTextarea } from '../ui/AutoGrowTextarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
@@ -535,53 +537,15 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                                 <span style={{ color: 'var(--blanc-ink-3)' }}>Discount</span>
                                                 <span className="font-mono text-red-600">−{money(discountAmount)}</span>
                                             </div>
-                                            <div className="flex items-center gap-2 text-sm">
-                                                <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => { if (discountType !== 'fixed') setDiscountValue(''); setDiscountType('fixed'); }}
-                                                        className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
-                                                            discountType === 'fixed'
-                                                                ? 'bg-[var(--blanc-ink-1)] text-white'
-                                                                : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
-                                                        }`}
-                                                    >
-                                                        $
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => { if (discountType !== 'percentage') setDiscountValue(''); setDiscountType('percentage'); }}
-                                                        className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
-                                                            discountType === 'percentage'
-                                                                ? 'bg-[var(--blanc-ink-1)] text-white'
-                                                                : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
-                                                        }`}
-                                                    >
-                                                        %
-                                                    </button>
-                                                </div>
-                                                {discountType === 'fixed' ? (
-                                                    <MoneyInput
-                                                        value={discountValue}
-                                                        onValueChange={setDiscountValue}
-                                                        className="w-24 h-8 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
-                                                    />
-                                                ) : (
-                                                    <input
-                                                        type="text"
-                                                        inputMode="decimal"
-                                                        value={discountValue}
-                                                        placeholder="0"
-                                                        onFocus={event => event.currentTarget.select()}
-                                                        onChange={event => setDiscountValue(event.target.value.replace(/[^0-9.]/g, ''))}
-                                                        maxLength={6}
-                                                        className="w-24 h-8 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
-                                                    />
-                                                )}
-                                                <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
-                                                    <Trash2 className="size-4" />
-                                                </Button>
-                                            </div>
+                                            <DiscountControl
+                                                kind={discountType}
+                                                value={discountValue}
+                                                showLabel={false}
+                                                invalid={!!discountError}
+                                                onKindChange={(kind, next) => { setDiscountType(kind); setDiscountValue(next); }}
+                                                onValueChange={setDiscountValue}
+                                                onRemove={() => { setDiscountType(null); setDiscountValue('0'); }}
+                                            />
                                             {/* Under the field it is about, at the size everything else
                                                 on this screen is — the smallest text must not be the one
                                                 carrying the problem. */}
@@ -595,8 +559,11 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     <div className="grid grid-cols-[1fr_auto] items-center gap-3">
                                         <Label className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Tax rate</Label>
                                         <div className="relative w-24">
-                                            <input
-                                                className="h-9 w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent pl-3 pr-7 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                            {/* Same field the discount beside it uses, and the same one
+                                                the estimate CARD uses — one screen must not hold two ideas
+                                                of what an input looks like. */}
+                                            <Input
+                                                className="h-8 w-full pl-3 pr-7 text-right tabular-nums"
                                                 type="text"
                                                 inputMode="decimal"
                                                 value={taxRate}
