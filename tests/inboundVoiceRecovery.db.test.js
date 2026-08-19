@@ -6,8 +6,12 @@ const { randomUUID } = require('crypto');
 const { Pool } = require('pg');
 const recovery = require('../backend/src/services/inboundVoiceRecoveryService');
 
-const FORWARD = fs.readFileSync(
+const FORWARD_285 = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '285_vapi_inbound_recovery_cases.sql'),
+    'utf8',
+);
+const FORWARD_286 = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '286_vapi_recommend_slots_call_audits.sql'),
     'utf8',
 );
 
@@ -33,7 +37,8 @@ beforeAll(async () => {
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
     client = await pool.connect();
     await client.query('BEGIN');
-    await client.query(FORWARD);
+    await client.query(FORWARD_285);
+    await client.query(FORWARD_286);
     companyId = randomUUID();
     await client.query(
         `INSERT INTO companies (id, name, slug)

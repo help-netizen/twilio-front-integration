@@ -100,6 +100,10 @@ const mockHandleInboundRecovery = jest.fn();
 jest.mock('../backend/src/services/inboundVoiceRecoveryService', () => ({
     handleEndOfCall: (...args) => mockHandleInboundRecovery(...args),
 }));
+const mockRecordRecommendSlotsEndOfCall = jest.fn();
+jest.mock('../backend/src/services/vapiRecommendSlotsAuditService', () => ({
+    recordEndOfCall: (...args) => mockRecordRecommendSlotsEndOfCall(...args),
+}));
 
 const SECRET = 'test-webhook-secret';
 
@@ -152,6 +156,7 @@ beforeEach(() => {
     mockFinalize.mockReset();
     mockApplyStatusUpdate.mockReset();
     mockHandleInboundRecovery.mockReset();
+    mockRecordRecommendSlotsEndOfCall.mockReset();
     mockResolveCredential.mockReset();
     mockIngestServerMessage.mockReset();
 
@@ -195,6 +200,7 @@ beforeEach(() => {
     mockFinalize.mockResolvedValue('CA_final');
     mockApplyStatusUpdate.mockResolvedValue('CA_mid');
     mockHandleInboundRecovery.mockResolvedValue({ status: 'skipped', reason: 'short_call' });
+    mockRecordRecommendSlotsEndOfCall.mockResolvedValue({ updated: false });
 });
 
 // Helper: queue the correlation SELECT (first db.query) → the attempt row.

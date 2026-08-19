@@ -35,6 +35,7 @@ const leadsService = require('../../leadsService');
 const slotEngineService = require('../../slotEngineService');
 const validateAddress = require('./validateAddress');
 const { aiActor } = require('../../leadContactActivityService');
+const inboundSlotBookingGuardService = require('../../inboundSlotBookingGuardService');
 // ZIP normalization (recover a dropped leading zero) — shared util.
 const { normalizeZip } = require('../../../utils/zip');
 
@@ -145,6 +146,8 @@ async function run(companyId, verifiedContext, input = {}) {
         State:     state || '',
         PostalCode: normalizeZip(serverAddress?.correctedZip || zip),
     };
+    let slotBookingRefused = false;
+    let inboundBookingGuardRequired = false;
 
     // VAPI-SLOT-ENGINE-001 (Decision D): when the caller picked an engine-offered
     // window, persist it as a schedule-blocking hold on the LEAD — real TIMESTAMPTZ
@@ -152,7 +155,19 @@ async function run(companyId, verifiedContext, input = {}) {
     // text. FIELD_MAP maps LeadDateTime/LeadEndDateTime/Latitude/Longitude → columns.
     // Back-compat: no chosenSlot ⇒ none of these four keys are added (columns NULL).
     // Edge 6: malformed chosenSlot ⇒ treated as absent (never block the call).
-    if (chosenSlot && /^\d{4}-\d{2}-\d{2}$/.test(String(chosenSlot.date))
+    if (chosenSlot) {
+        const bookingGuard = await inboundSlotBookingGuardService.validateChosenSlot(
+            companyId,
+            input,
+        );
+        inboundBookingGuardRequired = bookingGuard.required;
+        if (bookingGuard.required && !bookingGuard.allowed) {
+            slotBookingRefused = true;
+        }
+    }
+    if (!slotBookingRefused
+        && chosenSlot
+        && /^\d{4}-\d{2}-\d{2}$/.test(String(chosenSlot.date))
         && /^\d{1,2}:\d{2}$/.test(String(chosenSlot.start))
         && /^\d{1,2}:\d{2}$/.test(String(chosenSlot.end))) {
         try {
@@ -167,6 +182,7 @@ async function run(companyId, verifiedContext, input = {}) {
         } catch (err) {
             // Never let a slot-compose fault block lead creation.
             console.error('[vapi-tools] createLead slot-persist skipped:', err.message);
+            if (inboundBookingGuardRequired) slotBookingRefused = true;
             delete body.LeadDateTime;
             delete body.LeadEndDateTime;
             delete body.Latitude;
@@ -180,7 +196,16 @@ async function run(companyId, verifiedContext, input = {}) {
             const lead = await leadsService.createLead(body, companyId, {
                 activityActor: aiActor('AI Phone', 'agent'),
             });
-            return { success: true, leadId: lead?.UUID || lead?.uuid || lead?.id || null };
+            const leadId = lead?.UUID || lead?.uuid || lead?.id || null;
+            if (slotBookingRefused) {
+                return {
+                    success: false,
+                    leadId,
+                    needsCallback: true,
+                    error: 'That appointment time could not be confirmed. A teammate will follow up.',
+                };
+            }
+            return { success: true, leadId };
         } catch (err) {
             console.error(`[vapi-tools] createLead attempt ${attempt} failed:`, err.message);
             if (attempt < 2) await new Promise(r => setTimeout(r, 2000));

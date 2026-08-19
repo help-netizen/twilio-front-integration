@@ -66,6 +66,7 @@ function normalizeInput(input) {
         providerDurationSeconds: Number.isFinite(suppliedDuration) && suppliedDuration >= 0
             ? Math.floor(suppliedDuration)
             : null,
+        inboundTrusted: input.inboundTrusted === true,
     };
 }
 
@@ -231,14 +232,22 @@ async function markSkipped(client, input, reason, context = {}) {
     return { status: 'skipped', reason, created: false };
 }
 
-async function createDispatcherTask(client, input, context) {
+async function createDispatcherTask(client, input, context, reason = 'missing_open_work') {
+    const slotUnavailable = reason === 'slot_unavailable';
     const seconds = context.durationSeconds;
     const phoneLabel = context.callerPhone || 'number unavailable';
-    const description = [
-        `Call back ${phoneLabel}.`,
-        `The voice assistant spoke with this caller for ${seconds} seconds, but no open lead or job exists.`,
-        'Open the linked conversation to review its recording and transcript before calling.',
-    ].join(' ');
+    const description = slotUnavailable
+        ? [
+            `Call back ${phoneLabel}.`,
+            'The voice assistant could not confirm an available appointment window for an address we serve.',
+            'Open the linked conversation, confirm current availability, and arrange the visit.',
+        ].join(' ')
+        : [
+            `Call back ${phoneLabel}.`,
+            `The voice assistant spoke with this caller for ${seconds} seconds, but no open lead or job exists.`,
+            'Open the linked conversation to review its recording and transcript before calling.',
+        ].join(' ');
+    const agentType = slotUnavailable ? 'voice_slot_unavailable' : 'voice_inbound_recovery';
     const inserted = await client.query(
         `INSERT INTO tasks (
              company_id, thread_id, subject_type, subject_id,
@@ -247,25 +256,209 @@ async function createDispatcherTask(client, input, context) {
          ) VALUES (
              $1, $2, 'contact', $3,
              $4, $5, 'open', 'p1', now(),
-             'agent', 'agent', 'voice_inbound_recovery', $6::jsonb, $7::jsonb
+             'agent', 'agent', $6, $7::jsonb, $8::jsonb
          )
          RETURNING id`,
         [
             input.companyId,
             context.timelineId,
             context.contactId || null,
-            `Call back ${phoneLabel} — AI conversation needs follow-up`,
+            slotUnavailable
+                ? `Call back ${phoneLabel} — appointment time needs confirmation`
+                : `Call back ${phoneLabel} — AI conversation needs follow-up`,
             description,
+            agentType,
             JSON.stringify({
-                source: 'voice_inbound_recovery',
+                source: agentType,
                 call_sid: context.callSid || null,
             }),
             JSON.stringify({
-                reason: 'The AI conversation ended without an open lead or job.',
+                reason: slotUnavailable
+                    ? 'No current appointment window could be confirmed.'
+                    : 'The AI conversation ended without an open lead or job.',
             }),
         ],
     );
     return inserted.rows[0].id;
+}
+
+/**
+ * Create the in-call slot-unavailable callback under the same provider-call lock
+ * and recovery row used by the end-of-call safety net. The caller-facing route
+ * treats all failures as non-fatal; this function retains a retry_pending intent
+ * so the existing recovery sweep can repair a transient task-write failure.
+ */
+async function createSlotUnavailableCallbackWithClient(rawInput, client) {
+    const input = normalizeInput(rawInput);
+    if (!input.companyId || !input.providerCallId) {
+        const error = new Error('VOICE_SLOT_CALLBACK_IDENTITY_REQUIRED');
+        error.code = 'VOICE_SLOT_CALLBACK_IDENTITY_REQUIRED';
+        throw error;
+    }
+
+    await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+        [`vapi-inbound-recovery:${input.providerCallId}`],
+    );
+    await client.query(
+        `INSERT INTO vapi_inbound_recovery_cases (
+             provider_call_id, company_id, state, decision_reason,
+             caller_phone_e164, provider_call_type, provider_started_at,
+             provider_ended_at, observed_duration_seconds
+         ) VALUES ($1, $2, 'pending', 'slot_unavailable', $3, $4, $5, $6, $7)
+         ON CONFLICT (provider_call_id) DO NOTHING`,
+        [
+            input.providerCallId,
+            input.companyId,
+            input.callerPhone,
+            input.providerCallType,
+            input.providerStartedAt,
+            input.providerEndedAt,
+            input.providerDurationSeconds,
+        ],
+    );
+    const existingResult = await client.query(
+        `SELECT *
+         FROM vapi_inbound_recovery_cases
+         WHERE provider_call_id = $1 AND company_id = $2
+         FOR UPDATE`,
+        [input.providerCallId, input.companyId],
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) {
+        const error = new Error('VOICE_RECOVERY_PROVIDER_CALL_COLLISION');
+        error.code = 'VOICE_RECOVERY_PROVIDER_CALL_COLLISION';
+        throw error;
+    }
+    if (existing.state === 'task_created') {
+        return {
+            status: 'task_created',
+            taskId: existing.task_id || null,
+            created: false,
+            idempotent: true,
+        };
+    }
+
+    const effective = {
+        ...input,
+        providerCallType: input.providerCallType || existing.provider_call_type,
+        callerPhone: input.callerPhone || existing.caller_phone_e164,
+        providerStartedAt: input.providerStartedAt || validDate(existing.provider_started_at),
+        providerEndedAt: input.providerEndedAt || validDate(existing.provider_ended_at),
+        providerDurationSeconds: input.providerDurationSeconds
+            ?? existing.observed_duration_seconds,
+    };
+    await client.query(
+        `UPDATE vapi_inbound_recovery_cases
+         SET state = 'pending',
+             decision_reason = 'slot_unavailable',
+             attempt_count = attempt_count + 1,
+             caller_phone_e164 = COALESCE($3, caller_phone_e164),
+             provider_call_type = COALESCE($4, provider_call_type),
+             provider_started_at = COALESCE($5, provider_started_at),
+             provider_ended_at = COALESCE($6, provider_ended_at),
+             observed_duration_seconds = COALESCE($7, observed_duration_seconds),
+             updated_at = now()
+         WHERE provider_call_id = $1 AND company_id = $2`,
+        [
+            effective.providerCallId,
+            effective.companyId,
+            effective.callerPhone,
+            effective.providerCallType,
+            effective.providerStartedAt,
+            effective.providerEndedAt,
+            effective.providerDurationSeconds,
+        ],
+    );
+
+    await client.query('SAVEPOINT inbound_voice_slot_callback_work');
+    try {
+        const local = await resolveLocalContext(client, effective);
+        const inboundConfirmed = effective.inboundTrusted
+            || local?.session_direction === 'inbound'
+            || effective.providerCallType === 'inboundPhoneCall';
+        if (!inboundConfirmed) {
+            const error = new Error('VOICE_SLOT_CALLBACK_NOT_INBOUND');
+            error.code = 'VOICE_SLOT_CALLBACK_NOT_INBOUND';
+            throw error;
+        }
+
+        const timeline = await resolveTimeline(client, effective, local);
+        const callerPhone = normalizePhone(local?.from_number) || effective.callerPhone;
+        const contactId = local?.contact_id || timeline?.contact_id || null;
+        const context = {
+            sessionId: local?.session_id || null,
+            callSid: local?.call_sid || local?.twilio_parent_call_sid || null,
+            timelineId: timeline.id,
+            contactId,
+            callerPhone,
+            durationSeconds: effective.providerDurationSeconds,
+        };
+        const taskId = await createDispatcherTask(
+            client,
+            effective,
+            context,
+            'slot_unavailable',
+        );
+        await client.query(
+            `UPDATE vapi_inbound_recovery_cases
+             SET state = 'task_created',
+                 decision_reason = 'slot_unavailable',
+                 vapi_call_session_id = $3,
+                 call_sid = $4,
+                 timeline_id = $5,
+                 contact_id = $6,
+                 task_id = $7,
+                 next_retry_at = NULL,
+                 last_error_code = NULL,
+                 updated_at = now()
+             WHERE provider_call_id = $1 AND company_id = $2`,
+            [
+                effective.providerCallId,
+                effective.companyId,
+                context.sessionId,
+                context.callSid,
+                context.timelineId,
+                context.contactId,
+                taskId,
+            ],
+        );
+        await client.query(
+            `UPDATE vapi_recommend_slots_call_audits
+             SET callback_task_id = $3,
+                 call_sid = COALESCE(call_sid, $4),
+                 updated_at = now()
+             WHERE provider_call_id = $1 AND company_id = $2`,
+            [
+                effective.providerCallId,
+                effective.companyId,
+                taskId,
+                context.callSid,
+            ],
+        );
+        await client.query('RELEASE SAVEPOINT inbound_voice_slot_callback_work');
+        return { status: 'task_created', taskId, created: true };
+    } catch (error) {
+        await client.query('ROLLBACK TO SAVEPOINT inbound_voice_slot_callback_work');
+        await client.query('RELEASE SAVEPOINT inbound_voice_slot_callback_work');
+        const code = errorCode(error);
+        await client.query(
+            `UPDATE vapi_inbound_recovery_cases
+             SET state = 'retry_pending',
+                 decision_reason = 'slot_unavailable',
+                 next_retry_at = now() + ($3::integer * interval '1 minute'),
+                 last_error_code = $4,
+                 updated_at = now()
+             WHERE provider_call_id = $1 AND company_id = $2`,
+            [effective.providerCallId, effective.companyId, RETRY_DELAY_MINUTES, code],
+        );
+        console.error('[inboundVoiceRecovery] slot callback task deferred', {
+            companyId: effective.companyId,
+            providerCallId: effective.providerCallId,
+            code,
+        });
+        return { status: 'retry_pending', reason: code, created: false };
+    }
 }
 
 async function processEndOfCallWithClient(rawInput, client) {
@@ -300,15 +493,53 @@ async function processEndOfCallWithClient(rawInput, client) {
     const existingResult = await client.query(
         `SELECT *
          FROM vapi_inbound_recovery_cases
-         WHERE provider_call_id = $1
+         WHERE provider_call_id = $1 AND company_id = $2
          FOR UPDATE`,
-        [input.providerCallId],
+        [input.providerCallId, input.companyId],
     );
     const existing = existingResult.rows[0];
-    if (!existing || String(existing.company_id) !== input.companyId) {
+    if (!existing) {
         const error = new Error('VOICE_RECOVERY_PROVIDER_CALL_COLLISION');
         error.code = 'VOICE_RECOVERY_PROVIDER_CALL_COLLISION';
         throw error;
+    }
+
+    // OB-66: the in-call empty-availability path records its real callback task
+    // on the audit row. Adopt that terminal decision before applying duration or
+    // open-lead suppression, so an EoC webhook can never create a second task.
+    const slotAuditResult = await client.query(
+        `SELECT callback_task_id, call_sid
+         FROM vapi_recommend_slots_call_audits
+         WHERE provider_call_id = $1 AND company_id = $2
+         LIMIT 1`,
+        [input.providerCallId, input.companyId],
+    );
+    const slotAudit = slotAuditResult.rows[0];
+    if (slotAudit?.callback_task_id != null) {
+        await client.query(
+            `UPDATE vapi_inbound_recovery_cases
+             SET state = 'task_created',
+                 decision_reason = 'slot_unavailable',
+                 task_id = $3,
+                 call_sid = COALESCE(call_sid, $4),
+                 next_retry_at = NULL,
+                 last_error_code = NULL,
+                 updated_at = now()
+             WHERE provider_call_id = $1 AND company_id = $2`,
+            [
+                input.providerCallId,
+                input.companyId,
+                slotAudit.callback_task_id,
+                slotAudit.call_sid || null,
+            ],
+        );
+        return {
+            status: 'task_created',
+            reason: 'slot_unavailable',
+            taskId: slotAudit.callback_task_id,
+            created: false,
+            idempotent: true,
+        };
     }
     if (existing.state === 'task_created' || existing.state === 'skipped') {
         return {
@@ -318,6 +549,14 @@ async function processEndOfCallWithClient(rawInput, client) {
             created: false,
             idempotent: true,
         };
+    }
+    if (existing.state === 'retry_pending' && existing.decision_reason === 'slot_unavailable') {
+        return createSlotUnavailableCallbackWithClient({
+            ...rawInput,
+            companyId: input.companyId,
+            providerCallId: input.providerCallId,
+            inboundTrusted: true,
+        }, client);
     }
 
     const effective = {
@@ -476,6 +715,16 @@ async function handleEndOfCall(input) {
     return result;
 }
 
+async function handleSlotUnavailableCallback(input) {
+    return withTransaction(async (client) => {
+        const processed = await createSlotUnavailableCallbackWithClient(input, client);
+        if (processed.created && typeof client.afterCommit === 'function') {
+            client.afterCommit(() => tasksService.emitTaskChange(input.companyId));
+        }
+        return processed;
+    });
+}
+
 async function sweepRetryPending({ now = new Date(), limit = SWEEP_LIMIT } = {}) {
     const safeLimit = Number.isInteger(limit) && limit > 0 && limit <= SWEEP_LIMIT
         ? limit
@@ -483,7 +732,7 @@ async function sweepRetryPending({ now = new Date(), limit = SWEEP_LIMIT } = {})
     const { rows } = await db.query(
         `SELECT company_id, provider_call_id, provider_call_type,
                 caller_phone_e164, provider_started_at, provider_ended_at,
-                observed_duration_seconds
+                observed_duration_seconds, decision_reason
          FROM vapi_inbound_recovery_cases
          WHERE state = 'retry_pending'
            AND next_retry_at <= $1
@@ -494,7 +743,7 @@ async function sweepRetryPending({ now = new Date(), limit = SWEEP_LIMIT } = {})
     const results = [];
     for (const row of rows) {
         try {
-            results.push(await handleEndOfCall({
+            const retryInput = {
                 companyId: row.company_id,
                 providerCallId: row.provider_call_id,
                 providerCallType: row.provider_call_type,
@@ -502,7 +751,10 @@ async function sweepRetryPending({ now = new Date(), limit = SWEEP_LIMIT } = {})
                 providerStartedAt: row.provider_started_at,
                 providerEndedAt: row.provider_ended_at,
                 providerDurationSeconds: row.observed_duration_seconds,
-            }));
+            };
+            results.push(row.decision_reason === 'slot_unavailable'
+                ? await handleSlotUnavailableCallback({ ...retryInput, inboundTrusted: true })
+                : await handleEndOfCall(retryInput));
         } catch (error) {
             console.error('[inboundVoiceRecovery] retry sweep failed', {
                 companyId: row.company_id,
@@ -525,6 +777,8 @@ module.exports = {
     durationFromProvider,
     minimumConversationSeconds,
     processEndOfCallWithClient,
+    createSlotUnavailableCallbackWithClient,
     handleEndOfCall,
+    handleSlotUnavailableCallback,
     sweepRetryPending,
 };

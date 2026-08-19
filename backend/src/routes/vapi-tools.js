@@ -35,6 +35,8 @@ const resultShapes = require('../services/agentSkills/resultShapes');
 const vapiCallContextService = require('../services/vapiCallContextService');
 const machineCredentials = require('../services/machineCredentialService');
 const inboundVoiceRecoveryService = require('../services/inboundVoiceRecoveryService');
+const vapiRecommendSlotsAuditService = require('../services/vapiRecommendSlotsAuditService');
+const { TRANSPORT_FIELD: INBOUND_BOOKING_GUARD_FIELD } = require('../services/inboundSlotBookingGuardService');
 
 // The 4 relocated read-only legacy L0 tools keep byte-identical behavior (AC-11).
 // createLead is deliberately NOT in this set: caller identity is server context,
@@ -183,6 +185,18 @@ router.post('/', vapiSecretAuth, async (req, res) => {
             // must never change the provider webhook response.
             if (message?.type === 'end-of-call-report') {
                 try {
+                    await vapiRecommendSlotsAuditService.recordEndOfCall({
+                        companyId: req.machineCredential.companyId,
+                        message,
+                    });
+                } catch (auditError) {
+                    console.error('[vapi-tools] recommendSlots transcript audit unavailable (non-fatal)', {
+                        companyId: req.machineCredential.companyId,
+                        providerCallId: message.call?.id || null,
+                        code: auditError?.code || 'VAPI_RECOMMEND_AUDIT_UNAVAILABLE',
+                    });
+                }
+                try {
                     await inboundVoiceRecoveryService.handleEndOfCall({
                         companyId: req.machineCredential.companyId,
                         message,
@@ -236,6 +250,12 @@ router.post('/', vapiSecretAuth, async (req, res) => {
                 {
                     ...(callContext.matched ? callContext.values : {}),
                     companyId: transportCompanyId,
+                    ...(!outboundClaimed ? {
+                        [INBOUND_BOOKING_GUARD_FIELD]: {
+                            required: true,
+                            providerCallId: message.call?.id || null,
+                        },
+                    } : {}),
                 },
             );
             const result = await agentSkills.runSkill(
@@ -244,6 +264,27 @@ router.post('/', vapiSecretAuth, async (req, res) => {
                 { source: 'vapi', call: message.call },
                 input,
             );
+
+            if (name === 'recommendSlots') {
+                try {
+                    await vapiRecommendSlotsAuditService.recordInvocation({
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id,
+                        toolCallId: toolCall.id,
+                        arguments: args,
+                        result,
+                        call: message.call,
+                        inbound: !outboundClaimed,
+                    });
+                } catch (auditError) {
+                    console.error('[vapi-tools] recommendSlots audit unavailable (non-fatal)', {
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id || null,
+                        toolCallId: toolCall.id || null,
+                        code: auditError?.code || 'VAPI_RECOMMEND_AUDIT_UNAVAILABLE',
+                    });
+                }
+            }
 
             results.push({
                 toolCallId: toolCall.id,

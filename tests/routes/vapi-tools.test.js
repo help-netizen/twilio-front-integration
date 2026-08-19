@@ -58,6 +58,14 @@ jest.mock('../../backend/src/services/machineCredentialService', () => {
 jest.mock('../../backend/src/services/inboundVoiceRecoveryService', () => ({
     handleEndOfCall: jest.fn(),
 }));
+jest.mock('../../backend/src/services/vapiRecommendSlotsAuditService', () => ({
+    recordInvocation: jest.fn(),
+    recordEndOfCall: jest.fn(),
+}));
+jest.mock('../../backend/src/services/inboundSlotBookingGuardService', () => ({
+    TRANSPORT_FIELD: '__vapiInboundBookingGuard',
+    validateChosenSlot: jest.fn(async () => ({ required: true, allowed: true })),
+}));
 jest.mock('https', () => ({ get: jest.fn() }));
 
 const https = require('https');
@@ -71,6 +79,7 @@ const marketplaceService = require('../../backend/src/services/marketplaceServic
 const slotEngineService = require('../../backend/src/services/slotEngineService');
 const machineCredentials = require('../../backend/src/services/machineCredentialService');
 const inboundVoiceRecoveryService = require('../../backend/src/services/inboundVoiceRecoveryService');
+const vapiRecommendSlotsAuditService = require('../../backend/src/services/vapiRecommendSlotsAuditService');
 const vapiToolsRouter = require('../../backend/src/routes/vapi-tools');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -93,7 +102,11 @@ function toolCall(name, args, id = 'tc1') {
             toolCallList: [
                 { id, function: { name, arguments: JSON.stringify(args) } },
             ],
-            call: { customer: { number: '+16175551234' } },
+            call: {
+                id: 'vapi-inbound-call-1',
+                type: 'inboundPhoneCall',
+                customer: { number: '+16175551234' },
+            },
         },
     };
 }
@@ -146,6 +159,8 @@ beforeEach(() => {
     process.env.GOOGLE_GEOCODING_KEY = 'test-geocoding-key';
     delete process.env.VITE_GOOGLE_MAPS_API_KEY; // ensure dedicated key is used
     inboundVoiceRecoveryService.handleEndOfCall.mockResolvedValue({ status: 'skipped' });
+    vapiRecommendSlotsAuditService.recordInvocation.mockResolvedValue({ recorded: true });
+    vapiRecommendSlotsAuditService.recordEndOfCall.mockResolvedValue({ updated: true });
     app = makeApp();
 });
 
@@ -938,6 +953,58 @@ describe('Group 10 — recommendSlots', () => {
         expect(res.body.results[0].toolCallId).toBe('tcX');
         expect(typeof res.body.results[0].result).toBe('string');
         expect(JSON.parse(res.body.results[0].result).available).toBe(true);
+    });
+
+    test('audit runs on the exact args/result and an audit failure cannot change the VAPI response', async () => {
+        slotEngineService.getRecommendations.mockResolvedValue({
+            recommendations: [rec('2026-07-08', '10:00', '13:00')],
+            engine_status: 'ok',
+        });
+        const auditError = Object.assign(new Error('audit database unavailable'), {
+            code: 'AUDIT_DB_DOWN',
+        });
+        vapiRecommendSlotsAuditService.recordInvocation.mockRejectedValueOnce(auditError);
+        const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('recommendSlots', { zip: '02101' }, 'audit-tool-1'));
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+            results: [{
+                toolCallId: 'audit-tool-1',
+                result: JSON.stringify({
+                    available: true,
+                    slots: [{
+                        key: '2026-07-08|10:00|13:00',
+                        date: '2026-07-08',
+                        start: '10:00',
+                        end: '13:00',
+                        label: 'Wednesday, July 8, 10 AM to 1 PM',
+                        techName: 'Alex',
+                        confidence: 'high',
+                    }],
+                }),
+            }],
+        });
+        expect(vapiRecommendSlotsAuditService.recordInvocation).toHaveBeenCalledWith({
+            companyId: '00000000-0000-0000-0000-000000000001',
+            providerCallId: 'vapi-inbound-call-1',
+            toolCallId: 'audit-tool-1',
+            arguments: { zip: '02101' },
+            result: expect.objectContaining({ available: true }),
+            call: expect.objectContaining({ id: 'vapi-inbound-call-1' }),
+            inbound: true,
+        });
+        expect(error).toHaveBeenCalledWith(
+            '[vapi-tools] recommendSlots audit unavailable (non-fatal)',
+            expect.objectContaining({
+                providerCallId: 'vapi-inbound-call-1',
+                toolCallId: 'audit-tool-1',
+                code: 'AUDIT_DB_DOWN',
+            }),
+        );
+        error.mockRestore();
     });
 });
 

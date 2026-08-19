@@ -54,10 +54,14 @@ jest.mock('../backend/src/services/slotEngineService', () => ({
     tzCombine: jest.fn((date, hhmm) => `${date}T${hhmm}:00.000Z`),
 }));
 jest.mock('../backend/src/services/eventService', () => ({ logEvent: jest.fn(() => {}) }));
+jest.mock('../backend/src/services/inboundSlotBookingGuardService', () => ({
+    validateChosenSlot: jest.fn(),
+}));
 
 const leadsService = require('../backend/src/services/leadsService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
 const eventService = require('../backend/src/services/eventService');
+const inboundSlotBookingGuardService = require('../backend/src/services/inboundSlotBookingGuardService');
 const { runSkill } = require(AGENT);
 
 const SLOT = { date: '2026-07-16', start: '13:00', end: '15:00' };
@@ -72,6 +76,10 @@ beforeEach(() => {
     gate.deriveLevel.mockResolvedValue({ level: 'L1', contactId: CONTACT, customerName: 'Jane Doe', matchedPhone: '6175551212' });
     leadsService.getOpenLeadsByContact.mockResolvedValue([]);
     slotEngineService.tzCombine.mockImplementation((date, hhmm) => `${date}T${hhmm}:00.000Z`);
+    inboundSlotBookingGuardService.validateChosenSlot.mockResolvedValue({
+        required: false,
+        allowed: true,
+    });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -186,6 +194,22 @@ describe('bookOnLead — no open lead → createLead delegation (B2)', () => {
 // ════════════════════════════════════════════════════════════════════════════
 
 describe('bookOnLead — confirm-before-write (B5/B6)', () => {
+    test('OB-66: inbound non-offered slot is refused before any lead read/write', async () => {
+        inboundSlotBookingGuardService.validateChosenSlot.mockResolvedValue({
+            required: true,
+            allowed: false,
+        });
+        const out = await runSkill('bookOnLead', CO, {}, {
+            phone: '+16175551212',
+            chosenSlot: SLOT,
+            __vapiInboundBookingGuard: { required: true, providerCallId: 'vapi-call-book-1' },
+        });
+        expect(out).toMatchObject({ ok: false, needsCallback: true });
+        expect(leadsService.getOpenLeadsByContact).not.toHaveBeenCalled();
+        expect(leadsService.updateLead).not.toHaveBeenCalled();
+        expect(leadsService.createLead).not.toHaveBeenCalled();
+    });
+
     test('B5: malformed chosenSlot (no end) → refusal + needsConfirmation, NO read/write', async () => {
         const out = await runSkill('bookOnLead', CO, {}, { phone: '+16175551212', chosenSlot: { date: '2026-07-16', start: '13:00' } });
         expect(out).toMatchObject({ ok: false, needsConfirmation: true });

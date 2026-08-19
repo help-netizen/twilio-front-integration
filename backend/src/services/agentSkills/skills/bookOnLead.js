@@ -46,6 +46,7 @@ const resultShapes = require('../resultShapes');
 // so a bookOnLead slot and a reschedule/createLead slot are validated the same way.
 const { isConfirmedSlot, windowPhrase } = require('./rescheduleAppointment');
 const { aiActor } = require('../../leadContactActivityService');
+const inboundSlotBookingGuardService = require('../../inboundSlotBookingGuardService');
 
 /**
  * @param {string} companyId Tenant scope (DEFAULT_COMPANY_ID on voice/public-MCP).
@@ -86,6 +87,17 @@ async function run(companyId, verifiedContext, input) {
         return resultShapes.refusal(
             "Let's lock in a window first — which time works best for you?",
             { needsConfirmation: true },
+        );
+    }
+
+    const bookingGuard = await inboundSlotBookingGuardService.validateChosenSlot(
+        companyId,
+        src,
+    );
+    if (bookingGuard.required && !bookingGuard.allowed) {
+        return resultShapes.refusal(
+            'I could not confirm that appointment time. Let me have a teammate follow up with you.',
+            { needsCallback: true },
         );
     }
 

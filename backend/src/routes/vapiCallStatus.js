@@ -69,6 +69,7 @@ const eventService = require('../services/eventService');
 const eventBus = require('../services/eventBus');
 const outboundCallSettingsService = require('../services/outboundCallSettingsService');
 const inboundVoiceRecoveryService = require('../services/inboundVoiceRecoveryService');
+const vapiRecommendSlotsAuditService = require('../services/vapiRecommendSlotsAuditService');
 
 function emitJobAiOutcome(companyId, eventType, jobId, attemptId) {
     return eventBus.emit(companyId, eventType, {
@@ -307,6 +308,19 @@ router.post('/', statusCredentialAuth, async (req, res) => {
             return res.json({ ok: true });
         }
         const endedReason = message && (message.endedReason || (message.call && message.call.endedReason));
+
+        try {
+            await vapiRecommendSlotsAuditService.recordEndOfCall({
+                companyId: attempt?.company_id || req.machineCredential.companyId,
+                message,
+            });
+        } catch (auditError) {
+            console.error('[vapiCallStatus] recommendSlots transcript audit unavailable (non-fatal)', {
+                companyId: attempt?.company_id || req.machineCredential.companyId,
+                providerCallId: providerCallId || null,
+                code: auditError?.code || 'VAPI_RECOMMEND_AUDIT_UNAVAILABLE',
+            });
+        }
 
         if (!attempt) {
             // Inbound safety net runs BESIDE cost ingest. A missing lead/job after
