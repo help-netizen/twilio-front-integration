@@ -46,17 +46,31 @@ async function assistantRequestCredentialAuth(req, res, next) {
     }
 }
 
+// Vapi normalises the INVITE's custom headers into variableValues and drops the
+// `x-` prefix while doing it, so our token arrives as `albusto-call-token`. On a
+// real inbound SIP call NONE of the sipHeaders containers below are populated —
+// variableValues is the only place the token actually lands (OB-62, prod 2026-08-19).
+const TOKEN_KEYS = Object.freeze([
+    vapiCallIdentityService.TOKEN_HEADER,
+    vapiCallIdentityService.TOKEN_HEADER.replace(/^x-/, ''),
+]);
+
+function isTokenKey(key) {
+    return TOKEN_KEYS.includes(String(key).toLowerCase());
+}
+
 function extractCorrelationToken(message, { required = true } = {}) {
     const call = message?.call || {};
     const containers = [
         call.sipHeaders,
         call.phoneCallProviderDetails?.sipHeaders,
         call.headers,
+        call.assistantOverrides?.variableValues,
     ].filter((value) => value && typeof value === 'object' && !Array.isArray(value));
     const values = [];
     for (const headers of containers) {
         for (const [key, value] of Object.entries(headers)) {
-            if (key.toLowerCase() === vapiCallIdentityService.TOKEN_HEADER) {
+            if (isTokenKey(key)) {
                 if (typeof value !== 'string' || value.trim() === '') {
                     throw new vapiCallIdentityService.VapiIdentityError(
                         'VAPI_IDENTITY_TOKEN_REQUIRED',
@@ -80,9 +94,27 @@ function extractCorrelationToken(message, { required = true } = {}) {
     return unique[0];
 }
 
+// An inbound SIP assistant-request ALWAYS carries call.assistantOverrides: Vapi
+// fills it with variableValues built from the INVITE's custom headers (Twilio's
+// X-Twilio-CallSid, our x-albusto-call-token, the carrier ids). That is provider
+// transport metadata, not a caller picking an assistant, and refusing it outright
+// rejected every real inbound call (OB-62, proven on prod 2026-08-19: three test
+// calls, 400 each, `assistant-request-returned-error`, caller heard Vapi's error
+// prompt). Anything BEYOND variableValues inside it would be a genuine selection
+// claim and is still refused.
+function overridesClaimSelection(overrides) {
+    if (overrides === undefined || overrides === null) return false;
+    if (typeof overrides !== 'object' || Array.isArray(overrides)) return true;
+    return Object.keys(overrides).some((key) => key !== 'variableValues');
+}
+
 function hasProviderSelectionClaims(message) {
     const call = message?.call || {};
     const phoneNumber = message?.phoneNumber || {};
+    // Only the CALL-level overrides are provider-populated. A top-level
+    // `message.assistantOverrides` is something Vapi never sends, so its mere
+    // presence stays a refused claim.
+    if (overridesClaimSelection(call.assistantOverrides)) return true;
     return [
         message?.assistantId,
         message?.assistant,
@@ -97,7 +129,6 @@ function hasProviderSelectionClaims(message) {
         message?.serverUrl,
         call.assistantId,
         call.assistant,
-        call.assistantOverrides,
         call.squadId,
         call.squad,
         call.destination,
@@ -215,6 +246,7 @@ router.post('/', assistantRequestCredentialAuth, async (req, res) => {
 module.exports = router;
 module.exports.extractCorrelationToken = extractCorrelationToken;
 module.exports.hasProviderSelectionClaims = hasProviderSelectionClaims;
+module.exports.overridesClaimSelection = overridesClaimSelection;
 module.exports.answerUnattributed = answerUnattributed;
 module.exports.buildAssistantResponse = buildAssistantResponse;
 module.exports.ASSISTANT_REQUEST_PROBE_VARIABLES = ASSISTANT_REQUEST_PROBE_VARIABLES;
