@@ -109,6 +109,7 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                         onClick={() => player.playTrack(track)}
                         title={isPlaying ? 'Pause' : 'Play recording'}
                         aria-label={isPlaying ? 'Pause' : 'Play recording'}
+                        data-testid="pulse-play-recording"
                         className="h-7 shrink-0 flex items-center gap-1.5 pl-2 pr-2.5 rounded-full text-[11px] font-semibold transition-opacity hover:opacity-90"
                         style={isActiveTrack
                             ? { background: 'var(--blanc-accent)', color: '#fff' }
@@ -198,6 +199,8 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                                 return (
                                                     <div
                                                         key={`ge-${ge.label}-${idx}`}
+                                                        data-testid={hasTs ? 'pulse-entity-row' : undefined}
+                                                        data-seek-sec={hasTs ? sec : undefined}
                                                         onClick={() => {
                                                             if (!hasTs) return;
                                                             player.seekTrack(track, sec);
@@ -265,6 +268,8 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                             return (
                                                 <button
                                                     key={idx}
+                                                    data-testid={sec != null ? 'pulse-transcript-line' : undefined}
+                                                    data-seek-sec={sec != null ? sec : undefined}
                                                     onClick={() => { if (sec != null) player.seekTrack(track, sec); }}
                                                     className={`w-full flex items-baseline gap-2 px-2 py-1.5 rounded-lg text-left text-xs transition-colors ${sec != null ? 'cursor-pointer' : 'cursor-default'}`}
                                                     style={sec != null ? { color: 'var(--blanc-ink-1)' } : { color: 'var(--blanc-ink-2)' }}

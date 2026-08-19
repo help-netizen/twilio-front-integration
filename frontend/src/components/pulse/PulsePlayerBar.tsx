@@ -90,6 +90,7 @@ function RateChip({ p, size = 'md' }: { p: PulsePlayerApi; size?: 'md' | 'lg' })
             onClick={p.cycleRate}
             title="Playback speed"
             aria-label="Playback speed"
+            data-testid="pulse-player-rate"
             className={`${size === 'lg' ? 'h-10 px-3 text-[13px]' : 'h-8 px-2 text-[11px]'} shrink-0 rounded-lg font-semibold tabular-nums transition-colors hover:bg-[rgba(25,25,25,0.05)]`}
             style={{ color: p.rate !== 1 ? 'var(--blanc-accent)' : 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
         >
