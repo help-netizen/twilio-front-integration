@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Search, X, Moon, Sun } from 'lucide-react';
 import { toast } from 'sonner';
@@ -6,9 +6,10 @@ import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { MobileListPage } from '../components/layout/MobileListPage';
 import { TaskSnoozeMenu } from '../components/tasks/TaskSnoozeMenu';
+import { TaskAssigneeFilter, type AssigneeFilterValue } from '../components/tasks/TaskAssigneeFilter';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { FilterColumn } from '../components/jobs/jobsFilterHelpers';
-import { listTasksPage, completeTask, snoozeTask, unsnoozeTask, parentPath, type Task, type TaskParentType } from '../components/tasks/tasksApi';
+import { listTasksPage, listAssignees, getTaskFacets, completeTask, snoozeTask, unsnoozeTask, parentPath, type Task, type TaskParentType, type Assignee, type TaskFacets } from '../components/tasks/tasksApi';
 import { isOverdue, snoozedUntilLabel } from '../components/tasks/taskUtils';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../utils/companyTime';
 import { useLoadMoreList } from '../hooks/useLoadMoreList';
@@ -79,6 +80,28 @@ export function TasksPage() {
     const [sortBy, setSortBy] = useState<SortKey>('due_at');
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
     const debouncedSearch = useDebouncedSearch(searchQuery, 300);
+
+    // TASKS-ASSIGNEE-FILTERS-001 (phase 1): quick filter by role / user / mine.
+    const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>({ roles: [], users: [], authorMine: false, assigneeMine: false });
+    const [assignees, setAssignees] = useState<Assignee[]>([]);
+    const [facets, setFacets] = useState<TaskFacets | null>(null);
+    // OR-union facet params, shared by BOTH lists; facetKey makes them refetch on change.
+    const facetParams = {
+        role: assigneeFilter.roles.length ? assigneeFilter.roles : undefined,
+        assignee: assigneeFilter.users.length ? assigneeFilter.users : undefined,
+        author_mine: assigneeFilter.authorMine || undefined,
+        assignee_mine: assigneeFilter.assigneeMine || undefined,
+    };
+    const facetKey = JSON.stringify(assigneeFilter);
+    const reloadFacets = () => { getTaskFacets().then(setFacets).catch(() => {}); };
+    useEffect(() => {
+        if (!company?.id) return;
+        let live = true;
+        listAssignees().then(u => { if (live) setAssignees(u); }).catch(() => {});
+        getTaskFacets().then(f => { if (live) setFacets(f); }).catch(() => {});
+        return () => { live = false; };
+    }, [company?.id]);
+
     const tasksList = useLoadMoreList<Task>({
         queryKey: [
             'tasks-list',
@@ -90,6 +113,7 @@ export function TasksPage() {
             debouncedSearch,
             sortBy,
             sortOrder,
+            facetKey,
         ],
         pageSize: TASKS_PAGE_SIZE,
         enabled: !!company?.id,
@@ -99,6 +123,7 @@ export function TasksPage() {
                 parent_type: parentType || undefined,
                 search: debouncedSearch || undefined,
                 snoozed: 'active',
+                ...facetParams,
                 sort_by: sortBy,
                 sort_order: sortOrder,
                 limit,
@@ -131,7 +156,7 @@ export function TasksPage() {
     // SNOOZE-REWORK-001: parked (snoozed) tasks — a second, secondary list sorted by
     // wake time. Kept out of the active list + the nav badge (server counts active only).
     const snoozedList = useLoadMoreList<Task>({
-        queryKey: ['tasks-snoozed', company?.id ?? null, user?.sub ?? null, canManage, parentType || null, debouncedSearch],
+        queryKey: ['tasks-snoozed', company?.id ?? null, user?.sub ?? null, canManage, parentType || null, debouncedSearch, facetKey],
         pageSize: TASKS_PAGE_SIZE,
         enabled: !!company?.id,
         fetchPage: async ({ cursor, limit, signal }) => {
@@ -140,6 +165,7 @@ export function TasksPage() {
                 parent_type: parentType || undefined,
                 search: debouncedSearch || undefined,
                 snoozed: 'snoozed',
+                ...facetParams,
                 sort_by: 'snoozed_until',
                 sort_order: 'asc',
                 limit,
@@ -163,7 +189,7 @@ export function TasksPage() {
 
     const canActOn = (t: Task) => canManage || (!!myEmail && t.assignee_email === myEmail);
 
-    const resetBoth = () => Promise.all([tasksList.reset(), snoozedList.reset()]);
+    const resetBoth = () => { reloadFacets(); return Promise.all([tasksList.reset(), snoozedList.reset()]); };
     const onComplete = async (t: Task) => {
         tasksList.updateItem(t.id, current => ({ ...current, status: 'done' as const }));
         try {
@@ -240,7 +266,7 @@ export function TasksPage() {
     // ── Mobile (canonical MobileListPage shell — unchanged) ─────────────────
     if (isMobile) {
         const controls = (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
                 <select value={parentType} onChange={e => setParentType(e.target.value as TaskParentType | '')}
                     className="text-sm outline-none"
                     style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '6px 10px', background: 'transparent', color: 'var(--blanc-ink-1)' }}>
@@ -252,6 +278,7 @@ export function TasksPage() {
                     <option value="invoice">Invoices</option>
                     <option value="timeline">Pulse</option>
                 </select>
+                <TaskAssigneeFilter assignees={assignees} facets={facets} myEmail={myEmail ?? null} value={assigneeFilter} onChange={setAssigneeFilter} />
                 <div className="flex items-center" style={{ background: 'var(--blanc-field)', borderRadius: 999, padding: 2 }}>
                     {(['open', 'all'] as const).map(s => (
                         <button key={s} type="button" onClick={() => setStatus(s)}
@@ -440,6 +467,7 @@ export function TasksPage() {
                             />
                         </PopoverContent>
                     </Popover>
+                    <TaskAssigneeFilter assignees={assignees} facets={facets} myEmail={myEmail ?? null} value={assigneeFilter} onChange={setAssigneeFilter} />
                 </div>
             </div>
 

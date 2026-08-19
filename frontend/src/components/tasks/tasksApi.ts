@@ -67,6 +67,18 @@ export interface Assignee {
     id: string;
     name: string;
     email: string;
+    /** TASKS-ASSIGNEE-FILTERS-001: the user's company role (for grouping the picker). */
+    role_key?: string | null;
+    role_label?: string | null;
+}
+
+/** TASKS-ASSIGNEE-FILTERS-001: open-task (active + snoozed) counts for the filter panel. */
+export interface TaskFacets {
+    byRole: Record<string, number>;   // role_key -> count, incl. "unassigned"
+    byUser: Record<string, number>;   // owner_user_id -> count (only >0)
+    mineAuthor: number;
+    mineAssignee: number;
+    total: number;
 }
 
 export interface ListTasksParams {
@@ -83,6 +95,12 @@ export interface ListTasksParams {
     /** SNOOZE-REWORK-001: 'active' (default in badge) = not snoozed / snooze elapsed;
      * 'snoozed' = hidden until a future time; 'all' = no snooze filter. */
     snoozed?: 'active' | 'snoozed' | 'all';
+    /** TASKS-ASSIGNEE-FILTERS-001 — OR-union facet filters (none → all tasks).
+     * `role` = the assignee's role ("unassigned" sentinel for no owner). */
+    role?: string[];
+    assignee?: string[];
+    author_mine?: boolean;
+    assignee_mine?: boolean;
     sort_by?: 'description' | 'parent_type' | 'parent_label' | 'assignee_name' | 'due_at' | 'snoozed_until';
     sort_order?: 'asc' | 'desc';
 }
@@ -169,11 +187,21 @@ export async function listTasksPage(
     if (params.cursor) query.set('cursor', params.cursor);
     if (params.search) query.set('search', params.search);
     if (params.snoozed) query.set('snoozed', params.snoozed);
+    (params.role || []).forEach(r => query.append('role', r));
+    (params.assignee || []).forEach(a => query.append('assignee', a));
+    if (params.author_mine) query.set('author_mine', '1');
+    if (params.assignee_mine) query.set('assignee_mine', '1');
     if (params.sort_by) query.set('sort_by', params.sort_by);
     if (params.sort_order) query.set('sort_order', params.sort_order);
     const queryString = query.toString();
     const response = await authedFetch(`${BASE}${queryString ? `?${queryString}` : ''}`, { signal });
     return unwrap<TasksPageResult>(response);
+}
+
+/** TASKS-ASSIGNEE-FILTERS-001: open-task counts for the filter panel (role-scoped). */
+export async function getTaskFacets(signal?: AbortSignal): Promise<TaskFacets> {
+    const res = await authedFetch(`${BASE}/facets`, { signal });
+    return unwrap<TaskFacets>(res);
 }
 
 export interface CreateTaskInput {
