@@ -95,3 +95,39 @@ export function localPartsToIso(date: string, time: string, tz: string): string 
     if ([y, m, d].some(Number.isNaN)) return null;
     return dateInTZ(y, m, d, hh || 0, mm || 0, tz).toISOString();
 }
+
+// TASKS-ASSIGNEE-FILTERS-001 phase 2: group the active list by the assignee's role.
+export const ROLE_GROUP_ORDER = ['tenant_admin', 'manager', 'dispatcher', 'provider'];
+export const ROLE_GROUP_LABELS: Record<string, string> = {
+    tenant_admin: 'Admin', manager: 'Manager', dispatcher: 'Dispatcher', provider: 'Provider', unassigned: 'Unassigned',
+};
+
+export interface TaskRoleGroup { key: string; label: string; tasks: Task[]; }
+
+/** Bucket active tasks by the assignee's role. Your role first, then a fixed order,
+ * then Unassigned; overdue floats to the top of each group (stable partition — the
+ * caller's sort order is preserved within each). */
+export function roleGroupsOf(
+    tasks: Task[],
+    roleOf: Map<string, string>,
+    myRole: string | null,
+    labelOf: (rk: string) => string,
+): TaskRoleGroup[] {
+    const map = new Map<string, Task[]>();
+    for (const t of tasks) {
+        const rk = t.owner_user_id ? (roleOf.get(String(t.owner_user_id)) || 'unassigned') : 'unassigned';
+        if (!map.has(rk)) map.set(rk, []);
+        map.get(rk)!.push(t);
+    }
+    const keys = [...map.keys()];
+    const order = [
+        ...(myRole && map.has(myRole) ? [myRole] : []),
+        ...ROLE_GROUP_ORDER.filter(r => r !== myRole && map.has(r)),
+        ...keys.filter(r => !ROLE_GROUP_ORDER.includes(r) && r !== 'unassigned'),
+        ...(map.has('unassigned') ? ['unassigned'] : []),
+    ];
+    return order.map(rk => {
+        const g = map.get(rk)!;
+        return { key: rk, label: labelOf(rk), tasks: [...g.filter(isOverdue), ...g.filter(t => !isOverdue(t))] };
+    });
+}

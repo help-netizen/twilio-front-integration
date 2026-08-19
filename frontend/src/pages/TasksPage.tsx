@@ -10,7 +10,7 @@ import { TaskAssigneeFilter, type AssigneeFilterValue } from '../components/task
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { FilterColumn } from '../components/jobs/jobsFilterHelpers';
 import { listTasksPage, listAssignees, getTaskFacets, completeTask, snoozeTask, unsnoozeTask, parentPath, type Task, type TaskParentType, type Assignee, type TaskFacets } from '../components/tasks/tasksApi';
-import { isOverdue, snoozedUntilLabel } from '../components/tasks/taskUtils';
+import { isOverdue, snoozedUntilLabel, roleGroupsOf, ROLE_GROUP_LABELS } from '../components/tasks/taskUtils';
 import { formatTimeInTZ, formatDateTimeInTZ } from '../utils/companyTime';
 import { useLoadMoreList } from '../hooks/useLoadMoreList';
 import { useDebouncedSearch } from '../hooks/useDebouncedSearch';
@@ -30,34 +30,6 @@ const PARENT_META: Record<TaskParentType, { label: string; color: string }> = {
 const FILTER_TYPES: TaskParentType[] = ['job', 'lead', 'contact', 'estimate', 'invoice', 'timeline'];
 
 interface Group { key: string; label: string; danger?: boolean; compactTime?: boolean; tasks: Task[]; }
-
-// TASKS-ASSIGNEE-FILTERS-001 phase 2: group the ACTIVE list by the assignee's role.
-// Your role first, then a fixed order, then Unassigned; overdue floats to the top of
-// each group (stable — the server sort order is preserved within each partition).
-const ROLE_GROUP_ORDER = ['tenant_admin', 'manager', 'dispatcher', 'provider'];
-const ROLE_GROUP_LABELS: Record<string, string> = {
-    tenant_admin: 'Admin', manager: 'Manager', dispatcher: 'Dispatcher', provider: 'Provider', unassigned: 'Unassigned',
-};
-
-function roleGroupsOf(tasks: Task[], roleOf: Map<string, string>, myRole: string | null, labelOf: (rk: string) => string): Group[] {
-    const map = new Map<string, Task[]>();
-    for (const t of tasks) {
-        const rk = t.owner_user_id ? (roleOf.get(String(t.owner_user_id)) || 'unassigned') : 'unassigned';
-        if (!map.has(rk)) map.set(rk, []);
-        map.get(rk)!.push(t);
-    }
-    const keys = [...map.keys()];
-    const order = [
-        ...(myRole && map.has(myRole) ? [myRole] : []),
-        ...ROLE_GROUP_ORDER.filter(r => r !== myRole && map.has(r)),
-        ...keys.filter(r => !ROLE_GROUP_ORDER.includes(r) && r !== 'unassigned'),
-        ...(map.has('unassigned') ? ['unassigned'] : []),
-    ];
-    return order.map(rk => {
-        const g = map.get(rk)!;
-        return { key: rk, label: labelOf(rk), tasks: [...g.filter(isOverdue), ...g.filter(t => !isOverdue(t))] };
-    });
-}
 
 function initials(name?: string | null): string {
     if (!name) return '—';
