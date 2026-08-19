@@ -57,11 +57,11 @@ describe('RBAC-WAVE3-001 fixed-role matrix and Sara proof', () => {
         expect(roleCanInvoke(tool, permissions[role])).toBe(false);
     });
 
-    test('Sara outcome (a): all 16 deployed tools remain on the x-vapi-secret skill path', () => {
+    test('Sara outcome (a): all 15 deployed tools remain on the x-vapi-secret skill path', () => {
         const saraTools = sara.model.tools.map((tool) => tool.function.name);
         const registeredSkills = new Set(skillRegistry.listSkills().map((skill) => skill.name));
 
-        expect(saraTools).toHaveLength(16);
+        expect(saraTools).toHaveLength(15);
         expect(sara.model.tools.every((tool) => (
             tool.server.url === 'https://api.albusto.com/api/vapi-tools'
             && tool.server.secret === 'REPLACE_WITH_VAPI_TOOLS_SECRET'

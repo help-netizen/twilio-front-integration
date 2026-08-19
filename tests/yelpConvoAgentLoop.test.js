@@ -1130,7 +1130,7 @@ describe('TC-A11-01 · history is composed once and reused across a multi-step t
         ));
         const gen = scriptedGenerate([
             '{"action":"tool","tool":"checkServiceArea","args":{"zip":"02467"}}',
-            '{"action":"tool","tool":"checkAvailability","args":{"days":3}}',
+            '{"action":"tool","tool":"validateAddress","args":{"street":"9 Elm St"}}',
             'not json <<<',
             '{"action":"reply","body":"I can help with that.","intent":"collect"}',
         ]);

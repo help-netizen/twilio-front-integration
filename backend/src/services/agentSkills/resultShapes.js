@@ -8,7 +8,7 @@
  * refusal path. They guarantee no PII dump, no internal code, no stack, no SQL.
  *
  * Scope note: the 5 relocated L0 legacy tools (checkServiceArea / validateAddress /
- * checkAvailability / recommendSlots / createLead) keep their OWN legacy output
+ * recommendSlots / createLead) keep their OWN legacy output
  * shapes (byte-compat, AC-11) and do NOT use these builders. resultShapes is for
  * the 9 NEW skills + the generic fallback/refusal shared by the choke-point.
  */

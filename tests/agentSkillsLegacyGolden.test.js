@@ -2,7 +2,7 @@
  * agentSkillsLegacyGolden.test.js — AGENT-SKILLS-001 T9 (G3 byte-compat gate)
  *
  * The 5 relocated L0 legacy tools (checkServiceArea / validateAddress /
- * checkAvailability / recommendSlots / createLead) under
+ * recommendSlots / createLead) under
  * `backend/src/services/agentSkills/skills/` must stay BYTE-IDENTICAL to the
  * recorded golden (spec §7.3, AC-11) — the regression bar for the thin
  * `vapi-tools.js` refactor.
@@ -64,9 +64,9 @@ describe('AGENT-SKILLS-001 G3 — 5 relocated L0 tools byte-compat (golden gate)
             }
         });
 
-        test('golden covers all 5 relocated tools', () => {
+        test('golden covers all 4 relocated tools', () => {
             const tools = new Set(Object.keys(recorded).map((k) => k.split('.')[0]));
-            for (const t of ['checkServiceArea', 'validateAddress', 'checkAvailability', 'recommendSlots', 'createLead']) {
+            for (const t of ['checkServiceArea', 'validateAddress', 'recommendSlots', 'createLead']) {
                 expect(tools.has(t)).toBe(true);
             }
         });

@@ -5,7 +5,7 @@
  *   Group 2  dispatcher           TC-LQV2-005..007
  *   Group 3  checkServiceArea     TC-LQV2-008..011
  *   Group 4  validateAddress      TC-LQV2-012..016
- *   Group 5  checkAvailability    TC-LQV2-017..020
+ *   Group 5  checkAvailability    RETIRED (OB-66) — must stay gone
  *   Group 6  createLead           TC-LQV2-022a,022..029,029a
  *   Group 7  parallel tool calls  TC-LQV2-030
  *   Group 8  buildCallSummary     TC-LQV2-031..032 (via createLead body)
@@ -28,7 +28,6 @@ jest.mock('../../backend/src/services/leadsService', () => ({
     createLead: jest.fn(),
 }));
 jest.mock('../../backend/src/services/scheduleService', () => ({
-    getAvailableSlots: jest.fn(),
 }));
 // VAPI-SLOT-ENGINE-001 (T2): recommendSlots gate + engine + tz-combine.
 jest.mock('../../backend/src/services/marketplaceService', () => ({
@@ -448,54 +447,37 @@ describe('Group 4 — validateAddress', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Group 5 — checkAvailability
+// Group 5 — checkAvailability is RETIRED (OB-66)
 // ════════════════════════════════════════════════════════════════════════════
 
-describe('Group 5 — checkAvailability', () => {
+// The first-generation availability tool offered windows the company could not
+// honour: it never compared a window against the current time, never read a
+// technician's time off, knew nothing about who covers the address, and its
+// machine `date` disagreed with its own spoken `label` by a day. recommendSlots
+// (the slot engine) superseded it on 2026-07-04 and it survived only as the
+// prompt's "engine looks down, grab a generic window" fallback — which is how a
+// caller was offered this morning at 6:40pm and a technician's day off. These
+// tests replace the old Group 5: the tool must stay gone, not come back.
+describe('Group 5 — checkAvailability is retired', () => {
     const auth = (r) => r.set('x-vapi-secret', SECRET);
 
-    // TC-LQV2-017
-    test('success → delegates to scheduleService and returns slots', async () => {
-        const slots = [
-            { date: '2026-06-10', label: 'Tuesday, June 10th between 10am and 1pm', start: '10:00', end: '13:00' },
-        ];
-        scheduleService.getAvailableSlots.mockResolvedValue({ slots });
+    test('the tool is no longer dispatchable', async () => {
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkAvailability', { zip: '02101', unitType: 'Refrigerator' }));
-        expect(resultOf(res)).toEqual({ slots });
-        expect(scheduleService.getAvailableSlots).toHaveBeenCalledWith(
-            expect.any(String),
-            expect.objectContaining({ days: 5, slotDurationMin: 120, maxSlots: 3 }),
-        );
-    });
-
-    // TC-LQV2-018
-    test('no slots → empty array with error', async () => {
-        scheduleService.getAvailableSlots.mockResolvedValue({ slots: [], error: 'No availability found in the next 5 days' });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('checkAvailability', { zip: '02101' }));
-        expect(resultOf(res)).toEqual({ slots: [], error: 'No availability found in the next 5 days' });
-    });
-
-    // TC-LQV2-020 (scheduleService throws → graceful)
-    test('scheduleService throws → slots [] with error, HTTP 200', async () => {
-        scheduleService.getAvailableSlots.mockRejectedValue(new Error('schedule unreachable'));
-        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('checkAvailability', { zip: '02101' }));
+        // Unknown tools are refused by the generic dispatch, never executed.
         expect(res.status).toBe(200);
-        expect(resultOf(res)).toEqual({ slots: [], error: 'schedule unreachable' });
-        errSpy.mockRestore();
+        expect(JSON.stringify(resultOf(res))).not.toContain('"slots"');
     });
 
-    test('days override is forwarded', async () => {
-        scheduleService.getAvailableSlots.mockResolvedValue({ slots: [] });
-        await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('checkAvailability', { zip: '02101', days: 10 }));
-        expect(scheduleService.getAvailableSlots).toHaveBeenCalledWith(
-            expect.any(String),
-            expect.objectContaining({ days: 10 }),
-        );
+    test('no skill of that name is registered', () => {
+        const registry = require('../../backend/src/services/agentSkills/registry');
+        expect(registry.listSkills().map((s) => s.name)).not.toContain('checkAvailability');
+    });
+
+    test('the legacy generator is gone from scheduleService', () => {
+        // requireActual: the mock above must not be able to hide a resurrection.
+        const real = jest.requireActual('../../backend/src/services/scheduleService');
+        expect(real.getAvailableSlots).toBeUndefined();
     });
 });
 

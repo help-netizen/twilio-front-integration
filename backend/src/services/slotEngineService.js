@@ -477,9 +477,16 @@ async function getRecommendations(companyId, input = {}) {
 
     // 4. Engine request body (per slot-engine/README.md contract).
     const requestId = `alb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    // The engine reads `requested_at` as a COMPANY-LOCAL wall clock and ignores any
+    // offset (slot-engine/src/engine.js `parseLocalStamp`). Sending toISOString()
+    // handed it UTC, so "now" was wrong by the whole offset — in New York the engine
+    // believed it was four hours later than it was, over-filtering today's remaining
+    // windows and, after 20:00 local, rolling its idea of "today" into tomorrow.
+    // One `now` for both halves so the date and the time cannot straddle a tick.
+    const now = new Date();
     const body = {
         request_id: requestId,
-        requested_at: new Date().toISOString(),
+        requested_at: `${localDate(now, tz)}T${localHHMM(now, tz)}`,
         new_request: {
             id: 'new',
             lat: point.lat,

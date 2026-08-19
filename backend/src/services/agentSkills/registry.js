@@ -9,8 +9,8 @@
  * 16 skills total (AGENT-SKILLS-001: 14 + AGENT-SKILLS-002: +bookOnLead,
  * OB-61: +recordLeadDisposition):
  *   - 10 NEW skills (identifyCaller + existing-customer reads/writes + bookOnLead)
- *   - 5 RELOCATED legacy L0 tools (checkServiceArea / validateAddress /
- *     checkAvailability / recommendSlots / createLead), plus the small OB-61
+ *   - 4 RELOCATED legacy L0 tools (checkServiceArea / validateAddress /
+ *     recommendSlots / createLead), plus the small OB-61
  *     recordLeadDisposition write used by the inbound provider contract.
  *
  * Level assignment (AGENT-SKILLS-002 §2.1 relaxed the existing-customer skills to L1):
@@ -97,11 +97,10 @@ const SKILLS = [
     // isolation is fully in-skill. Inbound Sara's tool-set is unchanged.
     { name: 'confirmLeadBooking', kind: 'write', requiredLevel: 'L0', run: lazyRun('confirmLeadBooking') },
 
-    // --- 5 RELOCATED legacy L0 tools (public-shape compat) -------------------
+    // --- 4 RELOCATED legacy L0 tools (public-shape compat) -------------------
     // L0 so deriveLevel never blocks them → "never block the call" preserved.
     { name: 'checkServiceArea', kind: 'read', requiredLevel: 'L0', run: lazyRun('checkServiceArea') },
     { name: 'validateAddress', kind: 'read', requiredLevel: 'L0', run: lazyRun('validateAddress') },
-    { name: 'checkAvailability', kind: 'read', requiredLevel: 'L0', run: lazyRun('checkAvailability') },
     { name: 'recommendSlots', kind: 'read', requiredLevel: 'L0', run: lazyRun('recommendSlots') },
     { name: 'createLead', kind: 'write', requiredLevel: 'L0', run: lazyRun('createLead') },
     // Provider-only inbound disposition. It is intentionally absent from the

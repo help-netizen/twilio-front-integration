@@ -11,7 +11,7 @@
  * `backend/src/services/agentSkills/skills/*`, behind the single choke-point).
  *
  * Because dispatch is generic, EVERY registered skill is exposed here — the 5
- * legacy tools (checkServiceArea / validateAddress / checkAvailability /
+ * legacy tools (checkServiceArea / validateAddress /
  * recommendSlots / createLead) AND the new existing-customer skills — with the
  * skill name mapping 1:1 to `toolCall.function.name`.
  *
@@ -45,7 +45,6 @@ const { TRANSPORT_FIELD: INBOUND_BOOKING_GUARD_FIELD } = require('../services/in
 const LEGACY_TOOLS = new Set([
     'checkServiceArea',
     'validateAddress',
-    'checkAvailability',
     'recommendSlots',
 ]);
 
@@ -57,7 +56,6 @@ const LEGACY_TOOLS = new Set([
 const TOOLS_EXPECTING_ARGUMENTS = new Set([
     'checkServiceArea',
     'validateAddress',
-    'checkAvailability',
     'recommendSlots',
     'createLead',
     'recordLeadDisposition',

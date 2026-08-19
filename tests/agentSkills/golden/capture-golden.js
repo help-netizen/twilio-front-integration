@@ -3,7 +3,7 @@
  * capture-golden.js — AGENT-SKILLS-001 T3
  *
  * Records the golden `JSON.stringify` output of the 5 relocated L0 legacy tools
- * (checkServiceArea / validateAddress / checkAvailability / recommendSlots /
+ * (checkServiceArea / validateAddress / recommendSlots /
  * createLead) on a matrix of representative inputs, so T4's thin `vapi-tools.js`
  * refactor and T9/T10 can be proven BYTE-IDENTICAL (gate G3, spec §7.3, AC-11).
  *
@@ -153,7 +153,6 @@ Module._load = function stubbedLoad(request, parent, isMain) {
 // ─── Load the relocated skill modules (with the loader override active) ─────────
 const checkServiceArea = require(path.join(SKILLS_DIR, 'checkServiceArea'));
 const validateAddress = require(path.join(SKILLS_DIR, 'validateAddress'));
-const checkAvailability = require(path.join(SKILLS_DIR, 'checkAvailability'));
 const recommendSlots = require(path.join(SKILLS_DIR, 'recommendSlots'));
 const createLead = require(path.join(SKILLS_DIR, 'createLead'));
 
@@ -236,24 +235,6 @@ const CASES = [
         const out = await validateAddress.run(DEFAULT_COMPANY_ID, {}, { street: '45 Tremont St' });
         process.env.GOOGLE_GEOCODING_KEY = saved;
         return out;
-    } },
-
-    // ── checkAvailability ───────────────────────────────────────────────────
-    { tool: 'checkAvailability', name: 'success', run: async () => {
-        scheduleService._throw = null;
-        scheduleService._next = { slots: [
-            { date: '2026-06-10', label: 'Tuesday, June 10th between 10am and 1pm', start: '10:00', end: '13:00' },
-        ] };
-        return checkAvailability.run(DEFAULT_COMPANY_ID, {}, { zip: '02101', unitType: 'Refrigerator' });
-    } },
-    { tool: 'checkAvailability', name: 'no_slots', run: async () => {
-        scheduleService._throw = null;
-        scheduleService._next = { slots: [], error: 'No availability found in the next 5 days' };
-        return checkAvailability.run(DEFAULT_COMPANY_ID, {}, { zip: '02101' });
-    } },
-    { tool: 'checkAvailability', name: 'throws', run: async () => {
-        scheduleService._throw = 'schedule unreachable';
-        return checkAvailability.run(DEFAULT_COMPANY_ID, {}, { zip: '02101' });
     } },
 
     // ── recommendSlots ──────────────────────────────────────────────────────
