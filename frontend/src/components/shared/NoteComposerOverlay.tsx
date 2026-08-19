@@ -87,6 +87,30 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
         return popFloatingOverlay;
     }, [open]);
 
+    /*
+     * NOTHING BEHIND THE SCRIM SCROLLS (owner, 2026-08-19: "какой скролл, если я в инпуте?").
+     *
+     * pushFloatingOverlay pins the PAGE (body → position:fixed), which is why the page itself
+     * holds still. It cannot stop an inner `overflow-y:auto` scroller, and the host sheet has
+     * one: dragging over the scrim scrolled the Record-payment body underneath, and iOS carried
+     * this fixed card down with the layout viewport until the input sat under the keyboard.
+     * Two "fixes" before this one treated the symptom because they never crossed that gap.
+     *
+     * So the gesture is refused at the document, in the capture phase, for every touch that is
+     * NOT inside the editable itself — a long value still scrolls INSIDE the field, which is the
+     * only scrolling this screen has any use for.
+     */
+    useEffect(() => {
+        if (!open) return;
+        const onTouchMove = (event: TouchEvent) => {
+            const target = event.target as Element | null;
+            if (target?.closest?.('textarea, input, [data-composer-scroll]')) return;
+            if (event.cancelable) event.preventDefault();
+        };
+        document.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+        return () => document.removeEventListener('touchmove', onTouchMove, { capture: true } as EventListenerOptions);
+    }, [open]);
+
     if (!open) return null;
 
     return createPortal(
