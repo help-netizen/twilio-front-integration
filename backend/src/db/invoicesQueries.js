@@ -11,6 +11,10 @@ function queryFor(client) {
     return client?.query ? client.query.bind(client) : db.query;
 }
 
+function normalizeDiscountType(type) {
+    return type === 'fixed' || type === 'percentage' ? type : null;
+}
+
 function calculateBalanceDue(total, amountPaid) {
     const totalNumber = Number(total || 0);
     const paidNumber = Number(amountPaid || 0);
@@ -273,6 +277,7 @@ function buildInvoiceNumber({ leadSeq, jobSeq, sequence }) {
  */
 async function createInvoice(companyId, data, client = null) {
     const query = queryFor(client);
+    const hasDiscountType = data.discount_type !== undefined;
     const {
         contact_id,
         lead_id,
@@ -283,6 +288,8 @@ async function createInvoice(companyId, data, client = null) {
         notes,
         internal_note,
         tax_rate,
+        discount_type,
+        discount_value,
         discount_amount,
         payment_terms,
         due_date,
@@ -299,7 +306,7 @@ async function createInvoice(companyId, data, client = null) {
              WHERE company_id = $1 AND invoice_number ~ ('^INV-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-\\d+$')),
             1
         ))::text, 3, '0')`;
-    const numberExpr = invoice_number ? '$16' : fallbackNumberExpr;
+    const numberExpr = invoice_number ? '$18' : fallbackNumberExpr;
 
     const params = [
         companyId,
@@ -311,10 +318,12 @@ async function createInvoice(companyId, data, client = null) {
         notes || null,
         internal_note || null,
         tax_rate != null ? tax_rate : 0,
+        normalizeDiscountType(discount_type),
+        discount_value != null ? discount_value : 0,
         payment_terms || null,
         due_date || null,
         currency || 'USD',
-        discount_amount != null ? discount_amount : 0,
+        hasDiscountType ? 0 : (discount_amount != null ? discount_amount : 0),
         JSON.stringify(order_list || []),
         created_by || null,
     ];
@@ -324,7 +333,7 @@ async function createInvoice(companyId, data, client = null) {
         `INSERT INTO invoices (
             company_id, contact_id, lead_id, job_id, estimate_id,
             invoice_number, title, notes, internal_note, status,
-            tax_rate, payment_terms, due_date, currency,
+            tax_rate, discount_type, discount_value, payment_terms, due_date, currency,
             subtotal, tax_amount, discount_amount, total, amount_paid, balance_due,
             order_list, created_by
         )
@@ -332,9 +341,9 @@ async function createInvoice(companyId, data, client = null) {
             $1, $2, $3, $4, $5,
             ${numberExpr},
             $6, $7, $8, 'draft',
-            COALESCE($9::numeric, 0), $10, $11, COALESCE($12, 'USD'),
-            0, 0, COALESCE($13::numeric, 0), 0, 0, 0,
-            COALESCE($14::jsonb, '[]'::jsonb), $15
+            COALESCE($9::numeric, 0), $10, COALESCE($11::numeric, 0), $12, $13, COALESCE($14, 'USD'),
+            0, 0, COALESCE($15::numeric, 0), 0, 0, 0,
+            COALESCE($16::jsonb, '[]'::jsonb), $17
         )
         RETURNING *`,
         params
@@ -350,7 +359,8 @@ async function updateInvoice(id, companyId, data, client = null) {
     const allowedFields = [
         'contact_id', 'lead_id', 'job_id', 'estimate_id',
         'title', 'notes', 'internal_note',
-        'tax_rate', 'discount_amount', 'payment_terms', 'due_date',
+        'tax_rate', 'discount_type', 'discount_value', 'discount_amount',
+        'payment_terms', 'due_date',
         'order_list',
     ];
 
@@ -740,50 +750,66 @@ async function deleteInvoiceItem(companyId, invoiceId, itemId, client = null) {
 async function recalculateInvoiceTotals(companyId, invoiceId, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
-        `UPDATE invoices inv SET
-            subtotal = COALESCE(sub.item_total, 0),
-            tax_amount = ROUND(
-                GREATEST(
-                    COALESCE(sub.taxable_subtotal, 0) - COALESCE(inv.discount_amount, 0),
-                    0
-                ) * COALESCE(inv.tax_rate, 0) / 100
-            , 2),
-            total = ROUND(
-                COALESCE(sub.item_total, 0)
-                - COALESCE(inv.discount_amount, 0)
-                + ROUND(
-                    GREATEST(
-                        COALESCE(sub.taxable_subtotal, 0) - COALESCE(inv.discount_amount, 0),
-                        0
-                    ) * COALESCE(inv.tax_rate, 0) / 100
-                , 2)
-            , 2),
-            balance_due = ROUND(
-                COALESCE(sub.item_total, 0)
-                - COALESCE(inv.discount_amount, 0)
-                + ROUND(
-                    GREATEST(
-                        COALESCE(sub.taxable_subtotal, 0) - COALESCE(inv.discount_amount, 0),
-                        0
-                    ) * COALESCE(inv.tax_rate, 0) / 100
-                , 2)
-            , 2) - COALESCE(inv.amount_paid, 0),
-            updated_at = NOW()
-        FROM (
+        `WITH item_totals AS (
             SELECT
                 invoice_id,
-                SUM(amount) AS item_total,
-                SUM(CASE WHEN taxable THEN amount ELSE 0 END) AS taxable_subtotal
+                COALESCE(SUM(amount), 0) AS item_total,
+                COALESCE(SUM(CASE WHEN taxable THEN amount ELSE 0 END), 0) AS taxable_subtotal
             FROM invoice_items
             JOIN invoices item_owner
               ON item_owner.id = invoice_items.invoice_id
              AND item_owner.company_id = $1
             WHERE invoice_id = $2
             GROUP BY invoice_id
-        ) sub
-        WHERE inv.id = $2
-          AND inv.company_id = $1
-          AND inv.id = sub.invoice_id
+        ),
+        calc AS (
+            SELECT
+                inv.id,
+                COALESCE(sub.item_total, 0) AS item_total,
+                COALESCE(sub.taxable_subtotal, 0) AS taxable_subtotal,
+                CASE
+                    WHEN inv.discount_type = 'percentage'
+                        THEN ROUND(COALESCE(sub.item_total, 0) * LEAST(GREATEST(COALESCE(inv.discount_value, 0), 0), 100) / 100, 2)
+                    WHEN inv.discount_type = 'fixed'
+                        THEN LEAST(GREATEST(COALESCE(inv.discount_value, 0), 0), COALESCE(sub.item_total, 0))
+                    ELSE COALESCE(inv.discount_amount, 0)
+                END AS discount_amount
+            FROM invoices inv
+            LEFT JOIN item_totals sub ON sub.invoice_id = inv.id
+            WHERE inv.id = $2 AND inv.company_id = $1
+        )
+        UPDATE invoices inv SET
+            subtotal = calc.item_total,
+            discount_amount = calc.discount_amount,
+            tax_amount = ROUND(
+                GREATEST(
+                    calc.taxable_subtotal - calc.discount_amount,
+                    0
+                ) * COALESCE(inv.tax_rate, 0) / 100
+            , 2),
+            total = ROUND(
+                calc.item_total
+                - calc.discount_amount
+                + ROUND(
+                    GREATEST(
+                        calc.taxable_subtotal - calc.discount_amount,
+                        0
+                    ) * COALESCE(inv.tax_rate, 0) / 100
+                , 2)
+            , 2),
+            balance_due = ROUND(
+                calc.item_total
+                - calc.discount_amount
+                + ROUND(
+                    GREATEST(
+                        calc.taxable_subtotal - calc.discount_amount,
+                        0
+                    ) * COALESCE(inv.tax_rate, 0) / 100
+                , 2)
+            , 2) - COALESCE(inv.amount_paid, 0),
+            updated_at = NOW()
+        FROM calc
+        WHERE inv.id = calc.id
          RETURNING inv.*`,
         [companyId, invoiceId]
     );

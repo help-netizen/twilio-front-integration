@@ -52,6 +52,37 @@ const WORKFLOW_CONTROLLED_UPDATE_FIELDS = new Set([
 ]);
 const PUBLIC_LINK_LIFETIME_MONTHS = 18;
 
+function asNumber(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function validateDiscount(data = {}, subtotal = 0) {
+    const type = data.discount_type || null;
+    const value = asNumber(data.discount_value, 0);
+
+    if (!type && value === 0) return;
+    if (!['fixed', 'percentage'].includes(type)) {
+        throw new InvoicesServiceError('VALIDATION', 'discount_type must be fixed or percentage', 400);
+    }
+    if (value < 0) {
+        throw new InvoicesServiceError('VALIDATION', 'Discount cannot be negative', 400);
+    }
+    if (type === 'percentage' && value > 100) {
+        throw new InvoicesServiceError('VALIDATION', 'Discount percentage cannot exceed 100', 400);
+    }
+    if (type === 'fixed' && value > subtotal) {
+        throw new InvoicesServiceError('VALIDATION', 'Discount cannot exceed subtotal', 400);
+    }
+}
+
+function itemSubtotal(items = []) {
+    return items.reduce(
+        (sum, item) => sum + asNumber(item.quantity, 1) * asNumber(item.unit_price, 0),
+        0
+    );
+}
+
 // =============================================================================
 // Invoice CRUD
 // =============================================================================
@@ -110,6 +141,14 @@ async function validateLinkedEntities(companyId, data = {}, client = null) {
 async function createInvoice(companyId, userId, data, client = null, activityActor = null) {
     const resolved = { ...data };
     resolved.order_list = normalizeOrderList(data.order_list ?? []);
+    validateDiscount(data, itemSubtotal(Array.isArray(data.items) ? data.items : []));
+    if (data.discount_type !== undefined) {
+        resolved.discount_type = data.discount_type || null;
+        resolved.discount_amount = 0;
+    }
+    if (data.discount_value !== undefined) {
+        resolved.discount_value = asNumber(data.discount_value, 0);
+    }
     await validateLinkedEntities(companyId, resolved, client);
 
     if (!resolved.contact_id) {
@@ -225,10 +264,16 @@ async function createInvoice(companyId, userId, data, client = null, activityAct
     }, client);
 
     // Add items if provided
-    if (data.items && Array.isArray(data.items)) {
+    if (Array.isArray(data.items)) {
         for (const item of data.items) {
             await invoicesQueries.addInvoiceItem(companyId, invoice.id, item, client);
         }
+    }
+    if (
+        Array.isArray(data.items)
+        || data.discount_type !== undefined
+        || data.discount_value !== undefined
+    ) {
         await invoicesQueries.recalculateInvoiceTotals(companyId, invoice.id, client);
     }
 
@@ -274,8 +319,23 @@ async function updateInvoice(companyId, userId, id, data, client = null, activit
         );
     }
     await validateLinkedEntities(companyId, data, client);
+    const discountFieldsChanged = data.discount_type !== undefined
+        || data.discount_value !== undefined;
+    if (discountFieldsChanged) {
+        const discountItems = Array.isArray(data.items)
+            ? data.items
+            : await invoicesQueries.getInvoiceItems(companyId, id, client);
+        validateDiscount(data, itemSubtotal(discountItems));
+    }
     const updateData = {
         ...data,
+        discount_type: data.discount_type !== undefined
+            ? data.discount_type || null
+            : undefined,
+        discount_value: data.discount_value !== undefined
+            ? asNumber(data.discount_value, 0)
+            : undefined,
+        discount_amount: data.discount_type !== undefined ? 0 : data.discount_amount,
         order_list: data.order_list !== undefined
             ? normalizeOrderList(data.order_list)
             : undefined,
@@ -306,7 +366,12 @@ async function updateInvoice(companyId, userId, id, data, client = null, activit
     }
 
     // Recalculate totals when items were reconciled OR a totals-affecting scalar changed.
-    const TOTALS_AFFECTING = new Set(['tax_rate', 'discount_amount']);
+    const TOTALS_AFFECTING = new Set([
+        'tax_rate',
+        'discount_type',
+        'discount_value',
+        'discount_amount',
+    ]);
     const scalarTotalsChanged = Object.keys(data).some(k => TOTALS_AFFECTING.has(k));
     if (itemsReconciled || scalarTotalsChanged) {
         await invoicesQueries.recalculateInvoiceTotals(companyId, id, client);

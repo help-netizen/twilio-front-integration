@@ -213,6 +213,10 @@ describe('estimate to invoice conversion totals contract', () => {
             total: 105.3,
             balance_due: 105.3,
         });
+        expect(converted).toMatchObject({
+            discount_type: 'fixed',
+            discount_value: '90.00',
+        });
         expect(converted.items.map((item) => item.taxable)).toEqual([true, false]);
     });
 });

@@ -1363,6 +1363,8 @@ async function convertToInvoiceInTransaction(
         internal_note: estimate.internal_note,
         order_list: estimate.order_list || [],
         tax_rate: estimate.tax_rate,
+        discount_type: estimate.discount_type,
+        discount_value: estimate.discount_value,
         discount_amount: estimate.discount_amount,
         currency: estimate.currency,
         due_date: dueDate,

@@ -58,11 +58,11 @@ describe('ORDER-LIST-001 query persistence', () => {
 
         let [sql, params] = mockQuery.mock.calls[0];
         expect(sql).toContain('order_list, created_by');
-        expect(sql).toContain("COALESCE($14::jsonb, '[]'::jsonb)");
-        expect(sql).toContain('$16');
-        expect(params[13]).toBe(JSON.stringify(ORDER_LIST));
-        expect(params[14]).toBe(USER_ID);
-        expect(params[15]).toBe('INVOICE 1');
+        expect(sql).toContain("COALESCE($16::jsonb, '[]'::jsonb)");
+        expect(sql).toContain('$18');
+        expect(params[15]).toBe(JSON.stringify(ORDER_LIST));
+        expect(params[16]).toBe(USER_ID);
+        expect(params[17]).toBe('INVOICE 1');
 
         mockQuery.mockClear();
         await invoicesQueries.updateInvoice(1, COMPANY_ID, { order_list: ORDER_LIST });

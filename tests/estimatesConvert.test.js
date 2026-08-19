@@ -109,6 +109,8 @@ function makeEstimate(overrides = {}) {
         notes: '',
         internal_note: '',
         tax_rate: '0.00',
+        discount_type: null,
+        discount_value: '0.00',
         discount_amount: '0.00',
         currency: 'USD',
         order_list: [{
@@ -195,7 +197,11 @@ describe('estimatesService.convertToInvoice', () => {
     });
 
     it('TC-S4T1-01: creates invoice and copies line items from approved estimate', async () => {
-        mockGetEstimateById.mockResolvedValue(makeEstimate());
+        mockGetEstimateById.mockResolvedValue(makeEstimate({
+            discount_type: 'percentage',
+            discount_value: '10.00',
+            discount_amount: '20.00',
+        }));
         mockGetEstimateItems.mockResolvedValue([makeItem(1), makeItem(2)]);
 
         const result = await convertToInvoice(COMPANY_ID, USER_ID, EST_ID);
@@ -205,6 +211,9 @@ describe('estimatesService.convertToInvoice', () => {
             estimate_id: EST_ID,
             invoice_number: 'INVOICE 519-1',
             title: 'ESTIMATE 519-1',
+            discount_type: 'percentage',
+            discount_value: '10.00',
+            discount_amount: '20.00',
             order_list: [{
                 part_number: 'P-42',
                 part_name: 'Roof bracket',
