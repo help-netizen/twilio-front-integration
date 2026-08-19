@@ -11,7 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popove
 import { FilterColumn } from '../components/jobs/jobsFilterHelpers';
 import { listTasksPage, listAssignees, getTaskFacets, completeTask, snoozeTask, unsnoozeTask, parentPath, type Task, type TaskParentType, type Assignee, type TaskFacets } from '../components/tasks/tasksApi';
 import { isOverdue, snoozedUntilLabel } from '../components/tasks/taskUtils';
-import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../utils/companyTime';
+import { formatTimeInTZ, formatDateTimeInTZ } from '../utils/companyTime';
 import { useLoadMoreList } from '../hooks/useLoadMoreList';
 import { useDebouncedSearch } from '../hooks/useDebouncedSearch';
 import { LoadMoreFooter, type LoadMoreFooterProps } from '../components/lists/LoadMoreFooter';
@@ -31,29 +31,32 @@ const FILTER_TYPES: TaskParentType[] = ['job', 'lead', 'contact', 'estimate', 'i
 
 interface Group { key: string; label: string; danger?: boolean; compactTime?: boolean; tasks: Task[]; }
 
-function bucketTasks(tasks: Task[], tz: string): Group[] {
-    const today = todayInTZ(tz);
-    const [ty, tm, td] = today.split('-').map(Number);
-    const tomorrow = dateKeyInTZ(dateInTZ(ty, tm, td + 1, 12, 0, tz).toISOString(), tz);
-    const weekEnd = dateKeyInTZ(dateInTZ(ty, tm, td + 7, 12, 0, tz).toISOString(), tz);
-    const g: Record<string, Task[]> = { overdue: [], today: [], tomorrow: [], week: [], later: [], none: [] };
+// TASKS-ASSIGNEE-FILTERS-001 phase 2: group the ACTIVE list by the assignee's role.
+// Your role first, then a fixed order, then Unassigned; overdue floats to the top of
+// each group (stable — the server sort order is preserved within each partition).
+const ROLE_GROUP_ORDER = ['tenant_admin', 'manager', 'dispatcher', 'provider'];
+const ROLE_GROUP_LABELS: Record<string, string> = {
+    tenant_admin: 'Admin', manager: 'Manager', dispatcher: 'Dispatcher', provider: 'Provider', unassigned: 'Unassigned',
+};
+
+function roleGroupsOf(tasks: Task[], roleOf: Map<string, string>, myRole: string | null, labelOf: (rk: string) => string): Group[] {
+    const map = new Map<string, Task[]>();
     for (const t of tasks) {
-        if (!t.due_at) { g.none.push(t); continue; }
-        if (isOverdue(t)) { g.overdue.push(t); continue; }
-        const k = dateKeyInTZ(t.due_at, tz);
-        if (k === today) g.today.push(t);
-        else if (k === tomorrow) g.tomorrow.push(t);
-        else if (k <= weekEnd) g.week.push(t);
-        else g.later.push(t);
+        const rk = t.owner_user_id ? (roleOf.get(String(t.owner_user_id)) || 'unassigned') : 'unassigned';
+        if (!map.has(rk)) map.set(rk, []);
+        map.get(rk)!.push(t);
     }
-    return [
-        { key: 'overdue', label: 'Overdue', danger: true, compactTime: true, tasks: g.overdue },
-        { key: 'today', label: 'Today', compactTime: true, tasks: g.today },
-        { key: 'tomorrow', label: 'Tomorrow', compactTime: true, tasks: g.tomorrow },
-        { key: 'week', label: 'This week', tasks: g.week },
-        { key: 'later', label: 'Later', tasks: g.later },
-        { key: 'none', label: 'No date', tasks: g.none },
-    ].filter(grp => grp.tasks.length > 0);
+    const keys = [...map.keys()];
+    const order = [
+        ...(myRole && map.has(myRole) ? [myRole] : []),
+        ...ROLE_GROUP_ORDER.filter(r => r !== myRole && map.has(r)),
+        ...keys.filter(r => !ROLE_GROUP_ORDER.includes(r) && r !== 'unassigned'),
+        ...(map.has('unassigned') ? ['unassigned'] : []),
+    ];
+    return order.map(rk => {
+        const g = map.get(rk)!;
+        return { key: rk, label: labelOf(rk), tasks: [...g.filter(isOverdue), ...g.filter(t => !isOverdue(t))] };
+    });
 }
 
 function initials(name?: string | null): string {
@@ -69,7 +72,7 @@ const taskKey = (task: Task) => task.id;
 export function TasksPage() {
     const navigate = useNavigate();
     const isMobile = useIsMobile();
-    const { company, user, hasPermission } = useAuthz();
+    const { company, user, hasPermission, membership } = useAuthz();
     const tz = company?.timezone || 'America/New_York';
     const myEmail = user?.email;
     const canManage = hasPermission('tasks.manage');
@@ -209,7 +212,10 @@ export function TasksPage() {
         catch { toast.error('Failed'); }
     };
 
-    const groups = bucketTasks(tasks, tz);
+    const roleOf = new Map<string, string>();
+    for (const a of assignees) if (a.role_key) roleOf.set(String(a.id), a.role_key);
+    const roleLabelOf = (rk: string) => assignees.find(a => a.role_key === rk)?.role_label || ROLE_GROUP_LABELS[rk] || rk;
+    const groups = roleGroupsOf(tasks, roleOf, membership?.role_key ?? null, roleLabelOf);
 
     const TimeLabel = ({ t, compact }: { t: Task; compact?: boolean }) => {
         if (!t.due_at) return null;
@@ -356,7 +362,7 @@ export function TasksPage() {
             <div className="space-y-6">
                 {groups.map(group => (
                     <div key={group.key} className="space-y-2">
-                        <div className="blanc-eyebrow" style={group.danger ? { color: '#b42318' } : undefined}>{group.label}</div>
+                        <div className="blanc-section-heading">{group.label}</div>
                         {group.tasks.map(t => renderTile(t, group))}
                     </div>
                 ))}
@@ -512,7 +518,13 @@ export function TasksPage() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {tasks.map(t => {
+                                        {groups.flatMap(group => [
+                                            <tr key={`rolehdr-${group.key}`}>
+                                                <td colSpan={COLUMNS.length} className="px-4 pt-8 pb-1" style={{ background: 'transparent' }}>
+                                                    <span className="blanc-section-heading" style={{ display: 'block', marginBottom: 0 }}>{group.label}</span>
+                                                </td>
+                                            </tr>,
+                                            ...group.tasks.map(t => {
                                             const meta = PARENT_META[t.parent_type];
                                             const done = t.status === 'done';
                                             return (
@@ -568,7 +580,7 @@ export function TasksPage() {
                                                     </td>
                                                 </tr>
                                             );
-                                        })}
+                                        })])}
                                         {snoozedTasks.length > 0 && (
                                             <>
                                                 <tr>
