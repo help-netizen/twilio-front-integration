@@ -157,7 +157,10 @@ function requireTimestamp(object, key, path) {
 }
 
 function optionalTimestamp(object, key, path) {
-    if (object[key] === undefined) return undefined;
+    // Vapi sends explicit nulls for timestamps that do not exist yet — on an
+    // assistant-request the call has not started, so startedAt/endedAt are null.
+    // "Present but null" means absent, not "must be a timestamp".
+    if (object[key] == null) return undefined;
     return requireTimestamp(object, key, path);
 }
 
@@ -232,28 +235,40 @@ function parseCallIdentity(callValue, path, options = {}) {
     const call = requireObject(callValue, path);
     const normalized = {
         id: requireString(call, 'id', path),
-        orgId: requireString(call, 'orgId', path),
         type: requireEnum(call, 'type', CALL_TYPES, path),
     };
 
+    // `orgId` identifies OUR Vapi organisation — the same value for every tenant —
+    // so it never discriminated a company and is not an authorization signal. The
+    // company comes from the per-company x-vapi-secret; the cost is correlated by
+    // call.id. Vapi omits it entirely on assistant-request (verified 2026-08-19 in
+    // GET /logs?type=Webhook: the call object carries id, assistantId, customerId,
+    // phoneNumberId, type, startedAt and no orgId), so requiring it there rejected
+    // every real inbound and the caller got Vapi's error prompt instead of Sara.
+    if (options.requireOrg) {
+        normalized.orgId = requireString(call, 'orgId', path);
+    } else if (call.orgId != null) {
+        normalized.orgId = requireString(call, 'orgId', path);
+    }
+
     if (options.requireAssistant) {
         normalized.assistantId = requireString(call, 'assistantId', path);
-    } else if (call.assistantId !== undefined) {
+    } else if (call.assistantId != null) {
         normalized.assistantId = requireString(call, 'assistantId', path);
     }
 
     if (options.requireStatus) {
         normalized.status = requireEnum(call, 'status', CALL_STATUSES, path);
-    } else if (call.status !== undefined) {
+    } else if (call.status != null) {
         normalized.status = requireEnum(call, 'status', CALL_STATUSES, path);
     }
 
     for (const key of ['createdAt', 'updatedAt', 'startedAt', 'endedAt']) {
         const value = optionalTimestamp(call, key, path);
-        if (value !== undefined) normalized[key] = value;
+        if (value != null) normalized[key] = value;
     }
 
-    if (call.endedReason !== undefined) {
+    if (call.endedReason != null) {
         normalized.endedReason = requireString(call, 'endedReason', path);
     }
 
@@ -341,6 +356,7 @@ function parseVapiServerMessageValue(value) {
         const call = parseCallIdentity(message.call, '$.message.call', {
             requireAssistant: true,
             requireStatus: true,
+            requireOrg: true,
         });
         if (call.status !== status) fail('status_mismatch', '$.message.call.status');
         return { contractVersion: CONTRACT_VERSION, kind: type, status, call };
@@ -350,6 +366,7 @@ function parseVapiServerMessageValue(value) {
     const call = parseCallIdentity(message.call, '$.message.call', {
         requireAssistant: true,
         requireStatus: true,
+        requireOrg: true,
     });
     if (call.status !== 'ended') fail('status_mismatch', '$.message.call.status');
     if (call.endedReason !== undefined && call.endedReason !== endedReason) {
