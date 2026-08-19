@@ -14,10 +14,8 @@ const request = require('supertest');
 const mockQuery = jest.fn();
 jest.mock('../../backend/src/db/connection', () => ({ query: mockQuery }));
 jest.mock('../../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
-jest.mock('../../backend/src/services/userService', () => ({ listUsers: jest.fn() }));
 
 const tasksRouter = require('../../backend/src/routes/tasks');
-const userService = require('../../backend/src/services/userService');
 
 const COMPANY = '00000000-0000-0000-0000-000000000001';
 const ME = 'crm-me';
@@ -108,6 +106,30 @@ describe('GET / — visibility scope', () => {
             .mockResolvedValueOnce({ rows: [] });
         await request(makeApp()).get('/api/tasks?status=all');
         expect(mockQuery.mock.calls[1][0]).not.toMatch(/t\.status = \$/);
+    });
+
+    test('repeatable/csv facets are one OR-union in the list query', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ total: 0 }] })
+            .mockResolvedValueOnce({ rows: [] });
+        const res = await request(makeApp()).get(
+            '/api/tasks?role=dispatcher&role=provider,unassigned&assignee=u1,u2&author_mine=1&assignee_mine=1'
+        );
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[1];
+        expect(sql).toContain('om_filter.role_key = ANY($3::text[])');
+        expect(sql).toContain('OR t.owner_user_id IS NULL');
+        expect(sql).toContain('OR t.owner_user_id::text = ANY($4::text[])');
+        expect(sql).toContain('OR t.author_user_id = $5');
+        expect(sql).toContain('OR t.owner_user_id = $6');
+        expect(params.slice(0, 6)).toEqual([
+            COMPANY,
+            'open',
+            ['dispatcher', 'provider'],
+            ['u1', 'u2'],
+            ME,
+            ME,
+        ]);
     });
 });
 
@@ -218,6 +240,26 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
         expect(res.body).toEqual({ ok: false, error: { code: 'INTERNAL', message: 'Failed to count tasks' } });
     });
 
+    test('mirrors the repeatable/csv OR-union facet filters from GET /', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 9 }] });
+        const res = await request(makeApp()).get(
+            '/api/tasks/count?role=manager,provider&assignee=u1&assignee=u2&author_mine=1'
+        );
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toContain('om_filter.role_key = ANY($3::text[])');
+        expect(sql).toContain('OR t.owner_user_id::text = ANY($4::text[])');
+        expect(sql).toContain('OR t.author_user_id = $5');
+        expect(sql).toContain('(t.snoozed_until IS NULL OR t.snoozed_until <= now())');
+        expect(params).toEqual([
+            COMPANY,
+            'open',
+            ['manager', 'provider'],
+            ['u1', 'u2'],
+            ME,
+        ]);
+    });
+
     // ── SOFTPHONE-WARMUP-SUMMARY-001 — parent_type pass-through (spec §5.3) ──
     test('?parent_type=timeline adds thread_id predicate, params unchanged (TC-WS-01)', async () => {
         mockQuery.mockResolvedValueOnce({ rows: [{ count: 5 }] });
@@ -278,18 +320,93 @@ describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
     });
 });
 
+describe('GET /facets — role-scoped all-open counts', () => {
+    test('requires tasks.view (R-matrix deny)', async () => {
+        const res = await request(makeApp({ permissions: ['jobs.view'] })).get('/api/tasks/facets');
+        expect(res.status).toBe(403);
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    test('returns the exact facets shape and does not filter future snoozes', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [
+            {
+                owner_user_id: 'u1', role_key: 'dispatcher', task_count: 2,
+                mine_author_count: 1, mine_assignee_count: 0,
+            },
+            {
+                owner_user_id: null, role_key: null, task_count: 1,
+                mine_author_count: 0, mine_assignee_count: 0,
+            },
+        ] });
+        const res = await request(makeApp()).get('/api/tasks/facets');
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+            ok: true,
+            data: {
+                byRole: {
+                    tenant_admin: 0,
+                    manager: 0,
+                    dispatcher: 2,
+                    provider: 0,
+                    unassigned: 1,
+                },
+                byUser: { u1: 2 },
+                mineAuthor: 1,
+                mineAssignee: 0,
+                total: 3,
+            },
+        });
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toContain('t.company_id = $1');
+        expect(sql).toContain('om.company_id = t.company_id');
+        expect(sql).not.toContain('snoozed_until');
+        expect(params).toEqual([COMPANY, 'open', ME]);
+    });
+
+    test('tenant scope comes only from companyFilter, never a query parameter', async () => {
+        const foreignCompany = '00000000-0000-0000-0000-000000000099';
+        mockQuery.mockImplementationOnce(async (_sql, params) => ({
+            rows: params[0] === foreignCompany
+                ? [{
+                    owner_user_id: 'foreign-user', role_key: 'provider', task_count: 4,
+                    mine_author_count: 0, mine_assignee_count: 0,
+                }]
+                : [],
+        }));
+
+        const res = await request(makeApp({ company: COMPANY }))
+            .get(`/api/tasks/facets?company_id=${foreignCompany}`);
+        expect(res.status).toBe(200);
+        expect(res.body.data.total).toBe(0);
+        expect(res.body.data.byUser).toEqual({});
+        expect(mockQuery.mock.calls[0][1][0]).toBe(COMPANY);
+    });
+});
+
 describe('GET /assignees', () => {
     test('403 without tasks.create/manage', async () => {
         const res = await request(makeApp({ permissions: ['tasks.view'] })).get('/api/tasks/assignees');
         expect(res.status).toBe(403);
     });
 
-    test('returns id+name list', async () => {
-        userService.listUsers.mockResolvedValueOnce({ users: [{ id: 'u1', full_name: 'Ann', email: 'a@x.com' }] });
+    test('returns id, name, email, role key, and configured role label', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{
+            id: 'u1',
+            name: 'Ann',
+            email: 'a@x.com',
+            role_key: 'dispatcher',
+            role_label: 'Coordinator',
+        }] });
         const res = await request(makeApp()).get('/api/tasks/assignees');
         expect(res.status).toBe(200);
-        expect(userService.listUsers).toHaveBeenCalledWith(COMPANY, expect.objectContaining({ status: 'active' }));
-        expect(res.body.data.users).toEqual([{ id: 'u1', name: 'Ann', email: 'a@x.com' }]);
+        expect(res.body.data.users).toEqual([{
+            id: 'u1',
+            name: 'Ann',
+            email: 'a@x.com',
+            role_key: 'dispatcher',
+            role_label: 'Coordinator',
+        }]);
+        expect(mockQuery.mock.calls[0][1]).toEqual([COMPANY]);
     });
 });
 

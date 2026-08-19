@@ -15,6 +15,10 @@ jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/db/tasksQueries', () => ({
     listTasksPage: jest.fn(async () => ({ items: [], page_info: { has_more: false } })),
     countTasks: jest.fn(async () => 0),
+    getOpenTaskFacets: jest.fn(async () => ({
+        byRole: { tenant_admin: 0, manager: 0, dispatcher: 0, provider: 0, unassigned: 0 },
+        byUser: {}, mineAuthor: 0, mineAssignee: 0, total: 0,
+    })),
     getTaskById: jest.fn(),
     updateTask: jest.fn(async () => ({ id: 7, status: 'open' })),
     clearTimelineActionRequiredIfNoOpenTasks: jest.fn(async () => {}),
@@ -109,6 +113,32 @@ describe('ROLE-TASKS-SCOPE-001 — list visibility', () => {
         const [, filters] = tasksQueries.countTasks.mock.calls[0];
         expect(filters.scopeOwnerId).toBe(PROVIDER_USER);
         expect(filters.snoozed).toBe('active');
+    });
+
+    it('provider facets receive the same own-task scope as the list', async () => {
+        const res = await request(appWithAuthz({ permissions: ['tasks.view'] }), 'GET', '/facets');
+        expect(res.status).toBe(200);
+        const [company, actor, filters] = tasksQueries.getOpenTaskFacets.mock.calls[0];
+        expect(company).toBe(COMPANY_A);
+        expect(actor).toBe(PROVIDER_USER);
+        expect(filters.scopeOwnerId).toBe(PROVIDER_USER);
+    });
+
+    it('provider filtered list keeps base scope and forwards the OR-union facets', async () => {
+        const res = await request(
+            appWithAuthz({ permissions: ['tasks.view'] }),
+            'GET',
+            `/?role=dispatcher,provider&assignee=${OTHER_USER}&author_mine=1&assignee_mine=1`
+        );
+        expect(res.status).toBe(200);
+        const [, filters] = tasksQueries.listTasksPage.mock.calls[0];
+        expect(filters).toMatchObject({
+            scopeOwnerId: PROVIDER_USER,
+            roleKeys: ['dispatcher', 'provider'],
+            assigneeIds: [OTHER_USER],
+            authorMineId: PROVIDER_USER,
+            assigneeMineId: PROVIDER_USER,
+        });
     });
 });
 

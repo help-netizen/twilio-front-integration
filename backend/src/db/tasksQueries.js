@@ -40,6 +40,7 @@ const PARENTS = {
 };
 
 const PARENT_TYPES = Object.keys(PARENTS);
+const TASK_ROLE_KEYS = Object.freeze(['tenant_admin', 'manager', 'dispatcher', 'provider']);
 
 function isValidParentType(t) {
     return Object.prototype.hasOwnProperty.call(PARENTS, t);
@@ -250,6 +251,38 @@ function buildTaskListFilters(companyId, filters = {}) {
         params.push(filters.assignee_id);
         conditions.push(`t.owner_user_id = $${params.length}`);
     }
+    const facetConditions = [];
+    if (Array.isArray(filters.roleKeys) && filters.roleKeys.length > 0) {
+        const assignedRoleKeys = filters.roleKeys.filter(roleKey => roleKey !== 'unassigned');
+        if (assignedRoleKeys.length > 0) {
+            params.push(assignedRoleKeys);
+            facetConditions.push(`EXISTS (
+                SELECT 1
+                FROM company_memberships om_filter
+                WHERE om_filter.user_id = t.owner_user_id
+                  AND om_filter.company_id = t.company_id
+                  AND om_filter.role_key = ANY($${params.length}::text[])
+            )`);
+        }
+        if (filters.roleKeys.includes('unassigned')) {
+            facetConditions.push('t.owner_user_id IS NULL');
+        }
+    }
+    if (Array.isArray(filters.assigneeIds) && filters.assigneeIds.length > 0) {
+        params.push(filters.assigneeIds);
+        facetConditions.push(`t.owner_user_id::text = ANY($${params.length}::text[])`);
+    }
+    if (filters.authorMineId) {
+        params.push(filters.authorMineId);
+        facetConditions.push(`t.author_user_id = $${params.length}`);
+    }
+    if (filters.assigneeMineId) {
+        params.push(filters.assigneeMineId);
+        facetConditions.push(`t.owner_user_id = $${params.length}`);
+    }
+    if (facetConditions.length > 0) {
+        conditions.push(`(${facetConditions.join('\n            OR ')})`);
+    }
     if (filters.parent_type && isValidParentType(filters.parent_type)) {
         conditions.push(`t.${PARENTS[filters.parent_type].col} IS NOT NULL`);
     }
@@ -350,6 +383,10 @@ async function listTasksPage(companyId, filters = {}, client = null) {
         },
         filters: {
             status: filters.status || null,
+            role_keys: filters.roleKeys || [],
+            assignee_ids: filters.assigneeIds || [],
+            author_mine_id: filters.authorMineId ? String(filters.authorMineId) : null,
+            assignee_mine_id: filters.assigneeMineId ? String(filters.assigneeMineId) : null,
             parent_type: filters.parent_type || null,
             snoozed: filters.snoozed || null,
             overdue: Boolean(filters.overdue),
@@ -524,6 +561,81 @@ async function countTasks(companyId, filters = {}, client = null) {
         params
     );
     return rows[0]?.count || 0;
+}
+
+/** Active company members available as task assignees, with tenant role labels. */
+async function listTaskAssignees(companyId, client = null) {
+    requireCompanyId(companyId);
+    const query = queryFor(client, db);
+    const { rows } = await query(
+        `SELECT u.id,
+                u.full_name AS name,
+                u.email,
+                m.role_key,
+                COALESCE(
+                    NULLIF(rc.display_name, ''),
+                    INITCAP(REPLACE(m.role_key, '_', ' '))
+                ) AS role_label
+         FROM company_memberships m
+         JOIN crm_users u ON u.id = m.user_id
+         LEFT JOIN company_role_configs rc
+           ON rc.company_id = m.company_id
+          AND rc.role_key = m.role_key
+         WHERE m.company_id = $1
+           AND m.status = 'active'
+         ORDER BY u.full_name, u.id`,
+        [companyId]
+    );
+    return rows;
+}
+
+/**
+ * Counts over the same global-list universe and content scope as GET /, forced
+ * to status=open with no snooze partition (future snoozes remain included).
+ */
+async function getOpenTaskFacets(companyId, actorId, filters = {}, client = null) {
+    requireCompanyId(companyId);
+    if (!actorId) throw new Error('actorId is required');
+    const query = queryFor(client, db);
+    const facetFilters = { ...filters, status: 'open', snoozed: undefined };
+    const { conditions, params } = buildTaskListFilters(companyId, facetFilters);
+    params.push(actorId);
+    const actorParam = `$${params.length}`;
+    const { rows } = await query(
+        `SELECT t.owner_user_id::text AS owner_user_id,
+                om.role_key,
+                COUNT(*)::int AS task_count,
+                COUNT(*) FILTER (WHERE t.author_user_id = ${actorParam})::int AS mine_author_count,
+                COUNT(*) FILTER (WHERE t.owner_user_id = ${actorParam})::int AS mine_assignee_count
+         FROM tasks t
+         LEFT JOIN company_memberships om
+           ON om.user_id = t.owner_user_id
+          AND om.company_id = t.company_id
+         WHERE ${conditions.join(' AND ')}
+         GROUP BY t.owner_user_id, om.role_key`,
+        params
+    );
+
+    const byRole = Object.fromEntries([...TASK_ROLE_KEYS, 'unassigned'].map(roleKey => [roleKey, 0]));
+    const byUser = {};
+    let mineAuthor = 0;
+    let mineAssignee = 0;
+    let total = 0;
+
+    for (const row of rows) {
+        const count = Number(row.task_count) || 0;
+        total += count;
+        mineAuthor += Number(row.mine_author_count) || 0;
+        mineAssignee += Number(row.mine_assignee_count) || 0;
+        if (row.owner_user_id == null) {
+            byRole.unassigned += count;
+        } else {
+            byUser[String(row.owner_user_id)] = count;
+            if (TASK_ROLE_KEYS.includes(row.role_key)) byRole[row.role_key] += count;
+        }
+    }
+
+    return { byRole, byUser, mineAuthor, mineAssignee, total };
 }
 
 /** Single task with the derived parent fields. */
@@ -759,6 +871,8 @@ module.exports = {
     listTasks,
     listTasksPage,
     countTasks,
+    listTaskAssignees,
+    getOpenTaskFacets,
     getTaskById,
     findOpenAppTask,
     countAppTasksCreatedToday,

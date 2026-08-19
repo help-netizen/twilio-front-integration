@@ -15,7 +15,6 @@ const express = require('express');
 const router = express.Router();
 
 const tasksQueries = require('../db/tasksQueries');
-const userService = require('../services/userService');
 const tasksService = require('../services/tasksService');
 const jobsService = require('../services/jobsService');
 const taskActions = require('../services/taskActions/registry');
@@ -37,10 +36,10 @@ function hasPermission(req, permission) {
     return !!req.user?._devMode || (req.authz?.permissions || []).includes(permission);
 }
 
-function applyListVisibility(req, filters) {
+function applyListVisibility(req, filters, { includeLegacyAssignee = true } = {}) {
     const contentScope = getTaskContentScope(req);
     if (contentScope.canViewAll) {
-        if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
+        if (includeLegacyAssignee && req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
         return;
     }
 
@@ -51,6 +50,34 @@ function applyListVisibility(req, filters) {
         throw err;
     }
     filters.scopeOwnerId = ownerId;
+}
+
+function queryValues(value) {
+    const values = Array.isArray(value) ? value : [value];
+    return [...new Set(values
+        .flatMap(item => String(item ?? '').split(','))
+        .map(item => item.trim())
+        .filter(Boolean))];
+}
+
+function applyFacetFilters(req, filters) {
+    const roleKeys = queryValues(req.query.role);
+    const assigneeIds = queryValues(req.query.assignee);
+    const authorMine = queryValues(req.query.author_mine).includes('1');
+    const assigneeMine = queryValues(req.query.assignee_mine).includes('1');
+
+    if (roleKeys.length > 0) filters.roleKeys = roleKeys;
+    if (assigneeIds.length > 0) filters.assigneeIds = assigneeIds;
+    if (!authorMine && !assigneeMine) return;
+
+    const me = actorId(req);
+    if (!me) {
+        const err = new Error('Authenticated request is missing req.user.crmUser.id');
+        err.code = 'INVALID_AUTH_CONTEXT';
+        throw err;
+    }
+    if (authorMine) filters.authorMineId = me;
+    if (assigneeMine) filters.assigneeMineId = me;
 }
 
 function sendInvalidAuthContext(res, err, routeLabel) {
@@ -103,6 +130,7 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
             limit: req.query.limit === undefined ? 50 : Number(req.query.limit),
             offset: req.query.offset === undefined ? undefined : Number(req.query.offset),
         };
+        applyFacetFilters(req, filters);
         // Managers (tasks.manage) see all; everyone else only their own.
         applyListVisibility(req, filters);
         const page = await tasksQueries.listTasksPage(companyId(req), filters);
@@ -131,6 +159,7 @@ router.get('/count', requirePermission('tasks.view'), async (req, res) => {
             parent_type: req.query.parent_type || undefined,
             snoozed: 'active',
         };
+        applyFacetFilters(req, filters);
         // Same visibility branch as GET /: managers count all; everyone else own.
         applyListVisibility(req, filters);
         const count = await tasksQueries.countTasks(companyId(req), filters);
@@ -142,14 +171,34 @@ router.get('/count', requirePermission('tasks.view'), async (req, res) => {
     }
 });
 
+// ── GET /facets — all-open task counts (role-scoped; includes snoozed) ────────
+router.get('/facets', requirePermission('tasks.view'), async (req, res) => {
+    try {
+        const me = actorId(req);
+        if (!me) {
+            const err = new Error('Authenticated request is missing req.user.crmUser.id');
+            err.code = 'INVALID_AUTH_CONTEXT';
+            throw err;
+        }
+        const filters = {};
+        // Reuse the exact GET / content scope without accepting list filters here.
+        applyListVisibility(req, filters, { includeLegacyAssignee: false });
+        const facets = await tasksQueries.getOpenTaskFacets(companyId(req), me, filters);
+        res.json({ ok: true, data: facets });
+    } catch (err) {
+        if (sendInvalidAuthContext(res, err, 'GET /facets')) return;
+        console.error('[Tasks] GET /facets failed:', err.message);
+        res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to load task facets' } });
+    }
+});
+
 // ── GET /assignees — company users for the assignee picker ──────────────────
 // Self-contained (gated tasks.create) so dispatchers/providers can pick an
-// assignee without tenant.users.manage. Returns id + name only.
+// assignee without tenant.users.manage.
 router.get('/assignees', requirePermission('tasks.create', 'tasks.manage'), async (req, res) => {
     try {
-        const { users } = await userService.listUsers(companyId(req), { limit: 1000, status: 'active' });
-        const list = (users || []).map(u => ({ id: u.id, name: u.full_name, email: u.email }));
-        res.json({ ok: true, data: { users: list } });
+        const users = await tasksQueries.listTaskAssignees(companyId(req));
+        res.json({ ok: true, data: { users } });
     } catch (err) {
         console.error('[Tasks] GET /assignees failed:', err.message);
         res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to load assignees' } });
