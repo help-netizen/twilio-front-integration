@@ -20,7 +20,17 @@ export function useKeyboardInset(active: boolean): number {
             return;
         }
         const vv = window.visualViewport;
-        const read = () => setInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
+        // The card is position:fixed, so it is laid out against the LAYOUT viewport —
+        // and that height is documentElement.clientHeight, not window.innerHeight.
+        // Safari's innerHeight counts the strip behind its own collapsed toolbars, so
+        // measuring from it over-stated the keyboard by exactly that strip: the card
+        // floated above the keys and left the grey gap a 72px "shelf" was painted to
+        // hide (owner, 2026-08-19 — the shelf is gone with the gap that caused it).
+        // The PWA has no toolbars, which is why the same bug looked smaller there.
+        const read = () => {
+            const layoutHeight = document.documentElement?.clientHeight || window.innerHeight;
+            setInset(Math.max(0, layoutHeight - vv.height - vv.offsetTop));
+        };
         read();
         vv.addEventListener('resize', read);
         vv.addEventListener('scroll', read);
@@ -138,27 +148,6 @@ export function NoteComposerOverlay({ open, onClose, children }: NoteComposerOve
                 }}
             >
                 {children}
-                {/* KEYBOARD-SHELF — iOS 26 draws its form bar as a FLOATING pill with a transparent
-                    margin above it, and Safari and the installed PWA measure the keyboard's top edge
-                    differently (innerHeight counts Safari's collapsed toolbars, standalone counts the
-                    whole screen). Whatever is left between the composer and the keyboard therefore
-                    showed as a strip of dark scrim — the "empty space under the input". This shelf
-                    paints that strip in the composer's own colour, so the input always reads as
-                    sitting ON the keyboard, identically in both shells. Purely cosmetic: it lives
-                    outside the card's box and is clipped by whichever shell owns that band. */}
-                {keyboardInset > 0 && (
-                    <div
-                        aria-hidden
-                        style={{
-                            position: 'absolute',
-                            left: 0,
-                            right: 0,
-                            top: '100%',
-                            height: 72,
-                            background: 'var(--blanc-field)',
-                        }}
-                    />
-                )}
             </div>
         </div>,
         document.body,

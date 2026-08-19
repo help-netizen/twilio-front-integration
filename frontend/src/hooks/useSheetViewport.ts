@@ -139,7 +139,12 @@ export function useSheetViewport({
             // is gone — which stuck every sheet/panel at half height. When nothing editable
             // is focused, ignore the shrunk viewport and feed keyboard-down metrics so the
             // sheet always spans the full height.
-            const layoutHeight = window.innerHeight || document.documentElement.clientHeight;
+            // documentElement.clientHeight FIRST: a fixed sheet is laid out against the
+            // LAYOUT viewport, and Safari's innerHeight counts the strip behind its own
+            // collapsed toolbars. Measuring from innerHeight over-stated the keyboard by
+            // exactly that strip — an empty grey band above the keys, and a non-zero
+            // "keyboard" even with nothing focused (owner, 2026-08-19).
+            const layoutHeight = document.documentElement?.clientHeight || window.innerHeight;
             const keyboardPossible = isEditableControl(document.activeElement);
             const next = computeSheetViewportGeometry({
                 layoutHeight,
