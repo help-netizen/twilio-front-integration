@@ -190,6 +190,32 @@ export async function getRateStatus(jobId: number): Promise<JobRateStatus> {
     return jobsRequest<JobRateStatus>(`${JOBS_BASE}/${jobId}/rate-status`);
 }
 
+/**
+ * The job's money, counted once on the server (OB-70).
+ *
+ * The panel used to add these up itself from lists capped at 100 rows, which meant a
+ * busy job could quietly under-report, and it was a second opinion beside the figures
+ * the jobs list and Inspector already showed. One projector now answers all of them.
+ *
+ * `tips` is separate from `paid` on purpose (owner, 19.08): a $115 charge on a $100
+ * invoice is Paid $100, Due $0, Tips $15 — counting the tip made Due read −$15, a
+ * credit the customer never overpaid. `unapplied_credit` is money on the job that no
+ * invoice is currently showing.
+ */
+export interface JobFinance {
+    estimated: number;
+    invoiced: number;
+    paid: number;
+    /** Signed: negative means the customer is in credit. */
+    due: number;
+    tips: number;
+    unapplied_credit: number;
+}
+
+export async function fetchJobFinance(jobId: number): Promise<JobFinance> {
+    return jobsRequest<JobFinance>(`${JOBS_BASE}/${jobId}/finance`);
+}
+
 export async function sendRateLink(jobId: number, channel: RateLinkChannel): Promise<SendRateLinkResult> {
     const res = await authedFetch(`${JOBS_BASE}/${jobId}/rate-link`, {
         method: 'POST',

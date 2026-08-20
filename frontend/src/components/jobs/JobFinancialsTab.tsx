@@ -22,7 +22,7 @@ import type { InvoiceEvent } from '../../services/invoicesApi';
 import { sendInvoice } from '../../services/invoicesApi';
 import { approveEstimate, archiveEstimate, declineEstimate, restoreEstimate, sendEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
 import { toast } from 'sonner';
-import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
+import { formatSignedCurrency } from './jobFinanceMath';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { voidTransaction, fetchStripeReadiness, type PaymentTransaction } from '../../services/paymentsCanonicalApi';
@@ -83,7 +83,7 @@ interface Props {
 
 export function JobFinancialsTab({ jobId, contactEmail, contactPhone, hasContact, cardResumeEnabled }: Props) {
     const {
-        estimates, invoices, jobPayments, loading,
+        estimates, invoices, jobPayments, finance, loading,
         selectedEstimate, selectedInvoice,
         setSelectedEstimate, setSelectedInvoice,
         refresh, revalidateAfterPayment, handleCreateEstimate, handleCreateInvoice,
@@ -171,12 +171,13 @@ export function JobFinancialsTab({ jobId, contactEmail, contactPhone, hasContact
         refresh();
     };
 
-    const {
-        estimated: totalEstimated,
-        invoiced: totalInvoiced,
-        paid: totalPaid,
-        due: totalDue,
-    } = calculateJobFinanceSummary(estimates, invoices, jobPayments || []);
+    // OB-70: one projector on the server answers this, the jobs list, Inspector and the
+    // Unpaid filter. The client used to add it up from lists capped at 100 rows.
+    const totalEstimated = finance?.estimated ?? 0;
+    const totalInvoiced = finance?.invoiced ?? 0;
+    const totalPaid = finance?.paid ?? 0;
+    const totalDue = finance?.due ?? 0;
+    const totalTips = finance?.tips ?? 0;
 
     // Collect-payment surface (STRIPE-ADHOC-PAY-001 §1). Perm-gate FIRST: no collect
     // perm → render nothing at all (no button, no CTA). Then split on Stripe readiness.
@@ -204,6 +205,9 @@ export function JobFinancialsTab({ jobId, contactEmail, contactPhone, hasContact
                         <MetricCell label="Estimated" value={money(totalEstimated)} />
                         <MetricCell label="Invoiced" value={money(totalInvoiced)} />
                         <MetricCell label="Paid" value={money(totalPaid)} />
+                        {/* A tip is not payment of the invoice (owner, 19.08). Shown only
+                            when there is one — no empty cells. */}
+                        {totalTips > 0 ? <MetricCell label="Tips" value={money(totalTips)} /> : null}
                         <MetricCell
                             label="Due"
                             value={money(totalDue)}

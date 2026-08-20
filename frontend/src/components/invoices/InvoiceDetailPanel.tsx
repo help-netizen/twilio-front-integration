@@ -672,6 +672,17 @@ export function InvoiceDetailPanel({
                             <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] blanc-l2 blanc-l2-heading"><span>Total</span><span className="font-mono">{money(invoice.total)}</span></div>
                             <div className="flex min-h-8 items-center justify-between"><span className="text-[var(--blanc-ink-2)]">Amount paid</span><span className="font-mono font-semibold text-[var(--blanc-success)]">{money(invoice.amount_paid)}</span></div>
                             <div className="mt-1 flex min-h-11 items-center justify-between border-t border-[var(--blanc-line)] blanc-l2 blanc-l2-heading"><span>Balance due</span><span className="font-mono">{money(invoice.balance_due)}</span></div>
+                            {/* OB-70: money sitting on the job that no invoice is showing. Without
+                                this line the card reads "Amount paid $0.00" while the job reads
+                                "Paid $462.00" — usually because that money was detached from an
+                                invoice someone removed — and nothing on screen explains the gap.
+                                The server sends 0 when this is the job's only active invoice,
+                                since the figures above already include it. */}
+                            {Number(invoice.job_unapplied_credit || 0) > 0 ? (
+                                <p data-testid="invoice-job-credit" className="blanc-l2 mt-1.5" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    Job credit {money(invoice.job_unapplied_credit)} not applied to this invoice
+                                </p>
+                            ) : null}
                         </div>
                     </section>
 

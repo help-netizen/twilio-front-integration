@@ -9,6 +9,7 @@ import { fetchInvoices, createInvoice, type Invoice, type InvoiceCreateData } fr
 import { fetchTransactions, type PaymentTransaction } from '../services/paymentsCanonicalApi';
 import type { ManualCardSessionResult } from '../services/stripePaymentsApi';
 import { toast } from 'sonner';
+import { fetchJobFinance, type JobFinance } from '../services/jobsApi';
 import { useAuthz } from './useAuthz';
 import { completedJobPoolPaid } from '../components/jobs/jobFinanceMath';
 
@@ -81,6 +82,8 @@ interface UseJobFinancialsReturn {
     estimates: Estimate[];
     invoices: Invoice[];
     jobPayments: PaymentTransaction[];
+    /** The server's figures; null while loading or when the request failed. */
+    finance: JobFinance | null;
     loading: boolean;
     selectedEstimate: Estimate | null;
     selectedInvoice: Invoice | null;
@@ -99,6 +102,10 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
     const [estimates, setEstimates] = useState<Estimate[]>([]);
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [jobPayments, setJobPayments] = useState<PaymentTransaction[]>([]);
+    // OB-70: the four figures come from the server's one projector, not from adding up
+    // the lists above — those are capped at 100 rows and were a second opinion beside
+    // what the jobs list and Inspector already showed.
+    const [finance, setFinance] = useState<JobFinance | null>(null);
     const [loading, setLoading] = useState(false);
     // Same reasoning as selectedInvoice below — estimates are sent to customers too.
     const [selectedEstimateId, setSelectedEstimateId] = useState<number | null>(null);
@@ -160,12 +167,14 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
         Promise.all([
             fetchEstimates({ job_id: jobId, limit: 100 }),
             fetchJobFinanceSnapshot(jobId, true),
+            fetchJobFinance(jobId).catch(() => null),
         ])
-            .then(([eRes, snapshot]) => {
+            .then(([eRes, snapshot, jobFinance]) => {
                 if (cancelled) return;
                 setEstimates(eRes.estimates);
                 setInvoices(snapshot.invoices);
                 setJobPayments(snapshot.jobPayments);
+                setFinance(jobFinance);
                 jobPaymentsRef.current = snapshot.jobPayments;
             })
             .catch(() => {
@@ -212,6 +221,7 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
         estimates,
         invoices,
         jobPayments,
+        finance,
         loading,
         selectedEstimate,
         selectedInvoice,

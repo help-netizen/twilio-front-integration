@@ -114,9 +114,15 @@ export function InvoiceRemoveDialog({
                         onCheckedChange={next => setReapply(next === true)}
                         className="mt-0.5"
                     />
-                    <span className="text-[var(--blanc-ink-1)]">
-                        Put {money(preview?.payments_total)} on invoice {candidate.invoice_number}
-                        <span className="text-[var(--blanc-ink-3)]"> — {money(candidate.balance_due)} due</span>
+                    <span>
+                        {/* Two lines rather than one that wraps: on a phone the trailing
+                            "— $462.00 due" broke onto its own line behind a hanging dash. */}
+                        <span className="block text-[var(--blanc-ink-1)]">
+                            Put {money(preview?.payments_total)} on invoice {candidate.invoice_number}
+                        </span>
+                        <span className="blanc-l2 blanc-l2-quiet block">
+                            {money(candidate.balance_due)} due on it
+                        </span>
                     </span>
                 </label>
             ) : null}

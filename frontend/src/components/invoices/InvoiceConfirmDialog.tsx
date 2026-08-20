@@ -52,7 +52,13 @@ export function InvoiceConfirmDialog({
                         {title}
                     </DialogTitle>
                     <DialogDescription asChild>
-                        <div className="mt-2 text-[14px] leading-relaxed text-[var(--blanc-ink-2)]">
+                        {/* TYPE-CANON: 15px, like everything below a heading. It was 14px,
+                            which read as a second body size the moment anything at the
+                            canon's size stood next to it (OB-70's re-apply choice did).
+                            The quiet colour rides the class, not a utility beside it —
+                            design-system.css loads after Tailwind, so `.blanc-l2` wins
+                            the colour and a `text-[…]` neighbour is silently ignored. */}
+                        <div className="blanc-l2 blanc-l2-quiet mt-2 leading-relaxed">
                             {description}
                         </div>
                     </DialogDescription>

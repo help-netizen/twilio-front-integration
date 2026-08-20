@@ -121,9 +121,12 @@ const LEDGER_EFFECTS_CTE = `
           AND pt.transaction_type IN ('payment', 'refund')
     )`;
 
-async function getInvoiceAllocations(companyId, jobIds, client = null) {
+async function getInvoiceAllocations(companyId, jobIds, client = null, invoiceIds = []) {
     const ids = [...new Set((jobIds || []).map(Number).filter(Number.isFinite))];
     if (ids.length === 0) return [];
+    const scopedInvoiceIds = [...new Set(
+        (invoiceIds || []).map(Number).filter(Number.isFinite)
+    )];
     const query = queryFor(client);
     const { rows } = await query(`
         WITH ${LEDGER_EFFECTS_CTE},
@@ -182,7 +185,13 @@ async function getInvoiceAllocations(companyId, jobIds, client = null) {
                        WHEN COALESCE(aic.invoice_count, 0) = 1
                            THEN COALESCE(up.unapplied_amount, 0)
                        ELSE 0
-                   END AS unapplied_display
+                   END AS unapplied_display,
+                   CASE
+                       WHEN i.status NOT IN ('void', 'voided', 'refunded')
+                        AND COALESCE(aic.invoice_count, 0) = 1
+                           THEN 0
+                       ELSE COALESCE(up.unapplied_amount, 0)
+                   END AS job_unapplied_credit
             FROM invoices i
             LEFT JOIN linked_native ln ON ln.invoice_id = i.id
             LEFT JOIN direct_application da ON da.invoice_id = i.id
@@ -190,7 +199,10 @@ async function getInvoiceAllocations(companyId, jobIds, client = null) {
             LEFT JOIN active_invoice_count aic ON aic.job_id = i.job_id
             WHERE i.company_id = $1
               AND i.job_id = ANY($2::BIGINT[])
-              AND i.status NOT IN ('void', 'voided', 'refunded')
+              AND (
+                    i.status NOT IN ('void', 'voided', 'refunded')
+                    OR i.id = ANY($3::BIGINT[])
+              )
         )
         SELECT invoice_id,
                job_id,
@@ -199,9 +211,10 @@ async function getInvoiceAllocations(companyId, jobIds, client = null) {
                GREATEST(directly_applied + unapplied_display, -legacy_paid)
                    AS job_payment_allocated,
                GREATEST(legacy_paid + directly_applied + unapplied_display, 0)
-                   AS amount_paid
+                   AS amount_paid,
+               job_unapplied_credit
         FROM invoice_capacity`,
-        [companyId, ids]
+        [companyId, ids, scopedInvoiceIds]
     );
     return rows;
 }
@@ -249,13 +262,22 @@ function derivedInvoiceStatus(invoice, amountPaid) {
 
 async function applyInvoiceAllocations(companyId, invoices, client = null) {
     if (!Array.isArray(invoices) || invoices.length === 0) return invoices || [];
-    const allocations = await getInvoiceAllocations(companyId, uniqueJobIds(invoices), client);
+    const allocations = await getInvoiceAllocations(
+        companyId,
+        uniqueJobIds(invoices),
+        client,
+        invoices.map(invoice => invoice.id)
+    );
     const byInvoice = new Map(allocations.map(row => [String(row.invoice_id), row]));
 
     return invoices.map(invoice => {
         const allocation = byInvoice.get(String(invoice.id));
+        const jobUnappliedCredit = moneyShape(
+            allocation?.job_unapplied_credit || 0,
+            invoice.amount_paid
+        );
         if (!allocation || ['void', 'voided', 'refunded'].includes(invoice.status)) {
-            return invoice;
+            return { ...invoice, job_unapplied_credit: jobUnappliedCredit };
         }
         const amountPaid = Number(allocation.amount_paid || 0);
         const balanceDue = Math.max(Number(invoice.total || 0) - amountPaid, 0);
@@ -268,6 +290,7 @@ async function applyInvoiceAllocations(companyId, invoices, client = null) {
                 allocation.job_payment_allocated,
                 invoice.amount_paid
             ),
+            job_unapplied_credit: jobUnappliedCredit,
         };
     });
 }

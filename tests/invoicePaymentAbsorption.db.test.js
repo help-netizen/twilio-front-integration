@@ -52,6 +52,7 @@ async function createPayment({
     amount,
     source = 'stripe',
     status = 'completed',
+    transactionType = 'payment',
     metadata = {},
 }) {
     const { rows } = await client.query(
@@ -59,11 +60,21 @@ async function createPayment({
             company_id, job_id, invoice_id, transaction_type, payment_method,
             status, amount, currency, external_source, metadata, processed_at, recorded_by
          ) VALUES (
-            $1, $2, $3, 'payment', 'cash',
-            $4, $5, 'USD', $6, $7::JSONB, NOW(), $8
+            $1, $2, $3, $4, 'cash',
+            $5, $6, 'USD', $7, $8::JSONB, NOW(), $9
          )
          RETURNING *`,
-        [companyId, jobId, invoiceId, status, amount, source, JSON.stringify(metadata), userId]
+        [
+            companyId,
+            jobId,
+            invoiceId,
+            transactionType,
+            status,
+            amount,
+            source,
+            JSON.stringify(metadata),
+            userId,
+        ]
     );
     return rows[0];
 }
@@ -248,7 +259,7 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         });
     });
 
-    test('job 1603 shape: $95 before + $185 after pays a $280 invoice without claiming either row', async () => {
+    test('PAY-JOB-CENTRIC-001: job 1603 linked and unlinked rows count once', async () => {
         const job = await createJob();
         const before = await createPayment({ jobId: job.id, amount: 95 });
         const invoice = await createInvoice({ jobId: job.id, label: 'job-1603', total: 280 });
@@ -284,6 +295,162 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
             limit: 20,
         });
         expect(history.rows.map(row => row.id)).toEqual(expect.arrayContaining([before.id, after.id]));
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 280,
+            paid: 280,
+            due: 0,
+        });
+    });
+
+    test('SAB-OB70-LEGACY-PAID: materialized invoice money survives without ledger rows', async () => {
+        const job = await createJob();
+        const invoice = await createInvoice({ jobId: job.id, label: 'legacy-only', total: 100 });
+        await client.query(
+            `UPDATE invoices
+             SET amount_paid = 100, balance_due = 0, status = 'paid'
+             WHERE company_id = $1 AND id = $2`,
+            [companyA, invoice.id]
+        );
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+        });
+    });
+
+    test('linked native ledger is removed from legacy before Paid is summed', async () => {
+        const job = await createJob();
+        const invoice = await createInvoice({ jobId: job.id, label: 'native-dedup', total: 100 });
+        await client.query(
+            `UPDATE invoices
+             SET amount_paid = 40, balance_due = 60, status = 'partial'
+             WHERE company_id = $1 AND id = $2`,
+            [companyA, invoice.id]
+        );
+        await createPayment({ jobId: job.id, invoiceId: invoice.id, amount: 40 });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 100,
+            paid: 40,
+            due: 60,
+        });
+    });
+
+    test('CTRL-ZBPAY-DUE-GUARD: unlinked Zenbooker money credits Paid and Due', async () => {
+        const job = await createJob();
+        await createInvoice({ jobId: job.id, label: 'zb-unlinked', total: 100 });
+        await createPayment({ jobId: job.id, amount: 40, source: 'zenbooker' });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 100,
+            paid: 40,
+            due: 60,
+        });
+    });
+
+    test('CTRL-ZBPAY-DUE-GUARD: linked Zenbooker stays materialized without double count', async () => {
+        const job = await createJob();
+        const invoice = await createInvoice({ jobId: job.id, label: 'zb-linked', total: 100 });
+        await client.query(
+            `UPDATE invoices
+             SET amount_paid = 40, balance_due = 60, status = 'partial'
+             WHERE company_id = $1 AND id = $2`,
+            [companyA, invoice.id]
+        );
+        await createPayment({
+            jobId: job.id,
+            invoiceId: invoice.id,
+            amount: 40,
+            source: 'zenbooker',
+        });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 100,
+            paid: 40,
+            due: 60,
+        });
+    });
+
+    test('job 1498: standalone ZB money reduces Due instead of inflating it', async () => {
+        const job = await createJob();
+        const first = await createInvoice({ jobId: job.id, label: 'job-1498-main', total: 1665.81 });
+        await createInvoice({ jobId: job.id, label: 'job-1498-second', total: 125 });
+        await createInvoice({ jobId: job.id, label: 'job-1498-third', total: 125 });
+        await createPayment({ jobId: job.id, amount: 125, source: 'zenbooker' });
+        await createPayment({ jobId: job.id, invoiceId: first.id, amount: 1665.81 });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 1915.81,
+            paid: 1790.81,
+            due: 125,
+        });
+    });
+
+    test('Zenbooker refund inherits its source and nets both Paid and Due', async () => {
+        const job = await createJob();
+        await createInvoice({ jobId: job.id, label: 'zb-refund', total: 100 });
+        const original = await createPayment({
+            jobId: job.id,
+            amount: 100,
+            source: 'zenbooker',
+            status: 'refunded',
+        });
+        await createPayment({
+            jobId: job.id,
+            amount: -30,
+            source: null,
+            transactionType: 'refund',
+            metadata: { original_transaction_id: original.id },
+        });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 100,
+            paid: 70,
+            due: 30,
+        });
+    });
+
+    test('TXN-STATUS-VOID-001: refunded original is gross, refund nets, voided is zero', async () => {
+        const job = await createJob();
+        await createInvoice({ jobId: job.id, label: 'status-effects', total: 100 });
+        const original = await createPayment({
+            jobId: job.id,
+            amount: 100,
+            source: 'manual',
+            status: 'refunded',
+        });
+        await createPayment({
+            jobId: job.id,
+            amount: -30,
+            source: null,
+            transactionType: 'refund',
+            metadata: { original_transaction_id: original.id },
+        });
+        await createPayment({ jobId: job.id, amount: 40, source: 'manual', status: 'voided' });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 100,
+            paid: 70,
+            due: 30,
+        });
+    });
+
+    test('void invoice drops its materialized amount from Invoiced, Paid, and Due', async () => {
+        const job = await createJob();
+        const invoice = await createInvoice({ jobId: job.id, label: 'void-legacy', total: 100 });
+        await client.query(
+            `UPDATE invoices
+             SET amount_paid = 100, balance_due = 0, status = 'void', voided_at = NOW()
+             WHERE company_id = $1 AND id = $2`,
+            [companyA, invoice.id]
+        );
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 0,
+            paid: 0,
+            due: 0,
+        });
     });
 
     test('uses invoice_id application when several active invoices exist', async () => {
@@ -337,6 +504,53 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
             paid: Number(afterRemoval.total_paid),
             due: Number(afterRemoval.total_due),
         }).toEqual({ paid: 60, due: 40 });
+    });
+
+    test('SAB-OB70-CREDIT-VISIBILITY: credit is exposed only when this invoice does not display it', async () => {
+        const job = await createJob();
+        const first = await createInvoice({ jobId: job.id, label: 'credit-first', total: 100 });
+        const second = await createInvoice({ jobId: job.id, label: 'credit-second', total: 100 });
+        await createPayment({ jobId: job.id, amount: 60 });
+
+        const firstDetail = await invoicesQueries.getInvoiceById(companyA, first.id, client);
+        const secondDetail = await invoicesQueries.getInvoiceById(companyA, second.id, client);
+        expect(firstDetail).toMatchObject({
+            amount_paid: '0.00',
+            job_unapplied_credit: '60.00',
+        });
+        expect(secondDetail).toMatchObject({
+            amount_paid: '0.00',
+            job_unapplied_credit: '60.00',
+        });
+
+        const beforeList = await invoicesQueries.listInvoices(companyA, {
+            jobId: job.id,
+            limit: 10,
+        });
+        expect(beforeList.rows.map(invoice => invoice.job_unapplied_credit))
+            .toEqual(['60.00', '60.00']);
+
+        await expect(invoicesQueries.deleteInvoice(first.id, companyA, client)).resolves.toBe(true);
+
+        const soleDetail = await invoicesQueries.getInvoiceById(companyA, second.id, client);
+        expect(soleDetail).toMatchObject({
+            amount_paid: '60.00',
+            job_unapplied_credit: '0.00',
+        });
+        const afterList = await invoicesQueries.listInvoices(companyA, {
+            jobId: job.id,
+            limit: 10,
+        });
+        expect(afterList.rows).toHaveLength(1);
+        expect(afterList.rows[0].job_unapplied_credit).toBe('0.00');
+
+        const standalone = await createInvoice({
+            jobId: null,
+            label: 'credit-no-job',
+            total: 25,
+        });
+        await expect(invoicesQueries.getInvoiceById(companyA, standalone.id, client))
+            .resolves.toMatchObject({ job_unapplied_credit: '0.00' });
     });
 
     test('over-collection: full explicitly applied charge keeps invoice due at zero', async () => {

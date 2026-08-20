@@ -1,16 +1,5 @@
 type MoneyValue = string | number | null | undefined;
 
-interface EstimateMoney {
-    total?: MoneyValue;
-}
-
-interface InvoiceMoney {
-    total?: MoneyValue;
-    amount_paid?: MoneyValue;
-    job_payment_allocated?: MoneyValue;
-    status?: string | null;
-}
-
 interface JobPaymentMoney {
     id?: number | string;
     amount?: MoneyValue;
@@ -20,13 +9,6 @@ interface JobPaymentMoney {
     external_source?: string | null;
     voided_at?: string | null;
     metadata?: { original_transaction_id?: number | string | null; tip?: MoneyValue } | null;
-}
-
-export interface JobFinanceSummary {
-    estimated: number;
-    invoiced: number;
-    paid: number;
-    due: number;
 }
 
 function moneyNumber(value: MoneyValue): number {
@@ -69,66 +51,16 @@ export function completedJobPoolPaid(payments: JobPaymentMoney[]): number {
     }, 0);
 }
 
-export function completedJobPoolDueOffset(payments: JobPaymentMoney[]): number {
-    const byId = new Map(payments.map(payment => [String(payment.id), payment]));
-    return payments.reduce((sum, payment) => {
-        // SAME condition as completedJobPoolPaid, and that symmetry is the point.
-        // Zenbooker money is skipped only when it is already materialized on an
-        // invoice — i.e. when it is inside `legacyInvoicePaid` and crediting it
-        // here would count it twice.
-        //
-        // The guard used to skip EVERY zenbooker row. Its premise — "ZB money
-        // lives on its invoice" — is false in production: of 1403 completed
-        // Zenbooker payments ($288,840), zero carry an invoice_id, and zero
-        // invoices carry amount_paid without a linked payment. So the money
-        // counted in Paid and never reduced Due, and every job funded through
-        // Zenbooker showed a debt it did not have (job 1498: Due $250 against a
-        // real $125). Measured 2026-08-16 against production.
-        if (effectiveSource(payment, byId) === 'zenbooker' && payment.invoice_id != null) return sum;
-        let effect = transactionEffect(payment);
-        if (payment.transaction_type === 'payment' && effect > 0) {
-            effect = Math.max(effect - Math.max(moneyNumber(payment.metadata?.tip), 0), 0);
-        } else if (payment.transaction_type === 'refund' && effect < 0) {
-            const originalId = payment.metadata?.original_transaction_id;
-            const original = originalId != null ? byId.get(String(originalId)) : undefined;
-            const originalAmount = Math.abs(moneyNumber(original?.amount));
-            const originalTip = Math.max(moneyNumber(original?.metadata?.tip), 0);
-            if (originalAmount > 0) {
-                effect *= Math.max(originalAmount - originalTip, 0) / originalAmount;
-            }
-        }
-        return sum + effect;
-    }, 0);
-}
-
-const INACTIVE_INVOICE_STATUSES = new Set(['void', 'voided', 'refunded']);
-
-export function calculateJobFinanceSummary(
-    estimates: EstimateMoney[],
-    invoices: InvoiceMoney[],
-    jobPayments: JobPaymentMoney[],
-): JobFinanceSummary {
-    const estimated = estimates.reduce((sum, estimate) => sum + moneyNumber(estimate.total), 0);
-    // Voided / refunded invoices are cancelled — they drop out of Invoiced/Paid/Due
-    // together so the tiles stay internally consistent with the backend rollup.
-    const activeInvoices = invoices.filter(invoice => !INACTIVE_INVOICE_STATUSES.has(String(invoice.status ?? '')));
-    const invoiced = activeInvoices.reduce((sum, invoice) => sum + moneyNumber(invoice.total), 0);
-    const legacyInvoicePaid = activeInvoices.reduce((sum, invoice) => (
-        sum + Math.max(
-            moneyNumber(invoice.amount_paid) - moneyNumber(invoice.job_payment_allocated),
-            0
-        )
-    ), 0);
-    const paid = legacyInvoicePaid + completedJobPoolPaid(jobPayments);
-    const jobPoolDueOffset = completedJobPoolDueOffset(jobPayments);
-
-    return {
-        estimated,
-        invoiced,
-        paid,
-        due: invoiced - legacyInvoicePaid - jobPoolDueOffset,
-    };
-}
+/**
+ * The job's four figures used to live here, computed from lists the panel had already
+ * fetched. They are the server's now (OB-70 phase 2, `GET /api/jobs/:id/finance`): one
+ * projector answers the jobs list, Inspector, the Unpaid filter and the panel, so they
+ * cannot disagree — and this copy could not see past its own `limit: 100`. The rules it
+ * encoded (Zenbooker money crediting Due, refunds netting, voided rows counting zero,
+ * legacy `amount_paid` surviving without ledger rows) are asserted against a real
+ * database in tests/invoicePaymentAbsorption.db.test.js. What stays here is what the UI
+ * genuinely computes for itself.
+ */
 
 export function formatSignedCurrency(value: MoneyValue): string {
     const parsed = moneyNumber(value);

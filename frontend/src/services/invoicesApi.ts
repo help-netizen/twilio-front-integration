@@ -46,6 +46,12 @@ export interface Invoice {
     /** Percentage discounts round-trip since migration 287 — same shape as estimates. */
     discount_type?: 'fixed' | 'percentage' | null;
     discount_value?: string | null;
+    /**
+     * OB-70: money on this invoice's job that no invoice is showing — 0 when this is the
+     * job's only active invoice, because then it is already counted here. Without it the
+     * card says Paid $0.00 while the job says Paid $462.00 and nothing explains the gap.
+     */
+    job_unapplied_credit?: string | null;
     total: string;
     amount_paid: string;
     balance_due: string;

@@ -3,7 +3,7 @@ import type { PaymentDetail } from './paymentTypes';
 import { formatCurrency, formatPaymentDate } from './paymentTypes';
 import { LEVEL_TWO_QUIET, LEVEL_TWO_HEADING } from '../../styles/levelTwo';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
-import { calculateJobFinanceSummary, formatSignedCurrency } from '../jobs/jobFinanceMath';
+import { formatSignedCurrency } from '../jobs/jobFinanceMath';
 
 /**
  * The payment's own identity — everything this record IS, before any job context.
@@ -116,10 +116,11 @@ export function PaymentIdentity({
  * alarm), plain ink at zero.
  */
 export function JobFinanceFigures({ jobId }: { jobId: number | null | undefined }) {
-    const { estimates, invoices, jobPayments } = useJobFinancials(jobId ?? 0);
-    if (!jobId) return null;
-    const summary = calculateJobFinanceSummary(estimates, invoices, jobPayments);
-    const due = summary.due;
+    // OB-70: the server counts this now — one projector behind the jobs list, Inspector,
+    // the Unpaid filter and this card, instead of four spellings of the same sum.
+    const { finance } = useJobFinancials(jobId ?? 0);
+    if (!jobId || !finance) return null;
+    const due = finance.due;
     const dueColor = due > 0
         ? 'var(--blanc-warning)'
         : due < 0
@@ -143,10 +144,13 @@ export function JobFinanceFigures({ jobId }: { jobId: number | null | undefined 
         <div>
             <p className="blanc-section-heading">Finance</p>
             <div className="flex flex-wrap gap-x-7 gap-y-1.5">
-                {figure('Estimated', summary.estimated)}
-                {figure('Invoiced', summary.invoiced)}
-                {figure('Paid', summary.paid)}
-                {figure('Due', summary.due, dueColor)}
+                {figure('Estimated', finance.estimated)}
+                {figure('Invoiced', finance.invoiced)}
+                {figure('Paid', finance.paid)}
+                {figure('Due', finance.due, dueColor)}
+                {/* A tip is not payment of the invoice (owner, 19.08), so it stands on
+                    its own — and only when there is one: no empty rows. */}
+                {finance.tips > 0 ? figure('Tips', finance.tips) : null}
             </div>
         </div>
     );

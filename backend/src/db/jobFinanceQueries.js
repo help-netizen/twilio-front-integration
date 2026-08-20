@@ -9,8 +9,8 @@ function queryFor(client) {
 
 /*
  * OB-70 canonical Job finance projection. Every Job-level consumer reads this
- * exact query: active estimates, active invoices, non-tip net payments, tips,
- * signed Due, and unapplied Job credit.
+ * exact query: active estimates/invoices, legacy materialized paid money,
+ * non-tip net ledger effects, tips, signed Due, and unapplied Job credit.
  */
 const JOB_FINANCE_SQL = `
     WITH requested_jobs AS (
@@ -29,26 +29,20 @@ const JOB_FINANCE_SQL = `
           AND estimate.status <> 'declined'
         GROUP BY estimate.job_id
     ),
-    invoice_totals AS (
-        SELECT invoice.job_id,
-               COALESCE(SUM(invoice.total), 0)::NUMERIC AS invoiced
-        FROM invoices invoice
-        JOIN requested_jobs requested ON requested.job_id = invoice.job_id
-        WHERE invoice.company_id = $1
-          AND invoice.status NOT IN ('void', 'voided', 'refunded')
-        GROUP BY invoice.job_id
-    ),
     payment_base AS (
         SELECT payment.*,
                COALESCE(payment.job_id, applied_invoice.job_id) AS effective_job_id,
                original.amount AS original_amount,
-               original.metadata AS original_metadata
+               original.metadata AS original_metadata,
+               original.external_source AS original_external_source
         FROM payment_transactions payment
         LEFT JOIN invoices applied_invoice
           ON applied_invoice.id = payment.invoice_id
          AND applied_invoice.company_id = payment.company_id
         LEFT JOIN LATERAL (
-            SELECT original_payment.amount, original_payment.metadata
+            SELECT original_payment.amount,
+                   original_payment.metadata,
+                   original_payment.external_source
             FROM payment_transactions original_payment
             WHERE original_payment.company_id = payment.company_id
               AND original_payment.transaction_type = 'payment'
@@ -77,6 +71,10 @@ const JOB_FINANCE_SQL = `
         SELECT payment.id,
                payment.effective_job_id AS job_id,
                payment.invoice_id,
+               COALESCE(
+                   NULLIF(payment.external_source, ''),
+                   payment.original_external_source
+               ) AS effective_source,
                CASE
                    WHEN payment.voided_at IS NOT NULL THEN 0::NUMERIC
                    WHEN payment.transaction_type = 'payment'
@@ -134,12 +132,84 @@ const JOB_FINANCE_SQL = `
                            GREATEST(payment.amount, 0)
                        )
                    ELSE 0::NUMERIC
-               END AS tip_effect
+               END AS tip_effect,
+               CASE
+                   -- Voiding a linked native row must not resurrect the same
+                   -- historical money from invoices.amount_paid as legacy paid.
+                   WHEN payment.transaction_type = 'payment'
+                    AND (
+                        payment.status IN ('completed', 'refunded', 'voided')
+                        OR payment.voided_at IS NOT NULL
+                    )
+                       THEN GREATEST(
+                           payment.amount - LEAST(
+                               GREATEST(
+                                   CASE
+                                       WHEN payment.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                                           THEN (payment.metadata->>'tip')::NUMERIC
+                                       ELSE 0
+                                   END,
+                                   0
+                               ),
+                               GREATEST(payment.amount, 0)
+                           ),
+                           0
+                       )
+                   WHEN payment.transaction_type = 'refund'
+                    AND payment.status = 'completed'
+                       THEN -ABS(payment.amount) * CASE
+                           WHEN COALESCE(ABS(payment.original_amount), 0) > 0
+                               THEN GREATEST(
+                                   ABS(payment.original_amount) - LEAST(
+                                       GREATEST(
+                                           CASE
+                                               WHEN payment.original_metadata->>'tip'
+                                                    ~ '^[0-9]+([.][0-9]+)?$'
+                                                   THEN (payment.original_metadata->>'tip')::NUMERIC
+                                               ELSE 0
+                                           END,
+                                           0
+                                       ),
+                                       ABS(payment.original_amount)
+                                   ),
+                                   0
+                               ) / ABS(payment.original_amount)
+                           ELSE 1
+                       END
+                   ELSE 0::NUMERIC
+               END AS linked_materialized_effect
         FROM payment_base payment
+    ),
+    linked_native_totals AS (
+        SELECT effect.invoice_id,
+               COALESCE(SUM(effect.linked_materialized_effect) FILTER (
+                   WHERE effect.effective_source IS DISTINCT FROM 'zenbooker'
+               ), 0)::NUMERIC AS linked_amount
+        FROM payment_effects effect
+        WHERE effect.invoice_id IS NOT NULL
+        GROUP BY effect.invoice_id
+    ),
+    invoice_totals AS (
+        SELECT invoice.job_id,
+               COALESCE(SUM(invoice.total), 0)::NUMERIC AS invoiced,
+               COALESCE(SUM(GREATEST(
+                   COALESCE(invoice.amount_paid, 0)
+                       - COALESCE(linked.linked_amount, 0),
+                   0
+               )), 0)::NUMERIC AS legacy_paid
+        FROM invoices invoice
+        JOIN requested_jobs requested ON requested.job_id = invoice.job_id
+        LEFT JOIN linked_native_totals linked ON linked.invoice_id = invoice.id
+        WHERE invoice.company_id = $1
+          AND invoice.status NOT IN ('void', 'voided', 'refunded')
+        GROUP BY invoice.job_id
     ),
     payment_totals AS (
         SELECT effect.job_id,
-               COALESCE(SUM(effect.paid_effect), 0)::NUMERIC AS paid,
+               COALESCE(SUM(effect.paid_effect) FILTER (
+                   WHERE effect.effective_source IS DISTINCT FROM 'zenbooker'
+                      OR effect.invoice_id IS NULL
+               ), 0)::NUMERIC AS ledger_paid,
                COALESCE(SUM(effect.tip_effect), 0)::NUMERIC AS tips,
                COALESCE(SUM(effect.paid_effect) FILTER (
                    WHERE effect.invoice_id IS NULL
@@ -151,9 +221,11 @@ const JOB_FINANCE_SQL = `
         SELECT requested.job_id,
                COALESCE(estimate.estimated, 0)::NUMERIC AS estimated,
                COALESCE(invoice.invoiced, 0)::NUMERIC AS invoiced,
-               COALESCE(payment.paid, 0)::NUMERIC AS paid,
+               COALESCE(invoice.legacy_paid, 0)::NUMERIC
+                   + COALESCE(payment.ledger_paid, 0)::NUMERIC AS paid,
                COALESCE(invoice.invoiced, 0)::NUMERIC
-                   - COALESCE(payment.paid, 0)::NUMERIC AS due,
+                   - COALESCE(invoice.legacy_paid, 0)::NUMERIC
+                   - COALESCE(payment.ledger_paid, 0)::NUMERIC AS due,
                COALESCE(payment.tips, 0)::NUMERIC AS tips,
                COALESCE(payment.unapplied_credit, 0)::NUMERIC AS unapplied_credit
         FROM requested_jobs requested

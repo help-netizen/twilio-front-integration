@@ -74,3 +74,21 @@ describe('the confirm tells the truth about the money', () => {
         expect(apiRaw).toContain('request_id: string');
     });
 });
+
+/**
+ * After the money is detached, the invoice card says "Amount paid $0.00" while the job
+ * says "Paid $462.00". Somebody has to say why.
+ */
+describe('the card explains money it is not showing', () => {
+    it('names the job credit under the totals', () => {
+        expect(panelRaw).toContain('Job credit {money(invoice.job_unapplied_credit)} not applied to this invoice');
+        expect(panelRaw).toContain('data-testid="invoice-job-credit"');
+    });
+
+    it('says nothing when there is nothing to explain', () => {
+        // The server sends 0 when this is the job's only active invoice — the figures
+        // above already include the money — and an unexplained "credit $0.00" row would
+        // be exactly the empty state the design canon forbids.
+        expect(panelRaw).toContain("Number(invoice.job_unapplied_credit || 0) > 0 ?");
+    });
+});
