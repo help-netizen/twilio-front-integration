@@ -161,6 +161,16 @@ const DropdownMenuItem = React.forwardRef<
             onClick?.(event as unknown as React.MouseEvent<HTMLDivElement>)
             ctx.setOpen(false)
         }
+        // Desktop spreads the rest onto the Radix Item; mobile dropped it, so a
+        // `data-testid`, `title` or aria set at the call site existed on one half of the
+        // app only — which is why E2E cannot reach a destructive menu action on a phone.
+        // The rest of Radix's Item props are typed for a <div> and do not belong here.
+        const passthrough = Object.fromEntries(
+            Object.entries(props).filter(([key]) => (
+                key.startsWith('data-') || key.startsWith('aria-') || key === 'title' || key === 'id'
+            ))
+        )
+
         const rowClassName = cn(
             "relative flex w-full cursor-pointer select-none items-center gap-2 rounded-md px-3 py-2.5 text-left text-sm outline-none transition-colors",
             "hover:bg-accent focus-visible:bg-accent focus-visible:outline-none",
@@ -185,6 +195,7 @@ const DropdownMenuItem = React.forwardRef<
                 data-slot="dropdown-menu-item"
                 onClick={handleTap}
                 className={rowClassName}
+                {...passthrough}
             >
                 {children}
             </button>

@@ -8,6 +8,7 @@ import {
     DropdownMenuSeparator, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { Input } from '../ui/input';
+import { shortDocNumber } from '../../lib/docNumber';
 import { DiscountControl } from '../shared/DiscountControl';
 import { Label } from '../ui/label';
 import { Checkbox } from '../ui/checkbox';
@@ -450,7 +451,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     };
 
     const invoiceAction: Action = estimate.invoice_id
-        ? { key: 'invoice', label: `Open invoice${estimate.invoice_number ? ` #${estimate.invoice_number}` : ''}`, icon: <FileText className="size-4" />, onClick: openLinkedInvoice, testid: 'estimate-open-invoice' }
+        ? { key: 'invoice', label: `Open invoice${estimate.invoice_number ? ` ${shortDocNumber(estimate.invoice_number)}` : ''}`, icon: <FileText className="size-4" />, onClick: openLinkedInvoice, testid: 'estimate-open-invoice' }
         : { key: 'invoice', label: converting ? 'Creating…' : 'Create invoice', icon: <FileText className="size-4" />, onClick: handleConvertToInvoice, disabled: converting, testid: 'estimate-create-invoice' };
 
     const live = !archived;

@@ -17,7 +17,7 @@ import { InvoiceDetailPanel } from '../components/invoices/InvoiceDetailPanel';
 const invoice = {
     id: 42,
     company_id: 'demo',
-    invoice_number: '1668-2',
+    invoice_number: 'INVOICE 1668-2',
     status: 'draft',
     contact_id: 4093,
     contact_name: 'Richard Fitzgerald',

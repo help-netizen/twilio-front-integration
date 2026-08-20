@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { loadStripe } from '../utils/loadStripe';
+import { shortDocNumber } from '../lib/docNumber';
 
 /**
  * Public, unauthenticated branded payment page (F018). Shows a thank-you, the
@@ -153,7 +154,7 @@ export default function PublicInvoicePayPage() {
                         )}
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, marginBottom: 4 }}>
-                            <span style={{ color: '#6b5f4c' }}>Invoice {String(info.invoice_number || '').replace(/^INVOICE\s+/i, '')}</span>
+                            <span style={{ color: '#6b5f4c' }}>Invoice {shortDocNumber(info.invoice_number)}</span>
                             <span>{money(balance, info.currency)}</span>
                         </div>
 

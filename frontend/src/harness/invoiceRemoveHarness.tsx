@@ -13,7 +13,7 @@ import '../styles/design-system.css';
 import { InvoiceRemoveDialog } from '../components/invoices/InvoiceRemoveDialog';
 import { Button } from '../components/ui/button';
 
-type Scene = 'clean' | 'paid' | 'candidate';
+type Scene = 'clean' | 'paid' | 'candidate' | 'displayed';
 
 const PREVIEWS: Record<Scene, unknown> = {
     clean: {
@@ -34,8 +34,17 @@ const PREVIEWS: Record<Scene, unknown> = {
         disposition: 'voided',
         payments_total: '462.00',
         payments_count: 2,
-        candidate: { id: 77, invoice_number: '1668-3', balance_due: '462.00' },
+        candidate: { id: 77, invoice_number: 'INVOICE 1668-3', balance_due: '462.00' },
         preview_version: 'c'.repeat(64),
+    },
+    // The staging case: nothing is applied here, but the card reads "Paid · 100%"
+    // because this is the job's only invoice and it displays the job's credit.
+    displayed: {
+        disposition: 'deleted',
+        payments_total: '0.00',
+        payments_count: 0,
+        candidate: null,
+        preview_version: 'e'.repeat(64),
     },
 };
 
@@ -64,10 +73,15 @@ function Harness() {
                 <Button size="action" onClick={() => start('clean')}>Nothing paid</Button>
                 <Button size="action" onClick={() => start('paid')}>Paid, no candidate</Button>
                 <Button size="action" onClick={() => start('candidate')}>Paid, candidate exists</Button>
+                <Button size="action" onClick={() => start('displayed')}>Shows job credit (lone invoice)</Button>
             </div>
             {open ? (
                 <InvoiceRemoveDialog
-                    invoice={{ id: 42, invoice_number: '1668-2' }}
+                    invoice={{
+                        id: 42,
+                        invoice_number: 'INVOICE 1668-2',
+                        amount_paid: open === 'displayed' ? '250.00' : '0.00',
+                    }}
                     open
                     onOpenChange={next => { if (!next) setOpen(null); }}
                     onRemoved={() => setOpen(null)}

@@ -6,6 +6,7 @@ import {
     removeInvoice,
     type InvoiceRemovalPreview,
 } from '../../services/invoicesApi';
+import { shortDocNumber } from '../../lib/docNumber';
 import { Checkbox } from '../ui/checkbox';
 import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
 
@@ -34,7 +35,12 @@ function money(value: string | number | null | undefined): string {
 export function InvoiceRemoveDialog({
     invoice, open, onOpenChange, onRemoved,
 }: {
-    invoice: { id: number; invoice_number: string };
+    /**
+     * `amount_paid` is what the CARD shows, which is not always what is applied here: on
+     * a job's only active invoice the job's unapplied money is displayed on it. The
+     * confirm has to speak about the figure the user is looking at.
+     */
+    invoice: { id: number; invoice_number: string; amount_paid?: string | number | null };
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onRemoved: () => void;
@@ -62,6 +68,20 @@ export function InvoiceRemoveDialog({
 
     const paid = Number(preview?.payments_total || 0);
     const candidate = paid > 0 ? preview?.candidate ?? null : null;
+    // Money the card shows but that is NOT applied here — job credit displayed on a lone
+    // invoice. Removing does not move it, and saying "nothing has been paid on it" next
+    // to a card reading "Paid · 100%" is the kind of sentence this feature exists to end.
+    const displayedOnly = preview ? Math.max(Number(invoice.amount_paid || 0) - paid, 0) : 0;
+
+    /**
+     * What happens to the RECORD, which the money sentence never says. A pristine draft
+     * is deleted for good; anything with history is voided and stays readable. The server
+     * has already decided which — the confirm should not leave the user to guess whether
+     * they can get it back.
+     */
+    const fate = preview?.disposition === 'deleted'
+        ? 'The draft is deleted for good.'
+        : 'The invoice is voided and stays in the job’s history.';
 
     const confirm = async () => {
         if (!preview || busy) return;
@@ -76,7 +96,7 @@ export function InvoiceRemoveDialog({
             });
             onOpenChange(false);
             toast.success(target
-                ? `Invoice removed — ${money(preview.payments_total)} moved to ${target.invoice_number}`
+                ? `Invoice removed — ${money(preview.payments_total)} moved to invoice ${shortDocNumber(target.invoice_number)}`
                 : 'Invoice removed');
             onRemoved();
         } catch (err) {
@@ -90,14 +110,21 @@ export function InvoiceRemoveDialog({
         <InvoiceConfirmDialog
             open={open}
             onOpenChange={next => { if (!next && !busy) onOpenChange(false); }}
-            title={`Remove invoice ${invoice.invoice_number}?`}
+            title={`Remove invoice ${shortDocNumber(invoice.invoice_number)}?`}
             description={error
                 ? <span className="text-[var(--blanc-danger)]">{error}</span>
                 : !preview
                     ? <span className="inline-flex items-center gap-2"><Loader2 className="size-4 animate-spin" /> Checking what is paid on it…</span>
                     : paid > 0
-                        ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid stays on the job as credit — you can put it on the next invoice.</>
-                        : <>This takes the invoice off the job. Nothing has been paid on it.</>}
+                        ? candidate
+                            // With the choice sitting right below, promising the money
+                            // "stays on the job" would contradict the box the user is
+                            // about to tick.
+                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid does not go anywhere — it stays with the job unless you move it below. {fate}</>
+                            : <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid stays on the job as credit — you can put it on the next invoice. {fate}</>
+                        : displayedOnly > 0
+                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(displayedOnly)}</span> shown here is credit on the job, not a payment of this invoice. It stays on the job. {fate}</>
+                            : <>Nothing has been paid on it. {fate}</>}
             cancelLabel="Keep"
             confirmLabel="Remove invoice"
             confirmTestId="invoice-remove-confirm"
@@ -118,10 +145,10 @@ export function InvoiceRemoveDialog({
                         {/* Two lines rather than one that wraps: on a phone the trailing
                             "— $462.00 due" broke onto its own line behind a hanging dash. */}
                         <span className="block text-[var(--blanc-ink-1)]">
-                            Put {money(preview?.payments_total)} on invoice {candidate.invoice_number}
+                            Put {money(preview?.payments_total)} on invoice {shortDocNumber(candidate.invoice_number)}
                         </span>
                         <span className="blanc-l2 blanc-l2-quiet block">
-                            {money(candidate.balance_due)} due on it
+                            It has {money(candidate.balance_due)} due
                         </span>
                     </span>
                 </label>

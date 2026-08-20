@@ -17,6 +17,7 @@ import {
     type PaymentTransaction,
 } from '../../services/paymentsCanonicalApi';
 import { formatSignedCurrency } from '../jobs/jobFinanceMath';
+import { shortDocNumber } from '../../lib/docNumber';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
 import { PaymentStatusChip, isVoidablePayment, isVoidedPayment, VOIDED_AMOUNT_CLASS } from './paymentStatus';
 import { VoidPaymentDialog } from './VoidPaymentDialog';
@@ -130,7 +131,7 @@ export function TransactionReview({ transactionId, initial, contactEmail, canVoi
 
     const isCard = Boolean(tx?.stripe_payment_id) || (tx?.external_source === 'stripe');
     const voided = tx ? isVoidedPayment(tx) : false;
-    const jobLabel = tx?.job_id != null ? `#JOB-${tx.job_seq ?? '—'}` : tx?.invoice_number ? `#${tx.invoice_number}` : null;
+    const jobLabel = tx?.job_id != null ? `#JOB-${tx.job_seq ?? '—'}` : tx?.invoice_number ? `Invoice ${shortDocNumber(tx.invoice_number)}` : null;
 
     const sendReceipt = async () => {
         const to = email.trim();

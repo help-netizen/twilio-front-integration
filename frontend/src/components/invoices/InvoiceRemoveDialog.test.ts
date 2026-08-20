@@ -61,6 +61,17 @@ describe('the confirm tells the truth about the money', () => {
         expect(dialogRaw).toContain('const target = reapply ? candidate : null;');
     });
 
+    it('says the word once — the number is printed short', () => {
+        // Stored numbers carry the word inside them ("INVOICE 1668-2"), so a sentence
+        // that says "invoice" must print the short form or it reads "Remove invoice
+        // INVOICE 1668-2?" — which is what the staging audit found. One rule, shared
+        // with the backend's utils/docNumber.js.
+        expect(dialogRaw).toContain('shortDocNumber(invoice.invoice_number)');
+        expect(dialogRaw).toContain('shortDocNumber(candidate.invoice_number)');
+        expect(dialogRaw).toContain('shortDocNumber(target.invoice_number)');
+        expect(dialogRaw).not.toMatch(/\{invoice\.invoice_number\}\?/);
+    });
+
     it('offers the choice only when there is money to move', () => {
         expect(dialogRaw).toContain('const candidate = paid > 0 ? preview?.candidate ?? null : null;');
     });
