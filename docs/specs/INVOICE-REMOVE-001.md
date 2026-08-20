@@ -1,6 +1,6 @@
 # INVOICE-REMOVE-001 — removing an invoice without losing the money (OB-70)
 
-**Status:** in build (tandem — Codex backend, Claude design/frontend/gates) · **Owner decisions:** 19.08.2026 ·
+**Status:** shipped to master 20.08.2026 (`58edca87` + `0e704642`, migration 288) — not in production · **Owner decisions:** 19.08.2026 ·
 **Backlog:** `docs/owner-backlog.md` OB-70
 
 ## The problem
