@@ -13,8 +13,13 @@ const TERMINAL_STATUSES = new Set<HydratedInvoice['status']>(['void', 'refunded'
 export interface InvoiceCapabilities {
     canView: boolean;
     canEdit: boolean;
-    canDelete: boolean;
-    canVoid: boolean;
+    /**
+     * OB-70: one action, not two. `canDelete` (draft) and `canVoid` (everything else)
+     * described OUR bookkeeping — and a draft that had taken a card payment fell
+     * between them, which is how "Draft invoices must be deleted, not voided" reached
+     * a dispatcher looking at a paid invoice. What the user may do is remove it.
+     */
+    canRemove: boolean;
     canSend: boolean;
     canViewPayments: boolean;
     canCollect: boolean;
@@ -33,7 +38,6 @@ export function getInvoiceCapabilities(
 ): InvoiceCapabilities {
     const granted = new Set(permissions);
     const isTerminal = invoice ? TERMINAL_STATUSES.has(invoice.status) : false;
-    const isDraft = invoice?.status === 'draft';
     const hasBalance = invoice ? Number(invoice.balance_due || 0) > 0 : false;
     const canManageInvoice = granted.has('invoices.create');
     /**
@@ -54,8 +58,7 @@ export function getInvoiceCapabilities(
     return {
         canView: granted.has('invoices.view'),
         canEdit: canManageInvoice && !!invoice && !isTerminal,
-        canDelete: canManageInvoice && !!invoice && isDraft,
-        canVoid: canManageInvoice && !!invoice && !isDraft && !isTerminal,
+        canRemove: canManageInvoice && !!invoice && !isTerminal,
         canSend: granted.has('invoices.send') && !!invoice && !isTerminal,
         canViewPayments,
         canCollect: hasCollectionPermission && collectionEligible,

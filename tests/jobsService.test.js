@@ -1,8 +1,13 @@
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));
+jest.mock('../backend/src/db/jobFinanceQueries', () => ({
+    getJobFinance: jest.fn(),
+    listJobFinances: jest.fn(),
+}));
 
 const db = require('../backend/src/db/connection');
+const jobFinanceQueries = require('../backend/src/db/jobFinanceQueries');
 const jobsService = require('../backend/src/services/jobsService');
 
 describe('jobsService.getJobById', () => {
@@ -47,6 +52,53 @@ describe('jobsService.getJobById', () => {
     });
 });
 
+describe('jobsService.getJobFinance API projection', () => {
+    const CO = 'company-uuid-001';
+
+    beforeEach(() => {
+        db.query.mockReset();
+        jobFinanceQueries.getJobFinance.mockReset();
+    });
+
+    it('authorizes the Job before returning the exact canonical public shape', async () => {
+        db.query
+            .mockResolvedValueOnce({ rows: [{
+                id: 7,
+                company_id: CO,
+                assigned_techs: [],
+                notes: [],
+                metadata: {},
+            }] })
+            .mockResolvedValueOnce({ rows: [] });
+        jobFinanceQueries.getJobFinance.mockResolvedValue({
+            job_id: 7,
+            estimated: 250,
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+            tips: 15,
+            unapplied_credit: 100,
+        });
+
+        await expect(jobsService.getJobFinance(7, CO)).resolves.toEqual({
+            estimated: 250,
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+            tips: 15,
+            unapplied_credit: 100,
+        });
+        expect(db.query.mock.calls[0][0]).toContain('j.company_id = $2');
+        expect(jobFinanceQueries.getJobFinance).toHaveBeenCalledWith(CO, 7);
+    });
+
+    it('T-foreign stops before the projector and returns 404-compatible null', async () => {
+        db.query.mockResolvedValueOnce({ rows: [] });
+        await expect(jobsService.getJobFinance(7, CO)).resolves.toBeNull();
+        expect(jobFinanceQueries.getJobFinance).not.toHaveBeenCalled();
+    });
+});
+
 describe('jobsService.addNote company scope', () => {
     beforeEach(() => {
         db.query.mockReset();
@@ -82,56 +134,35 @@ describe('jobsService.addNote company scope', () => {
 });
 
 // ---------------------------------------------------------------------------
-// getJobBalanceDue — company-scoped local-invoice rollup for the outbound
-// "part arrived" voice agent (OUTBOUND-PARTS-CALL balance injection). Mirrors
-// listJobs' payments exclusion (void/voided/refunded) and null-for-no-invoice.
+// getJobBalanceDue — compatibility shape over the canonical projection.
 // ---------------------------------------------------------------------------
 describe('jobsService.getJobBalanceDue', () => {
     const CO = 'company-uuid-001';
     beforeEach(() => {
         db.query.mockReset();
+        jobFinanceQueries.getJobFinance.mockReset();
     });
 
-    it('sums the job invoices → numeric dollars, company-scoped query + params', async () => {
-        db.query.mockResolvedValueOnce({
-            rows: [{ total: '100.00', amount_paid: '30.00', balance_due: '70.00' }],
+    it('maps the canonical projection without a second formula', async () => {
+        jobFinanceQueries.getJobFinance.mockResolvedValue({
+            job_id: 50,
+            estimated: 250,
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+            tips: 15,
+            unapplied_credit: 100,
         });
 
         const out = await jobsService.getJobBalanceDue(50, CO);
 
-        // pg NUMERIC strings coerced to Numbers.
-        expect(out).toEqual({ balanceDue: 70, total: 100, amountPaid: 30 });
-        // One company-scoped query, params [jobId, companyId].
-        expect(db.query).toHaveBeenCalledTimes(1);
-        const [sql, params] = db.query.mock.calls[0];
-        expect(sql).toContain('i.job_id = $1 AND i.company_id = $2');
-        expect(sql).toMatch(/COALESCE\(i\.total, 0\)\s*-\s*COALESCE\(i\.amount_paid, 0\)/);
-        expect(params).toEqual([50, CO]);
+        expect(out).toEqual({ balanceDue: 0, total: 100, amountPaid: 100 });
+        expect(jobFinanceQueries.getJobFinance).toHaveBeenCalledWith(CO, 50);
+        expect(db.query).not.toHaveBeenCalled();
     });
 
-    it('excludes void/voided/refunded invoices (same exclusion set as listJobs)', async () => {
-        db.query.mockResolvedValueOnce({
-            rows: [{ total: '0', amount_paid: '0', balance_due: '0' }],
-        });
-
-        await jobsService.getJobBalanceDue(50, CO);
-
-        const sql = db.query.mock.calls[0][0];
-        expect(sql).toMatch(/NOT IN \('void','voided','refunded'\)/);
-    });
-
-    it('all invoices void → present-but-zero (NOT null — never invents null for existing invoices)', async () => {
-        // A row IS returned (GROUP BY matched invoice rows), sums clamp to 0.
-        db.query.mockResolvedValueOnce({
-            rows: [{ total: '0', amount_paid: '0', balance_due: '0' }],
-        });
-
-        const out = await jobsService.getJobBalanceDue(50, CO);
-        expect(out).toEqual({ balanceDue: 0, total: 0, amountPaid: 0 });
-    });
-
-    it('no local invoice (0 rows) → all null (never invents 0)', async () => {
-        db.query.mockResolvedValueOnce({ rows: [] });
+    it('missing tenant Job returns the legacy null shape', async () => {
+        jobFinanceQueries.getJobFinance.mockResolvedValue(null);
 
         const out = await jobsService.getJobBalanceDue(50, CO);
         expect(out).toEqual({ balanceDue: null, total: null, amountPaid: null });
@@ -141,6 +172,7 @@ describe('jobsService.getJobBalanceDue', () => {
         const out = await jobsService.getJobBalanceDue(50, null);
         expect(out).toEqual({ balanceDue: null, total: null, amountPaid: null });
         expect(db.query).not.toHaveBeenCalled();
+        expect(jobFinanceQueries.getJobFinance).not.toHaveBeenCalled();
     });
 });
 
@@ -149,6 +181,15 @@ describe('jobsService.getJobBalanceDue', () => {
 // ---------------------------------------------------------------------------
 describe('jobsService.listJobs signed payment rollup', () => {
     const CO = 'company-uuid-001';
+    const FINANCE = {
+        job_id: 7,
+        estimated: 250,
+        invoiced: 100,
+        paid: 100,
+        due: 0,
+        tips: 15,
+        unapplied_credit: 100,
+    };
     const jobRow = {
         id: 7,
         company_id: CO,
@@ -162,75 +203,65 @@ describe('jobsService.listJobs signed payment rollup', () => {
         updated_at: null,
     };
 
-    function primeList({ allocations = [], pools = [] } = {}) {
+    function primeList(finances = [FINANCE]) {
         db.query
             .mockResolvedValueOnce({ rows: [{ total: '1' }] })
             .mockResolvedValueOnce({ rows: [jobRow] })
-            .mockResolvedValueOnce({ rows: [] })
-            .mockResolvedValueOnce({ rows: allocations })
-            .mockResolvedValueOnce({ rows: pools });
+            .mockResolvedValueOnce({ rows: [] });
+        jobFinanceQueries.listJobFinances.mockResolvedValue(finances);
     }
 
     beforeEach(() => {
         db.query.mockReset();
+        jobFinanceQueries.listJobFinances.mockReset();
     });
 
-    it('CTRL-DUE-SIGNED: native completed standalone $95 returns paid 95 and due -95', async () => {
-        primeList({ pools: [{ job_id: 7, native_pool: '95.00', total_pool: '95.00' }] });
-
-        const result = await jobsService.listJobs({ companyId: CO });
-
-        expect(result.results).toHaveLength(1);
-        expect(result.results[0]).toMatchObject({
-            id: 7,
-            amount_paid: 95,
-            balance_due: -95,
-        });
-
-        const [allocationSql, allocationParams] = db.query.mock.calls[3];
-        const [poolSql, poolParams] = db.query.mock.calls[4];
-        expect(allocationParams).toEqual([CO, [7]]);
-        expect(poolParams).toEqual([CO, [7]]);
-        expect(allocationSql).toContain('i.company_id = $1');
-        expect(allocationSql).toContain("i.status NOT IN ('void', 'voided', 'refunded')");
-        expect(poolSql).toContain("effective_source IS DISTINCT FROM 'zenbooker'");
-        expect(poolSql).toContain('SUM(paid_effect)');
-        expect(poolSql).toContain('SUM(document_effect)');
-    });
-
-    it('CTRL-ZBPAY-DUE-GUARD: completed standalone ZB $95 is Paid but cannot create Due credit', async () => {
-        primeList({ pools: [{ job_id: 7, native_pool: '0.00', total_pool: '95.00' }] });
-
-        const result = await jobsService.listJobs({ companyId: CO });
-
-        expect(result.results[0]).toMatchObject({
-            id: 7,
-            amount_paid: 95,
-            balance_due: 0,
-        });
-
-        const sql = db.query.mock.calls[4][0];
-        expect(sql).toMatch(/SUM\(document_effect\) FILTER \(\s*WHERE NOT \(effective_source = 'zenbooker' AND invoice_id IS NOT NULL\)/);
-        expect(sql).toMatch(/SUM\(paid_effect\) FILTER \(\s*WHERE effective_source IS DISTINCT FROM 'zenbooker'\s*OR invoice_id IS NULL/);
-    });
-
-    it('keeps amount_paid and balance_due null when no local invoice or standalone payment exists', async () => {
+    it('maps the common canonical scenario without another money calculation', async () => {
         primeList();
 
         const result = await jobsService.listJobs({ companyId: CO });
 
-        expect(result.results[0]).toMatchObject({ amount_paid: null, balance_due: null });
+        expect(result.results[0]).toMatchObject({
+            id: 7,
+            amount_paid: 100,
+            balance_due: 0,
+        });
+        expect(jobFinanceQueries.listJobFinances).toHaveBeenCalledWith(CO, [7]);
+        expect(db.query).toHaveBeenCalledTimes(3);
     });
 
-    it('maps the combined invoice + standalone rollup without a second calculation', async () => {
-        primeList({
-            allocations: [{ job_id: 7, legacy_paid: '20.00', capacity: '80.00' }],
-            pools: [{ job_id: 7, native_pool: '50.00', total_pool: '50.00' }],
-        });
+    it('preserves signed Job Due supplied by the projector', async () => {
+        primeList([{ ...FINANCE, paid: 145, due: -45, unapplied_credit: 145 }]);
 
         const result = await jobsService.listJobs({ companyId: CO });
 
-        expect(result.results[0]).toMatchObject({ amount_paid: 70, balance_due: 30 });
-        expect(db.query).toHaveBeenCalledTimes(5);
+        expect(result.results[0]).toMatchObject({
+            amount_paid: 145,
+            balance_due: -45,
+        });
+    });
+
+    it('SAB-OB70-SECOND-FORMULA: Unpaid quick-filter consumes positive-Due ids from the projector', async () => {
+        db.query
+            .mockResolvedValueOnce({ rows: [{ total: '1' }] })
+            .mockResolvedValueOnce({ rows: [jobRow] })
+            .mockResolvedValueOnce({ rows: [] });
+        jobFinanceQueries.listJobFinances
+            .mockResolvedValueOnce([{ ...FINANCE, due: 40 }])
+            .mockResolvedValueOnce([FINANCE]);
+
+        await jobsService.listJobs({ companyId: CO, paymentStatus: 'unpaid' });
+
+        expect(jobFinanceQueries.listJobFinances).toHaveBeenNthCalledWith(
+            1,
+            CO,
+            null,
+            null,
+            { positiveDueOnly: true }
+        );
+        const metadataSql = db.query.mock.calls[0][0];
+        const metadataParams = db.query.mock.calls[0][1];
+        expect(metadataSql).toContain('j.id = ANY($2::BIGINT[])');
+        expect(metadataParams.slice(0, 2)).toEqual([CO, [7]]);
     });
 });

@@ -127,22 +127,6 @@ async function getInvoiceAllocations(companyId, jobIds, client = null) {
     const query = queryFor(client);
     const { rows } = await query(`
         WITH ${LEDGER_EFFECTS_CTE},
-        native_pool AS (
-            -- Zenbooker money leaves the pool ONLY when it is already
-            -- materialized on an invoice (invoice_id set), because then it is
-            -- inside legacy_paid and counting it here would settle it twice.
-            -- The filter used to drop every ZB row: in production not one of the
-            -- 1403 completed ZB payments ($288,840) carries an invoice_id, and
-            -- no invoice carries amount_paid without a linked payment — so real
-            -- money never reached any document and jobs showed debts they did
-            -- not have (measured 2026-08-16).
-            SELECT job_id,
-                   GREATEST(COALESCE(SUM(document_effect) FILTER (
-                       WHERE NOT (effective_source = 'zenbooker' AND invoice_id IS NOT NULL)
-                   ), 0), 0) AS pool_amount
-            FROM ledger_effects
-            GROUP BY job_id
-        ),
         linked_native AS (
             SELECT invoice_id,
                    COALESCE(SUM(linked_materialized_effect) FILTER (
@@ -151,6 +135,33 @@ async function getInvoiceAllocations(companyId, jobIds, client = null) {
             FROM ledger_effects
             WHERE invoice_id IS NOT NULL
             GROUP BY invoice_id
+        ),
+        direct_application AS (
+            -- Linked Zenbooker rows are already represented by the legacy
+            -- materialized amount_paid. Every other linked row is the current,
+            -- explicit application marker.
+            SELECT invoice_id,
+                   COALESCE(SUM(document_effect) FILTER (
+                       WHERE effective_source IS DISTINCT FROM 'zenbooker'
+                   ), 0) AS applied_amount
+            FROM ledger_effects
+            WHERE invoice_id IS NOT NULL
+            GROUP BY invoice_id
+        ),
+        unapplied_pool AS (
+            SELECT job_id,
+                   COALESCE(SUM(document_effect), 0) AS unapplied_amount
+            FROM ledger_effects
+            WHERE invoice_id IS NULL
+            GROUP BY job_id
+        ),
+        active_invoice_count AS (
+            SELECT job_id, COUNT(*)::INTEGER AS invoice_count
+            FROM invoices
+            WHERE company_id = $1
+              AND job_id = ANY($2::BIGINT[])
+              AND status NOT IN ('void', 'voided', 'refunded')
+            GROUP BY job_id
         ),
         invoice_capacity AS (
             SELECT i.id AS invoice_id,
@@ -166,32 +177,30 @@ async function getInvoiceAllocations(companyId, jobIds, client = null) {
                        ),
                        0
                    ) AS capacity,
-                   COALESCE(np.pool_amount, 0) AS pool_amount,
-                   i.created_at
+                   COALESCE(da.applied_amount, 0) AS directly_applied,
+                   CASE
+                       WHEN COALESCE(aic.invoice_count, 0) = 1
+                           THEN COALESCE(up.unapplied_amount, 0)
+                       ELSE 0
+                   END AS unapplied_display
             FROM invoices i
             LEFT JOIN linked_native ln ON ln.invoice_id = i.id
-            LEFT JOIN native_pool np ON np.job_id = i.job_id
+            LEFT JOIN direct_application da ON da.invoice_id = i.id
+            LEFT JOIN unapplied_pool up ON up.job_id = i.job_id
+            LEFT JOIN active_invoice_count aic ON aic.job_id = i.job_id
             WHERE i.company_id = $1
               AND i.job_id = ANY($2::BIGINT[])
               AND i.status NOT IN ('void', 'voided', 'refunded')
-        ),
-        ordered AS (
-            SELECT ic.*,
-                   COALESCE(SUM(capacity) OVER (
-                       PARTITION BY job_id
-                       ORDER BY created_at ASC, invoice_id ASC
-                       ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                   ), 0) AS prior_capacity
-            FROM invoice_capacity ic
         )
         SELECT invoice_id,
                job_id,
                legacy_paid,
                capacity,
-               LEAST(capacity, GREATEST(pool_amount - prior_capacity, 0)) AS job_payment_allocated,
-               legacy_paid
-                   + LEAST(capacity, GREATEST(pool_amount - prior_capacity, 0)) AS amount_paid
-        FROM ordered`,
+               GREATEST(directly_applied + unapplied_display, -legacy_paid)
+                   AS job_payment_allocated,
+               GREATEST(legacy_paid + directly_applied + unapplied_display, 0)
+                   AS amount_paid
+        FROM invoice_capacity`,
         [companyId, ids]
     );
     return rows;
@@ -249,7 +258,7 @@ async function applyInvoiceAllocations(companyId, invoices, client = null) {
             return invoice;
         }
         const amountPaid = Number(allocation.amount_paid || 0);
-        const balanceDue = Number(invoice.total || 0) - amountPaid;
+        const balanceDue = Math.max(Number(invoice.total || 0) - amountPaid, 0);
         return {
             ...invoice,
             amount_paid: moneyShape(amountPaid, invoice.amount_paid),

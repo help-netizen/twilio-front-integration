@@ -61,6 +61,17 @@ const REASON_ROLLBACK_SQL = fs.readFileSync(
     ),
     'utf8'
 );
+const REMOVAL_MIGRATION_SQL = fs.readFileSync(
+    path.join(
+        __dirname,
+        '..',
+        'backend',
+        'db',
+        'migrations',
+        '288_invoice_removal.sql'
+    ),
+    'utf8'
+);
 
 let client;
 let originalQuery;
@@ -155,8 +166,16 @@ beforeAll(async () => {
     await client.query('BEGIN');
     db.query = (text, params) => client.query(text, params);
 
+    // The shared dev DB lags the numbering contract used by invoice reads.
+    // Both additions are rolled back with this suite transaction.
+    await db.query(
+        'ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_seq INTEGER, '
+        + 'ADD COLUMN IF NOT EXISTS public_code TEXT'
+    );
+    await db.query('ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_seq INTEGER');
     await db.query(MIGRATION_SQL);
     await db.query(REASON_MIGRATION_SQL);
+    await db.query(REMOVAL_MIGRATION_SQL);
 
     companyA = randomUUID();
     companyB = randomUUID();
@@ -227,6 +246,7 @@ describe('manual invoice payment void contract', () => {
         const ledger = await paymentsService.getTransactionsForInvoice(companyA, invoice.id);
         expect(ledger).toHaveLength(1);
         expect(ledger[0]).toMatchObject({
+            origin_invoice_id: invoice.id,
             external_source: 'manual',
             payment_method: 'credit_card',
             status: 'completed',

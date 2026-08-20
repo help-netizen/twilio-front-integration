@@ -202,7 +202,11 @@ describe('canonical standalone Job payment void', () => {
             idempotent: false,
         });
         expect(result.payment.voided_at).toBeTruthy();
-        expect(await listJobPaymentRollups(companyA, [job.id])).toEqual([]);
+        expect(await listJobPaymentRollups(companyA, [job.id])).toEqual([{
+            job_id: job.id,
+            total_paid: 0,
+            total_due: 0,
+        }]);
 
         const { rows: activities } = await db.query(
             `SELECT action, target_type, target_id, actor_id, details

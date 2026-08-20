@@ -922,6 +922,7 @@ function manualCardFailure(pi, fallbackMessage = 'The card could not be charged'
 async function reconcileSuccessfulManualCardPayment(companyId, session, pi) {
     await withTransaction(async (client) => {
         const ownedSession = await getMerchantManualCardSession(companyId, session.id, client);
+        const ownedMetadata = parseSessionMetadata(ownedSession.metadata);
         const charge = pi.latest_charge;
         await q.updateSession(companyId, ownedSession.id, {
             status: 'complete',
@@ -930,6 +931,9 @@ async function reconcileSuccessfulManualCardPayment(companyId, session, pi) {
         await applyStripePayment(companyId, {
             externalId: pi.id,
             invoiceId: ownedSession.invoice_id || null,
+            originInvoiceId: ownedMetadata.removed_invoice_id
+                ? Number(ownedMetadata.removed_invoice_id)
+                : null,
             contactId: ownedSession.contact_id || null,
             jobId: ownedSession.job_id || null,
             amount: (pi.amount_received ?? pi.amount) / 100,
@@ -1069,12 +1073,8 @@ async function getScopedJob(companyId, jobId, access = null) {
 }
 
 async function getJobDue(companyId, jobId, client = null) {
-    const rollups = await jobFinanceQueries.listJobPaymentRollups(
-        companyId,
-        [Number(jobId)],
-        client
-    );
-    return Number(Number(rollups[0]?.total_due || 0).toFixed(2));
+    const finance = await jobFinanceQueries.getJobFinance(companyId, Number(jobId), client);
+    return Number(Number(finance?.due || 0).toFixed(2));
 }
 
 async function listJobSavedCards(companyId, jobId, access = null) {
@@ -1556,6 +1556,7 @@ async function applyStripeRefund(
             amount: -Math.abs(Number(amount)),
             currency: original?.currency || 'USD',
             invoice_id: original?.invoice_id || null,
+            origin_invoice_id: original?.origin_invoice_id || original?.invoice_id || null,
             contact_id: original?.contact_id || null,
             job_id: original?.job_id || null,
             external_id: refundId,
@@ -1853,7 +1854,16 @@ async function applyStripePayment(
     client = null,
     activityActor = null
 ) {
-    const { externalId, invoiceId, contactId, jobId, amount, currency, metadata } = payment;
+    const {
+        externalId,
+        invoiceId,
+        originInvoiceId: requestedOriginInvoiceId,
+        contactId,
+        jobId,
+        amount,
+        currency,
+        metadata,
+    } = payment;
     if (invoiceId && !client?.query) {
         return withTransaction(transactionClient => applyStripePayment(
             companyId,
@@ -1871,19 +1881,30 @@ async function applyStripePayment(
     );
     if (existing) return { tx: existing, deduped: true };
     let invoice = null;
+    let appliedInvoiceId = invoiceId || null;
+    let originInvoiceId = requestedOriginInvoiceId || invoiceId || null;
     if (invoiceId) {
         const locked = await invoicesQueries.lockInvoiceById(companyId, invoiceId, client);
-        if (!locked) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
-        invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
-        if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
-        if (['void', 'voided', 'refunded'].includes(invoice.status)) {
-            return {
-                tx: null,
-                deduped: false,
-                ignored: true,
-                reason: 'INVOICE_TERMINAL',
-            };
+        if (locked) {
+            invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
         }
+        if (!invoice) {
+            if (jobId == null) {
+                throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+            }
+            // A local session may have been orphaned by a historical hard delete.
+            // The account-derived company plus the owned job remains the mutation
+            // boundary; never lose a successful charge because its invoice vanished.
+            appliedInvoiceId = null;
+            originInvoiceId = null;
+        } else if (['void', 'voided', 'refunded'].includes(invoice.status)) {
+            // A charge that settles after Remove is job credit, not an ignored event.
+            appliedInvoiceId = null;
+        }
+    }
+    if (!invoiceId && originInvoiceId) {
+        const origin = await invoicesQueries.getInvoiceById(companyId, originInvoiceId, client);
+        if (!origin) originInvoiceId = null;
     }
     const resolvedContactId = invoice?.contact_id || contactId || null;
     const resolvedJobId = invoice?.job_id || jobId || null;
@@ -1913,12 +1934,17 @@ async function applyStripePayment(
     const tip = Math.max(0, Number(metadata?.tip || 0) || 0);
     // Over-collection is valid (OWNER decision): a card/pay-link may settle for MORE
     // than the live invoice balance (e.g. an added sale; documents are corrected
-    // later). Record the FULL non-tip portion as the payment's document credit — do
-    // NOT cap it to the live balance. The pay-jobcentric allocator caps each invoice's
-    // absorbed amount at its own total and holds any excess as job-level credit, so
-    // the excess is never dropped and the invoice can absorb it once corrected.
+    // later). Record and apply the FULL non-tip portion; an explicitly applied
+    // invoice reports the full amount received but floors its own balance at zero;
+    // only the job Due may be negative.
     const balancePortion = Math.max(0, Number((amount - tip).toFixed(2)));
-    const transactionMetadata = { ...(metadata || {}), tip };
+    const transactionMetadata = {
+        ...(metadata || {}),
+        tip,
+        ...((invoiceId || requestedOriginInvoiceId) && appliedInvoiceId == null
+            ? { removed_invoice_id: String(invoiceId || requestedOriginInvoiceId) }
+            : {}),
+    };
 
     let tx;
     try {
@@ -1930,7 +1956,8 @@ async function applyStripePayment(
             status: 'completed',
             amount,
             currency: (currency || 'USD').toUpperCase(),
-            invoice_id: invoiceId || null,
+            invoice_id: appliedInvoiceId,
+            origin_invoice_id: originInvoiceId,
             contact_id: resolvedContactId,
             job_id: resolvedJobId,
             external_id: externalId,
@@ -1952,11 +1979,11 @@ async function applyStripePayment(
         throw err;
     }
 
-    if (invoiceId) {
-        invoice = await invoicesService.getInvoice(companyId, invoiceId, client);
+    if (appliedInvoiceId) {
+        invoice = await invoicesService.getInvoice(companyId, appliedInvoiceId, client);
         await invoicesQueries.createEvent(
             companyId,
-            invoiceId,
+            appliedInvoiceId,
             'payment_recorded',
             'system',
             null,
@@ -1983,8 +2010,8 @@ async function applyStripePayment(
                 status: 'completed',
             },
         }, { client });
-        if (invoiceId) {
-            invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
+        if (appliedInvoiceId) {
+            invoice = await invoicesQueries.getInvoiceById(companyId, appliedInvoiceId, client);
             await logFinancialActivity({
                 companyId,
                 entityType: 'invoice',
@@ -2025,9 +2052,17 @@ async function applyStripePaymentFailure(
     if (existing) return { tx: existing, deduped: true };
 
     let invoice = null;
+    let appliedInvoiceId = invoiceId || null;
+    let originInvoiceId = invoiceId || null;
     if (invoiceId) {
         invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId, client);
-        if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+        if (!invoice) {
+            if (jobId == null) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+            appliedInvoiceId = null;
+            originInvoiceId = null;
+        } else if (['void', 'voided', 'refunded'].includes(invoice.status)) {
+            appliedInvoiceId = null;
+        }
     }
     if (contactId && !await estimatesQueries.getContactContext(companyId, contactId, client)) {
         throw new StripePaymentsError('NOT_FOUND', 'Contact not found', 404);
@@ -2044,7 +2079,8 @@ async function applyStripePaymentFailure(
             status: 'failed',
             amount: Number.isFinite(Number(amount)) ? Number(amount) : 0,
             currency: (currency || 'USD').toUpperCase(),
-            invoice_id: invoiceId || null,
+            invoice_id: appliedInvoiceId,
+            origin_invoice_id: originInvoiceId,
             contact_id: contactId || invoice?.contact_id || null,
             job_id: jobId || invoice?.job_id || null,
             external_id: externalId,
@@ -2129,8 +2165,10 @@ async function handleWebhook(rawBody, signature) {
                         client
                     );
                     const meta = obj.metadata || {};
-                    const invId = session?.invoice_id
-                        || (meta.invoice_id ? Number(meta.invoice_id) : null);
+                    const localMeta = parseSessionMetadata(session?.metadata);
+                    const invId = session
+                        ? session.invoice_id
+                        : (meta.invoice_id ? Number(meta.invoice_id) : null);
                     const externalId = obj.payment_intent || obj.id;
                     const amount = obj.amount_total != null
                         ? obj.amount_total / 100
@@ -2144,6 +2182,9 @@ async function handleWebhook(rawBody, signature) {
                     await applyStripePayment(companyId, {
                         externalId,
                         invoiceId: invId,
+                        originInvoiceId: localMeta.removed_invoice_id
+                            ? Number(localMeta.removed_invoice_id)
+                            : null,
                         contactId: session?.contact_id
                             || (meta.contact_id ? Number(meta.contact_id) : null),
                         jobId: session?.job_id
@@ -2179,8 +2220,10 @@ async function handleWebhook(rawBody, signature) {
                     );
                     successfulSession = session;
                     const meta = obj.metadata || {};
-                    const invId = session?.invoice_id
-                        || (meta.invoice_id ? Number(meta.invoice_id) : null);
+                    const localMeta = parseSessionMetadata(session?.metadata);
+                    const invId = session
+                        ? session.invoice_id
+                        : (meta.invoice_id ? Number(meta.invoice_id) : null);
                     const charge = obj.latest_charge || obj.id;
                     if (session) {
                         await q.updateSession(companyId, session.id, {
@@ -2191,8 +2234,13 @@ async function handleWebhook(rawBody, signature) {
                     await applyStripePayment(companyId, {
                         externalId: obj.id,
                         invoiceId: invId,
-                        contactId: session?.contact_id || null,
-                        jobId: session?.job_id || null,
+                        originInvoiceId: localMeta.removed_invoice_id
+                            ? Number(localMeta.removed_invoice_id)
+                            : null,
+                        contactId: session?.contact_id
+                            || (meta.contact_id ? Number(meta.contact_id) : null),
+                        jobId: session?.job_id
+                            || (meta.job_id ? Number(meta.job_id) : null),
                         amount: obj.amount_received != null
                             ? obj.amount_received / 100
                             : obj.amount / 100,
@@ -2222,8 +2270,9 @@ async function handleWebhook(rawBody, signature) {
                         client
                     );
                     const meta = obj.metadata || {};
-                    const invoiceId = session?.invoice_id
-                        || (meta.invoice_id ? Number(meta.invoice_id) : null);
+                    const invoiceId = session
+                        ? session.invoice_id
+                        : (meta.invoice_id ? Number(meta.invoice_id) : null);
                     const reason = obj.last_payment_error?.message || 'Payment failed';
                     if (session) {
                         await q.updateSession(companyId, session.id, {
@@ -2247,21 +2296,16 @@ async function handleWebhook(rawBody, signature) {
                             invoiceId,
                             client
                         );
-                        if (!invoice) {
-                            throw new StripePaymentsError(
-                                'NOT_FOUND',
-                                'Invoice not found',
-                                404
-                            );
+                        if (invoice) {
+                            await logFinancialActivity({
+                                companyId,
+                                entityType: 'invoice',
+                                action: 'invoice.payment_failed',
+                                entity: invoice,
+                                actor: stripeActor(),
+                                summary: { status: 'failed' },
+                            }, { client });
                         }
-                        await logFinancialActivity({
-                            companyId,
-                            entityType: 'invoice',
-                            action: 'invoice.payment_failed',
-                            entity: invoice,
-                            actor: stripeActor(),
-                            summary: { status: 'failed' },
-                        }, { client });
                     }
                 });
                 break;
@@ -2429,6 +2473,7 @@ module.exports = {
     confirmManualCardSession,
     finalizeManualCardSession,
     getManualCardSessionResult,
+    getJobDue,
     listJobSavedCards,
     listContactSavedCards,
     removeContactSavedCard,

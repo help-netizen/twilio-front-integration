@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
 const paymentsService = require('./paymentsService');
+const invoiceRemovalService = require('./invoiceRemovalService');
 const { toE164 } = require('../utils/phoneUtils');
 const { shortDocNumber } = require('../utils/docNumber');
 const { recordDocumentSendNote } = require('./documentSendNoteService');
@@ -435,6 +436,28 @@ async function deleteInvoice(companyId, id, userId, client = null, activityActor
         }, { client });
     }
     return { deleted: true };
+}
+
+async function previewInvoiceRemoval(companyId, id, client = null) {
+    return invoiceRemovalService.previewInvoiceRemoval(companyId, id, client);
+}
+
+async function removeInvoice(
+    companyId,
+    id,
+    userId,
+    data,
+    client = null,
+    activityActor = null
+) {
+    return invoiceRemovalService.removeInvoice(
+        companyId,
+        id,
+        userId,
+        data,
+        client,
+        activityActor
+    );
 }
 
 // =============================================================================
@@ -1124,6 +1147,8 @@ module.exports = {
     createInvoice,
     updateInvoice,
     deleteInvoice,
+    previewInvoiceRemoval,
+    removeInvoice,
     addItem,
     addItems,
     updateItem,

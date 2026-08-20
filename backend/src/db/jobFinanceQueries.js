@@ -1,171 +1,219 @@
 'use strict';
 
+const db = require('./connection');
 const { requireCompanyId } = require('./crmUtils');
-const {
-    getInvoiceAllocations,
-    getJobPaymentPools,
-} = require('./documentPaymentQueries');
 
-/**
- * Canonical Job paid/due rollup shared by the Jobs list and Inspector. Native
- * payments count from the Job pool regardless of invoice_id. Legacy persisted
- * invoice money remains only after subtracting native rows that previously
- * materialized it. Zenbooker remains paid-history only and does not offset Due.
+function queryFor(client) {
+    return client?.query ? client.query.bind(client) : db.query;
+}
+
+/*
+ * OB-70 canonical Job finance projection. Every Job-level consumer reads this
+ * exact query: active estimates, active invoices, non-tip net payments, tips,
+ * signed Due, and unapplied Job credit.
  */
-async function listJobPaymentRollups(companyId, jobIds, client = null) {
-    requireCompanyId(companyId);
-    const ids = [...new Set((jobIds || []).map(Number).filter(Number.isFinite))];
-    if (ids.length === 0) return [];
-    const allocations = await getInvoiceAllocations(companyId, ids, client);
-    const pools = await getJobPaymentPools(companyId, ids, client);
-    const byJob = new Map();
-    const ensure = (jobId) => {
-        const key = String(jobId);
-        if (!byJob.has(key)) {
-            byJob.set(key, {
-                job_id: jobId,
-                invoice_total: 0,
-                legacy_paid: 0,
-                native_pool: 0,
-                total_pool: 0,
-                has_invoices: false,
-            });
-        }
-        return byJob.get(key);
-    };
+const JOB_FINANCE_SQL = `
+    WITH requested_jobs AS (
+        SELECT job.id AS job_id
+        FROM jobs job
+        WHERE job.company_id = $1
+          AND ($2::BIGINT[] IS NULL OR job.id = ANY($2::BIGINT[]))
+    ),
+    estimate_totals AS (
+        SELECT estimate.job_id,
+               COALESCE(SUM(estimate.total), 0)::NUMERIC AS estimated
+        FROM estimates estimate
+        JOIN requested_jobs requested ON requested.job_id = estimate.job_id
+        WHERE estimate.company_id = $1
+          AND estimate.archived_at IS NULL
+          AND estimate.status <> 'declined'
+        GROUP BY estimate.job_id
+    ),
+    invoice_totals AS (
+        SELECT invoice.job_id,
+               COALESCE(SUM(invoice.total), 0)::NUMERIC AS invoiced
+        FROM invoices invoice
+        JOIN requested_jobs requested ON requested.job_id = invoice.job_id
+        WHERE invoice.company_id = $1
+          AND invoice.status NOT IN ('void', 'voided', 'refunded')
+        GROUP BY invoice.job_id
+    ),
+    payment_base AS (
+        SELECT payment.*,
+               COALESCE(payment.job_id, applied_invoice.job_id) AS effective_job_id,
+               original.amount AS original_amount,
+               original.metadata AS original_metadata
+        FROM payment_transactions payment
+        LEFT JOIN invoices applied_invoice
+          ON applied_invoice.id = payment.invoice_id
+         AND applied_invoice.company_id = payment.company_id
+        LEFT JOIN LATERAL (
+            SELECT original_payment.amount, original_payment.metadata
+            FROM payment_transactions original_payment
+            WHERE original_payment.company_id = payment.company_id
+              AND original_payment.transaction_type = 'payment'
+              AND (
+                    (
+                        payment.metadata->>'original_transaction_id' ~ '^[0-9]+$'
+                        AND original_payment.id =
+                            (payment.metadata->>'original_transaction_id')::BIGINT
+                    )
+                    OR (
+                        NULLIF(payment.metadata->>'original_external_id', '') IS NOT NULL
+                        AND original_payment.external_id =
+                            payment.metadata->>'original_external_id'
+                    )
+              )
+            ORDER BY original_payment.id
+            LIMIT 1
+        ) original ON payment.transaction_type = 'refund'
+        WHERE payment.company_id = $1
+          AND COALESCE(payment.job_id, applied_invoice.job_id) IN (
+              SELECT requested.job_id FROM requested_jobs requested
+          )
+          AND payment.transaction_type IN ('payment', 'refund')
+    ),
+    payment_effects AS (
+        SELECT payment.id,
+               payment.effective_job_id AS job_id,
+               payment.invoice_id,
+               CASE
+                   WHEN payment.voided_at IS NOT NULL THEN 0::NUMERIC
+                   WHEN payment.transaction_type = 'payment'
+                    AND payment.status IN ('completed', 'refunded')
+                       THEN GREATEST(
+                           payment.amount - LEAST(
+                               GREATEST(
+                                   CASE
+                                       WHEN payment.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                                           THEN (payment.metadata->>'tip')::NUMERIC
+                                       ELSE 0
+                                   END,
+                                   0
+                               ),
+                               GREATEST(payment.amount, 0)
+                           ),
+                           0
+                       )
+                   WHEN payment.transaction_type = 'refund'
+                    AND payment.status = 'completed'
+                       THEN -ABS(payment.amount) * CASE
+                           WHEN COALESCE(ABS(payment.original_amount), 0) > 0
+                               THEN GREATEST(
+                                   ABS(payment.original_amount) - LEAST(
+                                       GREATEST(
+                                           CASE
+                                               WHEN payment.original_metadata->>'tip'
+                                                    ~ '^[0-9]+([.][0-9]+)?$'
+                                                   THEN (payment.original_metadata->>'tip')::NUMERIC
+                                               ELSE 0
+                                           END,
+                                           0
+                                       ),
+                                       ABS(payment.original_amount)
+                                   ),
+                                   0
+                               ) / ABS(payment.original_amount)
+                           ELSE 1
+                       END
+                   ELSE 0::NUMERIC
+               END AS paid_effect,
+               CASE
+                   WHEN payment.voided_at IS NOT NULL THEN 0::NUMERIC
+                   WHEN payment.transaction_type = 'payment'
+                    AND payment.status IN ('completed', 'refunded')
+                       THEN LEAST(
+                           GREATEST(
+                               CASE
+                                   WHEN payment.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
+                                       THEN (payment.metadata->>'tip')::NUMERIC
+                                   ELSE 0
+                               END,
+                               0
+                           ),
+                           GREATEST(payment.amount, 0)
+                       )
+                   ELSE 0::NUMERIC
+               END AS tip_effect
+        FROM payment_base payment
+    ),
+    payment_totals AS (
+        SELECT effect.job_id,
+               COALESCE(SUM(effect.paid_effect), 0)::NUMERIC AS paid,
+               COALESCE(SUM(effect.tip_effect), 0)::NUMERIC AS tips,
+               COALESCE(SUM(effect.paid_effect) FILTER (
+                   WHERE effect.invoice_id IS NULL
+               ), 0)::NUMERIC AS unapplied_credit
+        FROM payment_effects effect
+        GROUP BY effect.job_id
+    ),
+    finance_projection AS (
+        SELECT requested.job_id,
+               COALESCE(estimate.estimated, 0)::NUMERIC AS estimated,
+               COALESCE(invoice.invoiced, 0)::NUMERIC AS invoiced,
+               COALESCE(payment.paid, 0)::NUMERIC AS paid,
+               COALESCE(invoice.invoiced, 0)::NUMERIC
+                   - COALESCE(payment.paid, 0)::NUMERIC AS due,
+               COALESCE(payment.tips, 0)::NUMERIC AS tips,
+               COALESCE(payment.unapplied_credit, 0)::NUMERIC AS unapplied_credit
+        FROM requested_jobs requested
+        LEFT JOIN estimate_totals estimate ON estimate.job_id = requested.job_id
+        LEFT JOIN invoice_totals invoice ON invoice.job_id = requested.job_id
+        LEFT JOIN payment_totals payment ON payment.job_id = requested.job_id
+    )
+    SELECT job_id, estimated, invoiced, paid, due, tips, unapplied_credit
+    FROM finance_projection
+    WHERE ($3::BOOLEAN = FALSE OR due > 0)
+    ORDER BY job_id`;
 
-    for (const invoice of allocations) {
-        const row = ensure(invoice.job_id);
-        row.has_invoices = true;
-        row.invoice_total += Number(invoice.legacy_paid || 0)
-            + Number(invoice.capacity || 0);
-        row.legacy_paid += Number(invoice.legacy_paid || 0);
-    }
-    for (const pool of pools) {
-        const row = ensure(pool.job_id);
-        row.native_pool = Number(pool.native_pool || 0);
-        row.total_pool = Number(pool.total_pool || 0);
-    }
-
-    return [...byJob.values()].filter(row => (
-        row.has_invoices || row.native_pool !== 0 || row.total_pool !== 0
-    )).map(row => ({
+function normalizeFinance(row) {
+    if (!row) return null;
+    return {
         job_id: row.job_id,
-        total_paid: row.legacy_paid + row.total_pool,
-        total_due: row.invoice_total - row.legacy_paid - row.native_pool,
+        estimated: Number(row.estimated || 0),
+        invoiced: Number(row.invoiced || 0),
+        paid: Number(row.paid || 0),
+        due: Number(row.due || 0),
+        tips: Number(row.tips || 0),
+        unapplied_credit: Number(row.unapplied_credit || 0),
+    };
+}
+
+async function listJobFinances(
+    companyId,
+    jobIds = null,
+    client = null,
+    { positiveDueOnly = false } = {}
+) {
+    requireCompanyId(companyId);
+    const ids = jobIds == null
+        ? null
+        : [...new Set(jobIds.map(Number).filter(Number.isFinite))];
+    if (ids?.length === 0) return [];
+    const query = queryFor(client);
+    const { rows } = await query(JOB_FINANCE_SQL, [companyId, ids, positiveDueOnly]);
+    return rows.map(normalizeFinance);
+}
+
+async function getJobFinance(companyId, jobId, client = null) {
+    const [finance] = await listJobFinances(companyId, [jobId], client);
+    return finance || null;
+}
+
+// Compatibility adapter for older internal callers; the formula remains the
+// canonical projection above.
+async function listJobPaymentRollups(companyId, jobIds, client = null) {
+    const rows = await listJobFinances(companyId, jobIds, client);
+    return rows.map(row => ({
+        job_id: row.job_id,
+        total_paid: row.paid,
+        total_due: row.due,
     }));
 }
 
-/**
- * JOBS-HEADER-QUICKFILTERS-001 — a correlated SQL scalar computing a single job's
- * outstanding Due (dollars), with the SAME rules as listJobPaymentRollups' total_due:
- * non-void invoice totals minus the native Job pool. Legacy materialized native
- * invoice amounts are first backed out so old claimed rows cannot double count. Used as a
- * filter predicate by the Jobs-list "Not Paid" quick filter (WHERE <expr> > 0) so the
- * finance rollup participates in the paginated query rather than only post-page.
- *
- * @param {string} jobAlias    - the jobs-table alias in the outer query (e.g. 'j')
- * @param {string} companyParam - the company_id parameter placeholder (e.g. '$1')
- */
-function outstandingDueExpr(jobAlias, companyParam) {
-    return `(
-        COALESCE((
-            SELECT SUM(CASE
-                WHEN i.status IN ('void','voided','refunded') THEN 0
-                ELSE COALESCE(i.total, 0) - GREATEST(
-                    COALESCE(i.amount_paid, 0) - COALESCE((
-                        SELECT SUM(CASE
-                            WHEN linked.transaction_type = 'payment'
-                             AND (
-                                 linked.status IN ('completed','refunded','voided')
-                                 OR linked.voided_at IS NOT NULL
-                             ) THEN GREATEST(
-                                 linked.amount - GREATEST(
-                                     CASE
-                                         WHEN linked.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
-                                             THEN (linked.metadata->>'tip')::NUMERIC
-                                         ELSE 0
-                                     END,
-                                     0
-                                 ),
-                                 0
-                             )
-                            WHEN linked.transaction_type = 'refund'
-                             AND linked.status = 'completed' THEN -ABS(linked.amount) * CASE
-                                 WHEN COALESCE(ABS(linked_origin.amount), 0) > 0 THEN
-                                     GREATEST(
-                                         ABS(linked_origin.amount) - GREATEST(
-                                             CASE
-                                                 WHEN linked_origin.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
-                                                     THEN (linked_origin.metadata->>'tip')::NUMERIC
-                                                 ELSE 0
-                                             END,
-                                             0
-                                         ),
-                                         0
-                                     ) / ABS(linked_origin.amount)
-                                 ELSE 1
-                             END
-                            ELSE 0 END)
-                        FROM payment_transactions linked
-                        LEFT JOIN payment_transactions linked_origin
-                          ON linked_origin.company_id = linked.company_id
-                         AND linked_origin.transaction_type = 'payment'
-                         AND linked_origin.id::TEXT = linked.metadata->>'original_transaction_id'
-                        WHERE linked.company_id = ${companyParam}
-                          AND linked.invoice_id = i.id
-                          AND COALESCE(NULLIF(linked.external_source, ''), linked_origin.external_source)
-                              IS DISTINCT FROM 'zenbooker'
-                    ), 0),
-                    0
-                ) END)
-            FROM invoices i
-            WHERE i.job_id = ${jobAlias}.id AND i.company_id = ${companyParam}
-        ), 0)
-        - COALESCE((
-            SELECT SUM(CASE
-                         WHEN pt.transaction_type = 'payment' AND pt.status IN ('completed','refunded') THEN
-                             GREATEST(
-                                 pt.amount - GREATEST(
-                                     CASE
-                                         WHEN pt.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
-                                             THEN (pt.metadata->>'tip')::NUMERIC
-                                         ELSE 0
-                                     END,
-                                     0
-                                 ),
-                                 0
-                             )
-                         WHEN pt.transaction_type = 'refund'  AND pt.status = 'completed' THEN
-                             -ABS(pt.amount) * CASE
-                                 WHEN COALESCE(ABS(refund_origin.amount), 0) > 0 THEN
-                                     GREATEST(
-                                         ABS(refund_origin.amount) - GREATEST(
-                                             CASE
-                                                 WHEN refund_origin.metadata->>'tip' ~ '^[0-9]+([.][0-9]+)?$'
-                                                     THEN (refund_origin.metadata->>'tip')::NUMERIC
-                                                 ELSE 0
-                                             END,
-                                             0
-                                         ),
-                                         0
-                                     ) / ABS(refund_origin.amount)
-                                 ELSE 1
-                             END
-                         ELSE 0 END)
-            FROM payment_transactions pt
-            LEFT JOIN payment_transactions refund_origin
-              ON pt.transaction_type = 'refund'
-             AND refund_origin.company_id = pt.company_id
-             AND refund_origin.transaction_type = 'payment'
-             AND refund_origin.id::TEXT = pt.metadata->>'original_transaction_id'
-            WHERE pt.job_id = ${jobAlias}.id AND pt.company_id = ${companyParam}
-              AND pt.voided_at IS NULL
-              AND ((pt.transaction_type = 'payment' AND pt.status IN ('completed','refunded'))
-                OR (pt.transaction_type = 'refund'  AND pt.status = 'completed'))
-              AND COALESCE(NULLIF(pt.external_source, ''), refund_origin.external_source) IS DISTINCT FROM 'zenbooker'
-        ), 0)
-    )`;
-}
-
-module.exports = { listJobPaymentRollups, outstandingDueExpr };
+module.exports = {
+    JOB_FINANCE_SQL,
+    getJobFinance,
+    listJobFinances,
+    listJobPaymentRollups,
+};

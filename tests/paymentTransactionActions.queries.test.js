@@ -14,6 +14,44 @@ beforeEach(() => {
 });
 
 describe('canonical transaction action projection', () => {
+    test('new invoice payments retain their original invoice marker', async () => {
+        db.query.mockResolvedValue({ rows: [{ id: 72, origin_invoice_id: 57 }] });
+
+        await paymentsQueries.createTransaction(COMPANY, {
+            invoice_id: 57,
+            job_id: 9,
+            transaction_type: 'payment',
+            payment_method: 'cash',
+            amount: 25,
+        });
+
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain('processed_at, recorded_by, origin_invoice_id');
+        expect(params[17]).toBe(57);
+    });
+
+    test('refund rows inherit provenance after a payment was re-applied', async () => {
+        db.query
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 72,
+                    invoice_id: 58,
+                    origin_invoice_id: 57,
+                    job_id: 9,
+                    payment_method: 'cash',
+                    currency: 'USD',
+                }],
+            })
+            .mockResolvedValueOnce({ rows: [{ id: 73, origin_invoice_id: 57 }] })
+            .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+        await paymentsQueries.createRefundTransaction(COMPANY, 72, 10, null);
+
+        const [sql, params] = db.query.mock.calls[1];
+        expect(sql).toContain('origin_invoice_id');
+        expect(params[13]).toBe(57);
+    });
+
     test('list exposes Stripe dashboard metadata only for Stripe credit-card rows', async () => {
         db.query.mockResolvedValue({
             rows: [{

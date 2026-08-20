@@ -6,8 +6,10 @@ jest.mock('../backend/src/db/connection', () => ({ query: mockQuery }));
 jest.mock('../backend/src/services/fsmService', () => ({}));
 jest.mock('../backend/src/services/eventService', () => ({}));
 jest.mock('../backend/src/db/jobFinanceQueries', () => ({
-    outstandingDueExpr: jest.fn(() => '0'),
-    listJobPaymentRollups: jest.fn(async () => []),
+    getJobFinance: jest.fn(),
+    listJobFinances: jest.fn(async (_companyId, jobIds) => (
+        (jobIds || []).map(jobId => ({ job_id: jobId }))
+    )),
 }));
 
 const jobsService = require('../backend/src/services/jobsService');

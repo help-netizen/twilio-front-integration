@@ -12,6 +12,8 @@ const mockCreateInvoice = jest.fn();
 const mockUpdateInvoice = jest.fn();
 const mockDeleteInvoice = jest.fn();
 const mockVoidInvoice = jest.fn();
+const mockPreviewInvoiceRemoval = jest.fn();
+const mockRemoveInvoice = jest.fn();
 const mockGetPayments = jest.fn();
 const mockRecordOfflinePayment = jest.fn();
 const mockEnsurePaymentLink = jest.fn();
@@ -25,6 +27,8 @@ jest.mock('../backend/src/services/invoicesService', () => ({
     updateInvoice: (...args) => mockUpdateInvoice(...args),
     deleteInvoice: (...args) => mockDeleteInvoice(...args),
     voidInvoice: (...args) => mockVoidInvoice(...args),
+    previewInvoiceRemoval: (...args) => mockPreviewInvoiceRemoval(...args),
+    removeInvoice: (...args) => mockRemoveInvoice(...args),
     getPayments: (...args) => mockGetPayments(...args),
     recordOfflinePayment: (...args) => mockRecordOfflinePayment(...args),
 }));
@@ -74,6 +78,18 @@ beforeEach(() => {
     mockUpdateInvoice.mockResolvedValue({ id: 57, items: [] });
     mockDeleteInvoice.mockResolvedValue({ deleted: true });
     mockVoidInvoice.mockResolvedValue({ id: 57, status: 'void' });
+    mockPreviewInvoiceRemoval.mockResolvedValue({
+        disposition: 'voided',
+        payments_total: '50.00',
+        payments_count: 1,
+        candidate: { id: 58, invoice_number: 'INVOICE 10-2', balance_due: '50.00' },
+        preview_version: 'a'.repeat(64),
+    });
+    mockRemoveInvoice.mockResolvedValue({
+        invoice_id: 57,
+        disposition: 'void',
+        payment_action: 'leave_unapplied',
+    });
     mockGetPayments.mockResolvedValue([{ id: 81, invoice_id: 57 }]);
     mockRecordOfflinePayment.mockResolvedValue({ id: 81, invoice_id: 57 });
     mockEnsurePaymentLink.mockResolvedValue({ url: 'https://pay.test/invoice-57' });
@@ -316,6 +332,89 @@ describe('invoice collection route contract', () => {
             TX_CLIENT,
             expect.any(Object)
         );
+    });
+});
+
+describe('unified invoice removal route contract', () => {
+    it('previews with the isolated invoices.create gate and companyFilter scope', async () => {
+        const response = await request(appWith(['invoices.create']))
+            .get('/57/removal-preview');
+
+        expect(response.status).toBe(200);
+        expect(response.body.data.preview_version).toBe('a'.repeat(64));
+        expect(mockPreviewInvoiceRemoval).toHaveBeenCalledWith(COMPANY_ID, '57');
+        expect(mockPreviewInvoiceRemoval.mock.calls[0]).not.toContain(
+            'LEGACY-COMPANY-MUST-NOT-BE-USED'
+        );
+    });
+
+    it('performs the explicit choice in one transaction with the CRM actor', async () => {
+        const body = {
+            preview_version: 'a'.repeat(64),
+            request_id: 'remove-request-57',
+            payment_action: 'apply',
+            target_invoice_id: 58,
+        };
+        const response = await request(appWith(['invoices.create']))
+            .post('/57/remove')
+            .send(body);
+
+        expect(response.status).toBe(200);
+        expect(mockRemoveInvoice).toHaveBeenCalledWith(
+            COMPANY_ID,
+            '57',
+            CRM_USER_ID,
+            body,
+            TX_CLIENT,
+            { id: CRM_USER_ID, type: 'user', label: null, source: 'crm' }
+        );
+        expect(mockRemoveInvoice.mock.calls[0]).not.toContain(
+            'keycloak-subject-must-not-be-used'
+        );
+    });
+
+    it.each([
+        ['no permissions', []],
+        ['invoice read only', ['invoices.view']],
+        ['invoice send only', ['invoices.send']],
+        ['payment collection rights', [
+            'payments.collect_online',
+            'payments.collect_keyed',
+            'payments.collect_offline',
+        ]],
+    ])('R-matrix: denies preview and perform with %s', async (_label, permissions) => {
+        const app = appWith(permissions);
+        const preview = await request(app).get('/57/removal-preview');
+        const perform = await request(app).post('/57/remove').send({
+            preview_version: 'a'.repeat(64),
+            request_id: 'remove-request-denied',
+            payment_action: 'leave_unapplied',
+        });
+
+        expect(preview.status).toBe(403);
+        expect(perform.status).toBe(403);
+        expect(mockPreviewInvoiceRemoval).not.toHaveBeenCalled();
+        expect(mockRemoveInvoice).not.toHaveBeenCalled();
+        expect(mockWithTransaction).not.toHaveBeenCalled();
+    });
+
+    it('keeps a foreign invoice response tenant-safe and unchanged at the route seam', async () => {
+        mockRemoveInvoice.mockRejectedValueOnce(Object.assign(
+            new Error('Invoice 57 not found'),
+            { code: 'NOT_FOUND', httpStatus: 404 }
+        ));
+
+        const response = await request(appWith(['invoices.create']))
+            .post('/57/remove')
+            .send({
+                preview_version: 'a'.repeat(64),
+                request_id: 'remove-request-foreign',
+                payment_action: 'leave_unapplied',
+            });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error.code).toBe('NOT_FOUND');
+        expect(mockRemoveInvoice.mock.calls[0][0]).toBe(COMPANY_ID);
     });
 });
 

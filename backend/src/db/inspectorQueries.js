@@ -517,42 +517,61 @@ async function getFinanceSummary(companyId, entityType, entityId, client = null)
          ) counts`,
         [companyId, entityId, CLOSED_ESTIMATE_STATUSES]
     );
-    const invoicePromise = query(
-        `SELECT COUNT(*) FILTER (WHERE invoice.status NOT IN ('void','voided','refunded'))::INTEGER AS count,
-                COALESCE(SUM(invoice.total) FILTER (
-                    WHERE invoice.status NOT IN ('void','voided','refunded')
-                ), 0) AS total_invoiced,
-                COALESCE(SUM(invoice.amount_paid) FILTER (
-                    WHERE invoice.status NOT IN ('void','voided','refunded')
-                ), 0) AS invoice_paid,
-                COALESCE(SUM(
-                    COALESCE(invoice.total, 0) - COALESCE(invoice.amount_paid, 0)
-                ) FILTER (
-                    WHERE invoice.status NOT IN ('void','voided','refunded')
-                ), 0) AS invoice_due
-         FROM invoices invoice
-         WHERE invoice.company_id = $1
-           AND invoice.${parentColumn} = $2`,
-        [companyId, entityId]
-    );
-    const paymentPromise = entityType === 'job'
-        ? jobFinanceQueries.listJobPaymentRollups(companyId, [entityId], client)
-        : Promise.resolve([]);
-    const [estimates, invoices, payments] = await Promise.all([
+    const invoicePromise = entityType === 'job'
+        ? query(
+            `SELECT COUNT(*) FILTER (
+                        WHERE invoice.status NOT IN ('void','voided','refunded')
+                    )::INTEGER AS count
+             FROM invoices invoice
+             WHERE invoice.company_id = $1
+               AND invoice.job_id = $2`,
+            [companyId, entityId]
+        )
+        : query(
+            `SELECT COUNT(*) FILTER (
+                        WHERE invoice.status NOT IN ('void','voided','refunded')
+                    )::INTEGER AS count,
+                    COALESCE(SUM(invoice.total) FILTER (
+                        WHERE invoice.status NOT IN ('void','voided','refunded')
+                    ), 0) AS total_invoiced,
+                    COALESCE(SUM(invoice.amount_paid) FILTER (
+                        WHERE invoice.status NOT IN ('void','voided','refunded')
+                    ), 0) AS invoice_paid,
+                    COALESCE(SUM(
+                        COALESCE(invoice.total, 0) - COALESCE(invoice.amount_paid, 0)
+                    ) FILTER (
+                        WHERE invoice.status NOT IN ('void','voided','refunded')
+                    ), 0) AS invoice_due
+             FROM invoices invoice
+             WHERE invoice.company_id = $1
+               AND invoice.lead_id = $2`,
+            [companyId, entityId]
+        );
+    const financePromise = entityType === 'job'
+        ? jobFinanceQueries.getJobFinance(companyId, entityId, client)
+        : Promise.resolve(null);
+    const [estimates, invoices, finance] = await Promise.all([
         estimatePromise,
         invoicePromise,
-        paymentPromise,
+        financePromise,
     ]);
     const invoice = invoices.rows[0] || {};
-    const payment = payments[0] || null;
+    const estimate = estimates.rows[0] || { count: 0, statuses: {}, latest_actionable: null };
     return {
-        estimates: estimates.rows[0] || { count: 0, statuses: {}, latest_actionable: null },
+        estimates: {
+            ...estimate,
+            ...(finance ? { total_estimated: finance.estimated } : {}),
+        },
         invoices: {
             count: Number(invoice.count || 0),
-            total_invoiced: invoice.total_invoiced,
+            total_invoiced: finance ? finance.invoiced : invoice.total_invoiced,
         },
-        amount_paid: payment ? payment.total_paid : invoice.invoice_paid,
-        balance_due: payment ? payment.total_due : invoice.invoice_due,
+        amount_paid: finance ? finance.paid : invoice.invoice_paid,
+        balance_due: finance ? finance.due : invoice.invoice_due,
+        ...(finance ? {
+            tips: finance.tips,
+            unapplied_credit: finance.unapplied_credit,
+        } : {}),
     };
 }
 

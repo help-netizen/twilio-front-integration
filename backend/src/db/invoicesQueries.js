@@ -404,8 +404,35 @@ async function updateInvoice(id, companyId, data, client = null) {
 async function deleteInvoice(id, companyId, client = null) {
     const query = queryFor(client);
     const { rowCount } = await query(
-        `DELETE FROM invoices
-         WHERE id = $1 AND company_id = $2 AND status = 'draft'`,
+        `DELETE FROM invoices i
+         WHERE i.id = $1
+           AND i.company_id = $2
+           AND i.status = 'draft'
+           AND i.estimate_id IS NULL
+           AND i.sent_at IS NULL
+           AND i.paid_at IS NULL
+           AND COALESCE(i.amount_paid, 0) = 0
+           AND i.voided_at IS NULL
+           AND i.public_token IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM payment_transactions pt WHERE pt.invoice_id = i.id
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM stripe_payment_sessions s WHERE s.invoice_id = i.id
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM invoice_revisions ir WHERE ir.invoice_id = i.id
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM invoice_events ie
+               WHERE ie.invoice_id = i.id AND ie.event_type <> 'created'
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM tasks t WHERE t.invoice_id = i.id
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM ai_generation_log agl WHERE agl.invoice_id = i.id
+           )`,
         [id, companyId]
     );
     return rowCount > 0;

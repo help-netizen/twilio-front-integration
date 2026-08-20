@@ -129,7 +129,7 @@ beforeAll(async () => {
     });
     q.getSessionByRequestKey.mockResolvedValue(null);
     jobsService.getJobById.mockResolvedValue({ id: 7001, contact_id: contactA });
-    jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 95 }]);
+    jobFinanceQueries.getJobFinance.mockResolvedValue({ due: 95 });
     provider.retrievePaymentMethod.mockRejectedValue(
         new Error('Expired card reached Stripe provider')
     );

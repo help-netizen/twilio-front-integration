@@ -26,10 +26,15 @@ jest.mock('../backend/src/db/companyQueries', () => ({}));
 jest.mock('../backend/src/db/rateMeQueries', () => ({}));
 jest.mock('../backend/src/services/messagingHelper', () => ({ resolveCompanyProxyE164: jest.fn() }));
 jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+jest.mock('../backend/src/db/jobFinanceQueries', () => ({
+    getJobFinance: jest.fn(),
+    listJobFinances: jest.fn(),
+}));
 
 const express = require('express');
 const request = require('supertest');
 const db = require('../backend/src/db/connection');
+const jobFinanceQueries = require('../backend/src/db/jobFinanceQueries');
 const jobsService = require('../backend/src/services/jobsService');
 const jobsRouter = require('../backend/src/routes/jobs');
 
@@ -64,6 +69,17 @@ function useListDispatch({
     payments = [],
     metaFieldExists = true,
 } = {}) {
+    jobFinanceQueries.listJobFinances.mockImplementation(async (_companyId, jobIds) => (
+        (jobIds || []).map(jobId => payments.find(row => row.job_id === jobId) || ({
+            job_id: jobId,
+            estimated: 0,
+            invoiced: 0,
+            paid: 0,
+            due: 0,
+            tips: 0,
+            unapplied_credit: 0,
+        }))
+    ));
     db.query.mockImplementation(async (sql) => {
         if (/SELECT 1\s+FROM lead_custom_fields\s+WHERE company_id = \$1/i.test(sql)) {
             return { rows: metaFieldExists ? [{ '?column?': 1 }] : [] };
@@ -73,7 +89,6 @@ function useListDispatch({
         }
         if (/SELECT j\.\*,[\s\S]*FROM jobs j/i.test(sql)) return { rows };
         if (/FROM job_tag_assignments jta[\s\S]*scoped_job/i.test(sql)) return { rows: tags };
-        if (/WITH\s+(?:invoice_rollup|original_payments)\s+AS/i.test(sql)) return { rows: payments };
         throw new Error(`Unexpected Jobs list SQL: ${sql}`);
     });
 }
@@ -361,7 +376,7 @@ describe('Jobs complete predicates, security, and facets', () => {
         const [tagSql, tagParams] = db.query.mock.calls[2];
         expect(tagSql).toMatch(/JOIN jobs scoped_job ON scoped_job\.id = jta\.job_id AND scoped_job\.company_id = \$2/);
         expect(tagParams).toEqual([[10, 9], COMPANY]);
-        expect(db.query.mock.calls[3][1]).toEqual([COMPANY, [10, 9]]);
+        expect(jobFinanceQueries.listJobFinances).toHaveBeenCalledWith(COMPANY, [10, 9]);
     });
 });
 

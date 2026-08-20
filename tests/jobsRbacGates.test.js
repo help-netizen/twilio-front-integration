@@ -8,6 +8,14 @@
 // ── Mock the jobs router's service deps so it mounts cleanly ──
 const mockJobs = {
     getJobById: jest.fn(async () => ({ id: 5, blanc_status: 'Scheduled', company_id: 'co', contact_id: null, customer_name: 'C', customer_phone: null, service_name: 'S' })),
+    getJobFinance: jest.fn(async () => ({
+        estimated: 250,
+        invoiced: 100,
+        paid: 100,
+        due: 0,
+        tips: 15,
+        unapplied_credit: 100,
+    })),
     addNote: jest.fn(async () => ({ notes: [] })),
     updateBlancStatus: jest.fn(async (id, status) => ({ id, blanc_status: status })),
     cancelJob: jest.fn(async () => ({ id: 5, blanc_status: 'Canceled' })),
@@ -83,6 +91,40 @@ function appAs(perms) {
     app.use('/', jobsRouter);
     return app;
 }
+
+describe('GET /:id/finance canonical contract', () => {
+    beforeEach(() => mockJobs.getJobFinance.mockClear());
+
+    test('returns the exact tenant-scoped public projection for jobs.view', async () => {
+        const res = await request(appAs(['jobs.view'])).get('/5/finance');
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+            ok: true,
+            data: {
+                estimated: 250,
+                invoiced: 100,
+                paid: 100,
+                due: 0,
+                tips: 15,
+                unapplied_credit: 100,
+            },
+        });
+        expect(mockJobs.getJobFinance).toHaveBeenCalledWith('5', 'co', null);
+    });
+
+    test('R-matrix deny: jobs.view is required', async () => {
+        const res = await request(appAs([])).get('/5/finance');
+        expect(res.status).toBe(403);
+        expect(mockJobs.getJobFinance).not.toHaveBeenCalled();
+    });
+
+    test('T-foreign: an invisible Job is 404', async () => {
+        mockJobs.getJobFinance.mockResolvedValueOnce(null);
+        const res = await request(appAs(['jobs.view'])).get('/5/finance');
+        expect(res.status).toBe(404);
+    });
+});
 
 describe('provider FSM gate', () => {
     beforeEach(() => Object.values(mockJobs).forEach(f => f.mockClear()));

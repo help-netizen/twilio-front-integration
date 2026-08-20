@@ -1,8 +1,5 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 
 const db = require('../backend/src/db/connection');
@@ -13,38 +10,53 @@ const COMPANY = '11111111-1111-1111-1111-111111111111';
 describe('canonical Job finance rollup', () => {
     beforeEach(() => jest.clearAllMocks());
 
-    test('SAB-INSP-JOB-FINANCE-PARITY: invoice and standalone formulas are one required-company helper', async () => {
-        db.query
-            .mockResolvedValueOnce({ rows: [] })
-            .mockResolvedValueOnce({
-                rows: [{ job_id: 8, native_pool: '95.00', total_pool: '95.00' }],
-            });
-        const rows = await finance.listJobPaymentRollups(COMPANY, [8]);
-        expect(rows[0]).toEqual({ job_id: 8, total_paid: 95, total_due: -95 });
-        expect(db.query).toHaveBeenCalledTimes(2);
-        const [[invoiceSql, invoiceParams], [poolSql, poolParams]] = db.query.mock.calls;
-        expect(invoiceParams).toEqual([COMPANY, [8]]);
-        expect(poolParams).toEqual([COMPANY, [8]]);
-        expect(invoiceSql).toContain('i.company_id = $1');
-        expect(invoiceSql).toContain('i.job_id = ANY($2::BIGINT[])');
-        expect(invoiceSql).toContain('ORDER BY created_at ASC, invoice_id ASC');
-        expect(poolSql).toContain('pt.company_id = $1');
-        expect(poolSql).toContain('pt.job_id = ANY($2::BIGINT[])');
-        expect(poolSql).toContain("effective_source IS DISTINCT FROM 'zenbooker'");
-        expect(poolSql).toContain('OR invoice_id IS NULL');
+    test('normalizes every public field from one company-scoped SQL projection', async () => {
+        db.query.mockResolvedValueOnce({
+            rows: [{
+                job_id: '8',
+                estimated: '250.00',
+                invoiced: '100.00',
+                paid: '100.00',
+                due: '0.00',
+                tips: '15.00',
+                unapplied_credit: '100.00',
+            }],
+        });
 
-        const jobsSource = fs.readFileSync(
-            path.join(__dirname, '../backend/src/services/jobsService.js'),
-            'utf8'
-        );
-        expect(jobsSource).toContain('jobFinanceQueries.listJobPaymentRollups(companyId, jobIds)');
-        expect(jobsSource.match(/WITH invoice_rollup AS/g) || []).toHaveLength(0);
+        await expect(finance.getJobFinance(COMPANY, 8)).resolves.toEqual({
+            job_id: '8',
+            estimated: 250,
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+            tips: 15,
+            unapplied_credit: 100,
+        });
+        expect(db.query).toHaveBeenCalledTimes(1);
+        const [sql, params] = db.query.mock.calls[0];
+        expect(params).toEqual([COMPANY, [8], false]);
+        expect(sql).toContain('estimate.company_id = $1');
+        expect(sql).toContain('estimate.archived_at IS NULL');
+        expect(sql).toContain("estimate.status <> 'declined'");
+        expect(sql).toContain('invoice.company_id = $1');
+        expect(sql).toContain("invoice.status NOT IN ('void', 'voided', 'refunded')");
+        expect(sql).toContain('payment.company_id = $1');
+        expect(sql).toContain('AS unapplied_credit');
     });
 
     test('missing company rejects and empty ids avoid SQL', async () => {
-        await expect(finance.listJobPaymentRollups(null, [8]))
+        await expect(finance.listJobFinances(null, [8]))
             .rejects.toMatchObject({ code: 'COMPANY_ID_REQUIRED' });
-        await expect(finance.listJobPaymentRollups(COMPANY, [])).resolves.toEqual([]);
+        await expect(finance.listJobFinances(COMPANY, [])).resolves.toEqual([]);
         expect(db.query).not.toHaveBeenCalled();
+    });
+
+    test('positive-Due selection is a mode of the same projection', async () => {
+        db.query.mockResolvedValueOnce({ rows: [] });
+        await finance.listJobFinances(COMPANY, null, null, { positiveDueOnly: true });
+        expect(db.query).toHaveBeenCalledWith(
+            expect.stringContaining('WHERE ($3::BOOLEAN = FALSE OR due > 0)'),
+            [COMPANY, null, true]
+        );
     });
 });

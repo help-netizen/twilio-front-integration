@@ -89,7 +89,7 @@ beforeEach(() => {
         stripe_customer_id: 'cus_contact_5',
     });
     savedCardsQueries.upsertSavedCard.mockResolvedValue({ id: 41 });
-    jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 95 }]);
+    jobFinanceQueries.getJobFinance.mockResolvedValue({ due: 95 });
     mockGetJobById.mockResolvedValue({ id: 7, contact_id: 5 });
     paymentsQueries.findByExternalSourceId.mockResolvedValue(null);
     paymentsQueries.createTransaction.mockImplementation(async (companyId, data) => ({
@@ -122,9 +122,30 @@ beforeEach(() => {
     );
 });
 
+describe('canonical Job finance Due', () => {
+    it('reads Stripe collection Due from the shared projector', async () => {
+        jobFinanceQueries.getJobFinance.mockResolvedValueOnce({
+            job_id: 7,
+            estimated: 250,
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+            tips: 15,
+            unapplied_credit: 100,
+        });
+
+        await expect(svc.getJobDue(COMPANY, 7, mockTransactionClient)).resolves.toBe(0);
+        expect(jobFinanceQueries.getJobFinance).toHaveBeenCalledWith(
+            COMPANY,
+            7,
+            mockTransactionClient
+        );
+    });
+});
+
 describe('invoice-bound Stripe settlement safety', () => {
     it.each(['void', 'refunded'])(
-        'does not create ledger credit when the locked invoice is %s',
+        'records job credit when the locked invoice is %s',
         async status => {
             const terminalInvoice = {
                 id: 42,
@@ -146,9 +167,8 @@ describe('invoice-bound Stripe settlement safety', () => {
                 currency: 'usd',
                 metadata: { tip: 0 },
             }, mockTransactionClient)).resolves.toMatchObject({
-                tx: null,
-                ignored: true,
-                reason: 'INVOICE_TERMINAL',
+                tx: expect.objectContaining({ invoice_id: null, job_id: 7, amount: 40 }),
+                deduped: false,
             });
 
             expect(invoicesQueries.lockInvoiceById).toHaveBeenCalledWith(
@@ -156,17 +176,25 @@ describe('invoice-bound Stripe settlement safety', () => {
                 42,
                 mockTransactionClient
             );
-            expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+            expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+                COMPANY,
+                expect.objectContaining({
+                    invoice_id: null,
+                    origin_invoice_id: 42,
+                    job_id: 7,
+                    metadata: expect.objectContaining({ removed_invoice_id: '42' }),
+                }),
+                mockTransactionClient
+            );
             expect(invoicesQueries.createEvent).not.toHaveBeenCalled();
-            expect(eventBus.emit).not.toHaveBeenCalled();
+            expect(eventBus.emit).toHaveBeenCalledTimes(1);
         }
     );
 
     it('records the FULL charge as document credit even above the locked balance (over-collection allowed)', async () => {
         // OWNER decision: over-collection is valid. A $50 settlement on a $30-balance
         // invoice records the full $50 as the payment's document credit — no cap to the
-        // live balance. (The pay-jobcentric allocator later caps the invoice's absorbed
-        // amount at its total and holds the $20 excess as job-level credit.)
+        // live balance. The explicit application is allowed to overpay the invoice.
         const liveInvoice = {
             id: 42,
             company_id: COMPANY,
@@ -411,6 +439,54 @@ describe('handleWebhook', () => {
                 && activity.actor.label === 'Stripe'
                 && activity.actor.id === null
         ))).toBe(true);
+    });
+
+    it('SAB-OB70-STRIPE-LATE: detached session wins over stale invoice metadata', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.getSessionByPaymentIntent.mockResolvedValue({
+            id: 70,
+            invoice_id: null,
+            job_id: 7,
+            contact_id: 5,
+            surface: 'checkout_link',
+            amount: 50,
+            currency: 'USD',
+            metadata: { removed_invoice_id: '42' },
+        });
+        q.updateSession.mockResolvedValue({});
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        const { body, sig } = signed({
+            id: 'evt_ob70_late',
+            type: 'payment_intent.succeeded',
+            account: ACCT,
+            data: {
+                object: {
+                    id: 'pi_ob70_late',
+                    amount_received: 5000,
+                    currency: 'usd',
+                    metadata: { invoice_id: '42', job_id: '7', contact_id: '5' },
+                },
+            },
+        });
+
+        await expect(svc.handleWebhook(body, sig)).resolves.toEqual({ ok: true });
+
+        expect(invoicesQueries.lockInvoiceById).not.toHaveBeenCalled();
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledWith(
+            COMPANY,
+            expect.objectContaining({
+                external_id: 'pi_ob70_late',
+                invoice_id: null,
+                origin_invoice_id: 42,
+                job_id: 7,
+                contact_id: 5,
+                status: 'completed',
+                amount: 50,
+            }),
+            mockTransactionClient
+        );
+        expect(invoicesQueries.createEvent).not.toHaveBeenCalled();
     });
 
     it('TC-31b tip is split: full charge to ledger, only balance applied to invoice', async () => {
@@ -1312,7 +1388,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
 
     it('charges the entered $1.00 against a $280 due and records exactly $1.00 in the ledger', async () => {
         primeCharge();
-        jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 280 }]);
+        jobFinanceQueries.getJobFinance.mockResolvedValue({ due: 280 });
         q.insertSession.mockImplementation(async (companyId, data) => ({
             id: 71,
             company_id: companyId,
@@ -1413,7 +1489,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
 
     it('retries an open partial-payment request without creating a second session', async () => {
         primeCharge();
-        jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 280 }]);
+        jobFinanceQueries.getJobFinance.mockResolvedValue({ due: 280 });
         q.getSessionByRequestKey.mockResolvedValue({
             id: 71,
             job_id: 7,
@@ -1474,7 +1550,7 @@ describe('CARD-ON-FILE-001 saved-card charge', () => {
 
     it('DUE_CHANGED requires a fresh confirmation and never reaches Stripe', async () => {
         primeCharge();
-        jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([{ total_due: 80 }]);
+        jobFinanceQueries.getJobFinance.mockResolvedValue({ due: 80 });
 
         await expect(svc.chargeJobSavedCard(COMPANY, actor, 7, {
             savedCardId: 41,

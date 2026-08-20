@@ -8,13 +8,20 @@ const estimatesQueries = require('../backend/src/db/estimatesQueries');
 const invoicesQueries = require('../backend/src/db/invoicesQueries');
 const invoicesService = require('../backend/src/services/invoicesService');
 const paymentsService = require('../backend/src/services/paymentsService');
-const { listJobPaymentRollups } = require('../backend/src/db/jobFinanceQueries');
+const {
+    getJobFinance,
+    listJobPaymentRollups,
+} = require('../backend/src/db/jobFinanceQueries');
 
 jest.setTimeout(60000);
 
 const TAG = `JPA-${Date.now().toString(36)}-${process.pid}`;
 const ORDER_LIST_MIGRATION = fs.readFileSync(
     path.join(__dirname, '..', 'backend', 'db', 'migrations', '207_estimate_invoice_order_list.sql'),
+    'utf8'
+);
+const DISCOUNT_MIGRATION = fs.readFileSync(
+    path.join(__dirname, '..', 'backend', 'db', 'migrations', '287_invoice_percentage_discounts.sql'),
     'utf8'
 );
 
@@ -134,7 +141,12 @@ beforeAll(async () => {
     client = await db.pool.connect();
     await client.query('BEGIN');
     db.query = (text, params) => client.query(text, params);
+    await client.query(
+        'ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_seq INTEGER, '
+        + 'ADD COLUMN IF NOT EXISTS public_code TEXT'
+    );
     await client.query(ORDER_LIST_MIGRATION);
+    await client.query(DISCOUNT_MIGRATION);
 
     companyA = randomUUID();
     companyB = randomUUID();
@@ -181,6 +193,61 @@ afterAll(async () => {
 });
 
 describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
+    test('SAB-OB70-TIPS-IN-PAID: canonical totals exclude tips and inactive documents', async () => {
+        const job = await createJob();
+        const activeEstimate = await createEstimate(job.id, 'finance-active', 250);
+        const declinedEstimate = await createEstimate(job.id, 'finance-declined', 30);
+        const archivedEstimate = await createEstimate(job.id, 'finance-archived', 40);
+        await client.query(
+            `UPDATE estimates SET status = 'declined'
+             WHERE company_id = $1 AND id = $2`,
+            [companyA, declinedEstimate.id]
+        );
+        await client.query(
+            `UPDATE estimates SET archived_at = NOW()
+             WHERE company_id = $1 AND id = $2`,
+            [companyA, archivedEstimate.id]
+        );
+        expect(Number(activeEstimate.total)).toBe(250);
+
+        await createInvoice({ jobId: job.id, label: 'finance-active', total: 100 });
+        const voidInvoice = await createInvoice({ jobId: job.id, label: 'finance-void', total: 60 });
+        await invoicesQueries.updateInvoiceStatus(
+            voidInvoice.id,
+            companyA,
+            'sent',
+            'sent_at',
+            client
+        );
+        await invoicesQueries.voidIssuedInvoice(voidInvoice.id, companyA, client);
+        await createPayment({ jobId: job.id, amount: 115, metadata: { tip: 15 } });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toEqual({
+            job_id: job.id,
+            estimated: 250,
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+            tips: 15,
+            unapplied_credit: 100,
+        });
+        await expect(getJobFinance(companyB, job.id, client)).resolves.toBeNull();
+    });
+
+    test('SAB-OB70-SIGNED-DUE: Job credit stays negative and is never clamped', async () => {
+        const job = await createJob();
+        const invoice = await createInvoice({ jobId: job.id, label: 'signed-due', total: 30 });
+        await createPayment({ jobId: job.id, invoiceId: invoice.id, amount: 50 });
+
+        await expect(getJobFinance(companyA, job.id, client)).resolves.toMatchObject({
+            invoiced: 30,
+            paid: 50,
+            due: -20,
+            tips: 0,
+            unapplied_credit: 0,
+        });
+    });
+
     test('job 1603 shape: $95 before + $185 after pays a $280 invoice without claiming either row', async () => {
         const job = await createJob();
         const before = await createPayment({ jobId: job.id, amount: 95 });
@@ -219,7 +286,7 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         expect(history.rows.map(row => row.id)).toEqual(expect.arrayContaining([before.id, after.id]));
     });
 
-    test('allocates one native Job pool across active invoices oldest first', async () => {
+    test('uses invoice_id application when several active invoices exist', async () => {
         const job = await createJob();
         const oldest = await createInvoice({
             jobId: job.id,
@@ -236,21 +303,43 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         await createPayment({ jobId: job.id, invoiceId: newest.id, amount: 150 });
 
         expect(money(await invoicesQueries.getInvoiceById(companyA, oldest.id, client)))
-            .toEqual({ amount_paid: 100, balance_due: 0, status: 'paid', allocated: 100 });
+            .toEqual({ amount_paid: 0, balance_due: 100, status: 'draft', allocated: 0 });
         expect(money(await invoicesQueries.getInvoiceById(companyA, newest.id, client)))
-            .toEqual({ amount_paid: 50, balance_due: 50, status: 'partial', allocated: 50 });
+            .toEqual({ amount_paid: 150, balance_due: 0, status: 'paid', allocated: 150 });
         const [rollup] = await listJobPaymentRollups(companyA, [job.id], client);
         expect(Number(rollup.total_paid)).toBe(150);
         expect(Number(rollup.total_due)).toBe(50);
     });
 
-    test('over-collection: full charge preserved, invoice capped at its total by the allocator, excess is job credit', async () => {
-        // OWNER decision: over-collection is valid and NOT capped at settlement. A $50
-        // payment on a $30 invoice records the full $50 into the job pool; the
-        // pay-jobcentric allocator caps THIS invoice's absorbed amount at its own $30
-        // total (invoice balance_due 0, never negative). The $20 excess is NOT dropped
-        // or clamped — it surfaces as a negative job-level Due (a customer credit) that
-        // a later corrected document can absorb.
+    test('SAB-OB70-LONE-INVOICE: unapplied money appears only on the sole active invoice', async () => {
+        const job = await createJob();
+        const first = await createInvoice({ jobId: job.id, label: 'unapplied-first', total: 100 });
+        const second = await createInvoice({ jobId: job.id, label: 'unapplied-second', total: 100 });
+        await createPayment({ jobId: job.id, amount: 60 });
+
+        expect(money(await invoicesQueries.getInvoiceById(companyA, first.id, client)))
+            .toEqual({ amount_paid: 0, balance_due: 100, status: 'draft', allocated: 0 });
+        expect(money(await invoicesQueries.getInvoiceById(companyA, second.id, client)))
+            .toEqual({ amount_paid: 0, balance_due: 100, status: 'draft', allocated: 0 });
+
+        const [beforeRemoval] = await listJobPaymentRollups(companyA, [job.id], client);
+        expect({
+            paid: Number(beforeRemoval.total_paid),
+            due: Number(beforeRemoval.total_due),
+        }).toEqual({ paid: 60, due: 140 });
+
+        await expect(invoicesQueries.deleteInvoice(first.id, companyA, client)).resolves.toBe(true);
+
+        expect(money(await invoicesQueries.getInvoiceById(companyA, second.id, client)))
+            .toEqual({ amount_paid: 60, balance_due: 40, status: 'partial', allocated: 60 });
+        const [afterRemoval] = await listJobPaymentRollups(companyA, [job.id], client);
+        expect({
+            paid: Number(afterRemoval.total_paid),
+            due: Number(afterRemoval.total_due),
+        }).toEqual({ paid: 60, due: 40 });
+    });
+
+    test('over-collection: full explicitly applied charge keeps invoice due at zero', async () => {
         const job = await createJob();
         const invoice = await createInvoice({
             jobId: job.id,
@@ -265,7 +354,7 @@ describe('PAY-JOB-CENTRIC-001 real PostgreSQL contract', () => {
         });
 
         expect(money(await invoicesQueries.getInvoiceById(companyA, invoice.id, client)))
-            .toEqual({ amount_paid: 30, balance_due: 0, status: 'paid', allocated: 30 });
+            .toEqual({ amount_paid: 50, balance_due: 0, status: 'paid', allocated: 50 });
         const [rollup] = await listJobPaymentRollups(companyA, [job.id], client);
         expect(Number(rollup.total_paid)).toBe(50);
         // $20 over-collected → job Due goes negative (credit), not clamped to 0.

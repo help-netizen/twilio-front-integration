@@ -19,9 +19,8 @@ import { fetchEstimate, fetchEstimateEvents } from '../../services/estimatesApi'
 import { fetchInvoiceEvents } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
 import type { InvoiceEvent } from '../../services/invoicesApi';
-import { voidInvoice, sendInvoice } from '../../services/invoicesApi';
+import { sendInvoice } from '../../services/invoicesApi';
 import { approveEstimate, archiveEstimate, declineEstimate, restoreEstimate, sendEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
-import { deleteInvoice } from '../../services/invoicesApi';
 import { toast } from 'sonner';
 import { calculateJobFinanceSummary, formatSignedCurrency } from './jobFinanceMath';
 import { paymentMethodLabel } from '../../lib/paymentMethodLabels';
@@ -541,14 +540,7 @@ export function JobFinancialsTab({ jobId, contactEmail, contactPhone, hasContact
                             onClose={() => setSelectedInvoice(null)}
                             onEdit={() => {}}
                             onSend={() => setShowInvoiceSend(true)}
-                            onVoid={async () => {
-                                try {
-                                    await voidInvoice(selectedInvoice.id);
-                                    toast.success('Invoice voided');
-                                    refresh();
-                                    setSelectedInvoice(null);
-                                } catch (err: any) { toast.error(err.message); }
-                            }}
+
                             onSyncEstimate={async () => {
                                 try {
                                     const { syncItemsFromEstimate } = await import('../../services/invoicesApi');
@@ -557,13 +549,9 @@ export function JobFinancialsTab({ jobId, contactEmail, contactPhone, hasContact
                                     refresh();
                                 } catch (err: any) { toast.error(err.message); }
                             }}
-                            onDelete={async () => {
-                                try {
-                                    await deleteInvoice(selectedInvoice.id);
-                                    toast.success('Invoice deleted');
-                                    refresh();
-                                    setSelectedInvoice(null);
-                                } catch (err: any) { toast.error(err.message); }
+                            onRemoved={() => {
+                                refresh();
+                                setSelectedInvoice(null);
                             }}
                         />
                 </FloatingDetailPanel>

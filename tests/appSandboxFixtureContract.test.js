@@ -81,16 +81,19 @@ describe('APP-SANDBOX-001 CRM projector response-shape contract', () => {
             job_id: job.id,
             ...tag,
         })));
-        const allocationRows = fixtures.invoices.map(invoice => ({
-            job_id: invoice.job_id,
-            legacy_paid: 0,
-            capacity: invoice.total,
-        }));
-        const paymentRows = fixtures.invoices.map(invoice => ({
-            job_id: invoice.job_id,
-            native_pool: invoice.amount_paid,
-            total_pool: invoice.amount_paid,
-        }));
+        const invoiceByJob = new Map(fixtures.invoices.map(invoice => [invoice.job_id, invoice]));
+        const paymentRows = fixtures.jobs.map(job => {
+            const invoice = invoiceByJob.get(job.id);
+            return {
+                job_id: job.id,
+                estimated: 0,
+                invoiced: invoice?.total || 0,
+                paid: invoice?.amount_paid || 0,
+                due: invoice?.balance_due || 0,
+                tips: 0,
+                unapplied_credit: 0,
+            };
+        });
 
         mockQuery.mockImplementation(async sql => {
             if (/\(SELECT COUNT\(\*\)::int FROM jobs j/i.test(sql)) {
@@ -103,12 +106,7 @@ describe('APP-SANDBOX-001 CRM projector response-shape contract', () => {
             }
             if (/SELECT j\.\*,[\s\S]*FROM jobs j/i.test(sql)) return { rows };
             if (/FROM job_tag_assignments jta[\s\S]*scoped_job/i.test(sql)) return { rows: tagRows };
-            if (/WITH\s+original_payments AS/i.test(sql)) {
-                if (/FROM ordered/i.test(sql)) return { rows: allocationRows };
-                if (/FROM ledger_effects[\s\S]*GROUP BY job_id/i.test(sql)) {
-                    return { rows: paymentRows };
-                }
-            }
+            if (/WITH requested_jobs AS/i.test(sql)) return { rows: paymentRows };
             throw new Error(`Unexpected Job projector SQL: ${sql}`);
         });
         const realList = safeResult(await jobsService.listJobs({

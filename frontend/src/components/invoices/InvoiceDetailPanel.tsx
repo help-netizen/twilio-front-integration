@@ -45,7 +45,7 @@ import {
 import type { PaymentTransaction } from '../../services/paymentsCanonicalApi';
 import { PaymentStatusChip, isVoidablePayment } from '../payments/paymentStatus';
 import { VoidPaymentDialog } from '../payments/VoidPaymentDialog';
-import { InvoiceConfirmDialog } from './InvoiceConfirmDialog';
+import { InvoiceRemoveDialog } from './InvoiceRemoveDialog';
 import { InvoiceCollectPaymentDialog } from './InvoiceCollectPaymentDialog';
 import { InvoiceItemSheet, type InvoiceItemDraft } from './InvoiceItemSheet';
 import { DiscountControl, type DiscountKind } from '../shared/DiscountControl';
@@ -97,9 +97,13 @@ interface Props {
     onEdit?: () => void;
     onSend: () => void;
     onCollect?: () => void;
-    onVoid: () => void | Promise<void>;
     onSyncEstimate?: () => void;
-    onDelete: () => void | Promise<void>;
+    /**
+     * OB-70: the panel performs the removal itself — it is the only place that holds the
+     * preview and the dispatcher's answer about the money. The three call sites used to
+     * carry a copy of void-vs-delete each; now they just hear that it happened.
+     */
+    onRemoved: () => void;
     onChanged?: (invoice: Invoice) => void;
 }
 
@@ -117,8 +121,7 @@ export function InvoiceDetailPanel({
     loading,
     onSend,
     onCollect,
-    onVoid,
-    onDelete,
+    onRemoved,
     onChanged,
 }: Props) {
     const { timeZone } = useCompanyTime();
@@ -139,8 +142,7 @@ export function InvoiceDetailPanel({
     const [dueDate, setDueDate] = useState('');
     const [paymentTerms, setPaymentTerms] = useState('');
     const [voidPayment, setVoidPayment] = useState<PaymentTransaction | null>(null);
-    const [destructiveAction, setDestructiveAction] = useState<'void' | 'delete' | null>(null);
-    const [destructiveBusy, setDestructiveBusy] = useState(false);
+    const [removeOpen, setRemoveOpen] = useState(false);
     const [collectOpen, setCollectOpen] = useState(false);
 
     useEffect(() => {
@@ -384,23 +386,12 @@ export function InvoiceDetailPanel({
         // NOTE: the panel also receives an `onSyncEstimate` prop that it has never
         // rendered a control for. Left alone — surfacing it here would be shipping
         // an action nobody has specified, not fixing a layout.
-        ...(capabilities.canDelete ? [{ key: 'delete', label: 'Delete draft', icon: <Trash2 className="size-4" />, onClick: () => setDestructiveAction('delete'), danger: true }] : []),
-        ...(capabilities.canVoid ? [{ key: 'void', label: 'Void invoice', icon: <Ban className="size-4" />, onClick: () => setDestructiveAction('void'), testid: 'invoice-void', danger: true }] : []),
+        // ONE removal (OB-70). "Delete draft" and "Void invoice" named our bookkeeping, and
+        // a draft that had taken a card payment matched neither: the card offered Void and
+        // the server answered "Draft invoices must be deleted, not voided".
+        ...(capabilities.canRemove ? [{ key: 'remove', label: 'Remove invoice', icon: <Trash2 className="size-4" />, onClick: () => setRemoveOpen(true), testid: 'invoice-remove', danger: true }] : []),
     ].filter(action => !shownActions.has(action.key));
 
-    const confirmDestructive = async () => {
-        if (!destructiveAction || destructiveBusy) return;
-        setDestructiveBusy(true);
-        try {
-            if (destructiveAction === 'void') await onVoid();
-            else await onDelete();
-            setDestructiveAction(null);
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : `Could not ${destructiveAction} invoice`);
-        } finally {
-            setDestructiveBusy(false);
-        }
-    };
 
     if (loading || (invoiceData.isLoading && !invoice.items)) {
         return (
@@ -820,20 +811,11 @@ export function InvoiceDetailPanel({
                     toast.success('Payment voided');
                 }}
             />
-            <InvoiceConfirmDialog
-                open={!!destructiveAction}
-                onOpenChange={next => { if (!next) setDestructiveAction(null); }}
-                title={destructiveAction === 'delete'
-                    ? `Delete draft ${invoice.invoice_number}?`
-                    : `Void ${invoice.invoice_number}?`}
-                description={destructiveAction === 'delete'
-                    ? <>This permanently deletes the draft and its {money(invoice.balance_due)} balance. This can’t be undone.</>
-                    : <>This clears the <span className="font-semibold text-[var(--blanc-danger)]">{money(invoice.balance_due)}</span> balance and marks the invoice void. This can’t be undone.</>}
-                cancelLabel="Keep"
-                confirmLabel={destructiveAction === 'delete' ? 'Delete draft' : 'Void invoice'}
-                confirmTestId={destructiveAction === 'delete' ? 'invoice-delete-confirm' : 'invoice-void-confirm'}
-                onConfirm={confirmDestructive}
-                busy={destructiveBusy}
+            <InvoiceRemoveDialog
+                invoice={invoice}
+                open={removeOpen}
+                onOpenChange={setRemoveOpen}
+                onRemoved={onRemoved}
             />
             <InvoiceCollectPaymentDialog
                 open={collectOpen}

@@ -4,7 +4,7 @@ import { useInvoices } from '../hooks/useInvoices';
 import { InvoiceDetailPanel } from '../components/invoices/InvoiceDetailPanel';
 import { InvoiceEditorDialog } from '../components/invoices/InvoiceEditorDialog';
 import { InvoiceSendDialog } from '../components/invoices/InvoiceSendDialog';
-import { InvoiceConfirmDialog } from '../components/invoices/InvoiceConfirmDialog';
+import { InvoiceRemoveDialog } from '../components/invoices/InvoiceRemoveDialog';
 import { InvoiceMobileRow } from '../components/invoices/InvoiceMobileRow';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -62,11 +62,8 @@ export function InvoicesPage() {
     const [editorOpen, setEditorOpen] = useState(false);
     const [editingInvoice, setEditingInvoice] = useState<HydratedInvoice | null>(null);
     const [sendInvoice, setSendInvoice] = useState<Invoice | null>(null);
-    const [rowConfirm, setRowConfirm] = useState<{
-        invoice: Invoice;
-        action: 'void' | 'delete';
-    } | null>(null);
-    const [rowConfirmBusy, setRowConfirmBusy] = useState(false);
+    // OB-70: one removal, and the dialog itself asks the server what it would cost.
+    const [removing, setRemoving] = useState<Invoice | null>(null);
     const [searchParams, setSearchParams] = useSearchParams();
     const { code } = useParams<{ code?: string }>();
 
@@ -124,21 +121,6 @@ export function InvoicesPage() {
 
     const handleSend = (invoice: Invoice) => {
         setSendInvoice(invoice);
-    };
-
-    const confirmRowAction = async () => {
-        if (!rowConfirm || rowConfirmBusy) return;
-        setRowConfirmBusy(true);
-        try {
-            if (rowConfirm.action === 'delete') {
-                await page.handleDeleteInvoice(rowConfirm.invoice.id);
-            } else {
-                await page.handleVoidInvoice(rowConfirm.invoice.id);
-            }
-            setRowConfirm(null);
-        } finally {
-            setRowConfirmBusy(false);
-        }
     };
 
     const canCreateInvoice = permissions.includes('invoices.create');
@@ -294,7 +276,7 @@ export function InvoicesPage() {
                             <tbody>
                                 {page.invoices.map(inv => {
                                     const capabilities = getInvoiceCapabilities(permissions, inv);
-                                    const hasActions = capabilities.canEdit || capabilities.canSend || capabilities.canDelete || capabilities.canVoid;
+                                    const hasActions = capabilities.canEdit || capabilities.canSend || capabilities.canRemove;
                                     return (
                                         <tr
                                             key={inv.id}
@@ -322,8 +304,7 @@ export function InvoicesPage() {
                                                     <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
                                                         {capabilities.canEdit ? <DropdownMenuItem onClick={() => void handleEdit(inv)}>Edit</DropdownMenuItem> : null}
                                                         {capabilities.canSend ? <DropdownMenuItem onClick={() => handleSend(inv)}>{inv.status === 'draft' ? 'Send' : 'Resend'}</DropdownMenuItem> : null}
-                                                        {capabilities.canDelete ? <DropdownMenuItem className="text-[var(--blanc-danger)]" onClick={() => setRowConfirm({ invoice: inv, action: 'delete' })}>Delete draft</DropdownMenuItem> : null}
-                                                        {capabilities.canVoid ? <DropdownMenuItem className="text-[var(--blanc-danger)]" onClick={() => setRowConfirm({ invoice: inv, action: 'void' })}>Void invoice</DropdownMenuItem> : null}
+                                                        {capabilities.canRemove ? <DropdownMenuItem className="text-[var(--blanc-danger)]" onClick={() => setRemoving(inv)}>Remove invoice</DropdownMenuItem> : null}
                                                     </DropdownMenuContent>
                                                 </DropdownMenu> : null}
                                             </td>
@@ -388,28 +369,19 @@ export function InvoicesPage() {
                         loading={page.detailLoading}
                         onClose={page.closeDetail}
                         onSend={() => handleSend(page.selectedInvoice!)}
-                        onVoid={() => page.handleVoidInvoice(page.selectedInvoice!.id)}
                         onSyncEstimate={() => page.handleSyncItems(page.selectedInvoice!.id)}
-                        onDelete={() => page.handleDeleteInvoice(page.selectedInvoice!.id)}
+                        onRemoved={() => { page.closeDetail(); void page.loadInvoices(); }}
                         onChanged={() => page.loadInvoices()}
                     />
                 )}
             </FloatingDetailPanel>
 
-            {rowConfirm ? (
-                <InvoiceConfirmDialog
+            {removing ? (
+                <InvoiceRemoveDialog
+                    invoice={removing}
                     open
-                    onOpenChange={open => { if (!open) setRowConfirm(null); }}
-                    title={rowConfirm.action === 'delete'
-                        ? `Delete draft ${rowConfirm.invoice.invoice_number}?`
-                        : `Void ${rowConfirm.invoice.invoice_number}?`}
-                    description={rowConfirm.action === 'delete'
-                        ? `This permanently deletes the draft and its $${formatMoney(rowConfirm.invoice.balance_due)} balance. This can’t be undone.`
-                        : `This clears the $${formatMoney(rowConfirm.invoice.balance_due)} balance and marks the invoice void. This can’t be undone.`}
-                    confirmLabel={rowConfirm.action === 'delete' ? 'Delete draft' : 'Void invoice'}
-                    confirmTestId={rowConfirm.action === 'delete' ? 'invoice-delete-confirm' : 'invoice-void-confirm'}
-                    onConfirm={confirmRowAction}
-                    busy={rowConfirmBusy}
+                    onOpenChange={open => { if (!open) setRemoving(null); }}
+                    onRemoved={() => { setRemoving(null); void page.loadInvoices(); }}
                 />
             ) : null}
         </div>

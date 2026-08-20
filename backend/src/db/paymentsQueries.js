@@ -312,6 +312,7 @@ async function createTransaction(companyId, data, client = null) {
         metadata = {},
         processed_at,
         recorded_by,
+        origin_invoice_id = invoice_id,
     } = data;
 
     const { rows } = await query(
@@ -320,13 +321,13 @@ async function createTransaction(companyId, data, client = null) {
             transaction_type, payment_method, status,
             amount, currency, reference_number,
             external_id, external_source, memo, metadata,
-            processed_at, recorded_by
+            processed_at, recorded_by, origin_invoice_id
         ) VALUES (
             $1, $2, $3, $4, $5,
             $6, $7, $8,
             $9, $10, $11,
             $12, $13, $14, $15,
-            $16, $17
+            $16, $17, $18
         ) RETURNING *`,
         [
             companyId, contact_id || null, estimate_id || null, invoice_id || null, job_id || null,
@@ -334,6 +335,7 @@ async function createTransaction(companyId, data, client = null) {
             amount, currency, reference_number || null,
             external_id || null, external_source || null, memo || null, JSON.stringify(metadata),
             processed_at || null, recorded_by || null,
+            origin_invoice_id || null,
         ]
     );
 
@@ -405,12 +407,14 @@ async function createRefundTransaction(companyId, originalTxId, amount, recorded
             company_id, contact_id, estimate_id, invoice_id, job_id,
             transaction_type, payment_method, status,
             amount, currency, reference_number,
-            external_source, memo, metadata, processed_at, recorded_by
+            external_source, memo, metadata, processed_at, recorded_by,
+            origin_invoice_id
         ) VALUES (
             $1, $2, $3, $4, $5,
             'refund', $6, 'completed',
             $7, $8, $9,
-            $10, $11, $12, NOW(), $13
+            $10, $11, $12, NOW(), $13,
+            $14
         ) RETURNING *`,
         [
             companyId, original.contact_id, original.estimate_id, original.invoice_id, original.job_id,
@@ -420,6 +424,7 @@ async function createRefundTransaction(companyId, originalTxId, amount, recorded
             `Refund for transaction #${originalTxId}`,
             JSON.stringify({ original_transaction_id: originalTxId }),
             recordedBy,
+            original.origin_invoice_id || original.invoice_id || null,
         ]
     );
 

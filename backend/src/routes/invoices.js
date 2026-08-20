@@ -11,6 +11,9 @@ const { actorFromRequest } = require('../services/documentSendNoteService');
 const { userActor } = require('../services/financialActivityService');
 const { withTransaction } = require('../services/transactionService');
 
+const INVOICE_REMOVE_PERMISSION = 'invoices.create';
+const requireInvoiceRemovalPermission = requirePermission(INVOICE_REMOVE_PERMISSION);
+
 // Resolve the active company scope from any of the supported middleware shapes.
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -219,6 +222,48 @@ router.delete('/:id', requirePermission('invoices.create'), async (req, res) => 
 // =============================================================================
 // Invoice actions
 // =============================================================================
+
+// GET /api/invoices/:id/removal-preview — Preview the unified Remove action.
+router.get('/:id/removal-preview', requireInvoiceRemovalPermission, async (req, res) => {
+    try {
+        const result = await invoicesService.previewInvoiceRemoval(
+            getCompanyId(req),
+            req.params.id
+        );
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Invoices] GET /:id/removal-preview error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({
+            ok: false,
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
+    }
+});
+
+// POST /api/invoices/:id/remove — Perform the previewed choice atomically.
+router.post('/:id/remove', requireInvoiceRemovalPermission, async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
+        const result = await withTransaction(client => invoicesService.removeInvoice(
+            companyId,
+            req.params.id,
+            userId,
+            req.body || {},
+            client,
+            userActor(userId)
+        ));
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Invoices] POST /:id/remove error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({
+            ok: false,
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
+    }
+});
 
 // POST /api/invoices/:id/send — Send invoice to client
 router.post('/:id/send', requirePermission('invoices.send'), async (req, res) => {

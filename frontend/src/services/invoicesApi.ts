@@ -285,6 +285,50 @@ export async function voidInvoice(id: number): Promise<Invoice> {
     return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}/void`, { method: 'POST' });
 }
 
+/**
+ * OB-70 — taking an invoice off a job without losing the money.
+ *
+ * Two calls on purpose. The confirm has to state the figure that would be detached and
+ * name the invoice it could go to instead, so it asks the server first; only then does
+ * it act, carrying the dispatcher's answer. The server never picks the destination.
+ */
+export interface InvoiceRemovalCandidate {
+    id: number;
+    invoice_number: string;
+    balance_due: string;
+}
+
+export interface InvoiceRemovalPreview {
+    /** What removing it does to the record: a pristine draft goes, anything else is voided. */
+    disposition: 'deleted' | 'voided';
+    /** Money currently applied to this invoice, refunds netted. */
+    payments_total: string;
+    payments_count: number;
+    /** The one invoice the money could move to instead, or null — never applied without an answer. */
+    candidate: InvoiceRemovalCandidate | null;
+    /** Echoed back on remove; a stale one is refused rather than acted on. */
+    preview_version: string;
+}
+
+export interface InvoiceRemovalChoice {
+    payment_action: 'leave_unapplied' | 'apply';
+    target_invoice_id?: number;
+    preview_version: string;
+    /** Client-generated, so a double submit removes once. */
+    request_id: string;
+}
+
+export async function previewInvoiceRemoval(id: number): Promise<InvoiceRemovalPreview> {
+    return invoicesRequest<InvoiceRemovalPreview>(`${INVOICES_BASE}/${id}/removal-preview`);
+}
+
+export async function removeInvoice(id: number, choice: InvoiceRemovalChoice): Promise<void> {
+    await invoicesRequest<void>(`${INVOICES_BASE}/${id}/remove`, {
+        method: 'POST',
+        body: JSON.stringify(choice),
+    });
+}
+
 export async function ensureInvoicePublicLink(id: number): Promise<{ token: string; url: string }> {
     return invoicesRequest<{ token: string; url: string }>(`${INVOICES_BASE}/${id}/public-link`, {
         method: 'POST',

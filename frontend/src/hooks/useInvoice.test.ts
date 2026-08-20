@@ -10,8 +10,7 @@ describe('invoice permission selector', () => {
         expect(capabilities).toMatchObject({
             canView: true,
             canEdit: false,
-            canDelete: false,
-            canVoid: false,
+            canRemove: false,
             canSend: false,
             canViewPayments: false,
             canCollect: false,
@@ -32,8 +31,7 @@ describe('invoice permission selector', () => {
 
         expect(capabilities).toMatchObject({
             canEdit: true,
-            canDelete: false,
-            canVoid: true,
+            canRemove: true,
             canSend: true,
             canViewPayments: true,
             canCollect: true,
@@ -44,15 +42,30 @@ describe('invoice permission selector', () => {
         });
     });
 
-    it('offers Delete only for a draft and Void only for an issued invoice', () => {
+    it('offers ONE removal, whatever state the invoice is in (OB-70)', () => {
+        // Two capabilities meant two labels, and a draft that had taken a card
+        // payment matched neither cleanly: the card offered Void and the server
+        // answered "Draft invoices must be deleted, not voided". Draft or issued,
+        // paid or not, the dispatcher may remove it — what that costs underneath
+        // (delete a clean draft, void anything with history) is not their problem.
         const permissions = ['invoices.view', 'invoices.create'];
 
         expect(getInvoiceCapabilities(permissions, {
             status: 'draft',
             balance_due: '100.00',
-        })).toMatchObject({ canDelete: true, canVoid: false });
+        })).toMatchObject({ canRemove: true });
         expect(getInvoiceCapabilities(permissions, issuedInvoice))
-            .toMatchObject({ canDelete: false, canVoid: true });
+            .toMatchObject({ canRemove: true });
+        expect(getInvoiceCapabilities(permissions, { status: 'draft', balance_due: '0.00' }))
+            .toMatchObject({ canRemove: true });
+    });
+
+    it('does not offer to remove what is already gone', () => {
+        const permissions = ['invoices.view', 'invoices.create'];
+        for (const status of ['void', 'refunded'] as const) {
+            expect(getInvoiceCapabilities(permissions, { status, balance_due: '0.00' }))
+                .toMatchObject({ canRemove: false });
+        }
     });
 
     it('does not open the invoice sheet for a terminal-only collector', () => {

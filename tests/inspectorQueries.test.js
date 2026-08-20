@@ -2,7 +2,7 @@
 
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/db/jobFinanceQueries', () => ({
-    listJobPaymentRollups: jest.fn(),
+    getJobFinance: jest.fn(),
 }));
 
 const db = require('../backend/src/db/connection');
@@ -82,9 +82,15 @@ describe('Inspector dedicated data layer', () => {
             .mockResolvedValueOnce({ rows: [{
                 count: 1, total_invoiced: '100.00', invoice_paid: '20.00', invoice_due: '80.00',
             }] });
-        jobFinanceQueries.listJobPaymentRollups.mockResolvedValue([
-            { job_id: 5, total_paid: '30.00', total_due: '70.00' },
-        ]);
+        jobFinanceQueries.getJobFinance.mockResolvedValue({
+            job_id: 5,
+            estimated: 250,
+            invoiced: 100,
+            paid: 100,
+            due: 0,
+            tips: 15,
+            unapplied_credit: 100,
+        });
         const result = await queries.getFinanceSummary(COMPANY, 'job', 5);
         const estimateSql = db.query.mock.calls[0][0];
         expect(estimateSql).toContain('estimate.company_id = $1');
@@ -92,8 +98,15 @@ describe('Inspector dedicated data layer', () => {
         expect(estimateSql).toContain('estimate.archived_at IS NULL');
         expect(estimateSql).toContain('status <> ALL($3::TEXT[])');
         expect(estimateSql).not.toMatch(/SUM\s*\(\s*(?:estimate\.)?total/i);
-        expect(result).toMatchObject({ amount_paid: '30.00', balance_due: '70.00' });
-        expect(jobFinanceQueries.listJobPaymentRollups).toHaveBeenCalledWith(COMPANY, [5], null);
+        expect(result).toMatchObject({
+            estimates: { total_estimated: 250 },
+            invoices: { total_invoiced: 100 },
+            amount_paid: 100,
+            balance_due: 0,
+            tips: 15,
+            unapplied_credit: 100,
+        });
+        expect(jobFinanceQueries.getJobFinance).toHaveBeenCalledWith(COMPANY, 5, null);
     });
 
     test('every tenant operation rejects a missing companyId before querying', async () => {

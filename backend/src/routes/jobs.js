@@ -259,6 +259,30 @@ router.get('/by-code/:code', requirePermission('jobs.view'), async (req, res) =>
     }
 });
 
+// ─── Get canonical Job finance ───────────────────────────────────────────────
+router.get('/:id/finance', requirePermission('jobs.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        if (!companyId) {
+            return res.status(403).json({
+                ok: false,
+                error: 'Company context is required',
+                code: 'TENANT_CONTEXT_REQUIRED',
+            });
+        }
+        const finance = await jobsService.getJobFinance(
+            req.params.id,
+            companyId,
+            getProviderScope(req)
+        );
+        if (!finance) return res.status(404).json({ ok: false, error: 'Job not found' });
+        res.json({ ok: true, data: finance });
+    } catch (err) {
+        console.error('[Jobs API] Get finance error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
 // ─── Get Job by ID ───────────────────────────────────────────────────────────
 router.get('/:id', requirePermission('jobs.view'), async (req, res) => {
     try {
