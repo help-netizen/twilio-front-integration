@@ -284,6 +284,25 @@ router.post('/', vapiSecretAuth, async (req, res) => {
                 }
             }
 
+            // A lead born on this call adopts the callback task the slot-unavailable
+            // path had to open before it existed — otherwise the dispatcher's task
+            // hangs on the conversation instead of on the request to act upon.
+            if (name === 'createLead' && result && result.leadId) {
+                try {
+                    await vapiRecommendSlotsAuditService.attachLeadToCallbackTask({
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id,
+                        leadRef: result.leadId,
+                    });
+                } catch (attachError) {
+                    console.error('[vapi-tools] callback task lead attach unavailable (non-fatal)', {
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id || null,
+                        code: attachError?.code || 'VAPI_CALLBACK_TASK_ATTACH_UNAVAILABLE',
+                    });
+                }
+            }
+
             results.push({
                 toolCallId: toolCall.id,
                 result: JSON.stringify(result),

@@ -60,6 +60,7 @@ jest.mock('../../backend/src/services/inboundVoiceRecoveryService', () => ({
 jest.mock('../../backend/src/services/vapiRecommendSlotsAuditService', () => ({
     recordInvocation: jest.fn(),
     recordEndOfCall: jest.fn(),
+    attachLeadToCallbackTask: jest.fn(),
 }));
 jest.mock('../../backend/src/services/inboundSlotBookingGuardService', () => ({
     TRANSPORT_FIELD: '__vapiInboundBookingGuard',
@@ -160,6 +161,7 @@ beforeEach(() => {
     inboundVoiceRecoveryService.handleEndOfCall.mockResolvedValue({ status: 'skipped' });
     vapiRecommendSlotsAuditService.recordInvocation.mockResolvedValue({ recorded: true });
     vapiRecommendSlotsAuditService.recordEndOfCall.mockResolvedValue({ updated: true });
+    vapiRecommendSlotsAuditService.attachLeadToCallbackTask.mockResolvedValue({ attached: true, taskId: 2982 });
     app = makeApp();
 });
 
@@ -494,6 +496,39 @@ describe('Group 6 — createLead', () => {
         problemDescription: 'not cooling', preferredSlot: 'Tuesday June 10th 10am-1pm',
         addressValidated: true,
     };
+
+    // OB-71: the callback task is opened mid-call, before any lead exists, so it
+    // can only carry a thread. The lead this call produces has to adopt it.
+    test('a created lead adopts this call\'s callback task', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'lead-uuid-071' });
+        await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', fullArgs));
+
+        expect(vapiRecommendSlotsAuditService.attachLeadToCallbackTask).toHaveBeenCalledTimes(1);
+        expect(vapiRecommendSlotsAuditService.attachLeadToCallbackTask.mock.calls[0][0])
+            .toMatchObject({ leadRef: 'lead-uuid-071' });
+    });
+
+    test('no lead created → nothing is adopted', async () => {
+        leadsService.createLead.mockRejectedValue(new Error('nope'));
+        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', fullArgs));
+        expect(vapiRecommendSlotsAuditService.attachLeadToCallbackTask).not.toHaveBeenCalled();
+        errSpy.mockRestore();
+    }, 15000);
+
+    test('an attach failure never reaches the caller', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'lead-uuid-072' });
+        vapiRecommendSlotsAuditService.attachLeadToCallbackTask
+            .mockRejectedValueOnce(new Error('task store down'));
+        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', fullArgs));
+        expect(res.status).toBe(200);
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'lead-uuid-072' });
+        errSpy.mockRestore();
+    });
 
     // TC-LQV2-022
     test('success → all mapped fields, JobSource AI Phone, full Comments', async () => {

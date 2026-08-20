@@ -12,6 +12,7 @@
  */
 
 const tasksService = require('./tasksService');
+const tasksQueries = require('../db/tasksQueries');
 const { withTransaction } = require('./transactionService');
 const inboundVoiceRecoveryService = require('./inboundVoiceRecoveryService');
 
@@ -187,6 +188,51 @@ async function recordEndOfCallWithClient(input, client) {
     return { updated: updated.rows.length === 1 };
 }
 
+/**
+ * Parent the call's slot-unavailable callback task to the lead the same call
+ * produced.
+ *
+ * The task is written mid-call, the moment the engine reports no window — it has
+ * to be, because its whole job is to not lose the caller, and at that point there
+ * is no lead yet (observed 2026-08-19: task at 23:23:13, lead at 23:23:38). So it
+ * lands with only `thread_id`, and `tasksQueries` derives a task's parent from
+ * whichever FK is set — with just a thread it reads as a task on the conversation
+ * rather than on the lead a dispatcher actually needs to open.
+ *
+ * `callback_task_id` on this call's audit row is the pointer back to it. Attaching
+ * is idempotent (only fills a NULL `lead_id`), company-scoped, and leaves
+ * `thread_id` in place so the recording and transcript stay one click away.
+ *
+ * @returns {Promise<{attached: boolean, taskId: number|null}>}
+ */
+async function attachLeadToCallbackTaskWithClient(input, client) {
+    const companyId = String(input.companyId || '').trim();
+    const providerCallId = String(input.providerCallId || input.call?.id || '').trim();
+    const leadRef = input.leadRef == null ? '' : String(input.leadRef).trim();
+    if (!companyId || !providerCallId || !leadRef) return { attached: false, taskId: null };
+
+    const leadId = await tasksQueries.resolveParentId(companyId, 'lead', leadRef, client);
+    if (leadId == null) return { attached: false, taskId: null };
+
+    const { rows } = await client.query(
+        `UPDATE tasks t
+         SET lead_id = $3, updated_at = now()
+         FROM vapi_recommend_slots_call_audits a
+         WHERE a.provider_call_id = $1
+           AND a.company_id = $2
+           AND t.id = a.callback_task_id
+           AND t.company_id = $2
+           AND t.lead_id IS NULL
+         RETURNING t.id`,
+        [providerCallId, companyId, leadId],
+    );
+    return { attached: rows.length === 1, taskId: rows[0]?.id ?? null };
+}
+
+async function attachLeadToCallbackTask(input) {
+    return withTransaction((client) => attachLeadToCallbackTaskWithClient(input, client));
+}
+
 async function recordEndOfCall(input) {
     return withTransaction((client) => recordEndOfCallWithClient(input, client));
 }
@@ -198,4 +244,6 @@ module.exports = {
     recordInvocation,
     recordEndOfCallWithClient,
     recordEndOfCall,
+    attachLeadToCallbackTaskWithClient,
+    attachLeadToCallbackTask,
 };
