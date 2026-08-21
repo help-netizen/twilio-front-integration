@@ -77,6 +77,17 @@
 
 ---
 
+## OB-73 (2026-08-21) — Чёрный список для голосового агента: клиенты, которым бот не отвечает — **✅ РЕАЛИЗОВАН + СЛИТ В MASTER (BE+FE; ⚠️миграция 290; НЕ задеплоен)**
+
+Владелец: в настройках телефонии есть ЧС — добавить отдельный раздел «исключения для агента»: туда автоматом (read-only) попадают номера из ЧС компании + можно добавлять клиентов, которым бот не должен отвечать. Tenant-scoped (номер в компании A не влияет на B).
+
+**Модель (развилки согласованы 21.08):**
+- **ЧС компании** (`telephony_blacklist_numbers`) = ПОЛНЫЙ сброс входящего ДО маршрутизации (pre-routing hook, `twilioWebhooks`, fail-open). Абонент не дозванивается никому.
+- **Исключения агента** (новое, `telephony_agent_excluded_numbers`, mig 290) = бот НЕ отвечает, но звонок НЕ сбрасывается → идёт по **текущему потоку** (fallback как «бот недоступен»: voicemail/следующая ветка). Авто из ЧС → **read-only показ** (проверка бота union'ит их для fail-safe). Всё **tenant-scoped**.
+
+**Реализация:** BE — mig 290 (+rollback); `callAgentExclusionService` (list/add/remove + `isExcludedForAgent` = union `telephony_agent_excluded_numbers` ∪ `telephony_blacklist_numbers`); роуты `/telephony/numbers/agent-exclusions` (GET `{manual, from_blacklist}`, POST, DELETE; наследуют `tenant.telephony.manage`); гейт в `callFlowRuntime.renderVapiNode` ПЕРЕД `reserveInboundSession` → `followFailureEdge`, **FAIL-OPEN** (сбой lookup → бот всё равно отвечает). FE — `telephonyApi`+типы; `AgentExclusionsSection` (read-only строки из ЧС + ручные add/remove) в `BlacklistPage`; design-qa passed. Тесты: Jest **11** (`callAgentExclusion.test.js` — сервис/роут/union/tenant-iso T-own/T-foreign/T-blast) + **2** (гейт: excluded→fallback, fail-open→бот); фронт **527/527**; `tsc` чист. ⚠️**Деплой:** миграция 290 ДО образа. `vapiFallback.db.test.js` локально без PG (не регресс).
+⚠️ Изначально сделан как OB-72/mig288 на отставшей ветке — оба заняты master (lead-history / invoice_removal), пересобран на свежий master как OB-73/mig290 (только эта фича; параллельный OB-69-дубль отброшен в пользу master `DiscountControl`).
+
 ## OB-72 (2026-08-21) — История карточки лида не показывает смену статуса «X → Y» (кто/когда) — **✅ РЕШЁН 21.08 (master `326e6fbf`), staging-verified; в проде НЕТ**
 
 **Решение (tandem: Claude, по проторённому job-reassign пути `1ba17559`).** `updateLead` кладёт в summary `lead.status_changed` теперь `from: expectedOldStatus, to: columns.status` (санитайзер уже пропускал from/to); `describeActivity` рендерит `Status: <old> → <new>`. Кто/когда = actor + timestamp. Фронт не трогали. E2E на staging: смена Submitted→Review → history = `{"desc":"Status: Submitted → Review","who":"Dana A","when":…}`. 53/53 юнит (lead-мутации+описатель+санитайзер). ⚠️ смена через mark-lost/activate/convert — отдельные action'ы (`lead.lost`/`reactivated`/`converted`), они и раньше логировались; здесь закрыт основной путь (dropdown → updateLead).

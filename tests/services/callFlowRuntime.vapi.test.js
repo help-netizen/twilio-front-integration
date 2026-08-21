@@ -21,6 +21,10 @@ jest.mock('../../backend/src/services/vapiCallIdentityService', () => ({
     TOKEN_HEADER: 'x-albusto-call-token',
     reserveInboundSession: (...args) => mockReserveInboundSession(...args),
 }));
+const mockIsExcluded = jest.fn().mockResolvedValue(false);
+jest.mock('../../backend/src/services/callAgentExclusionService', () => ({
+    isExcludedForAgent: (...args) => mockIsExcluded(...args),
+}));
 
 const {
     advance,
@@ -175,6 +179,7 @@ describe('advance() — VAPI-AGENCY-001 durable inbound reservation', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockIsExcluded.mockResolvedValue(false);
         wireInboundExecution();
     });
 
@@ -260,5 +265,43 @@ describe('advance() — VAPI-AGENCY-001 durable inbound reservation', () => {
 
         expect(twiml).toContain('SAFE_FALLBACK');
         expect(twiml).not.toContain('<Sip');
+    });
+
+    // AGENT-EXCLUSION-001: the bot must not answer a flagged caller. The call is NOT
+    // dropped — it takes the same fallback edge as an unavailable bot.
+    test('an excluded caller skips the assistant and takes the fallback edge (no reservation)', async () => {
+        mockIsExcluded.mockResolvedValue(true);
+
+        const twiml = await advance(
+            'CA_parent_shared',
+            'node.completed',
+            'trace-a',
+            '00000000-0000-4000-8000-00000000000a',
+        );
+
+        expect(mockReserveInboundSession).not.toHaveBeenCalled();
+        expect(twiml).toContain('SAFE_FALLBACK');
+        expect(twiml).not.toContain('<Sip');
+    });
+
+    // FAIL-OPEN: a lookup error must never kill the phone — the bot still answers.
+    test('an exclusion lookup error is fail-open: still reserves and dials the bot', async () => {
+        mockIsExcluded.mockRejectedValue(new Error('exclusion db down'));
+        mockReserveInboundSession.mockResolvedValue({
+            sessionId: 'session-x',
+            correlationToken: 'opaque-x',
+            sipUri: 'sip:registry-owned@sip.vapi.ai',
+        });
+
+        const twiml = await advance(
+            'CA_parent_shared',
+            'node.completed',
+            'trace-a',
+            '00000000-0000-4000-8000-00000000000a',
+        );
+
+        expect(mockReserveInboundSession).toHaveBeenCalled();
+        expect(twiml).toContain('sip:registry-owned@sip.vapi.ai');
+        expect(twiml).not.toContain('SAFE_FALLBACK');
     });
 });

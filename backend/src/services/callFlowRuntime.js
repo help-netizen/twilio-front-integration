@@ -11,6 +11,7 @@ const groupRouting = require('./groupRouting');
 const telephonyTenantService = require('./telephonyTenantService');
 const vapiCallIdentityService = require('./vapiCallIdentityService');
 const vapiInboundSafetyPolicy = require('./vapiInboundSafetyPolicy');
+const callAgentExclusionService = require('./callAgentExclusionService');
 const { buildSoftphoneIdentity } = require('./softphoneIdentity');
 const { toE164 } = require('../utils/phoneUtils');
 
@@ -431,6 +432,33 @@ async function resolveVapiSipUriFallback(companyId, query = db.query) {
 
 async function renderVapiNode({ execution, node, context, traceId }, dependencies = {}) {
     const cfg = node.config || {};
+
+    // AGENT-EXCLUSION-001: this caller may be flagged "the bot must not answer them"
+    // (the company's manual agent-exclusions UNION its blacklist). Skip the assistant
+    // and take the configured human/voicemail fallback edge — the call is NOT dropped.
+    // FAIL-OPEN: any lookup error still answers with the bot. This gate must never be
+    // the reason the phone goes dead.
+    try {
+        const botExcluded = await callAgentExclusionService.isExcludedForAgent(
+            execution.company_id,
+            context.callerNumber,
+            dependencies.query || db.query,
+        );
+        if (botExcluded) {
+            console.log(`[${traceId}] Caller ${context.callerNumber} is excluded from the agent; taking the fallback edge`);
+            return followFailureEdge({
+                execution,
+                node,
+                context,
+                traceId,
+                events: ['vapi.no_target', 'vapi.failed', 'vapi.timeout', null],
+                fallbackTwiml: () => buildVoicemailTwiml(context, node),
+            });
+        }
+    } catch (err) {
+        console.warn(`[${traceId}] Agent-exclusion lookup failed; answering with the bot:`, err.message);
+    }
+
     let reservation = null;
     try {
         reservation = await vapiCallIdentityService.reserveInboundSession({

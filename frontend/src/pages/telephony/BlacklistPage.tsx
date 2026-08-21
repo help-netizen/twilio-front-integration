@@ -18,6 +18,7 @@ import {
 } from '../../components/ui/dialog';
 import { PhoneInput, formatUSPhone, isValidUSPhone, toE164 } from '../../components/ui/PhoneInput';
 import { telephonyApi, TelephonyBlacklistError } from '../../services/telephonyApi';
+import { AgentExclusionsSection } from './AgentExclusionsSection';
 import type { BlacklistNumber } from '../../types/telephony';
 
 const QUERY_KEY = ['telephony-blacklist'] as const;
@@ -168,6 +169,8 @@ export default function BlacklistPage() {
                         </div>
                     )}
                 </SettingsSection>
+
+                <AgentExclusionsSection />
             </SettingsPageShell>
 
             <Dialog open={addOpen} onOpenChange={setAddOpen}>

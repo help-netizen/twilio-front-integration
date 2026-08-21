@@ -7,6 +7,9 @@ jest.mock('../../backend/src/services/vapiCallIdentityService', () => ({
     TOKEN_HEADER: 'x-albusto-call-token',
     reserveInboundSession: (...args) => mockReserveInboundSession(...args),
 }));
+jest.mock('../../backend/src/services/callAgentExclusionService', () => ({
+    isExcludedForAgent: jest.fn().mockResolvedValue(false),
+}));
 jest.mock('../../backend/src/services/realtimeService', () => ({
     broadcast: jest.fn(),
     publishCallUpdate: jest.fn(),

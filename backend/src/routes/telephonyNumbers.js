@@ -9,6 +9,7 @@ const db = require('../db/connection');
 const svc = require('../services/telephonyTenantService');
 const territoryGeoService = require('../services/territoryGeoService');
 const callBlacklistService = require('../services/callBlacklistService');
+const callAgentExclusionService = require('../services/callAgentExclusionService');
 const callMaskingService = require('../services/callMaskingService');
 const userService = require('../services/userService');
 const { requirePermission } = require('../middleware/authorization');
@@ -242,6 +243,45 @@ router.delete('/blacklist/:id', async (req, res) => {
         const removed = await callBlacklistService.removeNumber(companyId(req), req.params.id);
         if (!removed) {
             return res.status(404).json({ ok: false, code: 'NOT_FOUND', error: 'Blacklist entry not found' });
+        }
+        res.json({ ok: true });
+    } catch (err) { fail(res, err, 'Failed to remove the number'); }
+});
+
+// GET /api/telephony/numbers/agent-exclusions — numbers the voice agent must not
+// answer. Returns the company's manual list plus its blacklist (read-only here:
+// blacklisted numbers are already fully blocked, shown so the picture is complete).
+router.get('/agent-exclusions', async (req, res) => {
+    try {
+        const [manual, fromBlacklist] = await Promise.all([
+            callAgentExclusionService.listNumbers(companyId(req)),
+            callBlacklistService.listNumbers(companyId(req)),
+        ]);
+        res.json({ ok: true, manual, from_blacklist: fromBlacklist });
+    } catch (err) { fail(res, err, 'Failed to load agent exclusions'); }
+});
+
+// POST /api/telephony/numbers/agent-exclusions — add a caller the agent won't answer
+router.post('/agent-exclusions', async (req, res) => {
+    try {
+        const number = await callAgentExclusionService.addNumber(
+            companyId(req),
+            req.body?.phone_number,
+            req.user?.crmUser?.id || null
+        );
+        res.status(201).json({ ok: true, number });
+    } catch (err) { fail(res, err, 'Failed to add the number'); }
+});
+
+// DELETE /api/telephony/numbers/agent-exclusions/:id — remove one company-owned row
+router.delete('/agent-exclusions/:id', async (req, res) => {
+    try {
+        if (!/^\d+$/.test(req.params.id)) {
+            return res.status(404).json({ ok: false, code: 'NOT_FOUND', error: 'Agent exclusion not found' });
+        }
+        const removed = await callAgentExclusionService.removeNumber(companyId(req), req.params.id);
+        if (!removed) {
+            return res.status(404).json({ ok: false, code: 'NOT_FOUND', error: 'Agent exclusion not found' });
         }
         res.json({ ok: true });
     } catch (err) { fail(res, err, 'Failed to remove the number'); }

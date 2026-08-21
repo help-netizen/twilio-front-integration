@@ -135,6 +135,21 @@ export interface BlacklistNumber {
     created_at: string;
 }
 
+/** AGENT-EXCLUSION-001: a number the voice agent must not answer (the call is NOT
+ *  dropped — it falls through to the human/voicemail path). */
+export interface AgentExclusionNumber {
+    id: string;
+    phone_e164: string;
+    created_at: string;
+}
+
+export interface AgentExclusionsData {
+    /** Manually added — the company can remove these. */
+    manual: AgentExclusionNumber[];
+    /** Mirrored from the company blacklist (already fully blocked): read-only here. */
+    from_blacklist: AgentExclusionNumber[];
+}
+
 export interface AudioAsset {
     id: string;
     name: string;

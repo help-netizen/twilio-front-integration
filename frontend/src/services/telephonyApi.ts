@@ -3,6 +3,8 @@ import type {
     QueuedCall, DashboardKPI, ProviderInfo, UserGroup,
     OperationsDashboardData, TelephonyTargetGroupOption, TelephonyTargetUserOption,
     BlacklistNumber,
+    AgentExclusionNumber,
+    AgentExclusionsData,
 } from '../types/telephony';
 
 import { authedFetch } from './apiClient';
@@ -149,6 +151,25 @@ export const telephonyApi = {
     },
     removeBlacklistNumber: async (id: string): Promise<void> => {
         await blacklistFetch('/telephony/numbers/blacklist/' + encodeURIComponent(id), {
+            method: 'DELETE',
+        });
+    },
+
+    listAgentExclusions: async (): Promise<AgentExclusionsData> => {
+        const data = await blacklistFetch<{ manual: AgentExclusionNumber[]; from_blacklist: AgentExclusionNumber[] }>(
+            '/telephony/numbers/agent-exclusions',
+        );
+        return { manual: data.manual, from_blacklist: data.from_blacklist };
+    },
+    addAgentExclusion: async (phoneNumber: string): Promise<AgentExclusionNumber> => {
+        const data = await blacklistFetch<{ number: AgentExclusionNumber }>('/telephony/numbers/agent-exclusions', {
+            method: 'POST',
+            body: JSON.stringify({ phone_number: phoneNumber }),
+        });
+        return data.number;
+    },
+    removeAgentExclusion: async (id: string): Promise<void> => {
+        await blacklistFetch('/telephony/numbers/agent-exclusions/' + encodeURIComponent(id), {
             method: 'DELETE',
         });
     },
