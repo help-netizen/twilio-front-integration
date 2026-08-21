@@ -62,6 +62,18 @@ jest.mock('../../backend/src/services/vapiRecommendSlotsAuditService', () => ({
     recordEndOfCall: jest.fn(),
     attachLeadToCallbackTask: jest.fn(),
 }));
+jest.mock('../../backend/src/db/connection', () => ({ query: jest.fn(async () => ({ rows: [] })) }));
+jest.mock('../../backend/src/services/vapiInboundCallFactsService', () => {
+    // fillGaps is the real precedence rule — mocking it would test nothing.
+    const actual = jest.requireActual('../../backend/src/services/vapiInboundCallFactsService');
+    return {
+        FACT_KEYS: actual.FACT_KEYS,
+        factsFromTool: actual.factsFromTool,
+        fillGaps: actual.fillGaps,
+        resolve: jest.fn(async () => ({})),
+        recordFromTool: jest.fn(async () => ({ recorded: true, facts: {} })),
+    };
+});
 jest.mock('../../backend/src/services/inboundSlotBookingGuardService', () => ({
     TRANSPORT_FIELD: '__vapiInboundBookingGuard',
     validateChosenSlot: jest.fn(async () => ({ required: true, allowed: true })),
@@ -80,6 +92,7 @@ const slotEngineService = require('../../backend/src/services/slotEngineService'
 const machineCredentials = require('../../backend/src/services/machineCredentialService');
 const inboundVoiceRecoveryService = require('../../backend/src/services/inboundVoiceRecoveryService');
 const vapiRecommendSlotsAuditService = require('../../backend/src/services/vapiRecommendSlotsAuditService');
+const vapiInboundCallFactsService = require('../../backend/src/services/vapiInboundCallFactsService');
 const vapiToolsRouter = require('../../backend/src/routes/vapi-tools');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -162,6 +175,8 @@ beforeEach(() => {
     vapiRecommendSlotsAuditService.recordInvocation.mockResolvedValue({ recorded: true });
     vapiRecommendSlotsAuditService.recordEndOfCall.mockResolvedValue({ updated: true });
     vapiRecommendSlotsAuditService.attachLeadToCallbackTask.mockResolvedValue({ attached: true, taskId: 2982 });
+    vapiInboundCallFactsService.resolve.mockResolvedValue({});
+    vapiInboundCallFactsService.recordFromTool.mockResolvedValue({ recorded: true, facts: {} });
     app = makeApp();
 });
 
@@ -496,6 +511,59 @@ describe('Group 6 — createLead', () => {
         problemDescription: 'not cooling', preferredSlot: 'Tuesday June 10th 10am-1pm',
         addressValidated: true,
     };
+
+    // OB-71: the call that started this — createLead arrives as {} while the same
+    // conversation already handed us the town, the address and the appliance.
+    test('an empty createLead is completed from this call\'s own facts', async () => {
+        vapiInboundCallFactsService.resolve.mockResolvedValue({
+            street: '612 Cirrus', apt: '6211', city: 'Ashland', state: 'MA',
+            zip: '01721', unitType: 'Refrigerator', lat: 42.25, lng: -71.48,
+        });
+        leadsService.createLead.mockResolvedValue({ uuid: 'lead-uuid-071b' });
+
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', {}));
+
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'lead-uuid-071b' });
+        const [body] = leadsService.createLead.mock.calls[0];
+        expect(body.Address).toBe('612 Cirrus');
+        expect(body.City).toBe('Ashland');
+        expect(body.PostalCode).toBe('01721');
+        expect(body.JobType).toBe('Refrigerator Repair');
+    });
+
+    test('what the caller actually said still wins over a stored fact', async () => {
+        vapiInboundCallFactsService.resolve.mockResolvedValue({ city: 'Ashland', zip: '01721' });
+        leadsService.createLead.mockResolvedValue({ uuid: 'lead-uuid-071c' });
+
+        await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', { ...fullArgs, city: 'Newton', zip: '02467' }));
+
+        const [body] = leadsService.createLead.mock.calls[0];
+        expect(body.City).toBe('Newton');
+        expect(body.PostalCode).toBe('02467');
+    });
+
+    test('a facts lookup failure never breaks the call', async () => {
+        vapiInboundCallFactsService.resolve.mockRejectedValueOnce(new Error('facts store down'));
+        leadsService.createLead.mockResolvedValue({ uuid: 'lead-uuid-071d' });
+        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', fullArgs));
+
+        expect(res.status).toBe(200);
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'lead-uuid-071d' });
+        errSpy.mockRestore();
+    });
+
+    test('each answering tool contributes its facts to the call', async () => {
+        await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('checkServiceArea', { zip: '01721' }));
+        expect(vapiInboundCallFactsService.recordFromTool).toHaveBeenCalledWith(
+            expect.objectContaining({ tool: 'checkServiceArea' }),
+        );
+    });
 
     // OB-71: the callback task is opened mid-call, before any lead exists, so it
     // can only carry a thread. The lead this call produces has to adopt it.

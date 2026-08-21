@@ -36,6 +36,7 @@ const vapiCallContextService = require('../services/vapiCallContextService');
 const machineCredentials = require('../services/machineCredentialService');
 const inboundVoiceRecoveryService = require('../services/inboundVoiceRecoveryService');
 const vapiRecommendSlotsAuditService = require('../services/vapiRecommendSlotsAuditService');
+const vapiInboundCallFactsService = require('../services/vapiInboundCallFactsService');
 const { TRANSPORT_FIELD: INBOUND_BOOKING_GUARD_FIELD } = require('../services/inboundSlotBookingGuardService');
 
 // The 4 relocated read-only legacy L0 tools keep byte-identical behavior (AC-11).
@@ -256,12 +257,62 @@ router.post('/', vapiSecretAuth, async (req, res) => {
                     } : {}),
                 },
             );
+            // OB-71: the model drops fields it already gave us minutes earlier in
+            // this same call — `strict` on the tool did not stop it, because the
+            // schema's `required` is enforced by nobody on this path. Fill only
+            // what it left out, from what OUR tools resolved on THIS call. Model
+            // arguments always win; identity is deliberately not filled here — the
+            // verification gate owns the contact and fails closed on a shared phone.
+            let skillInput = input;
+            if (name === 'createLead' && !outboundClaimed) {
+                try {
+                    const facts = await vapiInboundCallFactsService.resolve({
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id,
+                    });
+                    const { merged, filled } = vapiInboundCallFactsService.fillGaps(input, facts);
+                    if (filled.length) {
+                        skillInput = merged;
+                        console.log('[vapi-tools] createLead gaps filled from call facts', {
+                            companyId: transportCompanyId,
+                            providerCallId: message.call?.id || null,
+                            filled,
+                        });
+                    }
+                } catch (factsError) {
+                    console.error('[vapi-tools] call facts unavailable (non-fatal)', {
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id || null,
+                        code: factsError?.code || 'VAPI_CALL_FACTS_UNAVAILABLE',
+                    });
+                }
+            }
+
             const result = await agentSkills.runSkill(
                 name,
                 transportCompanyId,
                 { source: 'vapi', call: message.call },
-                input,
+                skillInput,
             );
+
+            if (!outboundClaimed) {
+                try {
+                    await vapiInboundCallFactsService.recordFromTool({
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id,
+                        tool: name,
+                        arguments: args,
+                        result,
+                    });
+                } catch (factsError) {
+                    console.error('[vapi-tools] call facts not recorded (non-fatal)', {
+                        companyId: transportCompanyId,
+                        providerCallId: message.call?.id || null,
+                        tool: name,
+                        code: factsError?.code || 'VAPI_CALL_FACTS_WRITE_UNAVAILABLE',
+                    });
+                }
+            }
 
             if (name === 'recommendSlots') {
                 try {
