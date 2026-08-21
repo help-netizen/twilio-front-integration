@@ -77,7 +77,9 @@
 
 ---
 
-## OB-72 (2026-08-21) — История карточки лида не показывает смену статуса «X → Y» (кто/когда) — **ОТКРЫТ**
+## OB-72 (2026-08-21) — История карточки лида не показывает смену статуса «X → Y» (кто/когда) — **✅ РЕШЁН 21.08 (master `326e6fbf`), staging-verified; в проде НЕТ**
+
+**Решение (tandem: Claude, по проторённому job-reassign пути `1ba17559`).** `updateLead` кладёт в summary `lead.status_changed` теперь `from: expectedOldStatus, to: columns.status` (санитайзер уже пропускал from/to); `describeActivity` рендерит `Status: <old> → <new>`. Кто/когда = actor + timestamp. Фронт не трогали. E2E на staging: смена Submitted→Review → history = `{"desc":"Status: Submitted → Review","who":"Dana A","when":…}`. 53/53 юнит (lead-мутации+описатель+санитайзер). ⚠️ смена через mark-lost/activate/convert — отдельные action'ы (`lead.lost`/`reactivated`/`converted`), они и раньше логировались; здесь закрыт основной путь (dropdown → updateLead).
 
 **Симптом (владелец).** В history карточки лида не видно смену статуса лида — кто и когда сменил.
 
