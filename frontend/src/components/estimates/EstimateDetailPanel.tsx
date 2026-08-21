@@ -313,21 +313,23 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
         await persist({ summary: text } as any);
     };
 
-    // Save helper — applies optimistic update and notifies parent.
-    const saving = useRef(false);
-    const persist = async (patch: Partial<Estimate>) => {
-        if (readOnly) return;
-        if (saving.current) return;
-        saving.current = true;
-        try {
-            const updated = await updateEstimate(estimate.id, patch as any);
-            setEstimate(updated);
-            onChanged?.(updated);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Save failed');
-        } finally {
-            saving.current = false;
-        }
+    // Serialize inline edits: a blur that lands while another field is saving must
+    // wait, not disappear. Keeping the recovery on the queue lets later edits run
+    // even when one request fails.
+    const persistQueue = useRef<Promise<void>>(Promise.resolve());
+    const persist = (patch: Partial<Estimate>): Promise<void> => {
+        if (readOnly) return Promise.resolve();
+        const queued = persistQueue.current.then(async () => {
+            try {
+                const updated = await updateEstimate(estimate.id, patch as any);
+                setEstimate(updated);
+                onChanged?.(updated);
+            } catch (err) {
+                toast.error(err instanceof Error ? err.message : 'Save failed');
+            }
+        });
+        persistQueue.current = queued;
+        return queued;
     };
     const hasItems = !!estimate.items?.length;
 
@@ -417,7 +419,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
         .catch(() => toast.error('Could not open the PDF'));
     const handleExplicitSave = async () => {
         (document.activeElement as HTMLElement | null)?.blur?.();
-        await new Promise(resolve => setTimeout(resolve, 150)); // let on-blur saves land
+        await persistQueue.current;
         await refreshAfterItemChange().catch(() => {});
         toast.success('All changes saved');
         setEditing(false); // back to the read-only preview (VIEW-FIRST)

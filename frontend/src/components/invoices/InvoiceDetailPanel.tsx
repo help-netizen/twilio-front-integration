@@ -193,16 +193,24 @@ export function InvoiceDetailPanel({
         }
     };
 
-    const persist = async (patch: Parameters<typeof invoiceData.save>[0]) => {
-        if (readOnly) return;
-        try {
-            const updated = await invoiceData.save(patch);
-            setInvoice(updated);
-            onChanged?.(updated);
-        } catch (error) {
-            toast.error(error instanceof Error ? error.message : 'Save failed');
-            throw error;
-        }
+    // Match estimate detail: field commits run in order so a fast blur cannot race
+    // another inline save or leave the panel showing an older response.
+    const persistQueue = useRef<Promise<void>>(Promise.resolve());
+    const persist = (patch: Parameters<typeof invoiceData.save>[0]): Promise<void> => {
+        if (readOnly) return Promise.resolve();
+        const queued = persistQueue.current.then(async () => {
+            try {
+                const updated = await invoiceData.save(patch);
+                setInvoice(updated);
+                onChanged?.(updated);
+            } catch (error) {
+                toast.error(error instanceof Error ? error.message : 'Save failed');
+                throw error;
+            }
+        });
+        // A failed request is surfaced to its caller, but must not poison the queue.
+        persistQueue.current = queued.catch(() => {});
+        return queued;
     };
 
     const openNewItem = () => {
@@ -315,7 +323,7 @@ export function InvoiceDetailPanel({
 
     const explicitSave = async () => {
         (document.activeElement as HTMLElement | null)?.blur?.();
-        await new Promise(resolve => window.setTimeout(resolve, 150));
+        await persistQueue.current;
         await refresh();
         toast.success('All changes saved');
         setEditing(false);
