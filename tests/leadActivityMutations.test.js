@@ -182,7 +182,7 @@ test('a status-only save emits lead.status_changed instead of lead.updated', asy
         action: 'lead.status_changed',
         entityId: '42',
         actor: ACTOR,
-        summary: { status: 'Review' },
+        summary: { status: 'Review', from: 'Submitted', to: 'Review' },
     }, expect.objectContaining({ client: expect.any(Object) }));
 });
 

@@ -847,7 +847,9 @@ async function updateLead(uuid, fields, companyId = null, activityActor = null) 
                 companyId,
                 action: 'lead.status_changed',
                 entityId: updated.ClientId,
-                summary: { status: columns.status },
+                // from/to → history renders "Status: <old> → <new>" (who/when come
+                // from the activity actor + timestamp). Sanitizer allows from/to.
+                summary: { status: columns.status, from: expectedOldStatus, to: columns.status },
             },
         ]
     );

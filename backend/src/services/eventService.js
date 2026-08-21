@@ -150,6 +150,13 @@ function describeActivity(action, details = {}) {
         if (from.length > 0) return `Unassigned ${from.join(', ')}`;
     }
 
+    if (action === 'lead.status_changed') {
+        const from = details?.summary?.from;
+        const to = details?.summary?.to;
+        if (from && to) return `Status: ${from} → ${to}`;
+        if (to) return `Status changed to ${to}`;
+    }
+
     let description = ACTIVITY_DESCRIPTIONS[action];
     if (!description) {
         const [entity, ...actionParts] = String(action).split('.');

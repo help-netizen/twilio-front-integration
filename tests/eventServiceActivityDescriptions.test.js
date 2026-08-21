@@ -39,6 +39,14 @@ describe('audit action descriptions', () => {
     ])('%s uses assignment names when present', (action, details, expected) => {
         expect(eventService.describeActivity(action, details)).toBe(expected);
     });
+
+    test.each([
+        ['lead.status_changed', { summary: { status: 'Won', from: 'Submitted', to: 'Won' } }, 'Status: Submitted → Won'],
+        ['lead.status_changed', { summary: { to: 'Won' } }, 'Status changed to Won'],
+        ['lead.status_changed', { summary: {} }, 'Lead status changed.'],
+    ])('lead.status_changed renders old→new (%#)', (action, details, expected) => {
+        expect(eventService.describeActivity(action, details)).toBe(expected);
+    });
 });
 
 describe('audit History item shape', () => {
