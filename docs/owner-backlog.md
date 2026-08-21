@@ -77,6 +77,25 @@
 
 ---
 
+## OB-72 (2026-08-21) — История карточки лида не показывает смену статуса «X → Y» (кто/когда) — **ОТКРЫТ**
+
+**Симптом (владелец).** В history карточки лида не видно смену статуса лида — кто и когда сменил.
+
+**Что нашёл (код).** Смена статуса ЧАСТИЧНО логируется, но выходит бесцветно:
+- `updateLead` (`backend/src/services/leadsService.js:846`) пишет активность `lead.status_changed`, но в `summary` кладёт **только НОВЫЙ** статус (`{ status: columns.status }`). Старый статус захвачен рядом (`expectedOldStatus`, стр.753 `SELECT status … FOR UPDATE`), но в summary НЕ попадает.
+- Описатель `eventService.describeActivity` (`backend/src/services/eventService.js:123`) для `lead.status_changed` возвращает **статичное** `'Lead status changed.'` — без значения статуса и без from→to.
+- Итог: в лучшем случае в истории бесцветная строка «Lead status changed.» (actor + timestamp = кто/когда ЕСТЬ), а не «Submitted → Won». Владелец читает это как «не пишется».
+
+**⚠️ Проверить на staging (перед фиксом):** показывается ли строка `lead.status_changed` ВООБЩЕ в `GET /api/leads/:id/history`, или её что-то фильтрует (тогда «не пишется» буквально). Также смена через отдельные действия — mark-lost/activate/convert — эмитит СВОИ action'ы (`lead.lost`/`lead.reactivated`/`lead.converted`, `leadsService.js:900/936/1472`); проверить, что и они попадают в историю.
+
+**Фикс — прямая параллель JOB-reassign-history (уже в master `1ba17559`):**
+1. `updateLead`: добавить в summary `from: expectedOldStatus, to: columns.status` (⚠️ санитайзер `activityLogService` УЖЕ разрешает ключи `from`/`to` после `1ba17559` — доп. работы по allowlist не нужно).
+2. `describeActivity` для `lead.status_changed`: рендерить `Status: {from} → {to}` (как legacy `describeEvent` для job-статуса, `eventService.js:45`). Кто/когда уже есть (actor + created_at). Фронт не трогать — рендерит серверный `description`.
+
+**Кому.** Backend, раздел работы/лиды, tandem (Codex impl / Claude gate). Не блокирует прод.
+
+---
+
 ## OB-65 (2026-08-18) — appSandboxFixtureContract падает: Job-проектор SQL уехал от контракта песочницы — **✅ РЕШЁН (tandem: Codex), тест-дрейф, раздел App Studio/MCP**
 
 **Симптом.** `tests/appSandboxFixtureContract.test.js` (APP-SANDBOX-001 «CRM projector response-shape contract») падает: `Unexpected Job projector SQL`. Пре-существующее — падает и на чистом master без каких-либо правок (проверено `git stash` моих файлов); поймано попутно при гейте `b9d9b9b2` (TILE-CITY-002).
