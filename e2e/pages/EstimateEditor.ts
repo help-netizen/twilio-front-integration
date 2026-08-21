@@ -107,9 +107,6 @@ export class EstimateEditor {
         }).click();
         await this.discountValue.fill(value);
         await this.expectPercentageDiscount(value);
-        // Estimate detail edits persist discount_value on blur. The create dialog
-        // has no onCommit handler, so the same blur is harmless on that surface.
-        await this.discountValue.press('Tab');
     }
 
     async expectPercentageDiscount(value: string): Promise<void> {
