@@ -9,6 +9,8 @@ const { logFinancialActivity } = require('./financialActivityService');
 
 const TERMINAL_STATUSES = new Set(['void', 'voided', 'refunded']);
 const PAYMENT_ACTIONS = new Set(['leave_unapplied', 'apply']);
+const AUDIT_DISPOSITION = 'void';
+const RESPONSE_DISPOSITION = 'voided';
 
 class InvoiceRemovalError extends Error {
     constructor(code, message, httpStatus = 500) {
@@ -94,24 +96,12 @@ function summarizeTransactions(transactions, invoiceCurrency) {
     };
 }
 
-function pristineDraft(blockers) {
-    return blockers.status === 'draft'
-        && !blockers.was_converted
-        && !blockers.was_sent_or_public
-        && !blockers.has_payment_activity
-        && !blockers.has_stripe_session
-        && !blockers.has_revision
-        && !blockers.has_non_creation_event
-        && !blockers.has_task
-        && !blockers.has_ai_generation;
-}
-
 function stableTimestamp(value) {
     if (!value) return null;
     return value instanceof Date ? value.toISOString() : String(value);
 }
 
-function previewToken(source, blockers, transactions, sessions) {
+function previewToken(source, transactions, sessions) {
     const state = {
         invoice: {
             id: String(source.id),
@@ -121,10 +111,6 @@ function previewToken(source, blockers, transactions, sessions) {
             currency: source.currency,
             updated_at: stableTimestamp(source.updated_at),
         },
-        blockers: Object.keys(blockers).sort().reduce((result, key) => {
-            result[key] = blockers[key];
-            return result;
-        }, {}),
         transactions: transactions.map(transaction => ({
             id: String(transaction.id),
             invoice_id: transaction.invoice_id == null ? null : String(transaction.invoice_id),
@@ -195,8 +181,8 @@ function paymentAuditSnapshot(transactions) {
     }));
 }
 
-function assertRemovalIntegrity(source, blockers, transactions, sessions) {
-    if (blockers.has_cross_tenant_reference) {
+function assertRemovalIntegrity(source, hasCrossTenantReferences, transactions, sessions) {
+    if (hasCrossTenantReferences) {
         throw new InvoiceRemovalError(
             'TENANT_INTEGRITY_BLOCKED',
             'Invoice removal is blocked by a cross-company reference.',
@@ -270,30 +256,27 @@ async function loadPreview(companyId, sourceInvoiceId, client = null, { lock = f
             409
         );
     }
-    const [blockers, transactions, sessions] = await Promise.all([
-        invoiceRemovalQueries.getRemovalBlockers(companyId, sourceInvoiceId, client),
+    const [hasCrossTenantReferences, transactions, sessions] = await Promise.all([
+        invoiceRemovalQueries.hasCrossTenantReferences(companyId, sourceInvoiceId, client),
         invoiceRemovalQueries.getAppliedTransactions(companyId, sourceInvoiceId, client, { lock }),
         invoiceRemovalQueries.getStripeSessions(companyId, sourceInvoiceId, client, { lock }),
     ]);
-    assertRemovalIntegrity(source, blockers, transactions, sessions);
+    assertRemovalIntegrity(source, hasCrossTenantReferences, transactions, sessions);
     const summary = summarizeTransactions(transactions, source.currency);
     const candidate = await candidateFor(companyId, source, summary, client);
-    const disposition = pristineDraft(blockers) ? 'delete' : 'void';
     return {
         source,
-        blockers,
         transactions,
         sessions,
         summary,
         candidate,
-        disposition,
-        token: previewToken(source, blockers, transactions, sessions),
+        token: previewToken(source, transactions, sessions),
     };
 }
 
 function publicPreview(preview) {
     return {
-        disposition: preview.disposition === 'delete' ? 'deleted' : 'voided',
+        disposition: RESPONSE_DISPOSITION,
         payments_total: preview.summary.detachedAmount.toFixed(2),
         payments_count: preview.summary.paymentCount,
         candidate: preview.candidate ? {
@@ -405,8 +388,8 @@ async function removeInvoice(
         preview = await loadPreview(companyId, sourceInvoiceId, client, { lock: true });
     } catch (error) {
         // A concurrent perform may commit while this transaction is waiting on
-        // the invoice lock. Re-check the durable idempotency row for both hard
-        // delete (NOT_FOUND) and void (INVALID_STATUS) outcomes.
+        // the invoice lock. Re-check the durable idempotency row after the
+        // winning transaction moves the invoice to a terminal status.
         completed = await invoiceRemovalQueries.getCompletedRemoval(
             companyId,
             sourceInvoiceId,
@@ -462,7 +445,7 @@ async function removeInvoice(
         source_invoice_id: preview.source.id,
         source_invoice_number: preview.source.invoice_number,
         source_job_id: preview.source.job_id,
-        disposition: preview.disposition,
+        disposition: AUDIT_DISPOSITION,
         payment_action: requested.paymentAction,
         target_invoice_id: target?.id || null,
         target_invoice_number: target?.invoice_number || null,
@@ -508,54 +491,42 @@ async function removeInvoice(
         }
     }
 
-    let removedInvoice = preview.source;
-    if (preview.disposition === 'delete') {
-        const deleted = await invoicesQueries.deleteInvoice(preview.source.id, companyId, client);
-        if (!deleted) {
-            throw new InvoiceRemovalError(
-                'INVOICE_STATE_CHANGED',
-                'Invoice history changed during removal.',
-                409
-            );
-        }
-    } else {
-        removedInvoice = await invoiceRemovalQueries.voidInvoiceForRemoval(
-            companyId,
-            preview.source.id,
-            client
-        );
-        if (!removedInvoice) {
-            throw new InvoiceRemovalError(
-                'INVOICE_STATE_CHANGED',
-                'Invoice status changed during removal.',
-                409
-            );
-        }
-        await invoicesQueries.createEvent(
-            companyId,
-            preview.source.id,
-            'voided',
-            'user',
-            userId,
-            {
-                removal_id: removal.id,
-                payment_action: requested.paymentAction,
-                target_invoice_id: target?.id || null,
-            },
-            client
+    const removedInvoice = await invoiceRemovalQueries.voidInvoiceForRemoval(
+        companyId,
+        preview.source.id,
+        client
+    );
+    if (!removedInvoice) {
+        throw new InvoiceRemovalError(
+            'INVOICE_STATE_CHANGED',
+            'Invoice status changed during removal.',
+            409
         );
     }
+    await invoicesQueries.createEvent(
+        companyId,
+        preview.source.id,
+        'voided',
+        'user',
+        userId,
+        {
+            removal_id: removal.id,
+            payment_action: requested.paymentAction,
+            target_invoice_id: target?.id || null,
+        },
+        client
+    );
 
     if (activityActor) {
         await logFinancialActivity({
             companyId,
             entityType: 'invoice',
-            action: preview.disposition === 'delete' ? 'invoice.deleted' : 'invoice.voided',
+            action: 'invoice.voided',
             entity: removedInvoice,
             actor: activityActor,
             summary: {
                 removal_id: removal.id,
-                disposition: preview.disposition,
+                disposition: RESPONSE_DISPOSITION,
                 payment_action: requested.paymentAction,
                 target_invoice_id: target?.id || null,
                 detached_amount: preview.summary.detachedAmount,
@@ -575,7 +546,7 @@ async function removeInvoice(
         removal_id: removal.id,
         invoice_id: preview.source.id,
         invoice_number: preview.source.invoice_number,
-        disposition: preview.disposition,
+        disposition: RESPONSE_DISPOSITION,
         payment_action: requested.paymentAction,
         target_invoice: target ? {
             invoice_id: target.id,

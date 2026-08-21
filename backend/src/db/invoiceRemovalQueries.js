@@ -45,43 +45,13 @@ async function getSourceInvoice(companyId, sourceInvoiceId, client = null, { loc
 
 /**
  * The dependent-row predicates are deliberately keyed on the globally unique
- * invoice id. They decide whether a hard delete is safe, so an anomalous
- * cross-tenant reference must block deletion rather than be hidden by scope.
+ * invoice id. An anomalous cross-tenant reference must block removal rather
+ * than be hidden by tenant scope and left partly detached.
  */
-async function getRemovalBlockers(companyId, sourceInvoiceId, client = null) {
+async function hasCrossTenantReferences(companyId, sourceInvoiceId, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
-        `SELECT i.id,
-                i.status,
-                i.estimate_id IS NOT NULL AS was_converted,
-                i.sent_at IS NOT NULL OR i.public_token IS NOT NULL
-                    AS was_sent_or_public,
-                COALESCE(i.amount_paid, 0) <> 0 OR i.paid_at IS NOT NULL OR EXISTS (
-                    SELECT 1 FROM payment_transactions pt
-                    WHERE pt.invoice_id = i.id
-                ) AS has_payment_activity,
-                EXISTS (
-                    SELECT 1 FROM stripe_payment_sessions s
-                    WHERE s.invoice_id = i.id
-                ) AS has_stripe_session,
-                EXISTS (
-                    SELECT 1 FROM invoice_revisions ir
-                    WHERE ir.invoice_id = i.id
-                ) AS has_revision,
-                EXISTS (
-                    SELECT 1 FROM invoice_events ie
-                    WHERE ie.invoice_id = i.id
-                      AND ie.event_type <> 'created'
-                ) AS has_non_creation_event,
-                EXISTS (
-                    SELECT 1 FROM tasks t
-                    WHERE t.invoice_id = i.id
-                ) AS has_task,
-                EXISTS (
-                    SELECT 1 FROM ai_generation_log agl
-                    WHERE agl.invoice_id = i.id
-                ) AS has_ai_generation,
-                EXISTS (
+        `SELECT EXISTS (
                     SELECT 1 FROM payment_transactions pt
                     WHERE pt.invoice_id = i.id
                       AND pt.company_id <> i.company_id
@@ -102,7 +72,7 @@ async function getRemovalBlockers(companyId, sourceInvoiceId, client = null) {
          WHERE i.company_id = $1 AND i.id = $2`,
         [companyId, sourceInvoiceId]
     );
-    return rows[0] || null;
+    return Boolean(rows[0]?.has_cross_tenant_reference);
 }
 
 async function getAppliedTransactions(
@@ -316,7 +286,7 @@ module.exports = {
     getCandidateInvoices,
     getCompletedRemoval,
     getRemovalByRequestId,
-    getRemovalBlockers,
+    hasCrossTenantReferences,
     getSourceInvoice,
     getStripeSessions,
     lockCandidateInvoice,

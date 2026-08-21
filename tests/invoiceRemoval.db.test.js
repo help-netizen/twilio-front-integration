@@ -213,7 +213,7 @@ describe('INVOICE-REMOVE-001 real PostgreSQL contract', () => {
             null
         );
         expect(removed).toMatchObject({
-            disposition: 'void',
+            disposition: 'voided',
             payment_action: 'leave_unapplied',
             job_finance: {
                 estimated: 0,
@@ -380,68 +380,56 @@ describe('INVOICE-REMOVE-001 real PostgreSQL contract', () => {
         expect(Number(rollup.total_due)).toBe(-45);
     });
 
-    test('SAB-OB70-AUDIT-BOUNDARY: pristine draft deletes, history-bearing draft voids', async () => {
+    test('SAB-OB70-AUDIT-BOUNDARY: unified Remove always retains the invoice as void', async () => {
         const job = await createJob();
         const pristine = await createInvoice({ jobId: job.id, label: 'pristine', total: 10 });
-        const pristinePreview = await invoiceRemovalService.previewInvoiceRemoval(
-            companyA,
-            pristine.id,
-            client
-        );
-        expect(pristinePreview.disposition).toBe('deleted');
-        const first = await invoiceRemovalService.removeInvoice(
-            companyA,
-            pristine.id,
-            userA,
-            removalChoice(pristinePreview),
-            client,
-            null
-        );
-        expect(first).toMatchObject({ disposition: 'delete', idempotent: false });
-        expect(await invoicesQueries.getInvoiceById(companyA, pristine.id, client)).toBeNull();
-
         const linked = await createInvoice({ jobId: job.id, label: 'public-history', total: 10 });
+        const publicToken = randomUUID();
         await client.query(
             `UPDATE invoices SET public_token = $3 WHERE company_id = $1 AND id = $2`,
-            [companyA, linked.id, randomUUID()]
+            [companyA, linked.id, publicToken]
         );
-        const linkedPreview = await invoiceRemovalService.previewInvoiceRemoval(companyA, linked.id, client);
-        expect(linkedPreview.disposition).toBe('voided');
-        await invoiceRemovalService.removeInvoice(
-            companyA,
-            linked.id,
-            userA,
-            removalChoice(linkedPreview),
-            client,
-            null
-        );
-        const { rows: retained } = await client.query(
-            `SELECT status, public_token FROM invoices WHERE company_id = $1 AND id = $2`,
-            [companyA, linked.id]
-        );
-        expect(retained[0]).toMatchObject({ status: 'void', public_token: expect.any(String) });
 
-        const legacyPaid = await createInvoice({
-            jobId: job.id,
-            label: 'legacy-paid-marker',
-            total: 20,
-        });
-        await client.query(
-            `UPDATE invoices
-             SET amount_paid = 5, balance_due = total - 5
-             WHERE company_id = $1 AND id = $2`,
-            [companyA, legacyPaid.id]
+        for (const invoice of [pristine, linked]) {
+            const preview = await invoiceRemovalService.previewInvoiceRemoval(
+                companyA,
+                invoice.id,
+                client
+            );
+            expect(preview.disposition).toBe('voided');
+            const removed = await invoiceRemovalService.removeInvoice(
+                companyA,
+                invoice.id,
+                userA,
+                removalChoice(preview),
+                client,
+                null
+            );
+            expect(removed).toMatchObject({ disposition: 'voided', idempotent: false });
+
+            const { rows } = await client.query(
+                `SELECT status, voided_at, public_token
+                 FROM invoices
+                 WHERE company_id = $1 AND id = $2`,
+                [companyA, invoice.id]
+            );
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({ status: 'void', voided_at: expect.any(Date) });
+        }
+
+        const retainedLinked = await invoicesQueries.getInvoiceById(companyA, linked.id, client);
+        expect(retainedLinked.public_token).toBe(publicToken);
+        const { rows: auditRows } = await client.query(
+            `SELECT source_invoice_id, disposition
+             FROM invoice_removals
+             WHERE company_id = $1 AND source_invoice_id = ANY($2::BIGINT[])
+             ORDER BY source_invoice_id`,
+            [companyA, [pristine.id, linked.id]]
         );
-        const legacyPreview = await invoiceRemovalService.previewInvoiceRemoval(
-            companyA,
-            legacyPaid.id,
-            client
-        );
-        expect(legacyPreview.disposition).toBe('voided');
-        await expect(
-            invoicesQueries.deleteInvoice(legacyPaid.id, companyA, client)
-        ).resolves.toBe(false);
-        expect(await invoicesQueries.getInvoiceById(companyA, legacyPaid.id, client)).not.toBeNull();
+        expect(auditRows).toEqual([
+            { source_invoice_id: pristine.id, disposition: 'void' },
+            { source_invoice_id: linked.id, disposition: 'void' },
+        ].sort((left, right) => left.source_invoice_id - right.source_invoice_id));
     });
 
     test('SAB-OB70-IDEMPOTENCY: replay removes once and a stale preview writes nothing', async () => {
@@ -477,15 +465,7 @@ describe('INVOICE-REMOVE-001 real PostgreSQL contract', () => {
 
         const stale = await createInvoice({ jobId: job.id, label: 'stale-preview', total: 10 });
         const stalePreview = await invoiceRemovalService.previewInvoiceRemoval(companyA, stale.id, client);
-        await invoicesQueries.createEvent(
-            companyA,
-            stale.id,
-            'updated',
-            'user',
-            userA,
-            { fields: ['notes'] },
-            client
-        );
+        await createPayment({ jobId: job.id, invoiceId: stale.id, amount: 1 });
         await expect(invoiceRemovalService.removeInvoice(
             companyA,
             stale.id,

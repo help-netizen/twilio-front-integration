@@ -59,9 +59,9 @@ money first. None of them silently re-applies money to another invoice. Reconcil
   across invoices is out of OB-70. **A negative Due belongs to the job, never to a document** (owner,
   PAY-JOB-CENTRIC): the invoice reports what it actually received ($195) with its balance floored at $0,
   and the $95 surfaces as the job's credit. An invoice reading "Due −$95" would invite someone to chase it.
-- **Hard delete only for a pristine draft**: no payments, no Stripe sessions, never sent or publicly linked,
-  no tasks, no AI generation, not converted from an estimate. Anything with financial or external history is
-  **voided** instead, because deleting it cascades away items, revisions, events and tasks — the audit trail.
+- **No hard delete at all** (owner, 21.08 — supersedes the earlier "pristine draft" carve-out). Every removal
+  voids. This also settles the cascade worry the carve-out was built around: nothing removes items, revisions,
+  events or tasks, because nothing is deleted.
 - **Stripe settling late is part of this task, not a follow-up.** Today a checkout that succeeds after the
   invoice is voided is dropped (`INVOICE_TERMINAL`), and after a hard delete the webhook can look up an
   invoice that no longer exists. Either way the customer is charged and the ledger has nothing. A late
@@ -72,23 +72,38 @@ money first. None of them silently re-applies money to another invoice. Reconcil
 ## Behaviour
 
 ### Removing
+**One action, one outcome** (owner, 21.08): removing always **voids**. Nothing is ever deleted for
+good — the invoice stays readable in the job's history, marked void.
+
 | Invoice state | What happens to the invoice | What happens to its payments |
 |---|---|---|
-| draft, nothing paid | deleted | — |
-| draft, paid | **voided** (kept for audit — money touched it) | detached → job credit, or re-applied if the dispatcher says so |
+| draft, nothing paid | voided | — |
+| draft, paid | voided | detached → job credit, or re-applied if the dispatcher says so |
 | issued / partial / paid | voided | same |
 | already void / refunded | Remove is not offered | — |
 
-The draft/void split stays under the hood. The label is **Remove invoice** in every case: the distinction the
-user was shown is exactly what produced the error message above.
+The first version of this spec kept a delete-vs-void split under the hood, reasoning that a
+pristine draft has no history worth keeping. The owner removed it: *"we merged delete and void into
+one function — why two logics? Leave one, and let it stay in history."* The evidence was already on
+screen: the split had resurfaced in the confirm as two different promises, which is the exact shape
+of the bug this feature exists to end.
 
 ### The confirm
 One dialog, three bodies — always naming the figure, never "the payments":
 
-- nothing paid → "This takes the invoice off the job. Nothing has been paid on it."
+Every body ends with the same sentence about the record — "The invoice itself stays in the job's history,
+marked void." — because there is only one outcome to state.
+
+- nothing paid → "Nothing has been paid on it."
 - paid, no candidate → "The **$462.00** already paid stays on the job as credit — you can put it on the next invoice."
-- paid, candidate exists → the same line, plus an explicit, **unchecked** choice:
-  `☐ Put $462.00 on invoice 1668-3 — $462.00 due`
+- paid, candidate exists → "The **$462.00** already paid does not go anywhere — it stays with the job unless you move
+  it below", plus an explicit, **unchecked** choice: `☐ Put $462.00 on invoice 1668-3 · It has $462.00 due`
+- nothing applied here, but the invoice DISPLAYS job credit (the lone-invoice rule) → "The **$250.00** shown here is
+  credit on the job, not a payment of this invoice. It stays on the job." The staging audit found the old copy saying
+  "nothing has been paid on it" over a card reading *Paid · 100%*.
+
+The number is printed short (`lib/docNumber.ts`, mirroring the backend's `utils/docNumber.js`): stored numbers
+carry the word, so a sentence that says "invoice" would otherwise read "Remove invoice INVOICE 1668-2?".
 
 Confirm `Remove invoice` (danger) · Cancel `Keep`.
 

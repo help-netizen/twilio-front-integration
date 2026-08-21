@@ -87,7 +87,7 @@ beforeEach(() => {
     });
     mockRemoveInvoice.mockResolvedValue({
         invoice_id: 57,
-        disposition: 'void',
+        disposition: 'voided',
         payment_action: 'leave_unapplied',
     });
     mockGetPayments.mockResolvedValue([{ id: 81, invoice_id: 57 }]);
@@ -360,6 +360,7 @@ describe('unified invoice removal route contract', () => {
             .send(body);
 
         expect(response.status).toBe(200);
+        expect(response.body.data.disposition).toBe('voided');
         expect(mockRemoveInvoice).toHaveBeenCalledWith(
             COMPANY_ID,
             '57',

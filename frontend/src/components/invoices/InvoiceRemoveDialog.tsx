@@ -74,14 +74,12 @@ export function InvoiceRemoveDialog({
     const displayedOnly = preview ? Math.max(Number(invoice.amount_paid || 0) - paid, 0) : 0;
 
     /**
-     * What happens to the RECORD, which the money sentence never says. A pristine draft
-     * is deleted for good; anything with history is voided and stays readable. The server
-     * has already decided which — the confirm should not leave the user to guess whether
-     * they can get it back.
+     * What happens to the RECORD, which the money sentence never says — and it is now ONE
+     * outcome (owner, 21.08). Removing always voids: nothing is ever deleted for good.
+     * The two-path version had survived under the hood after the UI merged the actions,
+     * and it promptly surfaced again here as two different promises.
      */
-    const fate = preview?.disposition === 'deleted'
-        ? 'The draft is deleted for good.'
-        : 'The invoice is voided and stays in the job’s history.';
+    const fate = 'The invoice itself stays in the job’s history, marked void.';
 
     const confirm = async () => {
         if (!preview || busy) return;
