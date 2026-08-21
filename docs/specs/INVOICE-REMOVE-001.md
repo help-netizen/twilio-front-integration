@@ -91,18 +91,20 @@ of the bug this feature exists to end.
 ### The confirm
 One dialog, three bodies — always naming the figure, never "the payments":
 
-The confirm asks and states the money. It says nothing about what the record becomes: that sentence
-existed, and the owner cut it (21.08) — "extra, unnecessary information; you get a confirmation asking
-'really remove?', and that's it". Where the invoice ends up is our bookkeeping, not the decision in front
-of the dispatcher.
+The confirm asks, and — when there is money — says one thing about it. Nothing else (owner, 21.08):
+the sentence about what the record becomes went first ("extra, unnecessary information"), then the
+per-case wordings went too ("no need to separate those cases at all").
 
-- nothing paid → "Nothing has been paid on it."
-- paid, no candidate → "The **$462.00** already paid stays on the job as credit — you can put it on the next invoice."
-- paid, candidate exists → "The **$462.00** already paid does not go anywhere — it stays with the job unless you move
-  it below", plus an explicit, **unchecked** choice: `☐ Put $462.00 on invoice 1668-3 · It has $462.00 due`
-- nothing applied here, but the invoice DISPLAYS job credit (the lone-invoice rule) → "The **$250.00** shown here is
-  credit on the job, not a payment of this invoice. It stays on the job." The staging audit found the old copy saying
-  "nothing has been paid on it" over a card reading *Paid · 100%*.
+> **Remove invoice 1668-2?**
+> The **$462.00** already paid stays on the job as credit.
+
+That single line covers both shapes of money: what is applied to this invoice, and — when nothing is —
+what the card is nonetheless showing, because the job's only active invoice displays the job's credit.
+Either way it stays on the job, which is the whole of what the dispatcher needs told. With no money at
+all there is no body: the question and the two buttons are the dialog.
+
+The re-attach choice is unchanged and still always asked when a candidate exists — an unchecked
+`☐ Put $462.00 on invoice 1668-3 · It has $462.00 due`.
 
 The number is printed short (`lib/docNumber.ts`, mirroring the backend's `utils/docNumber.js`): stored numbers
 carry the word, so a sentence that says "invoice" would otherwise read "Remove invoice INVOICE 1668-2?".

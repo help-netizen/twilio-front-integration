@@ -49,8 +49,18 @@ describe('the confirm tells the truth about the money', () => {
     });
 
     it('names the amount, never "the payments"', () => {
-        expect(dialogRaw).toContain('{money(preview.payments_total)}');
+        expect(dialogRaw).toContain('{money(atStake)}');
         expect(dialogRaw).toContain('stays on the job as credit');
+    });
+
+    it('says that one thing and stops (owner, 21.08)', () => {
+        // The body was trimmed twice: first the sentence about what the record becomes,
+        // then everything around the money. One line when there is money, nothing when
+        // there is not — the question in the title is the rest of the dialog.
+        expect(dialogRaw).not.toContain('you can put it on the next invoice');
+        expect(dialogRaw).not.toContain('does not go anywhere');
+        expect(dialogRaw).not.toContain('Nothing has been paid on it');
+        expect(dialogRaw).toContain(': null}');
     });
 
     it('never re-applies money unless the dispatcher ticked the box', () => {
@@ -117,6 +127,6 @@ describe('the confirm asks, it does not brief (owner, 21.08)', () => {
 
     it('keeps the two things the decision needs', () => {
         expect(dialogRaw).toContain('title={`Remove invoice ${shortDocNumber(invoice.invoice_number)}?`}');
-        expect(dialogRaw).toContain('{money(preview.payments_total)}');
+        expect(dialogRaw).toContain('{money(atStake)}');
     });
 });

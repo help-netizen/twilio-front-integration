@@ -51,6 +51,7 @@ export function InvoiceConfirmDialog({
                     >
                         {title}
                     </DialogTitle>
+                    {description ? (
                     <DialogDescription asChild>
                         {/* TYPE-CANON: 15px, like everything below a heading. It was 14px,
                             which read as a second body size the moment anything at the
@@ -62,6 +63,7 @@ export function InvoiceConfirmDialog({
                             {description}
                         </div>
                     </DialogDescription>
+                    ) : null}
                     {children}
                     <div className="mt-[18px] grid grid-cols-2 gap-2.5">
                         <Button

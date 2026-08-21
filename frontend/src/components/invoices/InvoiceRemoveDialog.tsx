@@ -72,6 +72,12 @@ export function InvoiceRemoveDialog({
     // invoice. Removing does not move it, and saying "nothing has been paid on it" next
     // to a card reading "Paid · 100%" is the kind of sentence this feature exists to end.
     const displayedOnly = preview ? Math.max(Number(invoice.amount_paid || 0) - paid, 0) : 0;
+    /**
+     * The money the sentence is about: what is applied to this invoice, or — when nothing
+     * is — what the card is nonetheless showing (job credit on the job's only invoice).
+     * Either way it stays on the job, which is the one thing the dispatcher needs told.
+     */
+    const atStake = paid > 0 ? paid : displayedOnly;
 
 
     const confirm = async () => {
@@ -106,16 +112,9 @@ export function InvoiceRemoveDialog({
                 ? <span className="text-[var(--blanc-danger)]">{error}</span>
                 : !preview
                     ? <span className="inline-flex items-center gap-2"><Loader2 className="size-4 animate-spin" /> Checking what is paid on it…</span>
-                    : paid > 0
-                        ? candidate
-                            // With the choice sitting right below, promising the money
-                            // "stays on the job" would contradict the box the user is
-                            // about to tick.
-                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid does not go anywhere — it stays with the job unless you move it below.</>
-                            : <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid stays on the job as credit — you can put it on the next invoice.</>
-                        : displayedOnly > 0
-                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(displayedOnly)}</span> shown here is credit on the job, not a payment of this invoice. It stays on the job.</>
-                            : <>Nothing has been paid on it.</>}
+                    : atStake > 0
+                        ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(atStake)}</span> already paid stays on the job as credit.</>
+                        : null}
             cancelLabel="Keep"
             confirmLabel="Remove invoice"
             confirmTestId="invoice-remove-confirm"
