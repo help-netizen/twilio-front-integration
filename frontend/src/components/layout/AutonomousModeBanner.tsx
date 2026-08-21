@@ -29,6 +29,12 @@ export function AutonomousModeBanner({ visible }: { visible: boolean }) {
                 right: 0,
                 bottom: 0,
                 zIndex: 100,
+                // Purely informational (no interactive children): it must never
+                // intercept clicks meant for content beneath it. Without this, the
+                // fixed strip floats above open overlays (rendered in a portal, so
+                // they miss the .app-main bottom-padding) and eats the bottom of
+                // their sticky footers — e.g. an estimate detail panel's Save.
+                pointerEvents: 'none',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
