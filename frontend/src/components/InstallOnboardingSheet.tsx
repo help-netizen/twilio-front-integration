@@ -162,7 +162,7 @@ export default function InstallOnboardingSheet() {
                                     <IosStep n={2}>Choose <b className="font-semibold">“Add to Home Screen”</b></IosStep>
                                     <IosStep n={3}>Tap <b className="font-semibold">“Add”</b></IosStep>
                                 </div>
-                                <p className="mb-4 mt-3.5 text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                <p className="mb-4 mt-3.5 text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                     Then open Albusto from your Home Screen. Requires iOS 16.4 or later.
                                 </p>
                                 <Button className="w-full" onClick={dismiss}>Got it</Button>
@@ -212,7 +212,7 @@ function IosStep({ n, children }: { n: number; children: React.ReactNode }) {
     return (
         <div className="flex items-center gap-3 py-2.5" style={{ borderBottom: n < 3 ? '1px solid var(--blanc-line)' : 'none' }}>
             <span className="grid h-[26px] w-[26px] flex-none place-items-center rounded-full text-[13px] font-bold" style={{ background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }}>{n}</span>
-            <span className="flex items-center text-[14.5px]" style={{ color: 'var(--blanc-ink-1)' }}>{children}</span>
+            <span className="flex items-center text-[15px]" style={{ color: 'var(--blanc-ink-1)' }}>{children}</span>
         </div>
     );
 }

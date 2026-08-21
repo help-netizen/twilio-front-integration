@@ -7,7 +7,8 @@ describe('addressable Integrations tabs', () => {
         expect(integrationTabFromSearchParams(new URLSearchParams())).toBe('marketplace');
         expect(integrationTabFromSearchParams(new URLSearchParams('tab=marketplace'))).toBe('marketplace');
         expect(integrationTabFromSearchParams(new URLSearchParams('tab=api-keys'))).toBe('api-keys');
-        expect(integrationTabFromSearchParams(new URLSearchParams('tab=zenbooker'))).toBe('zenbooker');
+        // ZB-DECOUPLE F2a: the Zenbooker tab was retired; a stale ?tab=zenbooker now falls back to Marketplace.
+        expect(integrationTabFromSearchParams(new URLSearchParams('tab=zenbooker'))).toBe('marketplace');
         expect(integrationTabFromSearchParams(new URLSearchParams('tab=unknown'))).toBe('marketplace');
     });
 
@@ -19,9 +20,9 @@ describe('addressable Integrations tabs', () => {
     });
 
     it('renders published Marketplace apps through the grouped catalog browser', () => {
-        expect(pageSource).toContain('<MarketplaceBrowser');
-        expect(pageSource).toContain('apps={apps}');
-        expect(pageSource).toContain('renderApp={app => (');
+        expect(pageSource).toContain('<MarketplaceGrid');
+        expect(pageSource).toContain('apps={tenantApps}');
+        expect(pageSource).toContain('onOpen={app =>');
     });
 
     it('keeps Inspector settings addressable within the Marketplace URL', () => {

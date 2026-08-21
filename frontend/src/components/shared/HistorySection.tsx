@@ -224,7 +224,7 @@ function EventRow({ item }: { item: HistoryItem }) {
                     <span className="font-medium">{name}</span>
                     {chip && (
                         <span
-                            className="inline-block rounded-full px-1.5 text-[9.5px] font-bold uppercase tracking-wide"
+                            className="inline-block rounded-full px-1.5 text-[10px] font-bold uppercase tracking-wide"
                             style={chipTone === 'accent'
                                 ? { background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)' }
                                 : { background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-3)', border: '1px solid var(--blanc-line)' }}

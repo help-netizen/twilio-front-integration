@@ -110,11 +110,11 @@ export default function AutomationPage() {
                                     <span className="absolute top-0.5 h-[18px] w-[18px] rounded-full bg-white transition-[left] duration-150" style={{ left: r.enabled ? 20 : 2 }} />
                                 </button>
                                 <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-1.5 text-[14.5px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
+                                    <div className="flex items-center gap-1.5 text-[15px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
                                         {r.name}
-                                        {r.is_system && <span className="rounded-full px-[7px] py-px text-[10.5px]" style={{ background: 'rgba(47,99,216,0.12)', color: 'var(--blanc-info)' }}>system</span>}
+                                        {r.is_system && <span className="rounded-full px-[7px] py-px text-[11px]" style={{ background: 'rgba(47,99,216,0.12)', color: 'var(--blanc-info)' }}>system</span>}
                                     </div>
-                                    <div className="mt-0.5 truncate text-[12.5px]" style={{ color: INK3 }}>{ruleSentence(r)}</div>
+                                    <div className="mt-0.5 truncate text-[13px]" style={{ color: INK3 }}>{ruleSentence(r)}</div>
                                 </div>
                                 <button onClick={() => showRuns(r)} aria-label="Run history" className="flex cursor-pointer" style={{ color: INK3 }}><History size={16} /></button>
                                 <button onClick={() => setEditing(r)} className="cursor-pointer text-[13px] font-semibold" style={{ color: 'var(--blanc-job)' }}>Edit</button>

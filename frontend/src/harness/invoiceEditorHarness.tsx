@@ -32,7 +32,7 @@ function Harness() {
             <h1 className="text-lg font-semibold mb-2" style={{ color: 'var(--blanc-ink-1)' }}>
                 Invoice editor — mobile surface
             </h1>
-            <p className="text-[12.5px] mb-4" style={{ color: 'var(--blanc-ink-3)' }}>
+            <p className="text-[13px] mb-4" style={{ color: 'var(--blanc-ink-3)' }}>
                 Resize to 375px. The editor must fill the screen, not rise as a sheet.
             </p>
             <button

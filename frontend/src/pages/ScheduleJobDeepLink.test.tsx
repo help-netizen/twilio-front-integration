@@ -78,13 +78,16 @@ vi.mock('../hooks/useScheduleData', () => ({
 }));
 
 vi.mock('../hooks/useJobDetail', () => ({
-    useJobDetail: ({ jobId, onNotFound }: {
-        jobId: number | null;
-        onNotFound?: (jobId: number) => void;
+    useJobDetail: ({ jobId = null, jobSeq = null, onNotFound }: {
+        jobId?: number | null;
+        jobSeq?: number | null;
+        onNotFound?: (ref: number) => void;
     }) => {
-        routingState.requestedJobId = jobId;
+        // Schedule deep-links now resolve by per-company job_seq (identity sweep 69a952b8).
+        const ref = jobSeq ?? jobId;
+        routingState.requestedJobId = ref;
         routingState.onNotFound = onNotFound;
-        const job = jobId == null ? null : routingState.detailJobs.get(jobId) || null;
+        const job = ref == null ? null : routingState.detailJobs.get(ref) || null;
         return {
             job,
             detailLoading: false,
@@ -158,6 +161,7 @@ function scheduleItem(entityType: ScheduleItem['entity_type'], entityId: number)
     return {
         entity_type: entityType,
         entity_id: entityId,
+        job_seq: entityType === 'job' ? entityId : null,
         title: `${entityType} ${entityId}`,
         subtitle: '',
         status: 'scheduled',

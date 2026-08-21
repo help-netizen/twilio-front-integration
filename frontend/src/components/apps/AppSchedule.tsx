@@ -54,7 +54,7 @@ function Forecast({ forecast }: { forecast: CostForecast }) {
                     [compact(forecast.maximum_data_reads_per_month), 'data reads per month'],
                     [minutes(forecast.maximum_compute_ms_per_day), 'of compute per day'],
                 ].map(([value, label]) => (
-                    <div key={label} className="text-[12.5px]" style={{ color: 'var(--blanc-ink-2)' }}>
+                    <div key={label} className="text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
                         <b
                             className="block text-[17px] tabular-nums tracking-tight"
                             style={{ color: 'var(--blanc-ink-1)' }}

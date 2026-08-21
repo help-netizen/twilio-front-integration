@@ -202,7 +202,7 @@ export default function NotificationsSection() {
                                 />
                             </div>
                         ))}
-                        <p className="mt-3 flex items-center gap-1.5 text-[11.5px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                        <p className="mt-3 flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--blanc-ink-3)' }}>
                             <Lock className="size-3" /> Delivered only where your notifications are turned on and to records you can access.
                         </p>
                     </div>

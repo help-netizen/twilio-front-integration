@@ -25,7 +25,8 @@ describe('Schedule header composition contract', () => {
     });
 
     it('keeps mobile search in View options and removes the AI placeholder everywhere', () => {
-        expect(mobileScheduleBarSource).toContain('title="View options"');
+        expect(mobileScheduleBarSource).toContain('aria-label="View options"');
+        expect(mobileScheduleBarSource).toContain('title="Filters"');
         expect(mobileScheduleBarSource).toContain('placeholder="Search..."');
 
         const scheduleSources = [

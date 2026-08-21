@@ -119,7 +119,7 @@ export function NumberSearch({ onPurchased, onViewPlans }: NumberSearchProps) {
         <div className="space-y-6">
             {limitUpsell && (
                 <div className="rounded-2xl border border-[var(--blanc-warning)] bg-[var(--blanc-surface-muted)] px-4 py-3.5">
-                    <div className="text-[13.5px] text-[var(--blanc-ink-1)]">{limitUpsell}</div>
+                    <div className="text-[14px] text-[var(--blanc-ink-1)]">{limitUpsell}</div>
                     <div className="mt-1 text-[13px] text-[var(--blanc-ink-2)]">
                         Need more numbers? Switch to a package plan.
                     </div>
@@ -146,7 +146,7 @@ export function NumberSearch({ onPurchased, onViewPlans }: NumberSearchProps) {
                     />
                 </div>
                 <div className="flex flex-wrap items-center gap-4">
-                    <label className="flex cursor-pointer items-center gap-2 text-[13.5px] text-[var(--blanc-ink-1)]">
+                    <label className="flex cursor-pointer items-center gap-2 text-[14px] text-[var(--blanc-ink-1)]">
                         <Checkbox checked={tollFree} onCheckedChange={checked => setTollFree(checked === true)} />
                         Toll-free
                     </label>
@@ -160,7 +160,7 @@ export function NumberSearch({ onPurchased, onViewPlans }: NumberSearchProps) {
             </div>
 
             {searched && !searching && results.length === 0 && (
-                <p className="mx-0.5 text-[13.5px] text-[var(--blanc-ink-3)]">
+                <p className="mx-0.5 text-[14px] text-[var(--blanc-ink-3)]">
                     No numbers found — try another area code or city.
                 </p>
             )}

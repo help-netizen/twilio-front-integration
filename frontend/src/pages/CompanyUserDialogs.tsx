@@ -82,14 +82,14 @@ function RoleCards({ role, onRole, isProvider, onIsProvider, fieldContent }: {
                         {sel && (
                             <div className="space-y-4 px-4 pb-4 pt-3.5" style={{ background: 'var(--blanc-surface-muted)' }}>
                                 {r.key === 'provider' ? (
-                                    <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                         What providers can see and do is defined by the role — manage it in Settings → Roles &amp; permissions.
                                     </p>
                                 ) : (
                                     <label className="flex cursor-pointer items-center justify-between gap-3">
                                         <span>
                                             <span className="block text-[14px] font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Also works in the field</span>
-                                            <span className="block text-[12.5px]" style={{ color: 'var(--blanc-ink-3)' }}>Can be assigned to jobs like a provider</span>
+                                            <span className="block text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>Can be assigned to jobs like a provider</span>
                                         </span>
                                         <Switch checked={isProvider} onCheckedChange={onIsProvider} />
                                     </label>
@@ -180,7 +180,7 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
                         {areas ? (
                             <TechnicianServiceAreasEditor technicianId={technicianId} value={areas} onSaved={setAreas} />
                         ) : (
-                            <p className="text-[12.5px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                            <p className="text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
                                 {areasError
                                     ? 'Couldn’t load territories — manage them in Settings → Scheduling & service areas.'
                                     : 'Loading territories…'}
@@ -196,7 +196,7 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
                             onPick={({ address, fields }) => { setBaseInput(address); setBasePlace(fields); }}
                         />
                         <div className="flex items-center justify-between gap-3">
-                            <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                            <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                 Address or just a ZIP — drive time and slot suggestions count from here.
                             </p>
                             {baseInput.trim() !== '' && baseInput.trim() !== baseSaved.trim() && (
@@ -208,7 +208,7 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
                     </div>
                 </>
             ) : (
-                <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                     Save the user first — territories and the start location become editable here once they’re a field technician.
                 </p>
             )}
@@ -265,7 +265,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                         <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
                                         <FloatingField id="user-phone" label="Mobile phone" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
                                     </div>
-                                    <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                         The phone gets SMS about new jobs — and masked calls are recognized by it.
                                     </p>
                                 </div>
@@ -277,7 +277,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                         isProvider={createForm.is_provider}
                                         onIsProvider={v => setCreateForm(f => ({ ...f, is_provider: v }))}
                                         fieldContent={(
-                                            <p className="text-[12.5px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                            <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                                 Territories and the start location are set in the user's profile right after creating.
                                             </p>
                                         )}

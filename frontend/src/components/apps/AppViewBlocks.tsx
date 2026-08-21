@@ -116,7 +116,7 @@ function StatRow({ block }: { block: Extract<ViewBlock, { type: 'stat_row' }> })
                     </div>
                     <div className="mt-0.5 text-xs" style={{ color: 'var(--blanc-ink-2)' }}>{item.label}</div>
                     {item.trend && (
-                        <div className="mt-1.5 text-[11.5px]" style={{ color: 'var(--blanc-ink-3)' }}>{item.trend}</div>
+                        <div className="mt-1.5 text-[12px]" style={{ color: 'var(--blanc-ink-3)' }}>{item.trend}</div>
                     )}
                 </div>
             ))}
@@ -142,7 +142,7 @@ function Chart({ block }: { block: Extract<ViewBlock, { type: 'chart' }> }) {
                     className="flex h-full flex-1 flex-col items-center justify-end gap-1.5"
                     style={{ maxWidth: 96 }}
                 >
-                    <span className="text-[11.5px] tabular-nums" style={{ color: 'var(--blanc-ink-2)' }}>
+                    <span className="text-[12px] tabular-nums" style={{ color: 'var(--blanc-ink-2)' }}>
                         {format(point.value)}
                     </span>
                     <div
@@ -152,7 +152,7 @@ function Chart({ block }: { block: Extract<ViewBlock, { type: 'chart' }> }) {
                             background: index < 2 ? 'var(--blanc-accent)' : 'var(--blanc-accent-soft)',
                         }}
                     />
-                    <span className="max-w-full truncate text-[11.5px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                    <span className="max-w-full truncate text-[12px]" style={{ color: 'var(--blanc-ink-3)' }}>
                         {point.label}
                     </span>
                 </div>
@@ -170,7 +170,7 @@ function Table({ block, onAction, actionBusy }: {
     const rowActions = (onAction && block.key && block.row_actions?.length) ? block.row_actions : null;
     return (
         <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[13.5px]">
+            <table className="w-full border-collapse text-[14px]">
                 <thead>
                     <tr>
                         {columns.map(column => (
@@ -244,7 +244,7 @@ function List({ block }: { block: Extract<ViewBlock, { type: 'list' }> }) {
                             {item.ref && item.title ? <span className="ml-1.5">{item.title}</span> : null}
                         </div>
                         {item.subtitle && (
-                            <div className="mt-0.5 truncate text-[12.5px]" style={{ color: 'var(--blanc-ink-2)' }}>
+                            <div className="mt-0.5 truncate text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
                                 {item.subtitle}
                             </div>
                         )}

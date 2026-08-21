@@ -286,7 +286,7 @@ export default function PhoneNumbersPage() {
                     <h3 className="text-[15px] font-semibold text-[var(--blanc-ink-1)]">
                         Finish transferring your number
                     </h3>
-                    <p className="mt-1 text-[13.5px] text-[var(--blanc-ink-2)]">
+                    <p className="mt-1 text-[14px] text-[var(--blanc-ink-2)]">
                         Your new number is live. When you're ready, bring your existing number over — customers
                         keep reaching you at the number they already know.
                     </p>

@@ -28,6 +28,7 @@ describe('SETTINGS-IA-001 navigation model', () => {
             'Business',
             'Scheduling & service areas',
             'Jobs and Leads',
+            'Analytics',
             'Communication and AI',
             'Payments',
             'Apps & integrations',

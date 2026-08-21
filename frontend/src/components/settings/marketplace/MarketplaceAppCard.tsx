@@ -33,8 +33,8 @@ export function MarketplaceAppCard({ app, onOpen }: { app: MarketplaceApp; onOpe
                         : appMonogram(app.name)}
                 </div>
                 <div className="min-w-0 flex-1">
-                    <h4 className="truncate text-[15.5px] font-bold tracking-[-.01em] text-[var(--blanc-ink-1)]">{app.name}</h4>
-                    <div className="mt-0.5 truncate text-[12.5px] text-[var(--blanc-ink-3)]">
+                    <h4 className="truncate text-[16px] font-bold tracking-[-.01em] text-[var(--blanc-ink-1)]">{app.name}</h4>
+                    <div className="mt-0.5 truncate text-[13px] text-[var(--blanc-ink-3)]">
                         {app.provider_name} · {categoryLabel(app.category)}
                     </div>
                 </div>
@@ -58,14 +58,14 @@ export function MarketplaceAppCard({ app, onOpen }: { app: MarketplaceApp; onOpe
                             : <span className="text-[var(--blanc-ink-3)]">· {app.rating_count}</span>}
                     </>
                 ) : (
-                    <span className="text-[12.5px] text-[var(--blanc-ink-3)]">No ratings yet</span>
+                    <span className="text-[13px] text-[var(--blanc-ink-3)]">No ratings yet</span>
                 )}
             </div>
 
-            <p className="mt-2 line-clamp-2 min-h-[38px] text-[13.5px] text-[var(--blanc-ink-2)]">{app.short_description}</p>
+            <p className="mt-2 line-clamp-2 min-h-[38px] text-[14px] text-[var(--blanc-ink-2)]">{app.short_description}</p>
 
             <div className="mt-auto flex items-center justify-between gap-3 border-t border-[var(--blanc-line)] pt-3.5">
-                <span className={`text-[12.5px] font-semibold ${connected ? 'text-[var(--blanc-task,#1b8b63)]' : 'text-[var(--blanc-ink-3)]'}`}>
+                <span className={`text-[13px] font-semibold ${connected ? 'text-[var(--blanc-task,#1b8b63)]' : 'text-[var(--blanc-ink-3)]'}`}>
                     {connected ? '● Enabled' : app.installation?.status === 'provisioning_failed' ? 'Needs attention' : 'Not installed'}
                 </span>
                 <span className="text-[13px] font-semibold text-[var(--blanc-accent)] group-hover:underline">

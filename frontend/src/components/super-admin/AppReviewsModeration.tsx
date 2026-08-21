@@ -36,7 +36,7 @@ function ReviewTile({ r, onModerate, busy }: {
                         <span className="text-[15px] font-bold text-[var(--blanc-ink-1)]">{r.app_name}</span>
                         <Stars value={r.stars} size={13} />
                     </div>
-                    <div className="mt-0.5 text-[12.5px] text-[var(--blanc-ink-3)]">
+                    <div className="mt-0.5 text-[13px] text-[var(--blanc-ink-3)]">
                         {r.reviewer_first_name || 'Someone'} · {r.company_name} · {formatCompanyTime(r.created_at, { year: 'numeric', month: 'numeric', day: 'numeric' }, r.company_timezone)}
                     </div>
                 </div>
@@ -51,7 +51,7 @@ function ReviewTile({ r, onModerate, busy }: {
                     )}
                 </div>
             </div>
-            {r.comment && <p className="mt-2.5 whitespace-pre-wrap text-[13.5px] text-[var(--blanc-ink-2)]">{r.comment}</p>}
+            {r.comment && <p className="mt-2.5 whitespace-pre-wrap text-[14px] text-[var(--blanc-ink-2)]">{r.comment}</p>}
             {r.moderation_reason && (
                 <p className="mt-2 text-[12px] text-[var(--blanc-ink-3)]">
                     {r.moderation_source ? `${SOURCE_LABEL[r.moderation_source] ?? r.moderation_source}: ` : ''}{r.moderation_reason}

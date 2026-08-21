@@ -48,7 +48,7 @@ function ReviewRow({ app, r }: { app: MarketplaceApp; r: AppReview }) {
                     )}
                 </div>
                 <div className="mt-0.5"><Stars value={r.stars} size={13} /></div>
-                {r.comment && <p className="mt-1.5 text-[13.5px] text-[var(--blanc-ink-2)]">{r.comment}</p>}
+                {r.comment && <p className="mt-1.5 text-[14px] text-[var(--blanc-ink-2)]">{r.comment}</p>}
             </div>
         </div>
     );
@@ -139,7 +139,7 @@ export function MarketplaceAppDetail({ app, open, onClose, actions }: Props) {
                         </div>
                         <div className="min-w-0 flex-1 pr-8">
                             <h2 className="text-[23px] font-bold leading-tight tracking-[-.01em] text-[var(--blanc-ink-1)]" style={{ fontFamily: 'var(--blanc-font-heading)' }}>{app.name}</h2>
-                            <div className="mt-1 text-[13.5px] text-[var(--blanc-ink-3)]">by {app.provider_name}</div>
+                            <div className="mt-1 text-[14px] text-[var(--blanc-ink-3)]">by {app.provider_name}</div>
                             <div className="mt-2.5 flex flex-wrap gap-1.5">{badges}</div>
                         </div>
                     </div>
@@ -151,10 +151,10 @@ export function MarketplaceAppDetail({ app, open, onClose, actions }: Props) {
                                 <span className="text-[30px] font-bold leading-none text-[var(--blanc-ink-1)]" style={{ fontFamily: 'var(--blanc-font-heading)' }}>{(app.avg_rating ?? 0).toFixed(1)}</span>
                                 <div>
                                     <Stars value={app.avg_rating ?? 0} size={16} />
-                                    <div className="text-[12.5px] text-[var(--blanc-ink-3)]">{app.rating_count} rating{app.rating_count > 1 ? 's' : ''}</div>
+                                    <div className="text-[13px] text-[var(--blanc-ink-3)]">{app.rating_count} rating{app.rating_count > 1 ? 's' : ''}</div>
                                 </div>
                             </>
-                        ) : <span className="text-[13.5px] text-[var(--blanc-ink-3)]">No ratings yet — be the first.</span>}
+                        ) : <span className="text-[14px] text-[var(--blanc-ink-3)]">No ratings yet — be the first.</span>}
                     </div>
 
                     {/* primary action(s) */}
@@ -162,7 +162,7 @@ export function MarketplaceAppDetail({ app, open, onClose, actions }: Props) {
 
                     {/* what it does */}
                     <div className="blanc-eyebrow mt-7">What it does</div>
-                    <p className="mt-2.5 text-[14.5px] text-[var(--blanc-ink-2)]">{app.long_description || app.short_description}</p>
+                    <p className="mt-2.5 text-[15px] text-[var(--blanc-ink-2)]">{app.long_description || app.short_description}</p>
                     {access?.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1.5">
                             {access.map(a => <span key={a} className="rounded-full bg-[var(--blanc-field)] px-[11px] py-[5px] text-[12px] text-[var(--blanc-ink-2)]">{a}</span>)}
@@ -174,7 +174,7 @@ export function MarketplaceAppDetail({ app, open, onClose, actions }: Props) {
                     <div className="mt-2.5 flex items-start gap-3">
                         <span className={`shrink-0 rounded-full px-[9px] py-1 text-[11px] font-bold ${pricing.paid ? 'text-[var(--blanc-accent-ink,#5b2bb0)]' : 'text-[#1b6b4d]'}`}
                             style={{ background: pricing.paid ? '#efe6ff' : '#e2f2ea' }}>{pricing.paid ? 'Paid' : 'Free'}</span>
-                        <p className="text-[14.5px] text-[var(--blanc-ink-2)]">{pricing.text}</p>
+                        <p className="text-[15px] text-[var(--blanc-ink-2)]">{pricing.text}</p>
                     </div>
 
                     {/* ratings & reviews */}
@@ -196,7 +196,7 @@ export function MarketplaceAppDetail({ app, open, onClose, actions }: Props) {
                         </div>
                     </div>
 
-                    {posted.length === 0 && !mine && <p className="mt-4 text-[13.5px] text-[var(--blanc-ink-3)]">No written reviews yet.</p>}
+                    {posted.length === 0 && !mine && <p className="mt-4 text-[14px] text-[var(--blanc-ink-3)]">No written reviews yet.</p>}
                     <div className="mt-2">
                         {reviews.slice().sort((a, b) => (a.is_mine === b.is_mine ? 0 : a.is_mine ? -1 : 1)).map(r => <ReviewRow key={r.id} app={app} r={r} />)}
                     </div>
@@ -213,7 +213,7 @@ export function MarketplaceAppDetail({ app, open, onClose, actions }: Props) {
                             className="mt-3 min-h-[76px] w-full resize-y rounded-xl border bg-white px-3.5 py-3 text-[14px] text-[var(--blanc-ink-1)] outline-none focus:border-[var(--blanc-accent)]"
                             style={{ borderColor: linkError ? 'var(--blanc-danger,#F0503F)' : 'var(--blanc-line)' }}
                         />
-                        {linkError && <p className="mt-2 text-[12.5px] text-[var(--blanc-danger,#F0503F)]">Links and @handles aren’t allowed in reviews — please remove them.</p>}
+                        {linkError && <p className="mt-2 text-[13px] text-[var(--blanc-danger,#F0503F)]">Links and @handles aren’t allowed in reviews — please remove them.</p>}
                         <div className="mt-3 flex items-center gap-2.5">
                             <Button type="button" disabled={stars < 1 || submit.isPending} onClick={() => submit.mutate()}>
                                 {submit.isPending ? 'Sending…' : mine ? 'Update review' : 'Post review'}

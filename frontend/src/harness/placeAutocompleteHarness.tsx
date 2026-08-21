@@ -30,7 +30,7 @@ function Harness() {
                 <h1 className="text-xl font-semibold mb-1" style={{ color: 'var(--blanc-ink-1)' }}>
                     Start location — Places autocomplete
                 </h1>
-                <p className="text-[12.5px] mb-5" style={{ color: 'var(--blanc-ink-3)' }}>
+                <p className="text-[13px] mb-5" style={{ color: 'var(--blanc-ink-3)' }}>
                     Try “301 Common St, Brain”, then a bare ZIP “02184”.
                 </p>
 
@@ -41,7 +41,7 @@ function Harness() {
                     onChange={text => { setValue(text); setPicked(null); }}
                     onPick={({ address, fields }) => { setValue(address); setPicked(fields); }}
                 />
-                <p className="text-[12.5px] mt-1.5" style={{ color: 'var(--blanc-ink-3)' }}>
+                <p className="text-[13px] mt-1.5" style={{ color: 'var(--blanc-ink-3)' }}>
                     Address or just a ZIP — drive time and slot suggestions count from here.
                 </p>
 

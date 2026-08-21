@@ -1,0 +1,17 @@
+#!/bin/sh
+# Auto-gate (OB-71): run the full frontend test suite before every push, so a new
+# hand-written text-[Npx] (TYPE-CANON ratchet), an unzoned toLocale*String
+# (EMAIL-OCCURRED-AT ratchet), or any contract regression is blocked before it
+# reaches a shared branch. There is NO other CI in this repo — this hook is it.
+# Skip in a genuine emergency with:  git push --no-verify
+root="$(git rev-parse --show-toplevel)" || exit 0
+cd "$root/frontend" 2>/dev/null || { echo "[pre-push] no frontend/ — skipping"; exit 0; }
+echo "[pre-push] frontend test suite (vitest run)…"
+npm test --silent
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo ""
+  echo "[pre-push] BLOCKED: frontend tests failed. Fix them, or (emergency only) git push --no-verify"
+  echo "           A new text-[Npx]? Use .blanc-l2 / LEVEL_TWO (TYPE-CANON, OB-71)."
+fi
+exit $status

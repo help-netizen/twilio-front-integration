@@ -65,6 +65,7 @@ const intentionalUnlistedRoutes: Record<string, string> = {
     '/settings/alerts-notifications': 'Routing-only group landing that resolves to its first authorized subsection.',
     '/settings/billing-group': 'Routing-only group landing that resolves to its first authorized subsection.',
     '/settings/platform-administration': 'Routing-only group landing that resolves to its first authorized subsection.',
+    '/settings/marketing-analytics': 'Routing-only group landing that resolves to its first authorized subsection.',
     '/settings/providers': 'Backward-compatible alias; Providers was intentionally merged into Technicians.',
     '/settings/integrations/report-to-estimate': 'Reached from the Report → Estimate marketplace app card (its setup_path), not the Settings navigation.',
 };
