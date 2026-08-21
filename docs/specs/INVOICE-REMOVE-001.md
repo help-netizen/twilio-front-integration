@@ -91,8 +91,10 @@ of the bug this feature exists to end.
 ### The confirm
 One dialog, three bodies — always naming the figure, never "the payments":
 
-Every body ends with the same sentence about the record — "The invoice itself stays in the job's history,
-marked void." — because there is only one outcome to state.
+The confirm asks and states the money. It says nothing about what the record becomes: that sentence
+existed, and the owner cut it (21.08) — "extra, unnecessary information; you get a confirmation asking
+'really remove?', and that's it". Where the invoice ends up is our bookkeeping, not the decision in front
+of the dispatcher.
 
 - nothing paid → "Nothing has been paid on it."
 - paid, no candidate → "The **$462.00** already paid stays on the job as credit — you can put it on the next invoice."

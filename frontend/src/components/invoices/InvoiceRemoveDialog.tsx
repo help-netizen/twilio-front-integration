@@ -73,13 +73,6 @@ export function InvoiceRemoveDialog({
     // to a card reading "Paid · 100%" is the kind of sentence this feature exists to end.
     const displayedOnly = preview ? Math.max(Number(invoice.amount_paid || 0) - paid, 0) : 0;
 
-    /**
-     * What happens to the RECORD, which the money sentence never says — and it is now ONE
-     * outcome (owner, 21.08). Removing always voids: nothing is ever deleted for good.
-     * The two-path version had survived under the hood after the UI merged the actions,
-     * and it promptly surfaced again here as two different promises.
-     */
-    const fate = 'The invoice itself stays in the job’s history, marked void.';
 
     const confirm = async () => {
         if (!preview || busy) return;
@@ -118,11 +111,11 @@ export function InvoiceRemoveDialog({
                             // With the choice sitting right below, promising the money
                             // "stays on the job" would contradict the box the user is
                             // about to tick.
-                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid does not go anywhere — it stays with the job unless you move it below. {fate}</>
-                            : <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid stays on the job as credit — you can put it on the next invoice. {fate}</>
+                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid does not go anywhere — it stays with the job unless you move it below.</>
+                            : <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(preview.payments_total)}</span> already paid stays on the job as credit — you can put it on the next invoice.</>
                         : displayedOnly > 0
-                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(displayedOnly)}</span> shown here is credit on the job, not a payment of this invoice. It stays on the job. {fate}</>
-                            : <>Nothing has been paid on it. {fate}</>}
+                            ? <>The <span className="font-semibold text-[var(--blanc-ink-1)]">{money(displayedOnly)}</span> shown here is credit on the job, not a payment of this invoice. It stays on the job.</>
+                            : <>Nothing has been paid on it.</>}
             cancelLabel="Keep"
             confirmLabel="Remove invoice"
             confirmTestId="invoice-remove-confirm"

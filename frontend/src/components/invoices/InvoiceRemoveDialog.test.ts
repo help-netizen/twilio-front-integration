@@ -104,15 +104,19 @@ describe('the card explains money it is not showing', () => {
     });
 });
 
-describe('one action, one outcome (owner, 21.08)', () => {
-    it('never offers two fates for the record', () => {
-        // The UI merged "Delete draft" and "Void invoice" into one action; the split
-        // survived underneath and surfaced again as two different promises in this
-        // confirm. Removing always voids — the invoice stays readable in the job.
-        // The sentence is a constant, not a branch — the comment above it may still
-        // explain what the old two-path version said.
-        expect(dialogRaw).toMatch(/const fate = 'The invoice itself stays in the job’s history, marked void\.'/);
+describe('the confirm asks, it does not brief (owner, 21.08)', () => {
+    it('says nothing about what the record becomes', () => {
+        // First the two outcomes were merged into one (delete/void), then the surviving
+        // sentence about it — "stays in the job's history, marked void" — went too: it
+        // describes our bookkeeping, not the decision in front of the user. What is left
+        // is the question and the money.
+        expect(dialogRaw).not.toContain('marked void');
+        expect(dialogRaw).not.toMatch(/const fate/);
         expect(dialogRaw).not.toMatch(/disposition === 'deleted'/);
-        expect(dialogRaw).not.toMatch(/const fate = preview\?/);
+    });
+
+    it('keeps the two things the decision needs', () => {
+        expect(dialogRaw).toContain('title={`Remove invoice ${shortDocNumber(invoice.invoice_number)}?`}');
+        expect(dialogRaw).toContain('{money(preview.payments_total)}');
     });
 });
