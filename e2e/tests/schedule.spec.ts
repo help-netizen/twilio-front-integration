@@ -168,8 +168,10 @@ test.describe('@suite:schedule', () => {
             );
 
             await new JobsPage(page).openJob(job.id, job.marker);
-            await new JobPanel(page).replaceTechnicians([techA.name], techB.name);
+            const panel = new JobPanel(page);
+            await panel.replaceTechnicians([techA.name], techB.name);
             await expect.poll(async () => assignedIds(await api.getJob(job.id))).toEqual([techB.id]);
+            await panel.expectHistory(`Reassigned from ${techA.name} to ${techB.name}`);
 
             const updated = await api.getJob(job.id);
             const schedule = new SchedulePage(page);

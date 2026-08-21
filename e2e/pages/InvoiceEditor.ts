@@ -21,6 +21,11 @@ export class InvoiceEditor {
     get itemSearch(): Locator { return this.itemSheet.getByLabel('Search Price Book'); }
     get detailPanel(): Locator { return this.page.getByTestId('invoice-detail'); }
     get discardConfirm(): Locator { return this.page.getByTestId('invoice-discard-confirm'); }
+    get discountToggle(): Locator { return this.root.getByTestId('discount-type-toggle').filter({ visible: true }); }
+    get discountValue(): Locator { return this.root.getByTestId('discount-value').filter({ visible: true }); }
+    get addDiscount(): Locator {
+        return this.root.getByRole('button', { name: '+ Add discount', exact: true });
+    }
 
     heading(name: string): Locator {
         return this.root.getByRole('heading', { name, exact: true });
@@ -82,6 +87,29 @@ export class InvoiceEditor {
         // The redesign moved the grand total into the editor header (top-right),
         // not a "Totals" section — assert it shows anywhere in the editor.
         await expect(this.root.getByText(amount, { exact: true }).first()).toBeVisible();
+    }
+
+    async setPercentageDiscount(value: string): Promise<void> {
+        if (!(await this.discountToggle.isVisible())) {
+            await expect(this.addDiscount).toBeVisible();
+            await this.addDiscount.click();
+            await expect(this.discountToggle).toBeVisible();
+        }
+        await this.discountToggle.getByRole('button', {
+            name: 'Discount as a percentage',
+            exact: true,
+        }).click();
+        await this.discountValue.fill(value);
+        await this.expectPercentageDiscount(value);
+    }
+
+    async expectPercentageDiscount(value: string): Promise<void> {
+        await expect(this.discountToggle.getByRole('button', {
+            name: 'Discount as a percentage',
+            exact: true,
+        })).toHaveAttribute('aria-pressed', 'true');
+        const escaped = String(Number(value)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        await expect(this.discountValue).toHaveValue(new RegExp(`^${escaped}(?:\\.0+)?$`));
     }
 
     async createInvoice(): Promise<void> {

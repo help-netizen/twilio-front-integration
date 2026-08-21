@@ -47,6 +47,12 @@ export interface JobRecord extends JsonObject {
     assigned_techs?: Array<{ id?: string; name?: string }>;
 }
 
+export interface JobFinance extends JsonObject {
+    invoiced: string | number;
+    paid: string | number;
+    due: string | number;
+}
+
 export interface CreatedJob {
     id: number;
     marker: string;
@@ -393,6 +399,10 @@ export class ApiClient {
     async getJobBySeq(seq: number): Promise<JobRecord> {
         const data = await this.get<JsonObject>(`/api/jobs/by-seq/${seq}`);
         return { ...data, id: asNumber(data.id, 'job.id') };
+    }
+
+    async getJobFinance(id: number): Promise<JobFinance> {
+        return this.get<JobFinance>(`/api/jobs/${id}/finance`);
     }
 
     /**

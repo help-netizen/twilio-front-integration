@@ -8,6 +8,10 @@ Format: `L-NNN (YYYY-MM-DD) — <lesson>`
 
 ---
 
+- **L-029 (2026-08-21)** — `codex exec resume`: the `-s/--sandbox` and `-C/--cd` flags belong to the
+  parent `exec` and must precede the `resume` subcommand (`codex exec -s workspace-write -C <wt> resume
+  <SID> "<prompt>"`); after `resume` they error `unexpected argument` and the run applies nothing while a
+  trailing echo masks exit 0. Confirm a resume actually attached (`git diff --stat` changed) before trusting it.
 - **L-028 (2026-08-17)** — Structural migrations must never require environment variables,
   provider readback, credentials, or tenant resource rows; keep operational discovery, validation,
   and data backfill in an explicit company-scoped dry-run-by-default CLI.

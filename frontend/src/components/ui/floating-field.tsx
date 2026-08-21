@@ -24,6 +24,7 @@ interface FloatingFieldProps {
     onClick?: React.MouseEventHandler<HTMLInputElement | HTMLTextAreaElement>
     /** Defaults to "off" — pass a token only where browser autofill genuinely helps. */
     autoComplete?: string
+    'data-testid'?: string
 }
 
 /**

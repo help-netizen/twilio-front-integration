@@ -36,7 +36,28 @@ export class LeadsPage {
     async open(marker: string): Promise<void> {
         await (await this.searchFor(marker)).click();
         await expect(this.page).toHaveURL(/\/leads\/\d+$/);
-        await expect(this.page.getByRole('heading', { name: marker, exact: true })).toBeVisible();
+        // The detail title is assembled from FirstName/LastName; the list search
+        // marker is not a stable title contract. The status control is the stable
+        // signal that the selected lead detail has finished rendering.
+        await expect(this.page.getByRole('button', { name: /^Lead status: .+$/ })
+            .filter({ visible: true })).toBeVisible();
+    }
+
+    async changeStatus(from: string, to: string): Promise<void> {
+        await this.page.getByRole('button', { name: `Lead status: ${from}`, exact: true }).click();
+        await this.page.getByRole('menuitem', { name: to, exact: true }).click();
+        await expect(this.page.getByText('Status updated', { exact: true })).toBeVisible();
+        await expect(this.page.getByRole('button', {
+            name: `Lead status: ${to}`,
+            exact: true,
+        })).toBeVisible();
+    }
+
+    async expectHistory(description: string): Promise<void> {
+        await this.page.getByRole('button', { name: 'History', exact: true })
+            .filter({ visible: true }).click();
+        await expect(this.page.getByText(description, { exact: true })
+            .filter({ visible: true })).toBeVisible({ timeout: 15_000 });
     }
 
     linkedContact(marker: string): Locator {

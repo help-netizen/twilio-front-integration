@@ -18,7 +18,7 @@ test.describe('@suite:invoice-redesign detail', () => {
     // Both cases need an ISSUED invoice, and only a real send issues one.
     test.skip(!CAN_DISPATCH_DOCUMENTS, DISPATCH_BLOCKED_REASON);
 
-    test('@p0 detail-actions exposes issued actions and status-safe destruction', async ({ page }) => {
+    test('@p0 detail-actions exposes issued actions and one status-safe removal', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];
 
@@ -41,30 +41,22 @@ test.describe('@suite:invoice-redesign detail', () => {
             const detail = await invoices.openInvoice(issued.id, issued.invoiceNumber);
             await expect(detail.root.getByText('partial', { exact: true })).toBeVisible();
             await detail.expectIssuedActions();
-            // Voiding is last in the menu and set apart from the ways to move the
-            // invoice forward — it is how you lose one.
+            // OB-70: every live status ends in the same separated danger action.
             await detail.openMore();
-            await expect(detail.voidInvoice).toHaveAttribute('style', /--blanc-danger/);
-            await expect(page.getByRole('menuitem').last()).toHaveText(/Void invoice/);
+            await expect(detail.removeInvoice).toHaveAttribute('style', /--blanc-danger/);
+            await expect(page.getByRole('menuitem').last()).toHaveText(/Remove invoice/);
             await page.keyboard.press('Escape');
 
-            await detail.openVoidConfirm(issued.invoiceNumber, '$150.00');
-            const voidDialog = page.getByRole('dialog').filter({
-                has: page.getByRole('heading', { name: `Void ${issued.invoiceNumber}?`, exact: true }),
-            });
-            await voidDialog.getByRole('button', { name: 'Keep', exact: true }).click();
-            await expect(detail.voidConfirm).toBeHidden();
+            const issuedRemoval = await detail.openRemoveConfirm(issued.invoiceNumber);
+            await issuedRemoval.expectPaidCreditCopy('$50.00');
+            await issuedRemoval.keep();
 
             await invoices.openInvoice(draft.id, draft.invoiceNumber);
             await expect(detail.root.getByText('draft', { exact: true })).toBeVisible();
             await detail.expectDraftActions();
-            await detail.openMore();
-            await detail.deleteDraft.click();
-            await expect(detail.deleteConfirm).toBeVisible();
-            await expect(page.getByRole('heading', {
-                name: `Delete draft ${draft.invoiceNumber}?`,
-                exact: true,
-            })).toBeVisible();
+            const draftRemoval = await detail.openRemoveConfirm(draft.invoiceNumber);
+            await expect(draftRemoval.reapply).toHaveCount(0);
+            await draftRemoval.keep();
         } finally {
             await api.cleanup(cleanup);
             await api.dispose();

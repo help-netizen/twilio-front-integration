@@ -25,6 +25,14 @@ export class EstimateEditor {
     get subtotal(): Locator { return this.page.getByText('Subtotal', { exact: true }); }
     get total(): Locator { return this.page.getByText('Total', { exact: true }); }
     get save(): Locator { return this.page.getByRole('button', { name: 'Save estimate', exact: true }); }
+    get discountToggle(): Locator { return this.page.getByTestId('discount-type-toggle').filter({ visible: true }); }
+    get discountValue(): Locator { return this.page.getByTestId('discount-value').filter({ visible: true }); }
+    get addDiscount(): Locator {
+        // Estimate create/detail use the same reveal, but its shipped label is
+        // "Add Discount" (without the invoice surface's leading plus).
+        return this.page.getByRole('button', { name: 'Add Discount', exact: true })
+            .filter({ visible: true });
+    }
     /**
      * Anchored on the amount, which is the one thing an estimate card always
      * has. It used to be anchored on the "More actions" kebab — so when
@@ -85,6 +93,54 @@ export class EstimateEditor {
             await this.save.dispatchEvent('click');
             await expect(this.title).toBeHidden({ timeout: 5000 });
         }).toPass({ timeout: 30_000 });
+    }
+
+    async setPercentageDiscount(value: string): Promise<void> {
+        if (!(await this.discountToggle.isVisible())) {
+            await expect(this.addDiscount).toBeVisible();
+            await this.addDiscount.click();
+            await expect(this.discountToggle).toBeVisible();
+        }
+        await this.discountToggle.getByRole('button', {
+            name: 'Discount as a percentage',
+            exact: true,
+        }).click();
+        await this.discountValue.fill(value);
+        await this.expectPercentageDiscount(value);
+    }
+
+    async expectPercentageDiscount(value: string): Promise<void> {
+        await expect(this.discountToggle.getByRole('button', {
+            name: 'Discount as a percentage',
+            exact: true,
+        })).toHaveAttribute('aria-pressed', 'true');
+        const escaped = String(Number(value)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        await expect(this.discountValue).toHaveValue(new RegExp(`^${escaped}(?:\\.0+)?$`));
+    }
+
+    async expectEditorTotal(amount: string): Promise<void> {
+        await expect(this.page.getByRole('dialog').filter({ has: this.save })
+            .getByText(amount, { exact: true }).first()).toBeVisible();
+    }
+
+    async editOpenEstimate(): Promise<void> {
+        const edit = this.page.getByTestId('estimate-edit');
+        if (!(await edit.isVisible().catch(() => false))) {
+            await this.detailPanel.getByTestId('estimate-more').click();
+            await expect(edit).toBeVisible();
+        }
+        await edit.click();
+        await expect(this.detailPanel.getByTestId('estimate-save')).toBeVisible();
+    }
+
+    async saveDetailChanges(): Promise<void> {
+        await this.detailPanel.getByTestId('estimate-save').click();
+        await expect(this.detailPanel.getByTestId('estimate-save')).toBeHidden({ timeout: 30_000 });
+    }
+
+    async expectDetailPercentageDiscount(rate: string, total: string): Promise<void> {
+        await expect(this.detailPanel.getByText(`Discount (${rate}%)`, { exact: true })).toBeVisible();
+        await expect(this.detailPanel.getByTestId('estimate-total')).toHaveText(total);
     }
 
     async addDetailCustomItem(marker: string, unitPrice: string): Promise<void> {

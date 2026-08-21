@@ -92,6 +92,20 @@ export class JobPanel {
         }).toPass({ timeout: 30_000 });
     }
 
+    async expectHistory(description: string): Promise<void> {
+        await this.page.getByRole('button', { name: 'History', exact: true })
+            .filter({ visible: true }).click();
+        await expect(this.page.getByText(description, { exact: true })
+            .filter({ visible: true })).toBeVisible({ timeout: 15_000 });
+    }
+
+    async expectJobCredit(amount: string): Promise<void> {
+        const due = this.page.locator('.blanc-money-cell').filter({
+            has: this.page.getByText('Due', { exact: true }),
+        }).filter({ visible: true });
+        await expect(due.getByText(`−${amount}`, { exact: true })).toBeVisible();
+    }
+
     /**
      * A header/ops button addressed by its visible label. The header status pill and
      * the prominent FSM action buttons are both `button[name]`, so the same label

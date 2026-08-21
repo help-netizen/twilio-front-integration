@@ -77,6 +77,55 @@ test.describe('@suite:estimates', () => {
         }
     });
 
+    test('@p0 EST-OB69-01 percentage discount survives estimate create, edit, and reload', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const job = await api.createJob({ label: 'EST-OB69-01 Job' });
+            cleanup.push(
+                { type: 'contact', id: job.contact.id },
+                { type: 'lead', id: job.contact.leadUuid },
+                { type: 'job', id: job.id },
+            );
+            const marker = ApiClient.runName('EST-OB69-01 Estimate');
+
+            await new JobsPage(page).openJob(job.id, job.marker);
+            const panel = new JobPanel(page);
+            const editor = await panel.createEstimate();
+            await editor.addSummary(marker);
+            await editor.addCustomItem(`${marker} item`, '200.00');
+            await editor.setPercentageDiscount('10');
+            await editor.expectEditorTotal('$180.00');
+            await editor.saveEstimate();
+
+            await expect.poll(async () => Number((await api.findEstimate(job.id, marker))?.id || 0))
+                .not.toBe(0);
+            const created = await api.findEstimate(job.id, marker);
+            const estimateId = Number(created?.id);
+            cleanup.push({ type: 'estimate', id: estimateId });
+
+            await panel.openEstimate(marker);
+            await editor.expectDetailPercentageDiscount('10', '$180.00');
+            await editor.editOpenEstimate();
+            await editor.expectPercentageDiscount('10');
+            await editor.setPercentageDiscount('25');
+            await editor.saveDetailChanges();
+
+            await page.reload();
+            await panel.expectLoaded(job.marker);
+            await panel.openEstimate(marker);
+            await editor.expectDetailPercentageDiscount('25', '$150.00');
+            const saved = await api.getEstimate(estimateId);
+            expect(saved.discount_type).toBe('percentage');
+            expect(Number(saved.discount_value)).toBe(25);
+            expect(Number(saved.total)).toBe(150);
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
+
     test('@p0 EST-P1-01 customer approves from the public estimate link', async ({ page }) => {
         const api = await ApiClient.forPage(page);
         const cleanup: CleanupEntity[] = [];

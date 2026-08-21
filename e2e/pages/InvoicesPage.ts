@@ -59,6 +59,19 @@ export class InvoicesPage {
         return this.editor;
     }
 
+    async openRemovalFromListRow(invoiceNumber: string) {
+        const row = await this.searchFor(invoiceNumber);
+        await row.getByTestId('invoice-row-actions').click();
+        await this.page.getByRole('menuitem', { name: 'Remove invoice', exact: true }).click();
+        await this.detail.removeDialog.expectOpen(invoiceNumber);
+        return this.detail.removeDialog;
+    }
+
+    async expectStatus(invoiceNumber: string, status: string): Promise<void> {
+        const row = await this.searchFor(invoiceNumber);
+        await expect(row.getByText(status, { exact: true })).toBeVisible();
+    }
+
     async openMobileRow(invoiceNumber: string): Promise<InvoiceDetail> {
         const row = this.row(invoiceNumber);
         await expect(row).toHaveAttribute('aria-label', `Open ${invoiceNumber}`);

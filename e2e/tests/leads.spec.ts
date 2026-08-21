@@ -78,4 +78,26 @@ test.describe('@suite:leads', () => {
             await api.dispose();
         }
     });
+
+    test('@p0 LEAD-OB72-01 status change records its from and to values in history', async ({ page }) => {
+        const api = await ApiClient.forPage(page);
+        const cleanup: CleanupEntity[] = [];
+
+        try {
+            const lead = await api.createLead('LEAD-OB72-01 Lead');
+            cleanup.push(
+                { type: 'contact', id: lead.contactId },
+                { type: 'lead', id: lead.uuid },
+            );
+
+            const leads = new LeadsPage(page);
+            await leads.goto();
+            await leads.open(lead.marker);
+            await leads.changeStatus('Submitted', 'Contacted');
+            await leads.expectHistory('Status: Submitted → Contacted');
+        } finally {
+            await api.cleanup(cleanup);
+            await api.dispose();
+        }
+    });
 });

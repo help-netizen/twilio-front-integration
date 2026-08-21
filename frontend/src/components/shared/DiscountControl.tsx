@@ -73,6 +73,7 @@ export function DiscountControl({
 
     const percentInput = size === 'field' ? (
         <FloatingField
+            data-testid="discount-value"
             label="Percent"
             value={value}
             inputMode="decimal"
@@ -85,6 +86,7 @@ export function DiscountControl({
         />
     ) : (
         <Input
+            data-testid="discount-value"
             type="text"
             inputMode="decimal"
             value={value}
@@ -100,6 +102,7 @@ export function DiscountControl({
     const amountInput = size === 'field' ? (
         <FloatingLabel label="Amount" filled className="w-28">
             <MoneyInput
+                data-testid="discount-value"
                 value={value}
                 disabled={disabled}
                 onValueChange={onValueChange}
@@ -111,6 +114,7 @@ export function DiscountControl({
         </FloatingLabel>
     ) : (
         <MoneyInput
+            data-testid="discount-value"
             value={value}
             disabled={disabled}
             onValueChange={onValueChange}
@@ -125,6 +129,7 @@ export function DiscountControl({
         <div className="flex flex-wrap items-center gap-2 blanc-l2">
             {showLabel && <span className="text-[var(--blanc-ink-2)]">Discount</span>}
             <div
+                data-testid="discount-type-toggle"
                 className="inline-flex shrink-0 rounded-[10px] border border-[var(--blanc-line)] p-0.5"
                 style={{ background: 'var(--blanc-panel-surface, #fffdf9)' }}
             >
