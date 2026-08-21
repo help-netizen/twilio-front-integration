@@ -359,6 +359,7 @@ async function reassignItem(
     // (assigned_provider_user_ids) is refreshed → an assigned provider sees the job
     // on their own schedule immediately.
     let oldProviderUserIds = [];
+    let oldAssignees = [];
     let providerUserIds = null;
     if (entityType === 'job') {
         try {
@@ -367,9 +368,11 @@ async function reassignItem(
             // MTECH-T2: internal assignee mirror (crm_users.id) BEFORE the write,
             // so assignment events target only providers newly added to the job.
             oldProviderUserIds = (job?.assigned_provider_user_ids || []).map(String).filter(Boolean);
+            oldAssignees = (job?.assigned_techs || []).map(t => t?.name).filter(Boolean);
             providerUserIds = await jobsService.resolveAssignedProviderUserIds(companyId, list);
         } catch { /* best-effort — mirror refresh skipped if we can't read it */ }
     }
+    const newAssignees = list.map(a => a.name).filter(Boolean);
 
     let updated;
     switch (entityType) {
@@ -395,7 +398,7 @@ async function reassignItem(
                         action: list.length > 0 ? 'job.assigned' : 'job.unassigned',
                         jobId: entityId,
                         actor: activityActor,
-                        summary: { count: list.length },
+                        summary: { count: list.length, from: oldAssignees, to: newAssignees },
                     }, { client });
                     return row;
                 });

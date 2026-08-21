@@ -140,6 +140,16 @@ const ACTIVITY_DESCRIPTIONS = Object.freeze({
 });
 
 function describeActivity(action, details = {}) {
+    if (action === 'job.assigned' || action === 'job.unassigned') {
+        const from = Array.isArray(details?.summary?.from) ? details.summary.from : [];
+        const to = Array.isArray(details?.summary?.to) ? details.summary.to : [];
+        if (from.length > 0 && to.length > 0) {
+            return `Reassigned from ${from.join(', ')} to ${to.join(', ')}`;
+        }
+        if (to.length > 0) return `Assigned to ${to.join(', ')}`;
+        if (from.length > 0) return `Unassigned ${from.join(', ')}`;
+    }
+
     let description = ACTIVITY_DESCRIPTIONS[action];
     if (!description) {
         const [entity, ...actionParts] = String(action).split('.');

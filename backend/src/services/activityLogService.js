@@ -44,6 +44,8 @@ function isAllowedKey(key) {
         || key === 'count'
         || key === 'counts'
         || key.endsWith('_count')
+        || key === 'from'
+        || key === 'to'
         || key === 'channel'
         || key === 'actor_type'
         || key === 'actor_label'
@@ -93,6 +95,15 @@ function sanitizeAllowedValue(key, value, { summary = false } = {}) {
             }
         }
         return Object.keys(counts).length > 0 ? counts : undefined;
+    }
+    if (Array.isArray(value) && summary) {
+        const values = value
+            .filter(item => typeof item === 'string')
+            .map(item => sanitizeScalar(key, item))
+            .filter(item => item !== undefined)
+            .map(item => item.slice(0, 80))
+            .slice(0, 12);
+        return values.length > 0 ? values : undefined;
     }
     if (Array.isArray(value) && !summary) {
         const values = value

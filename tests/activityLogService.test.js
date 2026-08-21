@@ -168,6 +168,31 @@ describe('activityLogService', () => {
         });
     });
 
+    test('sanitizeDetails bounds and scrubs summary string arrays', () => {
+        const longName = `Long ${'x'.repeat(100)}`;
+        const names = Array.from({ length: 13 }, (_, index) =>
+            index === 0 ? longName : `Technician ${index}`
+        );
+
+        const sanitized = sanitizeDetails({
+            summary: {
+                from: [
+                    ' Alice ',
+                    'tech@example.test',
+                    '+14155552671',
+                    'https://example.test/tech',
+                    '',
+                ],
+                to: names,
+            },
+        });
+
+        expect(sanitized.summary.from).toEqual(['Alice']);
+        expect(sanitized.summary.to).toHaveLength(12);
+        expect(sanitized.summary.to[0]).toHaveLength(80);
+        expect(sanitized.summary.to[0]).toBe(longName.slice(0, 80));
+    });
+
     test('transaction clients receive insert failures while standalone callers get a failure result', async () => {
         const failure = new Error('audit insert failed');
         const client = { query: jest.fn().mockRejectedValue(failure) };

@@ -25,6 +25,20 @@ describe('audit action descriptions', () => {
             },
         })).toBe('Estimate sent by EMAIL.');
     });
+
+    test.each([
+        [
+            'job.assigned',
+            { summary: { from: ['A'], to: ['B'] } },
+            'Reassigned from A to B',
+        ],
+        ['job.assigned', { summary: { to: ['B'] } }, 'Assigned to B'],
+        ['job.unassigned', { summary: { from: ['A'] } }, 'Unassigned A'],
+        ['job.assigned', { summary: { from: [], to: [] } }, 'Job assigned.'],
+        ['job.unassigned', { summary: {} }, 'Job unassigned.'],
+    ])('%s uses assignment names when present', (action, details, expected) => {
+        expect(eventService.describeActivity(action, details)).toBe(expected);
+    });
 });
 
 describe('audit History item shape', () => {

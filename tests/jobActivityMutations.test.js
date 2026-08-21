@@ -328,9 +328,32 @@ test('schedule-slot Job creation logs job.created with the supplied human actor'
 });
 
 test.each([
-    [[{ id: 'zb-tech-1', name: 'Sara' }], 'job.assigned', 1],
-    [[], 'job.unassigned', 0],
-])('schedule reassign emits %s providers as %s', async (assignees, action, count) => {
+    [
+        [{ id: 'old-tech', name: 'Mina' }],
+        [{ id: 'zb-tech-1', name: 'Sara' }],
+        'job.assigned',
+        1,
+        ['Mina'],
+        ['Sara'],
+    ],
+    [
+        [{ id: 'old-tech', name: 'Mina' }],
+        [],
+        'job.unassigned',
+        0,
+        ['Mina'],
+        [],
+    ],
+])('schedule reassign records old and new assignee names for %s', async (
+    oldAssignedTechs,
+    assignees,
+    action,
+    count,
+    from,
+    to
+) => {
+    job.assigned_techs = oldAssignedTechs;
+
     await scheduleService.reassignItem(
         COMPANY_A,
         'job',
@@ -344,6 +367,6 @@ test.each([
         action,
         jobId: 50,
         actor: ACTOR,
-        summary: { count },
+        summary: { count, from, to },
     }, expect.objectContaining({ client: expect.any(Object) }));
 });
