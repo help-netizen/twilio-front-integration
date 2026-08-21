@@ -110,6 +110,11 @@ test.describe('@suite:estimates', () => {
             await editor.editOpenEstimate();
             await editor.expectPercentageDiscount('10');
             await editor.setPercentageDiscount('25');
+            // Detail edits auto-save this field on blur. Prove that request has
+            // settled before Save exits edit mode or the page is reloaded.
+            await editor.expectDetailTotal('$150.00');
+            await expect.poll(async () => Number((await api.getEstimate(estimateId)).discount_value))
+                .toBe(25);
             await editor.saveDetailChanges();
 
             await page.reload();

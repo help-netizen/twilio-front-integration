@@ -107,6 +107,9 @@ export class EstimateEditor {
         }).click();
         await this.discountValue.fill(value);
         await this.expectPercentageDiscount(value);
+        // Estimate detail edits persist discount_value on blur. The create dialog
+        // has no onCommit handler, so the same blur is harmless on that surface.
+        await this.discountValue.blur();
     }
 
     async expectPercentageDiscount(value: string): Promise<void> {
@@ -136,6 +139,10 @@ export class EstimateEditor {
     async saveDetailChanges(): Promise<void> {
         await this.detailPanel.getByTestId('estimate-save').click();
         await expect(this.detailPanel.getByTestId('estimate-save')).toBeHidden({ timeout: 30_000 });
+    }
+
+    async expectDetailTotal(total: string): Promise<void> {
+        await expect(this.detailPanel.getByTestId('estimate-total')).toHaveText(total);
     }
 
     async expectDetailPercentageDiscount(rate: string, total: string): Promise<void> {

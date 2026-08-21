@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import {
     Ban,
     Check,
@@ -138,6 +138,7 @@ export function InvoiceDetailPanel({
     // edit surface can offer the percentage its own create form always had.
     const [discountKind, setDiscountKind] = useState<DiscountKind>(null);
     const [discountValue, setDiscountValue] = useState('0');
+    const discountValueRef = useRef(discountValue);
     const [hasDiscount, setHasDiscount] = useState(false);
     const [dueDate, setDueDate] = useState('');
     const [paymentTerms, setPaymentTerms] = useState('');
@@ -155,13 +156,13 @@ export function InvoiceDetailPanel({
     }, [invoiceData.invoice]);
 
     useEffect(() => {
+        const nextDiscountValue = invoice.discount_value != null && invoice.discount_value !== ''
+            ? String(invoice.discount_value)
+            : (invoice.discount_amount ? String(invoice.discount_amount) : '0');
         setTaxRate(invoice.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
         setDiscountKind(invoice.discount_type ?? (Number(invoice.discount_amount) > 0 ? 'fixed' : null));
-        setDiscountValue(
-            invoice.discount_value != null && invoice.discount_value !== ''
-                ? String(invoice.discount_value)
-                : (invoice.discount_amount ? String(invoice.discount_amount) : '0'),
-        );
+        setDiscountValue(nextDiscountValue);
+        discountValueRef.current = nextDiscountValue;
         setHasDiscount(Number(invoice.discount_amount) > 0 || !!invoice.discount_type);
         setDueDate(toDateInput(invoice.due_date));
         setPaymentTerms(invoice.payment_terms || '');
@@ -627,10 +628,13 @@ export function InvoiceDetailPanel({
                                             setDiscountValue(next);
                                             persist({ discount_type: kind, discount_value: next || '0' });
                                         }}
-                                        onValueChange={setDiscountValue}
+                                        onValueChange={value => {
+                                            discountValueRef.current = value;
+                                            setDiscountValue(value);
+                                        }}
                                         onCommit={() => persist({
                                             discount_type: discountKind ?? 'fixed',
-                                            discount_value: discountValue || '0',
+                                            discount_value: discountValueRef.current || '0',
                                         })}
                                         onRemove={() => {
                                             setHasDiscount(false);

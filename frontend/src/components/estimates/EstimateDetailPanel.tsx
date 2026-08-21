@@ -149,10 +149,13 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     const [taxRate, setTaxRate] = useState<string>(estimate.tax_rate ? Number(estimate.tax_rate).toFixed(2) : '0');
     const [discountType, setDiscountType] = useState<EstimateDiscountType | null>(estimate.discount_type ?? null);
     const [discountValue, setDiscountValue] = useState<string>(estimate.discount_value ? String(estimate.discount_value) : '0');
+    const discountValueRef = useRef(discountValue);
     useEffect(() => {
+        const nextDiscountValue = estimate.discount_value ? String(estimate.discount_value) : '0';
         setTaxRate(estimate.tax_rate ? Number(estimate.tax_rate).toFixed(2) : '0');
         setDiscountType(estimate.discount_type ?? null);
-        setDiscountValue(estimate.discount_value ? String(estimate.discount_value) : '0');
+        setDiscountValue(nextDiscountValue);
+        discountValueRef.current = nextDiscountValue;
     }, [estimate.tax_rate, estimate.discount_type, estimate.discount_value]);
 
     const archived = !!estimate.archived_at;
@@ -821,8 +824,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                             setDiscountValue(next);
                                             persist({ discount_type: kind, discount_value: next || '0' } as any);
                                         }}
-                                        onValueChange={setDiscountValue}
-                                        onCommit={() => persist({ discount_value: discountValue || '0' } as any)}
+                                        onValueChange={value => {
+                                            discountValueRef.current = value;
+                                            setDiscountValue(value);
+                                        }}
+                                        onCommit={() => persist({ discount_value: discountValueRef.current || '0' } as any)}
                                         onRemove={() => {
                                             setDiscountType(null);
                                             setDiscountValue('0');
