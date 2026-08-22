@@ -92,7 +92,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                         borderBottom: '1px solid var(--sched-line)',
                     }}>
                         <div className="flex items-center justify-between mb-3">
-                            <span className="inline-flex items-center gap-1 min-h-[28px] px-2.5 rounded-full text-[11px] font-bold tracking-widest uppercase"
+                            <span className="inline-flex items-center gap-1 min-h-[28px] px-2.5 rounded-full blanc-eyebrow"
                                 style={{ background: 'rgba(47, 99, 216, 0.08)', border: '1px solid rgba(47, 99, 216, 0.14)', color: 'var(--sched-job)' }}>
                                 <User className="size-3" /> Customer
                             </span>
@@ -113,30 +113,30 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                             <p style={sectionEyebrow}>Contact info</p>
                             {d.phone && (
                                 <div style={sectionRow}>
-                                    <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>
+                                    <span className="flex items-center gap-1.5 blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>
                                         <Phone className="size-3" /> Phone
                                     </span>
                                     <div className="flex items-center gap-2">
-                                        <span className="text-[13px] font-semibold" style={{ color: 'var(--sched-ink-1)' }}>{d.phone}</span>
+                                        <span className="blanc-l2-heading" style={{ color: 'var(--sched-ink-1)' }}>{d.phone}</span>
                                         <ClickToCallButton phone={d.phone} contactName={d.name} inline />
                                     </div>
                                 </div>
                             )}
                             {d.email && (
                                 <div style={sectionRow}>
-                                    <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>
+                                    <span className="flex items-center gap-1.5 blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>
                                         <Mail className="size-3" /> Email
                                     </span>
-                                    <a href={`mailto:${d.email}`} className="text-[13px] font-semibold truncate hover:underline"
+                                    <a href={`mailto:${d.email}`} className="blanc-l2-heading truncate hover:underline"
                                         style={{ color: 'var(--sched-job)' }}>{d.email}</a>
                                 </div>
                             )}
                             {d.address && (
                                 <div style={{ ...sectionRow, borderBottom: 'none', paddingBottom: 0 }}>
-                                    <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>
+                                    <span className="flex items-center gap-1.5 blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>
                                         <MapPin className="size-3" /> Address
                                     </span>
-                                    <span className="text-[13px] font-semibold text-right" style={{ color: 'var(--sched-ink-1)' }}>{d.address}</span>
+                                    <span className="blanc-l2-heading text-right" style={{ color: 'var(--sched-ink-1)' }}>{d.address}</span>
                                 </div>
                             )}
                         </div>
@@ -145,7 +145,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                             <div style={sectionCard}>
                                 <p style={sectionEyebrow}>Opened from</p>
                                 <button type="button" onClick={onPopLayer}
-                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:opacity-80 transition-opacity text-[13px] font-semibold"
+                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:opacity-80 transition-opacity blanc-l2-heading"
                                     style={{ color: 'var(--sched-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid var(--sched-line)' }}>
                                     ← {(d.sourceItem as ScheduleItem).title}
                                 </button>
@@ -180,7 +180,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                         borderBottom: '1px solid var(--sched-line)',
                     }}>
                         <div className="flex items-center justify-between mb-3">
-                            <span className="inline-flex items-center gap-1 min-h-[28px] px-2.5 rounded-full text-[11px] font-bold tracking-widest uppercase"
+                            <span className="inline-flex items-center gap-1 min-h-[28px] px-2.5 rounded-full blanc-eyebrow"
                                 style={{ background: provColor.bg, border: `1px solid ${provColor.border}`, color: provColor.text }}>
                                 Provider
                             </span>
@@ -199,14 +199,14 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                         <div style={sectionCard}>
                             <p style={sectionEyebrow}>Provider details</p>
                             <div style={sectionRow}>
-                                <span className="text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>ID</span>
-                                <span className="text-[13px] font-semibold" style={{ color: 'var(--sched-ink-1)' }}>{d.id || '—'}</span>
+                                <span className="blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>ID</span>
+                                <span className="blanc-l2-heading" style={{ color: 'var(--sched-ink-1)' }}>{d.id || '—'}</span>
                             </div>
                             <div style={{ ...sectionRow, borderBottom: 'none', paddingBottom: 0 }}>
-                                <span className="text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>Color</span>
+                                <span className="blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>Color</span>
                                 <span className="inline-flex items-center gap-1.5">
                                     <span className="w-4 h-4 rounded-full" style={{ background: provColor.accent }} />
-                                    <span className="text-[13px] font-semibold" style={{ color: 'var(--sched-ink-1)' }}>{provColor.accent}</span>
+                                    <span className="blanc-l2-heading" style={{ color: 'var(--sched-ink-1)' }}>{provColor.accent}</span>
                                 </span>
                             </div>
                         </div>
@@ -215,7 +215,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                             <div style={sectionCard}>
                                 <p style={sectionEyebrow}>Opened from</p>
                                 <button type="button" onClick={onPopLayer}
-                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:opacity-80 transition-opacity text-[13px] font-semibold"
+                                    className="w-full text-left px-3 py-2.5 rounded-xl hover:opacity-80 transition-opacity blanc-l2-heading"
                                     style={{ color: 'var(--sched-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid var(--sched-line)' }}>
                                     ← {(d.sourceItem as ScheduleItem).title}
                                 </button>
@@ -265,7 +265,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                                     <button
                                         type="button"
                                         onClick={onPopLayer}
-                                        className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold"
+                                        className="flex items-center gap-1.5 px-4 py-2.5 blanc-l2-heading"
                                         style={{
                                             background: 'var(--blanc-panel-surface)',
                                             color: 'var(--sched-ink-2)',
@@ -375,7 +375,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                                 style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
                             >
                                 <span
-                                    className="text-[11px] font-semibold truncate"
+                                    className="blanc-l2-heading truncate"
                                     style={{ color: 'var(--sched-ink-3)', maxHeight: '200px' }}
                                 >
                                     {layer.title}
