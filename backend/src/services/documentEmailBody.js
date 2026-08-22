@@ -1,82 +1,69 @@
 'use strict';
 
+const K = require('./documentEmailLayout');
+const { shortDocNumber } = require('../utils/docNumber');
+
+const STRIPE_TRUST = 'Card or bank — payments secured by Stripe.';
+
 /**
- * Shared document-email wrapper. Existing invoice callers pass operator copy;
- * server-rendered document emails may opt into preformatted, already-escaped
- * HTML while retaining the same outer email seam.
+ * Compatibility wrapper for preformatted service email bodies that are not one
+ * of the customer document templates below.
  */
 function buildEmailBody(message, link, { preformatted = false } = {}) {
     const content = preformatted
         ? String(message || '')
         : String(message || '').replace(/\r\n|\r|\n/g, '<br>');
-    const anchor = link ? `<p><a href="${link}">View &amp; pay your invoice online</a></p>` : '';
+    const anchor = link ? `<p><a href="${K.escapeHtml(link)}">View &amp; pay your invoice online</a></p>` : '';
     return `<div>${content}</div>${anchor}`;
 }
 
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+function number(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function money(value) {
-    const amount = Number(value || 0);
-    const safeAmount = Number.isFinite(amount) ? amount : 0;
-    return '$' + safeAmount.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    });
+function firstName(value) {
+    return String(value || '').trim().split(/\s+/)[0] || '';
 }
 
-function formatDate(value, timeZone = 'America/New_York') {
+function brandDetails(brand, companyName) {
+    const source = brand && typeof brand === 'object' ? brand : {};
+    return {
+        name: String(source.name || companyName || '').trim() || 'Albusto',
+        phone: String(source.phone || '').trim(),
+        email: String(source.email || '').trim(),
+    };
+}
+
+function formatDate(value, timeZone = 'America/New_York', { year = true } = {}) {
     if (!value) return '';
     const raw = String(value);
     const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const options = {
+        month: 'short',
+        day: 'numeric',
+        ...(year ? { year: 'numeric' } : {}),
+    };
+
     if (dateOnly) {
-        const [, year, month, day] = dateOnly;
-        const monthName = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' })
-            .format(new Date(Date.UTC(Number(year), Number(month) - 1, 1)));
-        return `${monthName} ${Number(day)}, ${year}`;
+        const [, dateYear, month, day] = dateOnly;
+        return new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' })
+            .format(new Date(Date.UTC(Number(dateYear), Number(month) - 1, Number(day))));
     }
 
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
     try {
-        return date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
+        return new Intl.DateTimeFormat('en-US', {
+            ...options,
             timeZone: timeZone || 'America/New_York',
-        });
+        }).format(date);
     } catch {
-        return date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
+        return new Intl.DateTimeFormat('en-US', {
+            ...options,
             timeZone: 'America/New_York',
-        });
+        }).format(date);
     }
-}
-
-function factRow(label, value) {
-    if (!value) return '';
-    return `<tr>
-        <td style="padding: 7px 0; color: #6F6F6B; font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: bold; letter-spacing: 0.8px; text-transform: uppercase; vertical-align: top; width: 145px;">${escapeHtml(label)}</td>
-        <td style="padding: 7px 0; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; line-height: 20px; vertical-align: top;">${escapeHtml(value)}</td>
-    </tr>`;
-}
-
-function totalRow(label, value, { strong = false, accent = false } = {}) {
-    const color = accent ? '#7F42E1' : '#191919';
-    const fontSize = strong ? '16px' : '14px';
-    const weight = strong ? 'bold' : 'normal';
-    return `<tr>
-        <td style="padding: 5px 12px 5px 0; color: #6F6F6B; font-family: Arial, Helvetica, sans-serif; font-size: ${fontSize}; font-weight: ${weight}; line-height: 20px;">${escapeHtml(label)}</td>
-        <td align="right" style="padding: 5px 0; color: ${color}; font-family: Arial, Helvetica, sans-serif; font-size: ${fontSize}; font-weight: ${weight}; line-height: 20px; white-space: nowrap;">${escapeHtml(value)}</td>
-    </tr>`;
 }
 
 function removePaymentLink(message, paymentLink) {
@@ -96,153 +83,177 @@ function removePaymentLink(message, paymentLink) {
     return cleaned;
 }
 
-/**
- * Invoice-only, email-client-safe document. The caller supplies the already
- * company-scoped invoice model and the canonical payment URL generated by the
- * existing public-link send path.
- */
+function emailItems(items) {
+    return (Array.isArray(items) ? items : []).map(item => ({
+        name: String(item?.name || 'Item'),
+        description: String(item?.description || '').trim(),
+        qty: item?.quantity,
+        rate: item?.unit_price,
+        amount: item?.amount,
+    }));
+}
+
+function invoiceState(model, amountPaid) {
+    if (model.status === 'overdue') return 'overdue';
+    if (amountPaid > 0) return 'partly_paid';
+    return 'due';
+}
+
+function invoiceHeading(state, balanceDue, dueDate) {
+    if (state === 'overdue') {
+        return `${K.money(balanceDue)} — past due${dueDate ? ` since ${K.escapeHtml(dueDate)}` : ''}`;
+    }
+    const qualifier = state === 'partly_paid' ? ' still due' : ' due';
+    return `${K.money(balanceDue)}${qualifier}${dueDate ? ` by ${K.escapeHtml(dueDate)}` : ''}`;
+}
+
+function invoiceLead({ state, contactFirstName, shortNumber, amountPaid, balanceDue, dueDate }) {
+    const greeting = `Hi ${K.escapeHtml(contactFirstName)} — `;
+    const reference = `<b>${K.escapeHtml(shortNumber)}</b>`;
+    const due = `<b>${K.escapeHtml(K.money(balanceDue))}</b>`;
+    const date = dueDate ? `<b>${K.escapeHtml(dueDate)}</b>` : '';
+
+    if (state === 'overdue') {
+        return greeting + (dueDate
+            ? `invoice ${reference} was due on ${date} and is still open. Please review it and pay ${due} today.`
+            : `invoice ${reference} is past due and still open. Please review it and pay ${due} today.`);
+    }
+    if (state === 'partly_paid') {
+        return greeting + `thanks for the ${K.escapeHtml(K.money(amountPaid))} already paid. Please review invoice ${reference} and settle the remaining ${due}${dueDate ? ` by ${date}` : ''}.`;
+    }
+    return greeting + `the work is finished. Please review invoice ${reference} and pay ${due}${dueDate ? ` by ${date}` : ''}.`;
+}
+
+/** Build the approved due / partly-paid / overdue invoice document email. */
 function buildInvoiceEmailBody({
     message,
     paymentLink,
     includePaymentLink = Boolean(paymentLink),
     invoice,
+    brand,
     companyName,
+    senderName,
     timeZone = 'America/New_York',
 } = {}) {
     const model = invoice || {};
-    const brandName = String(companyName || '').trim() || 'our team';
-    const contactName = String(model.contact_name || '').trim();
-    const contactFirstName = contactName ? contactName.split(/\s+/)[0] : 'there';
-    const invoiceNumber = String(model.invoice_number || '').replace(/^INVOICE\s+/i, '').trim();
-    const dueDate = formatDate(model.due_date, timeZone);
-    const serviceDate = formatDate(model.service_date, timeZone);
-    const serviceAddress = String(model.service_address || '').trim();
-    const items = Array.isArray(model.items) ? model.items : [];
-    const discount = Number(model.discount_amount || 0);
-    const tax = Number(model.tax_amount || 0);
-    const amountPaid = Number(model.amount_paid || 0);
-
+    const emailBrand = brandDetails(brand, companyName);
+    const contactFirstName = firstName(model.contact_name) || 'there';
+    const signerFirstName = firstName(senderName);
+    const shortNumber = shortDocNumber(model.invoice_number) || String(model.invoice_number || '').trim();
+    const dueDate = formatDate(model.due_date, timeZone, { year: false });
+    const amountPaid = Math.max(number(model.amount_paid), 0);
+    const balanceDue = Math.max(number(model.balance_due), 0);
+    const state = invoiceState(model, amountPaid);
+    const canPayOnline = includePaymentLink && Boolean(paymentLink);
     const operatorMessage = (includePaymentLink
         ? String(message || '')
         : removePaymentLink(message, paymentLink)).trim();
-    const operatorBlock = operatorMessage ? `<tr>
-        <td style="padding: 22px 26px; background-color: #FFFFFF; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 21px;">${escapeHtml(operatorMessage).replace(/\r\n|\r|\n/g, '<br>')}</td>
-    </tr>
-    <tr><td height="16" style="height: 16px; font-size: 0; line-height: 0;">&nbsp;</td></tr>` : '';
+    const itemList = emailItems(model.items);
+    const discount = number(model.discount_amount);
+    const tax = number(model.tax_amount);
+    const totalRows = [
+        ['Subtotal', K.money(model.subtotal)],
+        discount !== 0 ? ['Discount', `−${K.money(Math.abs(discount))}`] : null,
+        tax !== 0 ? ['Tax', K.money(tax)] : null,
+        amountPaid > 0 ? ['Invoice total', K.money(model.total)] : null,
+        amountPaid > 0 ? ['Paid so far', `−${K.money(amountPaid)}`] : null,
+        ['Amount due', K.money(balanceDue), 'due'],
+    ];
+    const factRows = state === 'overdue'
+        ? [
+            ['Invoice date', formatDate(model.created_at, timeZone)],
+            ['Due', formatDate(model.due_date, timeZone)],
+        ]
+        : [
+            ['Service date', formatDate(model.service_date, timeZone)],
+            ['Service address', String(model.service_address || '').trim()],
+        ];
+    const closingText = state === 'overdue'
+        ? 'Already paid, or something looks wrong? Reply and we will check it right away. The PDF is attached.'
+        : 'Something looks wrong? Reply to this email and we will sort it out. The PDF is attached.';
 
-    const facts = [
-        factRow('Amount due', money(model.balance_due)),
-        factRow('Due by', dueDate),
-        factRow('Service date', serviceDate),
-        factRow('Service address', serviceAddress),
-    ].join('');
+    return K.shell(
+        invoiceHeading(state, balanceDue, dueDate),
+        K.lead(invoiceLead({
+            state,
+            contactFirstName,
+            shortNumber,
+            amountPaid,
+            balanceDue,
+            dueDate,
+        }))
+        + (canPayOnline ? K.button(`Review & pay ${K.money(balanceDue)}`, paymentLink) : '')
+        + (canPayOnline ? K.microcopy(STRIPE_TRUST) : '')
+        + K.facts(factRows)
+        + (itemList.length > 0 ? K.items(itemList) : '')
+        + K.totals(totalRows)
+        + (canPayOnline ? K.quietLink(`Review & pay ${K.money(balanceDue)}`, paymentLink) : '')
+        + K.note(operatorMessage, signerFirstName)
+        + K.closing(closingText)
+        + K.signoff(signerFirstName, emailBrand.name),
+        emailBrand
+    );
+}
 
-    const itemRows = items.map((item) => {
-        const description = String(item?.description || '').trim();
-        return `<tr>
-            <td style="padding: 14px 0; border-bottom: 1px solid #E6E4E1; vertical-align: top;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
-                    <tr>
-                        <td style="padding: 0 14px 0 0; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; line-height: 20px;">${escapeHtml(item?.name || 'Item')}</td>
-                        <td align="right" style="padding: 0; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold; line-height: 20px; white-space: nowrap;">${escapeHtml(money(item?.amount))}</td>
-                    </tr>
-                    ${description ? `<tr><td colspan="2" style="padding: 4px 0 0; color: #6F6F6B; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 19px;">${escapeHtml(description)}</td></tr>` : ''}
-                </table>
-            </td>
-        </tr>`;
-    }).join('');
+/** Build the approved estimate document, including job-level credit after tax. */
+function buildEstimateEmailBody({
+    message,
+    estimateLink,
+    estimate,
+    brand,
+    companyName,
+    senderName,
+    timeZone = 'America/New_York',
+} = {}) {
+    const model = estimate || {};
+    const emailBrand = brandDetails(brand, companyName);
+    const contactFirstName = firstName(model.contact_name) || 'there';
+    const signerFirstName = firstName(senderName);
+    const shortNumber = shortDocNumber(model.estimate_number) || String(model.estimate_number || '').trim();
+    const total = Math.max(number(model.total), 0);
+    const paid = Math.max(number(model.deposit_paid), 0);
+    const left = model.balance_due === null || model.balance_due === undefined
+        ? Math.max(total - paid, 0)
+        : Math.max(number(model.balance_due), 0);
+    const validUntil = formatDate(model.valid_until, timeZone, { year: false });
+    const reference = `<b>${K.escapeHtml(shortNumber)}</b>`;
+    const paidLead = paid > 0
+        ? `, less the <b>${K.escapeHtml(K.money(paid))}</b> you have paid so far on this job — <b>${K.escapeHtml(K.money(left))}</b> to go. Approve it and we will get you on the schedule.`
+        : '. Approve it and we will get you on the schedule; nothing is charged until you do.';
+    const leadText = `Hi ${K.escapeHtml(contactFirstName)} — here is estimate ${reference} for the work we discussed: <b>${K.escapeHtml(K.money(total))}</b>${paidLead}`;
+    const itemList = emailItems(model.items);
+    const discount = number(model.discount_amount);
+    const tax = number(model.tax_amount);
 
-    const summaryBlock = items.length > 0 ? `<tr>
-        <td style="padding: 28px 34px 0;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
-                <tr><td style="padding: 0 0 8px; color: #6F6F6B; font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase;">Summary</td></tr>
-                ${itemRows}
-            </table>
-        </td>
-    </tr>` : '';
-
-    const totals = [
-        totalRow('Subtotal', money(model.subtotal)),
-        Number.isFinite(discount) && discount !== 0
-            ? totalRow('Discount', `-${money(Math.abs(discount))}`)
-            : '',
-        Number.isFinite(tax) && tax !== 0 ? totalRow('Tax', money(tax)) : '',
-        totalRow('Total', money(model.total), { strong: true }),
-        Number.isFinite(amountPaid) && amountPaid > 0
-            ? totalRow('Total Paid', money(amountPaid))
-            : '',
-        totalRow('Total Due', money(model.balance_due), { strong: true, accent: true }),
-    ].join('');
-
-    const buttonBlock = includePaymentLink && paymentLink ? `<tr>
-        <td align="center" style="padding: 8px 34px 34px;">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
-                <tr>
-                    <td align="center" bgcolor="#7F42E1" style="background-color: #7F42E1; border-radius: 6px;">
-                        <a href="${escapeHtml(paymentLink)}" style="display: inline-block; padding: 13px 24px; color: #FFFFFF; font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: bold; line-height: 20px; text-decoration: none;">Pay Invoice</a>
-                    </td>
-                </tr>
-            </table>
-        </td>
-    </tr>` : '';
-
-    const heading = `Your invoice from ${brandName}`;
-    const invoiceReference = invoiceNumber ? `Invoice #${invoiceNumber}` : 'your invoice';
-
-    return `<!doctype html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${escapeHtml(heading)}</title>
-</head>
-<body style="margin: 0; padding: 0; background-color: #F1F1F0; color: #191919;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%; background-color: #F1F1F0;">
-        <tr>
-            <td align="center" style="padding: 28px 12px;">
-                <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%; max-width: 640px;">
-                    ${operatorBlock}
-                    <tr>
-                        <td style="background-color: #FFFFFF;">
-                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">
-                                <tr>
-                                    <td style="padding: 34px 34px 10px; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 28px; font-weight: bold; line-height: 35px;">${escapeHtml(heading)}</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px 34px 0; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 23px;">Hi ${escapeHtml(contactFirstName)},</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 10px 34px 0; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 23px;">Thank you for your recent business with us. Please find a detailed copy of ${escapeHtml(invoiceReference)} below.</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 25px 34px 0;">
-                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%; background-color: #F7F7F6;">
-                                            <tr><td style="padding: 14px 18px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%;">${facts}</table></td></tr>
-                                        </table>
-                                    </td>
-                                </tr>
-                                ${summaryBlock}
-                                <tr>
-                                    <td align="right" style="padding: 24px 34px 20px;">
-                                        <table role="presentation" width="300" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; width: 100%; max-width: 300px;">${totals}</table>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 10px 34px 22px; color: #191919; font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 23px;">We appreciate your business.</td>
-                                </tr>
-                                ${buttonBlock}
-                            </table>
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
-</body>
-</html>`;
+    return K.shell(
+        `Your estimate — ${K.escapeHtml(K.money(total))}`,
+        K.lead(leadText)
+        + K.button('Approve this estimate', estimateLink)
+        + K.microcopy(`One tap, no account needed.${validUntil ? ` Valid until ${validUntil}.` : ''}`)
+        + K.facts([
+            ['Service address', String(model.billing_address || model.service_address || '').trim()],
+        ])
+        + (itemList.length > 0 ? K.items(itemList) : '')
+        + K.totals([
+            ['Subtotal', K.money(model.subtotal)],
+            discount !== 0 ? ['Discount', `−${K.money(Math.abs(discount))}`] : null,
+            tax !== 0 ? ['Tax', K.money(tax)] : null,
+            ['Estimate total', K.money(total), paid > 0 ? undefined : 'due'],
+            paid > 0 ? ['Paid so far', `−${K.money(paid)}`] : null,
+            paid > 0 ? ['Left to pay', K.money(left), 'due'] : null,
+        ])
+        + K.quietLink('Approve this estimate', estimateLink)
+        + K.note(message, signerFirstName)
+        + K.closing('Want to change something first? Reply to this email. The PDF is attached.')
+        + K.signoff(signerFirstName, emailBrand.name),
+        emailBrand
+    );
 }
 
 module.exports = {
     buildEmailBody,
     buildInvoiceEmailBody,
+    buildEstimateEmailBody,
+    formatDate,
+    firstName,
 };

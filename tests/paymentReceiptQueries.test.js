@@ -27,6 +27,10 @@ test('DETAIL-TENANT-CUT: detail query scopes the transaction and every operator 
     expect(sql).toContain('j.company_id = t.company_id');
     expect(sql).toContain('j.job_seq');
     expect(sql).toContain('c.company_id = t.company_id');
+    expect(sql).toContain('sent_invoice.company_id = t.company_id');
+    expect(sql).toContain("sent_event.event_type = 'sent'");
+    expect(sql).toContain("sent_event.actor_type = 'user'");
+    expect(sql).toContain("IN ('checkout_link', 'public_pay')");
     expect(params).toEqual([COMPANY_A, 71]);
 });
 

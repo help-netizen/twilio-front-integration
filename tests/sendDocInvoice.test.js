@@ -109,6 +109,7 @@ jest.mock('../backend/src/services/jobsService', () => ({
 }));
 
 const invoicesRouter = require('../backend/src/routes/invoices');
+const invoicesService = require('../backend/src/services/invoicesService');
 
 function appWith({ permissions = ['invoices.send'], companyId = COMPANY_A } = {}) {
     const app = express();

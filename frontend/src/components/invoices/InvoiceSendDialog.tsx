@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2, Mail, MessageSquare, Send } from 'lucide-react';
+import { shortDocNumber } from '../../lib/docNumber';
 import { useAuth } from '../../auth/AuthProvider';
 import {
     ensureInvoicePublicLink,
@@ -19,7 +20,7 @@ import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { FloatingField } from '../ui/floating-field';
 import { PhoneInput, isValidUSPhone, toE164 } from '../ui/PhoneInput';
-import { formatCompanyTime, useCompanyTime } from '../../lib/companyTime';
+import { useCompanyTime } from '../../lib/companyTime';
 
 interface Props {
     open: boolean;
@@ -58,13 +59,6 @@ function fmtMoney(value: number | string | null | undefined): string {
     return (amount < 0 ? '−$' : '$') + body;
 }
 
-function fmtDate(value: string | null | undefined, timeZone?: string): string {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    return formatCompanyTime(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00Z` : date, { month: 'short', day: 'numeric', year: 'numeric' }, timeZone);
-}
-
 export function buildDefaultInvoiceMessage(
     channel: 'email' | 'sms',
     options: {
@@ -78,12 +72,12 @@ export function buildDefaultInvoiceMessage(
         timeZone?: string;
     },
 ): string {
-    const { invoiceNumber, name, url, balanceDue, total, dueDate, signOff, timeZone } = options;
-    const shortNumber = invoiceNumber ? invoiceNumber.replace(/^INVOICE\s+/i, '') : '';
+    // dueDate / signOff / timeZone survive in the signature because the caller passes the
+    // whole invoice; only SMS reads from here now.
+    const { invoiceNumber, name, url, balanceDue, total } = options;
+    const shortNumber = invoiceNumber ? shortDocNumber(invoiceNumber) : '';
     const label = shortNumber || 'your invoice';
     const isPaid = balanceDue <= 0 && total > 0;
-    const due = fmtDate(dueDate, timeZone);
-    const signature = signOff ? `\n${signOff}` : '';
 
     if (channel === 'sms') {
         if (isPaid) {
@@ -97,31 +91,15 @@ export function buildDefaultInvoiceMessage(
             : `Hi ${name}! Invoice ${label} for ${amount} is ready.`;
     }
 
-    if (isPaid) {
-        return [
-            `Hi ${name},`,
-            '',
-            `Thank you — your payment on invoice ${label} has been received.`,
-            '',
-            url ? `Your receipt is available here:\n${url}` : null,
-            '',
-            `Thanks,${signature}`,
-        ].filter(line => line !== null).join('\n');
-    }
-
-    const amount = fmtMoney(balanceDue || total);
-    const dueLine = due ? `The ${amount} balance is due by ${due}.` : `The balance due is ${amount}.`;
-    return [
-        `Hi ${name},`,
-        '',
-        `Here's invoice ${label} for the work we completed. ${dueLine}`,
-        '',
-        url ? `View and pay securely here:\n${url}` : null,
-        '',
-        'Reply if you have any questions.',
-        '',
-        `Thanks,${signature}`,
-    ].filter(line => line !== null).join('\n');
+    /**
+     * Email gets NO default (DOC-EMAIL-001, owner 21.08). The letter already says who it
+     * is from, what is owed, by when, and carries the button — a paragraph repeating all
+     * of that was the duplication this work exists to remove. The field stays for a
+     * personal note, and whatever the operator types arrives in the letter as its own
+     * block. SMS is different: there is no document behind a text message, so the text
+     * IS the message and keeps its wording above.
+     */
+    return '';
 }
 
 export function InvoiceSendDialog({ open, onOpenChange, invoice, onSend }: Props) {

@@ -119,6 +119,8 @@ function publicTransactionDetail(context, receiptHistory) {
         job_seq: _jobSeq,
         service_name: _serviceName,
         company_timezone: _companyTimezone,
+        customer_paid_online: _customerPaidOnline,
+        invoice_sender_name: _invoiceSenderName,
         ...detail
     } = context;
 
@@ -799,25 +801,11 @@ async function buildReceiptDelivery(companyId, context) {
     const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
     const brand = descriptor?.brand || {};
     const files = [];
-    let logoContentId = null;
-
-    if (brand.logo_url) {
-        const { fetchPdfLogo } = require('./documentTemplates/pdfLogo');
-        const logo = await fetchPdfLogo(brand.logo_url);
-        if (logo) {
-            logoContentId = 'albusto-company-logo';
-            files.push({
-                originalname: `company-logo.${logo.format === 'jpg' ? 'jpg' : 'png'}`,
-                mimetype: logo.format === 'jpg' ? 'image/jpeg' : 'image/png',
-                buffer: logo.data,
-                contentId: logoContentId,
-            });
-        }
-    }
 
     // The receipt carries the invoice PDF whenever one exists: the payment's own
     // invoice, or — for an ad-hoc job payment — the job's current invoice.
     let invoice = null;
+    let paymentLink = null;
     const invoiceIdForPdf = context.receipt_invoice_id || context.invoice_id || context.job_invoice_id;
     if (invoiceIdForPdf) {
         const invoicesService = require('./invoicesService');
@@ -833,6 +821,16 @@ async function buildReceiptDelivery(companyId, context) {
             // A receipt must still reach the customer if the invoice PDF fails to render.
             console.error('[PaymentReceipt] invoice PDF skipped:', err.message);
         }
+        if (invoice && Number(invoice.balance_due || 0) > 0) {
+            try {
+                const { token } = await invoicesService.ensurePublicLink(companyId, invoiceIdForPdf);
+                const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
+                paymentLink = base ? `${base}/pay/${token}` : `/pay/${token}`;
+            } catch (err) {
+                // The receipt and attached PDF remain useful when a pay link cannot be minted.
+                console.error('[PaymentReceipt] balance link skipped:', err.message);
+            }
+        }
     }
 
     const { buildPaymentReceiptEmail } = require('./paymentReceiptTemplate');
@@ -840,12 +838,11 @@ async function buildReceiptDelivery(companyId, context) {
         context,
         invoice,
         brand,
-        logoContentId,
+        paymentLink,
     });
-    const { buildEmailBody } = require('./documentEmailBody');
     return {
         subject: template.subject,
-        body: buildEmailBody(template.html, null, { preformatted: true }),
+        body: template.html,
         textBody: template.text,
         files,
         fromName: brand.name || null,

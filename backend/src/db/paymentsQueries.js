@@ -246,6 +246,13 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
                     THEN 'Customer (online)'
                     ELSE NULL
                 END AS created_by_name,
+                (
+                    t.external_source = 'stripe'
+                    AND t.payment_method = 'credit_card'
+                    AND COALESCE(NULLIF(t.metadata->>'surface', ''), stripe_session.surface)
+                        IN ('checkout_link', 'public_pay')
+                ) AS customer_paid_online,
+                invoice_sender.invoice_sender_name,
                 COALESCE(NULLIF(voider.full_name, ''), NULLIF(voider.email, ''))
                     AS voided_by_name,
                 NULLIF(t.metadata->>'stripe_customer_id', '') AS stripe_customer_id,
@@ -284,6 +291,21 @@ async function getTransactionReceiptContext(companyId, id, client = null) {
           AND voider_membership.user_id = t.voided_by
          LEFT JOIN crm_users voider
            ON voider.id = voider_membership.user_id
+         LEFT JOIN LATERAL (
+             SELECT COALESCE(NULLIF(sender.full_name, ''), NULLIF(sender.email, ''))
+                        AS invoice_sender_name
+             FROM invoice_events sent_event
+             JOIN invoices sent_invoice
+               ON sent_invoice.id = sent_event.invoice_id
+              AND sent_invoice.company_id = t.company_id
+             JOIN crm_users sender
+               ON sender.id::TEXT = sent_event.actor_id
+             WHERE sent_event.invoice_id = COALESCE(i.id, job_invoice.id)
+               AND sent_event.event_type = 'sent'
+               AND sent_event.actor_type = 'user'
+             ORDER BY sent_event.created_at DESC, sent_event.id DESC
+             LIMIT 1
+         ) invoice_sender ON TRUE
          WHERE t.company_id = $1 AND t.id = $2`,
         [companyId, id]
     );

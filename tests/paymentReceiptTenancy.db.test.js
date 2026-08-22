@@ -20,6 +20,7 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
     const companyA = randomUUID();
     const companyB = randomUUID();
     const userA = randomUUID();
+    const userB = randomUUID();
     try {
         await client.query('BEGIN');
         await client.query(`
@@ -52,6 +53,7 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
                 territory TEXT,
                 city TEXT,
                 job_number TEXT,
+                job_seq INTEGER,
                 service_name TEXT
             ) ON COMMIT DROP;
             CREATE TEMP TABLE invoices (
@@ -69,6 +71,14 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
                 company_id UUID PRIMARY KEY,
                 stripe_account_id TEXT,
                 livemode BOOLEAN
+            ) ON COMMIT DROP;
+            CREATE TEMP TABLE invoice_events (
+                id BIGINT PRIMARY KEY,
+                invoice_id BIGINT NOT NULL,
+                event_type TEXT NOT NULL,
+                actor_type TEXT NOT NULL,
+                actor_id TEXT,
+                created_at TIMESTAMPTZ NOT NULL
             ) ON COMMIT DROP;
             CREATE TEMP TABLE stripe_payment_sessions (
                 id BIGINT PRIMARY KEY,
@@ -132,9 +142,10 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
             [companyA, companyB]
         );
         await client.query(
-            `INSERT INTO crm_users (id, full_name, email)
-                VALUES ($1, 'Operator A', 'operator@example.com')`,
-            [userA]
+            `INSERT INTO crm_users (id, full_name, email) VALUES
+                ($1, 'Operator A', 'operator@example.com'),
+                ($2, 'Sender B', 'sender-b@example.com')`,
+            [userA, userB]
         );
         await client.query(
             `INSERT INTO company_memberships (company_id, user_id) VALUES ($1, $2)`,
@@ -149,11 +160,22 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
         await client.query(
             `INSERT INTO jobs (
                 id, company_id, contact_id, customer_email, customer_name,
-                territory, city, job_number, service_name
+                territory, city, job_number, job_seq, service_name
              ) VALUES
-                (111, $1, 11, 'same@example.com', 'Customer A', 'A Territory', 'A City', 'JOB-A', 'Repair A'),
-                (222, $2, 22, 'same@example.com', 'Customer B', 'B Territory', 'B City', 'JOB-B', 'Repair B')`,
+                (111, $1, 11, 'same@example.com', 'Customer A', 'A Territory', 'A City', 'JOB-A', 111, 'Repair A'),
+                (222, $2, 22, 'same@example.com', 'Customer B', 'B Territory', 'B City', 'JOB-B', 222, 'Repair B')`,
             [companyA, companyB]
+        );
+        await client.query(
+            `INSERT INTO invoices (id, company_id, contact_id, job_id, invoice_number)
+             VALUES (82, $1, 22, 222, 'INVOICE J-222-1')`,
+            [companyB]
+        );
+        await client.query(
+            `INSERT INTO invoice_events (
+                id, invoice_id, event_type, actor_type, actor_id, created_at
+             ) VALUES (820, 82, 'sent', 'user', $1, NOW())`,
+            [userB]
         );
         await client.query(
             `INSERT INTO stripe_connected_accounts (company_id, stripe_account_id, livemode) VALUES
@@ -196,6 +218,7 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
             company_id: companyA,
             customer_name: 'Customer A',
             created_by_name: 'Operator A',
+            customer_paid_online: false,
             territory: 'A Territory',
             stripe_payment_id: 'ch_a',
         });
@@ -206,6 +229,8 @@ test('RECEIPT-TENANCY-DB: detail/history/claim/complete/release isolate two tena
                 company_id: companyB,
                 customer_name: 'Customer B',
                 created_by_name: 'Customer (online)',
+                customer_paid_online: true,
+                invoice_sender_name: 'Sender B',
                 territory: 'B Territory',
             });
         await expect(stripePaymentsQueries.getSessionById(companyA, 1002, client))

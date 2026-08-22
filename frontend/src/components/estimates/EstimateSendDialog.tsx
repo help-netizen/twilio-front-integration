@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import type { EstimateSendData } from '../../services/estimatesApi';
 import { ensureEstimatePublicLink } from '../../services/estimatesApi';
 import * as emailApi from '../../services/emailApi';
+import { shortDocNumber } from '../../lib/docNumber';
 import { useAuth } from '../../auth/AuthProvider';
 
 // The Google Email marketplace app setup path (created by C2). The connect CTA and
@@ -48,12 +49,11 @@ function buildDefaultMessage(
         signOff: string;
     }
 ): string {
-    const { estimateNumber, name, url, signOff } = opts;
-    // Numbers like "ESTIMATE L-53-1" already start with the word "ESTIMATE"; trim the
-    // prefix so "estimate ESTIMATE L-53-1" doesn't read doubled in the body.
-    const shortNumber = estimateNumber ? estimateNumber.replace(/^ESTIMATE\s+/i, '') : '';
+    const { estimateNumber, name, url } = opts;
+    // Numbers carry the word inside them ("ESTIMATE L-53-1"), so a sentence that says
+    // "estimate" prints the short form — one rule, shared with the backend.
+    const shortNumber = estimateNumber ? shortDocNumber(estimateNumber) : '';
     const label = shortNumber || 'your estimate';
-    const signature = signOff ? `\n${signOff}` : '';
 
     if (channel === 'sms') {
         return url
@@ -61,18 +61,14 @@ function buildDefaultMessage(
             : `Hi ${name}! Your estimate ${label} is ready. Thanks!`;
     }
 
-    // Email — longer, friendly, with a link to view the estimate online.
-    return [
-        `Hi ${name},`,
-        '',
-        `Thanks so much for the opportunity — here's estimate ${label} for the work we discussed.`,
-        '',
-        url ? `You can review the full details online here:\n${url}` : null,
-        '',
-        'Take a look whenever you have a moment, and if anything looks off or you have a question, just hit reply and we will sort it out.',
-        '',
-        `Thanks,${signature}`,
-    ].filter(s => s !== null).join('\n');
+    /**
+     * Email gets NO default (DOC-EMAIL-001, owner 21.08). The estimate letter is a
+     * document now — price, items, the approve button and a person's sign-off — so a
+     * paragraph restating it would be the same duplication we removed from the invoice.
+     * The field stays for a personal note; SMS keeps its text, having no document behind
+     * it.
+     */
+    return '';
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -139,7 +135,11 @@ export function EstimateSendDialog({ open, onOpenChange, estimateId, contactEmai
 
     // Email send is gated on a connected mailbox (else the backend 409s).
     const emailBlocked = channel === 'email' && !emailConnected;
-    const canSubmit = recipient.trim().length > 0 && message.trim().length > 0 && !emailBlocked;
+    // DOC-EMAIL-001: the email is a document — price, items, approve button, sign-off —
+    // so a message is optional there. An SMS has no document behind it: the text IS the
+    // message, so it stays required.
+    const messageSatisfied = channel === 'sms' ? message.trim().length > 0 : true;
+    const canSubmit = recipient.trim().length > 0 && messageSatisfied && !emailBlocked;
 
     const handleSend = async () => {
         if (!canSubmit) return;
@@ -231,16 +231,20 @@ export function EstimateSendDialog({ open, onOpenChange, estimateId, contactEmai
                         />
                     </div>
 
-                    {/* Message — required */}
+                    {/* Message — required on SMS, optional on email (the letter speaks) */}
                     <div>
-                        <Label className="text-xs">Message <span className="text-red-600">*</span></Label>
+                        <Label className="text-xs">
+                            Message{channel === 'sms' ? <span className="text-red-600"> *</span> : <span className="text-[var(--blanc-ink-3)]"> · optional</span>}
+                        </Label>
                         <Textarea
                             value={message}
                             onChange={e => { setMessage(e.target.value); setUserEditedMessage(true); }}
-                            placeholder="Add a personal message..."
+                            placeholder={channel === 'sms'
+                                ? 'Write the text message…'
+                                : 'Anything you want to add — it arrives as a note from you.'}
                             rows={5}
                         />
-                        {!message.trim() && (
+                        {channel === 'sms' && !message.trim() && (
                             <p className="mt-1 text-xs text-red-600">Message is required.</p>
                         )}
                     </div>

@@ -121,7 +121,11 @@ describe('single-object send contract', () => {
         });
     });
 
-    it('builds neutral, emoji-free email and SMS defaults from those invoice fields', () => {
+    it('composes nothing for email and keeps the text message whole', () => {
+        // This case used to require the email default to carry the number, the amount,
+        // the due date and the link. DOC-EMAIL-001 overturned that (owner, 21.08): the
+        // letter itself says all of it and carries the button, so the paragraph was the
+        // same thing twice. SMS keeps everything — there is no document behind a text.
         const options = {
             invoiceNumber: 'INV-1042',
             name: 'Maria',
@@ -134,13 +138,11 @@ describe('single-object send contract', () => {
 
         const email = buildDefaultInvoiceMessage('email', options);
         const sms = buildDefaultInvoiceMessage('sms', options);
-        expect(email).toContain('INV-1042');
-        expect(email).toContain('$188.50');
-        expect(email).toContain('Aug 20, 2026');
-        expect(email).toContain(options.url);
+        expect(email).toBe('');
         expect(sms).toContain('INV-1042');
         expect(sms).toContain('$188.50');
-        expect(`${email}${sms}`).not.toMatch(/[\p{Extended_Pictographic}]/u);
+        expect(sms).toContain(options.url);
+        expect(sms).not.toMatch(/[\p{Extended_Pictographic}]/u);
     });
 
     it('keeps the dialog API atomic and puts mobile actions in the scrolling body', () => {

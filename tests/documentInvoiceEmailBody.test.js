@@ -28,15 +28,16 @@ test('renders total, paid, and canonical balance-due fields including the paid c
     const html = buildInvoiceEmailBody({
         invoice: invoice(),
         companyName: 'Boston Masters',
+        senderName: 'Dana Scott',
         timeZone: 'America/New_York',
     });
     const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
-    expect(text).toContain('Your invoice from Boston Masters');
+    expect(text).toContain('$100.00 still due by Aug 15');
     expect(text).toContain('Amount due $100.00');
-    expect(text).toContain('Total $125.00');
-    expect(text).toContain('Total Paid $25.00');
-    expect(text).toContain('Total Due $100.00');
+    expect(text).toContain('Invoice total $125.00');
+    expect(text).toContain('Paid so far −$25.00');
+    expect(text).toContain('Thanks, Dana Boston Masters');
 });
 
 test('omits Total Paid when no payment has been made', () => {
@@ -45,7 +46,7 @@ test('omits Total Paid when no payment has been made', () => {
         companyName: 'Boston Masters',
     });
 
-    expect(html).not.toContain('Total Paid');
+    expect(html).not.toContain('Paid so far');
 });
 
 test('toggle on renders the Pay Invoice button with the existing public pay URL', () => {
@@ -56,7 +57,7 @@ test('toggle on renders the Pay Invoice button with the existing public pay URL'
     });
 
     expect(html).toContain('href="https://app.albusto.com/pay/tok_invABCDE"');
-    expect(html).toContain('>Pay Invoice</a>');
+    expect(html).toContain('>Review &amp; pay $100.00</a>');
 });
 
 test('toggle off renders no button or payment link', () => {
@@ -68,7 +69,7 @@ test('toggle off renders no button or payment link', () => {
         includePaymentLink: false,
     });
 
-    expect(html).not.toContain('Pay Invoice');
+    expect(html).not.toContain('Review &amp; pay');
     expect(html).not.toContain('/pay/');
     expect(html).not.toContain('tok_invABCDE');
 });

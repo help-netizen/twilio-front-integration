@@ -708,7 +708,7 @@ async function sendInvoice(
         } catch { /* subject falls back to no company suffix */ }
         const subject = companyName ? `Your invoice from ${companyName}` : 'Your invoice';
 
-        const { invoice: documentInvoice, buffer } = await generatePdf(companyId, id, client);
+        const { invoice: documentInvoice, buffer, brand } = await generatePdf(companyId, id, client);
         const safeFile = String(shortNumber).replace(/[^a-z0-9_-]+/gi, '_');
 
         const emailService = require('./emailService');
@@ -721,7 +721,9 @@ async function sendInvoice(
                     paymentLink: payUrl,
                     includePaymentLink: includePaymentLink !== false,
                     invoice: documentInvoice,
+                    brand,
                     companyName,
+                    senderName: noteActor?.name,
                     timeZone: companyTimeZone,
                 }),
                 files: [{
@@ -1121,7 +1123,7 @@ async function generatePdf(companyId, id, client = null) {
         throw new InvoicesServiceError('INTERNAL', 'Invoice renderer adapter not registered', 500);
     }
     const buffer = await adapter.render(customerInvoice, descriptor);
-    return { invoice: customerInvoice, buffer };
+    return { invoice: customerInvoice, buffer, brand: descriptor?.brand || {} };
 }
 
 /**

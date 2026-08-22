@@ -26,6 +26,7 @@ jest.mock('../backend/src/services/documentTemplates/pdfLogo', () => ({
 }));
 jest.mock('../backend/src/services/invoicesService', () => ({
     generatePdf: jest.fn(),
+    ensurePublicLink: jest.fn(),
 }));
 
 const paymentsQueries = require('../backend/src/db/paymentsQueries');
@@ -127,6 +128,7 @@ beforeEach(() => {
     emailService.sendEmail.mockResolvedValue({ provider_message_id: 'gmail-1' });
     contactPropagationService.propagateContactDetails.mockResolvedValue({ email: 'added' });
     documentSendNoteService.recordDocumentSendNote.mockResolvedValue(true);
+    invoicesService.ensurePublicLink.mockResolvedValue({ token: 'tok_receipt' });
 });
 
 describe('paymentsService.getTransactionReceiptView', () => {
@@ -256,15 +258,15 @@ describe('paymentsService.emailTransactionReceipt', () => {
             expect.objectContaining({
                 to: 'customer@example.com',
                 subject: 'Payment receipt from Repair Co',
-                body: expect.stringContaining('Your payment receipt from Repair Co'),
-                textBody: expect.stringContaining('Amount: $95.00'),
+                body: expect.stringContaining('Payment received — $95.00'),
+                textBody: expect.stringContaining('Amount paid: $95.00'),
                 files: [],
                 userId: ACTOR.id,
                 userEmail: ACTOR.email,
             })
         );
         expect(stripeProvider.retrieveCharge).toHaveBeenCalledWith('acct_71', 'ch_71');
-        expect(emailService.sendEmail.mock.calls[0][1].body).toContain('Visa ending in 4242');
+        expect(emailService.sendEmail.mock.calls[0][1].body).toContain('Visa ending 4242');
         expect(paymentsQueries.completeReceiptDelivery.mock.invocationCallOrder[0])
             .toBeGreaterThan(emailService.sendEmail.mock.invocationCallOrder[0]);
         expect(result).toEqual({
@@ -298,6 +300,8 @@ describe('paymentsService.emailTransactionReceipt', () => {
                 discount_amount: '0',
                 tax_amount: '10.00',
                 total: '200.00',
+                amount_paid: '75.00',
+                balance_due: '125.00',
                 items: [{
                     name: '<script>Repair</script>',
                     description: '<img src=x onerror=alert(1)>',
@@ -323,10 +327,12 @@ describe('paymentsService.emailTransactionReceipt', () => {
         const message = emailService.sendEmail.mock.calls[0][1];
         expect(message.body).toContain('Invoice total');
         expect(message.body).toContain('$200.00');
-        expect(message.body).toContain('Amount</td><td');
+        expect(message.body).toContain('Paid so far');
+        expect(message.body).toContain('Remaining balance');
         expect(message.body).toContain('$75.00');
-        expect(message.body).toContain('&lt;script&gt;Repair&lt;/script&gt;');
         expect(message.body).not.toContain('<script>Repair</script>');
+        expect(invoicesService.ensurePublicLink).toHaveBeenCalledWith(COMPANY_A, 88);
+        expect(message.body).toContain('href="/pay/tok_receipt"');
         expect(message.files).toEqual([
             {
                 originalname: 'Invoice-INV-88.pdf',

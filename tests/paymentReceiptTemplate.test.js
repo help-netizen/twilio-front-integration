@@ -31,6 +31,8 @@ test('RECEIPT-TOTAL-SWAP: invoice HTML uses canonical invoice totals, not paymen
             discount_amount: '0',
             tax_amount: '10.00',
             total: '200.00',
+            amount_paid: '75.00',
+            balance_due: '125.00',
             currency: 'USD',
             items: [{
                 name: 'Repair',
@@ -48,11 +50,11 @@ test('RECEIPT-TOTAL-SWAP: invoice HTML uses canonical invoice totals, not paymen
     expect(receipt.html).toContain('$5.00');
 });
 
-test('RECEIPT-HTML-INJECT: escapes every customer, brand, job, and item string', () => {
+test('RECEIPT-HTML-INJECT: escapes every customer, brand, and invoice string it renders', () => {
     const receipt = buildPaymentReceiptEmail({
         context: context({
             customer_name: '<img src=x onerror=alert(1)>',
-            service_name: '<script>service()</script>',
+            created_by_name: 'Dana',
         }),
         brand: { name: 'Co <script>brand()</script>' },
         invoice: {
@@ -61,29 +63,27 @@ test('RECEIPT-HTML-INJECT: escapes every customer, brand, job, and item string',
             tax_amount: 0,
             discount_amount: 0,
             total: 1,
-            items: [{
-                name: '<script>item()</script>',
-                description: '<img src=x>',
-                quantity: 1,
-                unit_price: 1,
-                amount: 1,
-            }],
+            amount_paid: 1,
+            balance_due: 0,
+            items: [],
         },
     });
 
-    expect(receipt.html).toContain('&lt;script&gt;item()&lt;/script&gt;');
-    expect(receipt.html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(receipt.html).toContain('Co &lt;script&gt;brand()&lt;/script&gt;');
+    expect(receipt.html).toContain('Hi &lt;img —');
+    expect(receipt.html).toContain('&lt;INV&gt;');
     expect(receipt.html).not.toContain('<script>');
     expect(receipt.html).not.toContain('<img src=x');
 });
 
-test('standalone job receipt has a payment summary and no invented invoice lines', () => {
+test('standalone job receipt has a payment total and no invented invoice lines', () => {
     const receipt = buildPaymentReceiptEmail({
         context: context(),
         brand: { name: 'Repair Co' },
     });
 
-    expect(receipt.html).toContain('Payment summary');
+    expect(receipt.html).toContain('Payment received — $75.00');
+    expect(receipt.html).toContain('Amount paid');
     expect(receipt.html).toContain('#JOB-9');
     expect(receipt.html).toContain('Repair');
     expect(receipt.html).not.toContain('Invoice total');

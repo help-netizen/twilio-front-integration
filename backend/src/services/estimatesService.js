@@ -19,6 +19,7 @@ const {
 const { recordDocumentSendNote } = require('./documentSendNoteService');
 const { logFinancialActivity } = require('./financialActivityService');
 const eventBus = require('./eventBus');
+const { buildEstimateEmailBody } = require('./documentEmailBody');
 const {
     normalizeOrderList,
     stripInternalOrderList,
@@ -720,16 +721,6 @@ async function assertHasItems(companyId, estimateId, client = null) {
 }
 
 /**
- * Build the HTML email body: the operator `message` (newlines → <br>) followed
- * by an anchor to the public estimate page. The PDF rides along as an attachment.
- */
-function buildEmailBody(message, link) {
-    const safe = String(message || '').replace(/\r\n|\r|\n/g, '<br>');
-    const anchor = link ? `<p><a href="${link}">View your estimate online</a></p>` : '';
-    return `<div>${safe}</div>${anchor}`;
-}
-
-/**
  * Compose the SMS body: the operator `message`; append the link only if it is
  * not already embedded (the dialog default already includes it → usually a no-op).
  */
@@ -860,17 +851,19 @@ async function sendEstimate(
 
         let companyName = '';
         let senderName = '';
+        let companyTimeZone = '';
         try {
             const companyQueries = require('../db/companyQueries');
             const company = await companyQueries.getCompanyById(companyId);
             companyName = asText(company?.name);
             senderName = asText(company?.settings?.email_sender_name);
+            companyTimeZone = asText(company?.timezone);
         } catch { /* subject falls back to no company suffix */ }
         const subject = companyName
             ? `Estimate ${shortNumber} from ${companyName}`
             : `Estimate ${shortNumber}`;
 
-        const { buffer } = await generatePdf(companyId, id, client);
+        const { estimate: documentEstimate, buffer, brand } = await generatePdf(companyId, id, client);
         const safeFile = String(shortNumber).replace(/[^a-z0-9_-]+/gi, '_');
 
         const emailService = require('./emailService');
@@ -878,7 +871,15 @@ async function sendEstimate(
             await emailService.sendEmail(companyId, {
                 to,
                 subject,
-                body: buildEmailBody(currentMessage, link),
+                body: buildEstimateEmailBody({
+                    message: currentMessage,
+                    estimateLink: link,
+                    estimate: documentEstimate,
+                    brand,
+                    companyName,
+                    senderName: noteActor?.name,
+                    timeZone: companyTimeZone,
+                }),
                 files: [{
                     mimetype: 'application/pdf',
                     originalname: `Estimate-${safeFile}.pdf`,
@@ -1733,6 +1734,7 @@ async function generatePdf(companyId, id, client = null) {
     return {
         estimate: customerEstimate,
         buffer: await renderEstimatePdf(customerEstimate, descriptor),
+        brand: descriptor?.brand || {},
     };
 }
 
