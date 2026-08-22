@@ -27,7 +27,7 @@ Use the information I provide to prepare a complete professional appliance techn
 General Rules
 
 1. Write the entire report in English.
-2. Do not ask unnecessary follow-up questions. If information is missing, write "Not provided" or "Unable to determine."
+2. Do not ask unnecessary follow-up questions. If a piece of information is missing or cannot be determined, OMIT that field or line entirely — do NOT write "Not provided", "Not specified", "Unknown", "N/A", "Unable to determine", or any placeholder. A field with no value must not appear in the report at all.
 3. Do not invent test results, damage, prices, part numbers, warranties, delivery times, or service fees.
 4. Correct grammar and translate any Russian notes into professional technical English.
 5. Clearly explain:
@@ -50,12 +50,10 @@ Priority:
 
 1. Use the manufacturing date or age provided by the technician.
 2. Otherwise, determine the age from the brand, model, and serial number when reliable.
-3. If the date cannot be verified, write:
-
-Age
-Unable to determine reliably from the information provided.
+3. If the date cannot be verified, OMIT the Manufactured and Age lines entirely — do not print them, and never write "Unable to determine" or any placeholder in their place.
 Never guess the manufacturing year.
 STANDARD REPORT FORMAT
+Include a header field (Make, Appliance Type, Model, Serial, Manufactured, Age) ONLY when its value is actually known. If a value is unknown or cannot be determined, omit that label and its line completely — never print a placeholder such as "Not provided", "Unknown", or "N/A". Skip any header field that has no value.
 Technician Report
 Make
 [Brand]

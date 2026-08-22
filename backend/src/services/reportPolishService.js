@@ -80,6 +80,31 @@ function stripPromptInjectionLines(text) {
         .trim();
 }
 
+// The instruction tells the model to OMIT unknown fields, but models occasionally still
+// emit a placeholder (and a company's custom instruction may predate that rule). Safety
+// net: drop a header label immediately followed by a placeholder value, plus any lone
+// placeholder line. Whole-line match only — prose that merely contains these words stays.
+const HEADER_FIELD_LABELS = new Set([
+    'make', 'appliance type', 'model', 'serial', 'serial number', 'manufactured', 'age',
+]);
+const PLACEHOLDER_LINE = /^(not provided|not specified|unknown|none provided|n\/?a|unable to determine\b.*)\.?$/i;
+
+function stripUndeterminedFields(report) {
+    const lines = String(report).split(/\r?\n/);
+    const out = [];
+    for (let i = 0; i < lines.length; i += 1) {
+        const label = lines[i].trim().toLowerCase();
+        const nextIsPlaceholder = i + 1 < lines.length && PLACEHOLDER_LINE.test(lines[i + 1].trim());
+        if (HEADER_FIELD_LABELS.has(label) && nextIsPlaceholder) {
+            i += 1; // drop the label AND its placeholder value
+            continue;
+        }
+        if (PLACEHOLDER_LINE.test(lines[i].trim())) continue; // lone placeholder line
+        out.push(lines[i]);
+    }
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function buildUserPrompt(text) {
     const safeNote = stripPromptInjectionLines(text);
     return [
@@ -131,7 +156,9 @@ function createReportPolishService({
             || typeof payload.report !== 'string' || !payload.report.trim()) {
             throw unavailableError();
         }
-        return payload.report;
+        // NOTES-REPORT-PERM-001 / owner request: unknown fields are omitted, never
+        // rendered as "Not provided" / "Unable to determine". Belt to the prompt's braces.
+        return stripUndeterminedFields(payload.report) || payload.report.trim();
     }
 
     return { polishReport };
@@ -147,6 +174,7 @@ module.exports = {
     SECURITY_PREAMBLE,
     FIXED_RESPONSE_INSTRUCTIONS,
     stripPromptInjectionLines,
+    stripUndeterminedFields,
     buildUserPrompt,
     buildSystemPrompt,
     createGeminiTransport,

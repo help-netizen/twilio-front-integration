@@ -5,6 +5,7 @@ const {
     REPORT_RESPONSE_SCHEMA,
     createGeminiTransport,
     createReportPolishService,
+    stripUndeterminedFields,
 } = require('../backend/src/services/reportPolishService');
 
 const COMPANY_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -121,5 +122,41 @@ describe('REPORT-POLISH-001 reportPolishService', () => {
             timeoutMs: expect.any(Number),
             maxRetries: expect.any(Number),
         }));
+    });
+});
+
+describe('stripUndeterminedFields (owner: omit unknown fields, no placeholders)', () => {
+    it('drops each header label whose value is a placeholder, keeps the known ones', () => {
+        const input = [
+            'Technician Report',
+            'Make', 'Not provided',
+            'Appliance Type', 'Washer/Dryer',
+            'Model', 'Not provided',
+            'Serial', 'Not provided',
+            'Manufactured', 'Not provided',
+            'Age', 'Unable to determine reliably from the information provided.',
+            'Failure Issue:', 'Dryer does not heat.',
+        ].join('\n');
+        expect(stripUndeterminedFields(input)).toBe([
+            'Technician Report',
+            'Appliance Type', 'Washer/Dryer',
+            'Failure Issue:', 'Dryer does not heat.',
+        ].join('\n'));
+    });
+
+    it('handles N/A / Unknown / Not specified variants', () => {
+        const input = 'Model\nN/A\nSerial\nUnknown\nMake\nNot specified\nAppliance Type\nRange';
+        expect(stripUndeterminedFields(input)).toBe('Appliance Type\nRange');
+    });
+
+    it('keeps prose that merely contains the words (whole-line match only)', () => {
+        const input = 'Findings:\nThe manufacturing year is unknown, but the compressor is unable to determine suction.';
+        expect(stripUndeterminedFields(input)).toBe(input.trim());
+    });
+
+    it('polishReport runs the model output through the stripper', async () => {
+        const h = harness({ payload: { report: 'Technician Report\nMake\nNot provided\nAppliance Type\nRange' } });
+        await expect(h.service.polishReport({ companyId: COMPANY_A, text: 'range broken' }))
+            .resolves.toBe('Technician Report\nAppliance Type\nRange');
     });
 });
