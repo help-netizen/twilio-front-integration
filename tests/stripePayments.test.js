@@ -526,7 +526,11 @@ describe('handleWebhook', () => {
         q.getSessionByPaymentIntent.mockResolvedValue({ id: 8, invoice_id: 42 });
         q.updateSession.mockResolvedValue({});
         q.markWebhookEvent.mockResolvedValue(undefined);
-        paymentsQueries.findByExternalSourceId.mockResolvedValue({ id: 100, external_id: 'pi_1' }); // already in ledger
+        paymentsQueries.findByExternalSourceId.mockResolvedValue({
+            id: 100,
+            external_id: 'pi_1',
+            status: 'completed',
+        }); // already in ledger
         const { body, sig } = signed({
             id: 'evt_pi', type: 'payment_intent.succeeded', account: ACCT,
             data: { object: { id: 'pi_1', amount_received: 5000, currency: 'usd', metadata: { invoice_id: '42' } } },
@@ -742,10 +746,15 @@ describe('ensurePaymentLink', () => {
         expect(q.insertSession).not.toHaveBeenCalled();
     });
 
-    it('rejects draft or jobless invoice links before Stripe writes', async () => {
+    it('rejects a void or jobless invoice link, but not a draft (OB-72)', async () => {
+        // A draft used to be rejected here. The owner cut that restriction (22.08): the
+        // customer approves on the spot, and refusing the card because we have not
+        // emailed the invoice yet is our bookkeeping, not their problem. What stays
+        // rejected is what genuinely cannot take money.
         q.getAccountByCompany.mockResolvedValue(readyAccount);
         provider.createCheckoutSession = jest.fn();
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'draft', balance_due: 80, total: 80, job_id: 7 });
+
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'void', balance_due: 80, total: 80, job_id: 7 });
         await expect(svc.ensurePaymentLink(COMPANY, { id: null }, 42))
             .rejects.toMatchObject({ code: 'INVALID_STATUS' });
 
@@ -787,9 +796,9 @@ describe('createManualCardSession (Phase 3)', () => {
         await expect(svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 })).rejects.toMatchObject({ code: 'NOT_READY' });
     });
 
-    it('rejects draft or jobless invoice card sessions before provider/session writes', async () => {
+    it('rejects a void or jobless invoice card session, but not a draft (OB-72)', async () => {
         q.getAccountByCompany.mockResolvedValue(readyAccount);
-        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'draft', balance_due: 80, total: 80, job_id: 7 });
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'refunded', balance_due: 80, total: 80, job_id: 7 });
         await expect(svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 }))
             .rejects.toMatchObject({ code: 'INVALID_STATUS' });
 

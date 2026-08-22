@@ -30,6 +30,49 @@ describe('canonical transaction action projection', () => {
         expect(params[17]).toBe(57);
     });
 
+    test('Stripe retry promotion is tenant-scoped, one-way, and refreshes settlement data', async () => {
+        const promoted = {
+            id: 72,
+            company_id: COMPANY,
+            external_id: 'pi_retry',
+            status: 'completed',
+        };
+        db.query.mockResolvedValue({ rows: [promoted] });
+
+        await expect(paymentsQueries.promoteStripeTransaction(
+            COMPANY,
+            'pi_retry',
+            {
+                amount: 115,
+                invoice_id: 57,
+                origin_invoice_id: 56,
+                metadata: { tip: 15 },
+                processed_at: '2026-08-22T12:00:00.000Z',
+            }
+        )).resolves.toEqual(promoted);
+
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).toContain("SET status = 'completed'");
+        expect(sql).toContain('amount = $3');
+        expect(sql).toContain('invoice_id = $4');
+        expect(sql).toContain('origin_invoice_id = $5');
+        expect(sql).toContain('metadata = $6');
+        expect(sql).toContain('processed_at = $7');
+        expect(sql).toContain('WHERE company_id = $1');
+        expect(sql).toContain("external_source = 'stripe'");
+        expect(sql).toContain('external_id = $2');
+        expect(sql).toContain("status <> 'completed'");
+        expect(params).toEqual([
+            COMPANY,
+            'pi_retry',
+            115,
+            57,
+            56,
+            JSON.stringify({ tip: 15 }),
+            '2026-08-22T12:00:00.000Z',
+        ]);
+    });
+
     test('refund rows inherit provenance after a payment was re-applied', async () => {
         db.query
             .mockResolvedValueOnce({

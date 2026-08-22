@@ -664,7 +664,11 @@ describe('webhook job ledger (invoice_id NULL)', () => {
         q.getSessionByCheckoutId.mockResolvedValue({ id: 12, invoice_id: null, job_id: 'job-1', contact_id: 5 });
         q.updateSession.mockResolvedValue({});
         q.markWebhookEvent.mockResolvedValue(undefined);
-        paymentsQueries.findByExternalSourceId.mockResolvedValue({ id: 300, external_id: 'pi_job' });
+        paymentsQueries.findByExternalSourceId.mockResolvedValue({
+            id: 300,
+            external_id: 'pi_job',
+            status: 'completed',
+        });
         const { body, sig } = signed({ id: 'evt_job2', type: 'checkout.session.completed', account: ACCT, data: { object: { id: 'cs_job', payment_intent: 'pi_job', amount_total: 18000, currency: 'usd', metadata: { job_id: 'job-1' } } } });
         const res = await svc.handleWebhook(body, sig);
         expect(res).toEqual({ ok: true });

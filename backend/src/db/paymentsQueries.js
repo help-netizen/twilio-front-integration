@@ -381,6 +381,45 @@ async function findByExternalSourceId(companyId, externalSource, externalId, cli
 }
 
 /**
+ * Atomically promote a failed/retryable Stripe ledger row to completed.
+ * The completed guard makes concurrent success deliveries one-way and single-winner.
+ */
+async function promoteStripeTransaction(companyId, externalId, data, client = null) {
+    const query = queryFor(client);
+    const {
+        amount,
+        invoice_id,
+        origin_invoice_id,
+        metadata = {},
+        processed_at,
+    } = data;
+    const { rows } = await query(
+        `UPDATE payment_transactions
+         SET status = 'completed',
+             amount = $3,
+             invoice_id = $4,
+             origin_invoice_id = $5,
+             metadata = $6,
+             processed_at = $7
+         WHERE company_id = $1
+           AND external_source = 'stripe'
+           AND external_id = $2
+           AND status <> 'completed'
+         RETURNING *`,
+        [
+            companyId,
+            externalId,
+            amount,
+            invoice_id || null,
+            origin_invoice_id || null,
+            JSON.stringify(metadata),
+            processed_at,
+        ]
+    );
+    return rows[0] || null;
+}
+
+/**
  * Update transaction status with optional extra sets (e.g. processed_at=NOW()).
  */
 async function updateTransactionStatus(id, companyId, status, extraSets = {}, client = null) {
@@ -768,6 +807,7 @@ module.exports = {
     getTransactionReceiptContext,
     createTransaction,
     findByExternalSourceId,
+    promoteStripeTransaction,
     updateTransactionStatus,
     getTransactionForInvoice,
     voidPayment,

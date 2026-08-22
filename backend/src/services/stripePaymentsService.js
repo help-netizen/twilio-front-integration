@@ -1879,7 +1879,7 @@ async function applyStripePayment(
         externalId,
         client
     );
-    if (existing) return { tx: existing, deduped: true };
+    if (existing?.status === 'completed') return { tx: existing, deduped: true };
     let invoice = null;
     let appliedInvoiceId = invoiceId || null;
     let originInvoiceId = requestedOriginInvoiceId || invoiceId || null;
@@ -1947,6 +1947,9 @@ async function applyStripePayment(
     };
 
     let tx;
+    const processedAt = new Date().toISOString();
+    const insertSavepoint = client?.query ? 'stripe_payment_ledger_insert' : null;
+    if (insertSavepoint) await client.query(`SAVEPOINT ${insertSavepoint}`);
     try {
         // Low-level insert (does NOT auto-apply to the invoice) so we control the
         // balance vs tip split below.
@@ -1963,10 +1966,16 @@ async function applyStripePayment(
             external_id: externalId,
             external_source: 'stripe',
             metadata: transactionMetadata,
-            processed_at: new Date().toISOString(),
+            processed_at: processedAt,
         }, client);
+        if (insertSavepoint) await client.query(`RELEASE SAVEPOINT ${insertSavepoint}`);
     } catch (err) {
-        // Unique-violation race → another delivery won; treat as deduped.
+        // The savepoint keeps the surrounding webhook transaction usable after
+        // PostgreSQL marks the failed INSERT statement as aborted.
+        if (err.code === '23505' && insertSavepoint) {
+            await client.query(`ROLLBACK TO SAVEPOINT ${insertSavepoint}`);
+            await client.query(`RELEASE SAVEPOINT ${insertSavepoint}`);
+        }
         if (err.code === '23505') {
             const row = await paymentsQueries.findByExternalSourceId(
                 companyId,
@@ -1974,9 +1983,25 @@ async function applyStripePayment(
                 externalId,
                 client
             );
-            return { tx: row, deduped: true };
+            if (!row) throw err;
+            if (row.status === 'completed') return { tx: row, deduped: true };
+
+            tx = await paymentsQueries.promoteStripeTransaction(
+                companyId,
+                externalId,
+                {
+                    amount,
+                    invoice_id: appliedInvoiceId,
+                    origin_invoice_id: originInvoiceId,
+                    metadata: transactionMetadata,
+                    processed_at: processedAt,
+                },
+                client
+            );
+            if (!tx) return { tx: row, deduped: true };
+        } else {
+            throw err;
         }
-        throw err;
     }
 
     if (appliedInvoiceId) {
