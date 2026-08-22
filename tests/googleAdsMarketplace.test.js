@@ -10,6 +10,7 @@ jest.mock('../backend/src/db/marketplaceQueries', () => ({
     getPublishedAppByKey: jest.fn(),
     findActiveInstallation: jest.fn(),
     createInstallation: jest.fn(),
+    findPublishedRuntimeVersion: jest.fn(),
 }));
 jest.mock('../backend/src/db/emailQueries', () => ({
     getMailboxByCompany: jest.fn(),
