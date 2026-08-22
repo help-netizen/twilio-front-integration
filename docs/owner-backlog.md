@@ -149,6 +149,28 @@ OB-71 (Sara строит лид из серверных фактов — ⚠live
 
 ---
 
+## OB-72 (2026-08-22) — «Cannot collect on invoice with status 'draft'» — надуманный запрет: принял деньги на месте, а сервер не даёт — **ОТКРЫТ**
+
+Владелец: «если пользователь принимает оплату — значит так нужно, например на месте продал. Другое дело если подпись требуется — тогда просить апрув нужно, да».
+
+**Проверено в коде — фронт и бэк спорят между собой.** Фронт УЖЕ разрешает платить по черновику, и это ваше решение от 16.08 с записанной причиной ([useInvoice.ts:44](/Users/rgareev91/contact_center/twilio-front-integration/frontend/src/hooks/useInvoice.ts:44)): «клиент соглашается на месте, на кухне, и нет причины сперва слать ему письмо только чтобы разблокировать картридер — этот крюк и приводил к тому, что деньги записывались на работу, а не на инвойс». Бэкенд про это решение не знает и режет в ТРЁХ местах:
+
+- офлайн/ручной платёж — [invoicesService.js:963](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/services/invoicesService.js:963): пропускает только `sent/viewed/partial/overdue`;
+- Stripe, путь 1 — [stripePaymentsService.js:349](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/services/stripePaymentsService.js:349): режет `draft/void/refunded/paid`;
+- Stripe, путь 2 — [stripePaymentsService.js:650](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/services/stripePaymentsService.js:650): тот же гард.
+
+Итог для диспетчера тот же, что был в OB-70 с «Draft invoices must be deleted, not voided»: интерфейс предлагает действие, сервер отвечает 409 фразой про наши статусы.
+
+**Что оставить как есть** (это НЕ надуманное): void/refunded — там платить нечего; нулевой остаток — тоже; требование, чтобы инвойс был привязан к работе ([invoicesService.js:970](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/services/invoicesService.js:970)) — иначе деньги повисают без владельца.
+
+**Нюанс с подписью — уточнить у владельца.** `signature_required` живёт на СМЕТЕ ([estimatesQueries.js:387](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/db/estimatesQueries.js:387)), у инвойса такого поля нет. Значит правило владельца читается так: если инвойс сделан из сметы, которая требует подписи, и подписи ещё нет — перед приёмом денег на месте спросить апрув (подпись на устройстве или явное «клиент согласился устно», с записью кто подтвердил). Отдельный вопрос: нужно ли своё `signature_required` у инвойса — сегодня его нет.
+
+**Побочный эффект, который стоит проверить заодно:** при оплате черновика статус должен переходить в `partial`/`paid`, а не оставаться `draft` — иначе получится ровно тот J-1668-2, который дал OB-70 (черновик, принявший карту, не удалялся и не void-ился).
+
+Зона: бэкенд (Codex) + одна проверка фронта, что после оплаты карточка перерисовывается. Тесты: T-own/T-foreign на новом пути, оплата черновика доводит его до `partial`, зачёт в job-пул как обычно.
+
+---
+
 ## OB-71 (2026-08-19) — Лид от Sara пустой: `createLead` снова уходит с `{}`, хотя сервер знает адрес и прибор — **ОТКРЫТ, P0: заявка бесполезна диспетчеру**
 
 Владелец, звонок 19.08 23:21 UTC (`01a01c54-8729-700f-add5-8ca328088c29`), лид
