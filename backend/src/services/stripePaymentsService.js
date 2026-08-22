@@ -346,7 +346,7 @@ async function ensurePaymentLink(
     const account = await assertCollectable(companyId);
     const invoice = await invoicesService.getInvoice(companyId, invoiceId, client); // 404 if foreign
     if (!invoice) throw new StripePaymentsError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
-    if (['draft', 'void', 'refunded', 'paid'].includes(invoice.status)) {
+    if (['void', 'refunded', 'paid'].includes(invoice.status)) {
         throw new StripePaymentsError('INVALID_STATUS', `Cannot collect on invoice with status '${invoice.status}'`, 400);
     }
     if (invoice.job_id == null) {
@@ -646,7 +646,7 @@ async function resolveSurfaceContext(
     if (invoiceId) {
         const invoice = await invoicesService.getInvoice(companyId, invoiceId, client);
         if (!invoice) throw new StripePaymentsError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
-        if (['draft', 'void', 'refunded', 'paid'].includes(invoice.status)) {
+        if (['void', 'refunded', 'paid'].includes(invoice.status)) {
             throw new StripePaymentsError('INVALID_STATUS', `Cannot collect on invoice with status '${invoice.status}'`, 400);
         }
         if (invoice.job_id == null) {

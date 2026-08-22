@@ -962,7 +962,7 @@ async function recordOfflinePayment(
     if (!invoice) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
     }
-    if (!['sent', 'viewed', 'partial', 'overdue'].includes(invoice.status)) {
+    if (!['draft', 'sent', 'viewed', 'partial', 'overdue'].includes(invoice.status)) {
         throw new InvoicesServiceError(
             'INVALID_STATUS',
             `Cannot collect on invoice with status '${invoice.status}'.`,
