@@ -154,6 +154,29 @@ OB-71 (Sara строит лид из серверных фактов — ⚠live
 
 ---
 
+## OB-79 (2026-08-22) — Повторная оплата после отказа карты записывается как FAILED, хотя Stripe деньги забрал — **ОТКРЫТ, P0: деньги есть, в CRM их нет**
+
+Владелец, работа #1691 (COD Service, Momine Mo Mine): карта была заблокирована, первая попытка отклонена. Клиент разблокировал карту, оплатили повторно — успешный экран, деньги в Stripe списаны. В Альбусто платёж показан **failed**; отправить чек с успешного экрана не удалось.
+
+**Механика найдена, читается однозначно.**
+
+Идемпотентность Stripe-платежей держится уникальным индексом [113_create_stripe_connected_accounts.sql:33](/Users/rgareev91/contact_center/twilio-front-integration/backend/db/migrations/113_create_stripe_connected_accounts.sql:33): `(company_id, external_id) WHERE external_source='stripe'` — **одна строка на PaymentIntent, независимо от статуса**.
+
+1. Отказ → вебхук `payment_intent.payment_failed` вызывает `applyStripePaymentFailure({ externalId: obj.id })` ([stripePaymentsService.js:2284](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/services/stripePaymentsService.js:2284)), где `obj` — сам PaymentIntent. В ledger появляется строка `pi_XXX` со статусом `failed`.
+2. Клиент чинит карту и подтверждает **ТОТ ЖЕ** PaymentIntent — у Stripe при повторе id не меняется.
+3. Успех → `applyStripePayment({ externalId: obj.id })` пытается вставить `completed` с тем же `pi_XXX` → нарушение уникальности `23505`.
+4. Обработчик ([stripePaymentsService.js:1969](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/services/stripePaymentsService.js:1969)) считает, что это гонка двух доставок одного вебхука: достаёт существующую строку и **возвращает её как есть**, не глядя на статус. А в ней написано `failed`.
+
+Итог: деньги в Stripe, в ledger — «отказ», инвойс не погашен, работа выглядит неоплаченной, чек не отправляется (транзакция не является успешным платежом). Комментарий в коде — «another delivery won; treat as deduped» — описывает единственный сценарий, о котором думали, и не знает про повтор по тому же PI.
+
+**Направление фикса.** В ветке `23505` успешного пути смотреть на найденную строку: `completed` → это действительно дубль доставки, вернуть как сейчас; **не-completed → ПОВЫСИТЬ**: обновить статус, сумму, `processed_at`, метаданные и провести ту же привязку к инвойсу и разбивку чаевых, что делает обычная вставка. Обратное понижение запрещено — путь отказа ([:2092](/Users/rgareev91/contact_center/twilio-front-integration/backend/src/services/stripePaymentsService.js:2092)) уже возвращает строку не трогая, так что поздний `payment_failed` не сломает успешный платёж.
+
+**Тесты обязательны, сценарий именно этот:** отказ по `pi_X`, затем успех по `pi_X` → одна строка, статус `completed`, деньги применены к инвойсу; повторная доставка `succeeded` по `pi_X` ничего не дублирует; поздний `payment_failed` после успеха не понижает статус. Саботаж: вернуть «возвращать найденную строку как есть» → тест обязан покраснеть.
+
+**Отдельно — данные в проде.** Нужно найти уже пострадавшие платежи: строки `external_source='stripe'` со статусом `failed`, по которым в Stripe есть успешное списание. Как минимум работа #1691. Чинить точечно и только с ведома владельца.
+
+---
+
 ## OB-78 (2026-08-22) — Сторож, который перестал сторожить: `stripeActorFkSafety` красный и ничего не проверяет — **ОТКРЫТ, тихий риск**
 
 Тест [stripeActorFkSafety.structural.test.js](/Users/rgareev91/contact_center/twilio-front-integration/tests/stripeActorFkSafety.structural.test.js) требует, чтобы в `routes/invoices.js` была функция `getStripeActor(req)`. Её там нет — и не было на HEAD, когда я сверял: файл давно использует `userActor` из `financialActivityService`. То есть кейс «invoices.js: the two-line actor pattern cannot silently revert to getUserId» падает уже некоторое время, и все привыкли видеть его красным.
