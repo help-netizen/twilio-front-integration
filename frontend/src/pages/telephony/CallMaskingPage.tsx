@@ -230,7 +230,7 @@ export default function CallMaskingPage() {
                         <div className="flex items-center justify-between gap-3">
                             <div className="space-y-0.5">
                                 <div className="text-sm font-medium" style={{ color: INK1 }}>Call masking</div>
-                                <div className="text-[13px]" style={{ color: INK2 }}>
+                                <div className="blanc-l2" style={{ color: INK2 }}>
                                     {enabled
                                         ? 'On — the selected roles reach customers through your company number.'
                                         : 'Off — masked calling is disabled for everyone.'}
@@ -265,7 +265,7 @@ export default function CallMaskingPage() {
                                             {/* #83 — under a checked role, the members who can't mask yet. */}
                                             {showMissing && (
                                                 <div className="mt-1.5 space-y-1" style={{ marginLeft: 26 }}>
-                                                    <div className="text-[12px]" style={{ color: DANGER }}>
+                                                    <div className="blanc-l2" style={{ color: DANGER }}>
                                                         No phone number on file — can't place masked calls until it's added:
                                                     </div>
                                                     {missing.map(u => (
@@ -273,7 +273,7 @@ export default function CallMaskingPage() {
                                                             key={u.id}
                                                             type="button"
                                                             onClick={() => openEdit(u)}
-                                                            className="flex items-center gap-1 text-left text-[13px]"
+                                                            className="flex items-center gap-1 text-left blanc-l2"
                                                             style={{ color: INK1 }}
                                                         >
                                                             <span className="underline decoration-dotted underline-offset-2">{u.full_name || u.email}</span>
@@ -286,7 +286,7 @@ export default function CallMaskingPage() {
                                     );
                                 })}
                             </div>
-                            <p className="text-[12px]" style={{ color: INK3, marginTop: 8, lineHeight: 1.5 }}>
+                            <p className="blanc-l2" style={{ color: INK3, marginTop: 8, lineHeight: 1.5 }}>
                                 These roles see the masked line and reach customers through your company number; the customer's real number is hidden from them.
                             </p>
                         </div>
@@ -302,14 +302,14 @@ export default function CallMaskingPage() {
                     {/* #82 — the phone-number requirement, stated up front. */}
                     <div className="flex items-start gap-2" style={{ marginTop: 10, marginBottom: 16 }}>
                         <AlertTriangle size={16} style={{ color: ACCENT, marginTop: 2, flexShrink: 0 }} />
-                        <p className="text-[13px]" style={{ color: INK1, lineHeight: 1.5 }}>
+                        <p className="blanc-l2" style={{ color: INK1, lineHeight: 1.5 }}>
                             <strong>Each tech must have their mobile number saved in their profile.</strong>{' '}
                             Callers are recognized by that number — without it, the call falls back to your regular
                             company line instead of masking.
                         </p>
                     </div>
 
-                    <p className="text-[13px] font-semibold" style={{ color: INK1, marginBottom: 12 }}>
+                    <p className="blanc-l2-heading" style={{ color: INK1, marginBottom: 12 }}>
                         Two ways your tech places a masked call.
                     </p>
                     <div className="space-y-4">
@@ -317,7 +317,7 @@ export default function CallMaskingPage() {
                             <PhoneForwarded size={16} style={{ color: ACCENT, marginTop: 2, flexShrink: 0 }} />
                             <div>
                                 <div className="text-sm font-semibold" style={{ color: INK1 }}>Direct dial</div>
-                                <p className="text-[13px]" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
+                                <p className="blanc-l2" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
                                     The tech dials <code style={codeStyle}>{activeNumber || 'your number'},,CODE</code> — the six-digit
                                     customer code shown on the job and contact.
                                 </p>
@@ -327,7 +327,7 @@ export default function CallMaskingPage() {
                             <ShieldCheck size={16} style={{ color: ACCENT, marginTop: 2, flexShrink: 0 }} />
                             <div>
                                 <div className="text-sm font-semibold" style={{ color: INK1 }}>IVR entry</div>
-                                <p className="text-[13px]" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
+                                <p className="blanc-l2" style={{ color: INK2, marginTop: 2, lineHeight: 1.5 }}>
                                     Or the tech calls <code style={codeStyle}>{activeNumber || 'your number'}</code> from their
                                     registered phone and enters the code when prompted. The customer is called from your number and
                                     the call is recorded.

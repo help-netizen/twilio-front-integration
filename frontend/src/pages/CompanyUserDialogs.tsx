@@ -75,21 +75,21 @@ function RoleCards({ role, onRole, isProvider, onIsProvider, fieldContent }: {
                                     : { border: '1.5px solid var(--blanc-line-strong)' }}
                             />
                             <span>
-                                <span className="block text-[15px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{r.name}</span>
-                                <span className="mt-0.5 block text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-2)' }}>{r.desc}</span>
+                                <span className="block blanc-l2-heading" style={{ color: 'var(--blanc-ink-1)' }}>{r.name}</span>
+                                <span className="mt-0.5 block blanc-l2 leading-snug" style={{ color: 'var(--blanc-ink-2)' }}>{r.desc}</span>
                             </span>
                         </button>
                         {sel && (
                             <div className="space-y-4 px-4 pb-4 pt-3.5" style={{ background: 'var(--blanc-surface-muted)' }}>
                                 {r.key === 'provider' ? (
-                                    <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    <p className="blanc-l2 leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                         What providers can see and do is defined by the role — manage it in Settings → Roles &amp; permissions.
                                     </p>
                                 ) : (
                                     <label className="flex cursor-pointer items-center justify-between gap-3">
                                         <span>
-                                            <span className="block text-[14px] font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Also works in the field</span>
-                                            <span className="block text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>Can be assigned to jobs like a provider</span>
+                                            <span className="block blanc-l2" style={{ color: 'var(--blanc-ink-1)' }}>Also works in the field</span>
+                                            <span className="block blanc-l2" style={{ color: 'var(--blanc-ink-3)' }}>Can be assigned to jobs like a provider</span>
                                         </span>
                                         <Switch checked={isProvider} onCheckedChange={onIsProvider} />
                                     </label>
@@ -180,7 +180,7 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
                         {areas ? (
                             <TechnicianServiceAreasEditor technicianId={technicianId} value={areas} onSaved={setAreas} />
                         ) : (
-                            <p className="text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                            <p className="blanc-l2" style={{ color: 'var(--blanc-ink-3)' }}>
                                 {areasError
                                     ? 'Couldn’t load territories — manage them in Settings → Scheduling & service areas.'
                                     : 'Loading territories…'}
@@ -196,7 +196,7 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
                             onPick={({ address, fields }) => { setBaseInput(address); setBasePlace(fields); }}
                         />
                         <div className="flex items-center justify-between gap-3">
-                            <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                            <p className="blanc-l2 leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                 Address or just a ZIP — drive time and slot suggestions count from here.
                             </p>
                             {baseInput.trim() !== '' && baseInput.trim() !== baseSaved.trim() && (
@@ -208,12 +208,12 @@ function FieldWorkSection({ technicianId, scheduleColor, onColorChange }: {
                     </div>
                 </>
             ) : (
-                <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                <p className="blanc-l2 leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                     Save the user first — territories and the start location become editable here once they’re a field technician.
                 </p>
             )}
             <div className="flex items-center justify-between gap-3">
-                <span className="text-[14px] font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Schedule color</span>
+                <span className="blanc-l2" style={{ color: 'var(--blanc-ink-1)' }}>Schedule color</span>
                 <div className="flex items-center gap-2.5">
                     <Input type="color" className="w-12 h-8 p-1 cursor-pointer bg-transparent" value={scheduleColor} onChange={e => onColorChange(e.target.value)} />
                     <span className="text-sm font-mono uppercase" style={{ color: 'var(--blanc-ink-3)' }}>{scheduleColor}</span>
@@ -231,7 +231,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
             <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle
-                        className="text-[22px] font-semibold leading-tight"
+                        className="blanc-section-heading leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                     >
                         {tempPassword ? 'User created' : 'Add new user'}
@@ -246,7 +246,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                 <div className="rounded-xl p-4" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
                                     <div className="blanc-eyebrow">Temporary password</div>
                                     <div className="flex items-center gap-2 mt-1"><code className="text-lg font-mono font-semibold flex-1">{tempPassword}</code><Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(tempPassword); toast.success('Copied!'); }}><Copy className="size-4" /></Button></div>
-                                    <p className="text-[12px] text-muted-foreground mt-2">Share the temporary password with the user. It will only be shown once.</p>
+                                    <p className="blanc-l2-quiet mt-2">Share the temporary password with the user. It will only be shown once.</p>
                                 </div>
                             </div>
                         </DialogBody>
@@ -265,7 +265,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                         <FloatingField id="user-email" label="Email" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
                                         <FloatingField id="user-phone" label="Mobile phone" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
                                     </div>
-                                    <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    <p className="blanc-l2 leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                         The phone gets SMS about new jobs — and masked calls are recognized by it.
                                     </p>
                                 </div>
@@ -277,7 +277,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                                         isProvider={createForm.is_provider}
                                         onIsProvider={v => setCreateForm(f => ({ ...f, is_provider: v }))}
                                         fieldContent={(
-                                            <p className="text-[13px] leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
+                                            <p className="blanc-l2 leading-snug" style={{ color: 'var(--blanc-ink-3)' }}>
                                                 Territories and the start location are set in the user's profile right after creating.
                                             </p>
                                         )}
@@ -354,7 +354,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
             <DialogContent variant="panel">
                 <DialogPanelHeader>
                     <DialogTitle
-                        className="text-[22px] font-semibold leading-tight"
+                        className="blanc-section-heading leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                     >
                         Edit user profile
@@ -422,7 +422,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5">
                                 <Label>Softphone Access</Label>
-                                <div className="text-[13px] text-muted-foreground">Can make/receive calls via browser</div>
+                                <div className="blanc-l2-quiet">Can make/receive calls via browser</div>
                             </div>
                             <Switch checked={form.phone_calls_allowed} onCheckedChange={v => setForm(f => ({ ...f, phone_calls_allowed: v }))} />
                         </div>
@@ -430,7 +430,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5">
                                 <Label>Location Tracking</Label>
-                                <div className="text-[13px] text-muted-foreground">Track via mobile app</div>
+                                <div className="blanc-l2-quiet">Track via mobile app</div>
                             </div>
                             <Switch checked={form.location_tracking_enabled} onCheckedChange={v => setForm(f => ({ ...f, location_tracking_enabled: v }))} />
                         </div>
