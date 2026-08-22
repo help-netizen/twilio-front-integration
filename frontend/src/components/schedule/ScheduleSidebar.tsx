@@ -132,7 +132,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                             {formatDateTimeInTZ(new Date(item.start_at), timezone)}
                         </div>
                         {item.end_at && (
-                            <div className="mt-1 text-[13px]" style={{ color: 'var(--sched-ink-2)' }}>
+                            <div className="mt-1 blanc-l2" style={{ color: 'var(--sched-ink-2)' }}>
                                 {formatTimeInTZ(new Date(item.start_at), timezone)} - {formatTimeInTZ(new Date(item.end_at), timezone)} local time
                             </div>
                         )}
@@ -151,7 +151,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                         <p style={eyebrow}>Contact</p>
                         {item.customer_name && (
                             <div style={infoRow}>
-                                <span className="text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>Customer</span>
+                                <span className="blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>Customer</span>
                                 {onPushLayer ? (
                                     <button
                                         type="button"
@@ -166,30 +166,30 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                                             },
                                             title: item.customer_name,
                                         })}
-                                        className="flex items-center gap-1 text-right text-[13px] font-semibold hover:underline"
+                                        className="flex items-center gap-1 text-right blanc-l2-heading hover:underline"
                                         style={{ color: 'var(--sched-job)', background: 'none', border: 'none', cursor: 'pointer' }}
                                     >
                                         {item.customer_name}
                                         <ChevronRight className="size-3 flex-shrink-0" />
                                     </button>
                                 ) : (
-                                    <span className="text-right text-[13px] font-semibold" style={{ color: 'var(--sched-ink-1)' }}>{item.customer_name}</span>
+                                    <span className="text-right blanc-l2-heading" style={{ color: 'var(--sched-ink-1)' }}>{item.customer_name}</span>
                                 )}
                             </div>
                         )}
                         {item.customer_phone && (
                             <div style={infoRow}>
-                                <span className="text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>Phone</span>
+                                <span className="blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>Phone</span>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-right text-[13px] font-semibold" style={{ color: 'var(--sched-ink-1)' }}>{item.customer_phone}</span>
+                                    <span className="text-right blanc-l2-heading" style={{ color: 'var(--sched-ink-1)' }}>{item.customer_phone}</span>
                                     <ClickToCallButton phone={item.customer_phone} contactName={item.customer_name} inline />
                                 </div>
                             </div>
                         )}
                         {item.customer_email && (
                             <div style={{ ...infoRow, borderBottom: 0, paddingBottom: 0 }}>
-                                <span className="text-[13px]" style={{ color: 'var(--sched-ink-3)' }}>Email</span>
-                                <span className="text-right text-[13px] font-semibold truncate" style={{ color: 'var(--sched-ink-1)' }}>{item.customer_email}</span>
+                                <span className="blanc-l2" style={{ color: 'var(--sched-ink-3)' }}>Email</span>
+                                <span className="text-right blanc-l2-heading truncate" style={{ color: 'var(--sched-ink-1)' }}>{item.customer_email}</span>
                             </div>
                         )}
                     </div>
@@ -220,7 +220,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                                             data: { id: tech.id, name: tech.name, sourceItem: item },
                                             title: tech.name,
                                         })}
-                                        className="inline-flex items-center gap-1 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium hover:shadow-md transition-shadow cursor-pointer"
+                                        className="inline-flex items-center gap-1 min-h-[34px] px-3.5 rounded-full blanc-l2 font-medium hover:shadow-md transition-shadow cursor-pointer"
                                         style={{
                                             background: 'rgba(47, 99, 216, 0.08)',
                                             border: '1px solid rgba(47, 99, 216, 0.12)',
@@ -233,7 +233,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                                 ) : (
                                     <span
                                         key={tech.id || tech.name}
-                                        className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
+                                        className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full blanc-l2 font-medium"
                                         style={{
                                             background: 'rgba(47, 99, 216, 0.08)',
                                             border: '1px solid rgba(47, 99, 216, 0.12)',
@@ -246,7 +246,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                             ))
                         ) : (
                             <span
-                                className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full text-[13px] font-medium italic"
+                                className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full blanc-l2 font-medium italic"
                                 style={{
                                     background: 'rgba(243, 244, 246, 0.7)',
                                     border: '1px solid rgba(107, 114, 128, 0.18)',
@@ -267,7 +267,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                             {item.tags.map(tag => (
                                 <span
                                     key={tag}
-                                    className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
+                                    className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full blanc-l2 font-medium"
                                     style={{
                                         background: 'var(--blanc-bg-deep)',
                                         color: 'var(--sched-ink-2)',
