@@ -219,7 +219,7 @@ export function InvoiceSendDialog({ open, onOpenChange, invoice, onSend }: Props
             <DialogContent variant="panel" size="default" data-testid="invoice-send-dialog">
                 <DialogPanelHeader className="max-md:hidden">
                     <DialogTitle
-                        className="text-[22px] font-semibold leading-tight text-[var(--blanc-ink-1)]"
+                        className="blanc-section-heading leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)' }}
                     >
                         Send invoice
@@ -233,12 +233,12 @@ export function InvoiceSendDialog({ open, onOpenChange, invoice, onSend }: Props
                     <div className="mx-auto w-full max-w-[520px]">
                         <div className="mb-5 md:hidden">
                             <h3
-                                className="text-[20px] font-semibold leading-tight text-[var(--blanc-ink-1)]"
+                                className="blanc-section-heading leading-tight"
                                 style={{ fontFamily: 'var(--blanc-font-heading)' }}
                             >
                                 Send invoice
                             </h3>
-                            <p className="mt-1 text-[12px] text-[var(--blanc-ink-3)]">
+                            <p className="mt-1 blanc-l2-quiet">
                                 {invoice.invoice_number} · {fmtMoney(invoice.total)} · {invoice.contact_name || 'Customer'}
                             </p>
                         </div>

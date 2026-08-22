@@ -20,7 +20,7 @@ const SRC = fileURLToPath(new URL('..', import.meta.url));
 
 // Measured at adoption (2026-08-14), payment card already migrated.
 const CEILING = {
-    occurrences: 625,
+    occurrences: 616,
     distinctSizes: 22,
     // 9.5 · 10.5 · 11.5 · 12.5 · 13.5 · 14.5 · 15.5 — half-steps nobody can
     // justify. First migration batch: these should reach 0 without any design

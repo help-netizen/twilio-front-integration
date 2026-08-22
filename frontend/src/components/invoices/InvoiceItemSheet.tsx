@@ -157,7 +157,7 @@ export function InvoiceItemSheet({
             <DialogContent variant="panel" size="default" data-testid="invoice-item-sheet">
                 <DialogPanelHeader className="max-md:hidden">
                     <DialogTitle
-                        className="text-[22px] font-semibold leading-tight text-[var(--blanc-ink-1)]"
+                        className="blanc-section-heading leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)' }}
                     >
                         {isEdit ? 'Edit item' : 'Add item'}
@@ -171,12 +171,12 @@ export function InvoiceItemSheet({
                     <div className="mx-auto w-full max-w-[740px]">
                         <div className="mb-5 md:hidden">
                             <DialogTitle
-                                className="text-[22px] font-semibold leading-tight text-[var(--blanc-ink-1)]"
+                                className="blanc-section-heading leading-tight"
                                 style={{ fontFamily: 'var(--blanc-font-heading)' }}
                             >
                                 {isEdit ? 'Edit item' : 'Add item'}
                             </DialogTitle>
-                            <p className="mt-1.5 text-[13px] text-[var(--blanc-ink-3)]">
+                            <p className="mt-1.5 blanc-l2-quiet">
                                 {isEdit ? 'Update this invoice item.' : 'Search your Price Book, or fill it in below.'}
                             </p>
                         </div>
