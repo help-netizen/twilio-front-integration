@@ -233,7 +233,7 @@ export function InvoiceCollectPaymentDialog({
 
                             <FloatingLabel label="Amount" filled>
                                 <span
-                                    className="pointer-events-none absolute left-3.5 top-[29px] z-[1] -translate-y-1/2 text-[15px] font-medium text-[var(--blanc-ink-1)]"
+                                    className="pointer-events-none absolute left-3.5 top-[33px] z-[1] -translate-y-1/2 text-[15px] font-medium text-[var(--blanc-ink-1)]"
                                     aria-hidden="true"
                                 >
                                     $
